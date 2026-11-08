@@ -322,7 +322,7 @@ Both run JSON-RPC through the same `@a2a-js/sdk` `DefaultRequestHandler`, with S
 `SubscribeToTask`. `SqlTaskStore` (`store.ts`) keeps tasks in `tasks` and the order a task follows
 (or a chat action waiting for a confirm) in `task_links`; for an unfinished order, `load` and
 `list` take the status from the `OrderAgent` snapshot through `orderTaskState` in
-`packages/core/src/a2a.ts`. `OrderLoopExecutor` (`executor.ts`) reads a data part
+`packages/core/src/a2a.ts`. `OrderExecutor` (`executor.ts`) reads a data part
 `{ skill, input }` into `runTool` with `via: 'A2A'`, starts orders with `startOrderOnce` keyed
 `a2a:<principal id>:<messageId>`, runs `chat` with `assistantModel` (an action it proposes stops at
 `input-required` until `{ confirm }`), and follows an order for up to 25 seconds per request.
@@ -1008,7 +1008,7 @@ Bundle: about 10 KiB gzipped (segmented listings added about 1 KiB to the 9.4 it
 | `A2A_AGENT` | engine | Durable Object class `A2AAgent` (SQLite, migration tag `v3`) |
 | `CART_AGENT` | engine | Durable Object class `CartAgent` (SQLite, migration tag `v5`) |
 | `HEALTH_PROBE` | engine | Durable Object class `HealthProbe` (SQLite, migration tag `v6`): one object, `health`, that the deploy smoke test's write check writes a row to and deletes; empty between checks (`apps/engine/src/health.ts`) |
-| `ORDER_LOOP` | engine | Workflow `commerceworker-order`, class `CommerceWorker`, `limits.steps: 10000` |
+| `ORDER_WORKFLOW` | engine | Workflow `commerceworker-order`, class `OrderWorkflow`, `limits.steps: 10000` |
 | `REPLENISH` | engine | Workflow `commerceworker-replenish`, class `Replenish`, schedule `0 6 * * *` |
 | `DB` | both | D1 `commerceworker`, migrations in `packages/db/migrations` |
 | `DOCS` | both | R2 `commerceworker-docs` |
@@ -1029,7 +1029,7 @@ Bundle: about 10 KiB gzipped (segmented listings added about 1 KiB to the 9.4 it
 | `PUBLISHERS` | catalog | Durable Object `CatalogPublisher` (SQLite, migration tag `v5`), `PUBLISH_FANOUT` per shard named `pub-<shard>-<n>`: the shards' storage writes |
 | `FEED_PARTS` | catalog | Queue producer for `commerceworker-catalog-feed-parts`; the Worker consumes it |
 | `CHANGES` | catalog | Queue `commerceworker-catalog-changes` (dead-letter queue `commerceworker-catalog-changes-dlq`); producer and consumer are the catalog Worker |
-| `DB` | catalog | D1 `commerceworker` (the web app's database): the catalog writes `products.name`, `price`, `catalog_at` and the weight and size columns ([CommerceWorker's products](#order-loops-products)) |
+| `DB` | catalog | D1 `commerceworker` (the web app's database): the catalog writes `products.name`, `price`, `catalog_at` and the weight and size columns ([CommerceWorker's products](#commerceworkers-products)) |
 | `PUBLISHED` | catalog | R2 `commerceworker-catalog`: product documents, alias pointers, category trees, listing indexes, and the backups (`backups/`) |
 | `PURGE` | catalog | Queue producer for `commerceworker-catalog-purge` (`{ tags }` messages) |
 | `CARDS` | catalog | KV namespace of listing cards and `u:f1:<key>` uid entries; created by `provision.sh` |
@@ -1123,7 +1123,7 @@ Two rules hold for every connector:
   `Idempotency-Key` is the row id, so a retried step replays Stripe's first answer. Stock changes (`reserveInventory`'s holds and
   `restock`) go through the `stock_movements` ledger, which records each change and applies it to
   `products` (or, with a `location_id`, a store's `location_stock` row) in one batch, once. A hold is written only while the stock is still free. Capture flips its authorization to `captured` and records the capture in one batch, and a retried capture returns the one already recorded.
-- **After a continue-as-new, keys gain the generation.** The ids above embed the effect key, `${nodeId}#${run}@g${generation}` from generation 2 on (see [OrderLoop Workflow](workflow.md#step-names)).
+- **After a continue-as-new, keys gain the generation.** The ids above embed the effect key, `${nodeId}#${run}@g${generation}` from generation 2 on (see [Order Workflow](workflow.md#step-names)).
 - **Compensations are idempotent.** `releaseInventory` releases only `held` reservations (each
   release is a ledger movement, so a cancel racing a rollback releases once),
   `voidAuthorizations` voids only `authorized` payments (a void racing a capture leaves exactly
@@ -1503,4 +1503,4 @@ before a change can't roll a newer version back, and seeding twice publishes onc
 demo scenarios are `SCENARIOS` in `apps/web/app/lib/scenarios.ts`, shown only where `demoAvailable()` finds their customers and SKUs (the demo data in `packages/db/seed`, never in production); the docs page
 [Built-in flows](https://docs.commerceworker.com/guides/templates/) describes them.
 
-See [OrderLoop Workflow](workflow.md) and [OrderAgent](order-agent.md).
+See [Order Workflow](workflow.md) and [OrderAgent](order-agent.md).

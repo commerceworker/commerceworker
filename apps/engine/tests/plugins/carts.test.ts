@@ -255,7 +255,7 @@ describe('the plugin host API', () => {
   });
 
   it('starts an order once per key, in its own namespace, saying which plugin started it', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -298,7 +298,7 @@ describe('the plugin host API', () => {
   });
 
   it('cancels only an order it started, by its key, once', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -426,7 +426,7 @@ describe('the plugin host API', () => {
   });
 
   it('keeps the core’s meta keys to the core, and refuses a currency with no rate', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

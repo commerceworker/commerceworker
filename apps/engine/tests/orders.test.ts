@@ -106,7 +106,7 @@ beforeAll(async () => {
 });
 
 async function introspect(timeouts: string[] = []) {
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();

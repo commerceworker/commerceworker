@@ -280,7 +280,7 @@ describe('shipping a cart', () => {
   });
 
   it('starts the order with the ship-to and option the cart was quoted for', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -298,7 +298,7 @@ describe('shipping a cart', () => {
   });
 
   it('ships by what the quote charged when the flow picks its own option, and says so', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -341,7 +341,7 @@ describe('shipping a cart', () => {
   });
 
   it('starts an order with the option the quote charged when none was chosen, and none for a flow without shipping', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -800,7 +800,7 @@ describe('cart files', () => {
 
 describe('submitting a cart', () => {
   it('starts one order of the cart’s flow from the quote, and ends the cart', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -928,7 +928,7 @@ describe('staff carts over EngineApi (the REST API)', () => {
   });
 
   it('submits as the caller once, and cancels only a cart that has not ended', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

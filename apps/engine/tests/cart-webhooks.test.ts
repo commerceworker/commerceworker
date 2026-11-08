@@ -143,7 +143,7 @@ async function externalCart(title = 'Punchout', expiresAt = Date.now() + 3_600_0
 
 describe('cart events', () => {
   it('announces a staff cart once when it opens and once when it is submitted, signed', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -378,7 +378,7 @@ describe('cart events', () => {
   });
 
   it('forgets a staff cart’s events and erases its title when its customer is erased', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

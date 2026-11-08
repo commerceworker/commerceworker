@@ -10,9 +10,10 @@ metadata:
 
 # Triage a CI failure
 
-Workflows: `.github/workflows/ci.yml` (verify on every push and PR; on `main`, `plan` then the rings
-`staging` → `internal` → `canary` → `general`), `deploy.yml` (one deployment, called per ring),
-`demo-reset.yml` (nightly). `docs/deploy.md` "CI" describes them.
+Workflows: `.github/workflows/ci.yml` (verify on every push and PR; on `main`, when the repository
+variable `DEPLOY_ENABLED` is `true`, `plan` then the rings `staging` → `internal` → `canary` →
+`general`; a skipped `plan` with no deploy means the variable is off, not a failure), `deploy.yml` (one deployment, called per ring),
+`demo-reset.yml` (nightly, behind the same variable). `docs/deploy.md` "CI" describes them.
 
 ## 1. Find the run
 

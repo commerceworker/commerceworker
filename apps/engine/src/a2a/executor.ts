@@ -83,7 +83,7 @@ const ORDER_TOOLS = new Set<AssistantTool>(['decide_approval', 'deliver_event', 
 
 type Ids = { taskId: string; contextId: string };
 
-export class OrderLoopExecutor implements AgentExecutor {
+export class OrderExecutor implements AgentExecutor {
   /** Tasks being followed by a request now; a cancel stops the follow. */
   private readonly following = new Set<string>();
   /** What an order showed just before this request acted on it, by task. */

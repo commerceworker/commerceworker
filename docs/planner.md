@@ -4,7 +4,7 @@ The pure state machine that decides which nodes run, which are skipped, and how 
 
 The planner in `packages/core/src/graph.ts` is the only place flow semantics live. It is a pure
 function of a graph and a `PlanState`, with no I/O, so it is unit tested in Node
-(`packages/core/tests/graph.test.ts`). The [OrderLoop Workflow](workflow.md) drives it and
+(`packages/core/tests/graph.test.ts`). The [Order Workflow](workflow.md) drives it and
 adds durability; it never re-implements scheduling.
 
 ## State

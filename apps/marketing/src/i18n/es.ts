@@ -28,12 +28,12 @@ export const es: Copy = {
       'CommerceWorker es infraestructura de comercio API-first sobre Cloudflare. Cada cliente tiene un despliegue aislado, y personas y agentes acceden a cada función con la misma interfaz.',
     ctaStart: 'Empezar',
     ctaSignIn: 'Iniciar sesión',
-    loopTitle: 'Cada pedido es un Order Loop.',
+    loopTitle: 'Cada pedido es un Order Flow.',
     loopBody:
-      'Un Order Loop es un flujo duradero dibujado como un grafo. Cada paso muestra su estado en vivo, las aprobaciones que espera y su historial. Todos los canales y modelos de pedido funcionan igual: tienda, marketplace, suscripción y orden de compra.',
+      'Un Order Flow es un flujo duradero dibujado como un grafo. Cada paso muestra su estado en vivo, las aprobaciones que espera y su historial. Todos los canales y modelos de pedido funcionan igual: tienda, marketplace, suscripción y orden de compra.',
     loopSteps: ['Entrada', 'Precio', 'Aprobación', 'Reserva', 'Autorización', 'Envío'],
     loopFoot:
-      'Si un paso falla, el loop deshace lo que hizo, en orden inverso, hasta un estado conocido.',
+      'Si un paso falla, el flujo deshace lo que hizo, en orden inverso, hasta un estado conocido.',
     apiTitle: 'REST y MCP. Los mismos pedidos, las mismas reglas.',
     apiBody:
       'Tu tienda llama a la API REST. Un agente llama al servidor MCP. Ambos leen el mismo pedido, deciden las mismas aprobaciones y responden al mismo rol.',
@@ -43,7 +43,7 @@ export const es: Copy = {
       'El checkout para agentes habla UCP, y otros agentes siguen los pedidos por A2A. ACP está previsto.',
     b2bTitle: 'Hecho para cómo compra el B2B.',
     b2bBody:
-      'Las órdenes de compra llegan por correo, punchout o EDI 850 y recorren el mismo loop que un pedido web.',
+      'Las órdenes de compra llegan por correo, punchout o EDI 850 y recorren el mismo flujo que un pedido web.',
     b2bSteps: [
       { title: 'Solicitud', body: 'Una orden de compra llega por correo, punchout o EDI 850.' },
       {
@@ -69,14 +69,14 @@ export const es: Copy = {
   features: {
     metaTitle: 'Funciones: CommerceWorker',
     metaDescription:
-      'Order Loops, interfaces para agentes, entrada B2B, catálogo y checkout, gestión de contenido y despliegues aislados sobre Cloudflare.',
+      'Order Flows, interfaces para agentes, entrada B2B, catálogo y checkout, gestión de contenido y despliegues aislados sobre Cloudflare.',
     title: 'Funciones',
     intro:
       'Lo que CommerceWorker hace hoy. Cada sección enlaza con la documentación que la explica (en inglés).',
     more: 'Más información',
     sections: [
       {
-        heading: 'Order Loops',
+        heading: 'Order Flows',
         doc: '/guides/building-flows/',
         items: [
           {
@@ -89,7 +89,7 @@ export const es: Copy = {
           },
           {
             title: 'Reversión',
-            body: 'Reservar stock, autorizar un pago y crear un envío registran una compensación. Un loop que falla las deshace en orden inverso.',
+            body: 'Reservar stock, autorizar un pago y crear un envío registran una compensación. Un flujo que falla las deshace en orden inverso.',
           },
         ],
       },
@@ -116,7 +116,7 @@ export const es: Copy = {
         doc: '/guides/inbound-orders/',
         items: [
           {
-            title: 'Todos los canales, un loop',
+            title: 'Todos los canales, un flujo',
             body: 'Webhooks firmados de una tienda, marketplace o TPV, pedidos de Shopify, órdenes de compra EDI X12 850 y pedidos por correo inician el mismo tipo de pedido.',
           },
           {

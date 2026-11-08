@@ -1,6 +1,6 @@
 # Pattern inventory
 
-Every architectural pattern from the platform packages and OrderLoop that applies to CommerceWorker is merged and used. This page tracks each one. **Merged** means the whole platform follows it and a test or check holds it. **Content: merged · Commerce: Pn** means the content stack (`apps/studio`, `api`, `delivery`, `media`, `pipeline` and the platform packages) follows it and the commerce stack (`apps/web`, `engine`, `catalog*`, `packages/core`) adopts it in that ROADMAP phase. **To merge** names the phase that lands it. Update a row in the same change that moves it.
+Every architectural pattern from the platform packages and the order engine that applies to CommerceWorker is merged and used. This page tracks each one. **Merged** means the whole platform follows it and a test or check holds it. **Content: merged · Commerce: Pn** means the content stack (`apps/studio`, `api`, `delivery`, `media`, `pipeline` and the platform packages) follows it and the commerce stack (`apps/web`, `engine`, `catalog*`, `packages/core`) adopts it in that ROADMAP phase. **To merge** names the phase that lands it. Update a row in the same change that moves it.
 
 Each pattern is listed only once. Where both sources have a version, the stricter one wins.
 
@@ -35,7 +35,7 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Pattern | Source | State | Where / phase |
 |---|---|---|---|
 | Cloudflare primitives first; D1 and Durable Object SQLite only | both | Merged (rule) | AGENTS.md, ADR 0001 |
-| A pure core with no bindings or Cloudflare imports | OrderLoop | Merged | `packages/core` |
+| A pure core with no bindings or Cloudflare imports | Order engine | Merged | `packages/core` |
 | Hexagonal layers: `domain` → `ports` → `application`; adapters bound only at the composition root | Platform | Content: merged · Commerce: partial (pricing, inventory, fulfillment, balances, marketplace, shipping, documents, payments, invoices, order and cart records, checkout sessions, retention, data subjects, order queries, flows, workspace, plugin installs, sealed secrets, tax certificates, addresses, identity, confirmations, UCP, outbox, product index, logs, audit: ports, D1 and in-memory stores, contracts, the `priceOrder`, `routeFulfillment`, `splitBySeller`, `schedulePayouts`, `bookShipment`, label-void, payment and invoice use-cases, `apps/engine/src/wire.ts`, the only engine file that reaches D1, held by `scripts/composition-root.test.ts`; the web app's reads P1) | `packages/{domain,ports,application,adapters,platform}`, `packages/ports/src/commerce`, `packages/application/src/commerce` (ADR 0003) |
 | Deterministic use-cases: ids from an injected `IdGenerator`, time from `Clock`, every call carries a `Scope` | Platform | Content: merged · Commerce: partial (`priceOrder` takes `now`; the D1 pricing store takes a `Clock`) | `packages/application`, `packages/ports/src/support.ts` |
 | Unit of work: read first, then one D1 batch, with the outbox row in the same batch | Platform | Content: merged · Commerce: P1 (the catalog shards already write their outbox in the same transaction) | `packages/store` |
@@ -48,8 +48,8 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | A store contract run against both the D1 and the in-memory store | Platform | Content: merged · Commerce: partial (pricing, inventory, fulfillment, balances, marketplace, shipping, documents, payments, invoices, order and cart records, checkout sessions, retention, data subjects, order queries, flows, workspace, plugin installs, sealed secrets, tax certificates, addresses, identity, confirmations, UCP, outbox, product index, logs, audit) | `packages/test-kit/src/commerce/pricing-store-contract.ts`, `packages/db/test`, `packages/test-kit/test` |
 | D1 read replicas with session bookmarks | Platform | Content: merged · Commerce: P1 | `packages/platform/src/wire.ts` |
 | Sealed secrets at rest; refuse fake adapters in a persistent deployment | Platform | Content: merged · Commerce: partial (every stored secret sealed and resealed daily through the sealed secrets port; fake-adapter refusal P1) | `packages/platform/src/wire.ts` |
-| Sharded catalog in Durable Objects with a frozen shard hash | OrderLoop | Merged | `apps/catalog`, golden tests |
-| Workflows with step-keyed effects, saga rollback, continue-as-new | OrderLoop | Merged | `apps/engine/src/workflow.ts` |
+| Sharded catalog in Durable Objects with a frozen shard hash | Order engine | Merged | `apps/catalog`, golden tests |
+| Workflows with step-keyed effects, saga rollback, continue-as-new | Order engine | Merged | `apps/engine/src/workflow.ts` |
 | Optional assets service (R2 originals, Images variants, Stream, signed reads, share links) | Platform | Merged as an app; per-deployment switch and product media wiring P3 | `apps/media` |
 | Sandboxed plugins on Worker Loader with declared capabilities | both | Merged | `apps/engine/src/plugin-host.ts` |
 
@@ -64,7 +64,7 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Signed principal header: HMAC, bound to method and path, under 60 s, trusted only on internal hops | both | Content: merged · Commerce: P2 (bound to the path only) | `packages/security/src/principal.ts`, `packages/core/src/roles.ts` |
 | Human auth: passwords, passkeys, TOTP, OIDC, SCIM, setup code | both | Merged | `apps/web/app/lib/*.server.ts` |
 | Host-only `__Host-` session cookies and `Origin` checks | both | Merged | `apps/web/app/lib/auth.server.ts`, `origin.ts` |
-| AI through AI Gateway; schema-validated output; deterministic fallback | OrderLoop | Merged | `apps/engine/src/ai.ts` |
+| AI through AI Gateway; schema-validated output; deterministic fallback | Order engine | Merged | `apps/engine/src/ai.ts` |
 | Model tiers (`flagship` / `balanced` / `fast`) chosen by callers, mapped once | Platform | Content: merged · Commerce: P1 | `packages/ports` `ModelTier`, `packages/adapters/src/ai-workers` |
 | Hybrid search: full-text shards in Durable Objects plus vectors | both | Merged (catalog search shards, product vectors) | `apps/catalog` |
 | Public SDK (core, edge, management) and a CLI with device-flow login | Platform | Merged for content; commerce endpoints P7 | `packages/sdk/*`, `packages/cli` |

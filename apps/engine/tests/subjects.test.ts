@@ -68,7 +68,7 @@ async function finished(input: OrderInput) {
 
 describe('data subject requests', () => {
   it('exports, then erases, a person from their orders, account, documents and messages', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -278,7 +278,7 @@ describe('data subject requests', () => {
   });
 
   it('adds the ship-to of orders started before addresses were kept, dated by the order', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -383,7 +383,7 @@ describe('data subject requests', () => {
   });
 
   it('erases the buyer from orders finished longer ago than the retention, and only those', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

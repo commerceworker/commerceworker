@@ -280,7 +280,7 @@ the customer deletes it.
 The catalog Worker ([Architecture](architecture.md#product-catalog)) owns no tables in D1. Its one
 D1 write is to CommerceWorker's `products` table: a row per variant SKU with its `name`, `price` and
 `catalog_at`, and its `weight_kg` and `length_cm`/`width_cm`/`height_cm` (null when the variant has none, so removing them in
-the catalog clears them, and `dim_weight` shipping never bills a size the catalog no longer has), upserted by `apps/catalog/src/orders.ts` ([CommerceWorker's products](architecture.md#order-loops-products)).
+the catalog clears them, and `dim_weight` shipping never bills a size the catalog no longer has), upserted by `apps/catalog/src/orders.ts` ([CommerceWorker's products](architecture.md#commerceworkers-products)).
 A new row gets `cost` 0 and the column defaults; an existing row keeps everything else. `catalog_at`
 is the publish change's `at`, and an upsert applies only where it is null or older, so out-of-order
 queue delivery can't overwrite a newer name or price. Rows are never deleted when a product stops

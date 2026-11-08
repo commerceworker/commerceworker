@@ -16,14 +16,28 @@ const colours = (lines: ReactNode[][]) =>
     return [[children, style.color] as const];
   });
 
+/**
+ * A highlighter that has already run once. Shiki stops tokenizing a line after 500 ms
+ * (`tokenizeTimeLimit`) and leaves the rest uncoloured; the first run compiles the grammar's
+ * regexes, which on a busy CI runner can take that long, so the colours checked are a warm run's.
+ */
+async function warm(lang: Parameters<typeof loadHighlighter>[0], code: string) {
+  const highlight = await loadHighlighter(lang);
+  highlight(code);
+  return highlight(code);
+}
+
 describe('the code block highlighter', () => {
   it('colours JSON and JavaScript with Ledger’s variables, each defined in app.css', async () => {
     const json = colours(
-      (await loadHighlighter('json'))('{\n  "sku": "DESK-1",\n  "qty": 2,\n  "ok": true\n}').lines,
+      (await warm('json', '{\n  "sku": "DESK-1",\n  "qty": 2,\n  "ok": true\n}')).lines,
     );
     const js = colours(
-      (await loadHighlighter('javascript'))(
-        '// a rule\nexport const rules = { total: (o) => o.qty * 2, name: "x" };',
+      (
+        await warm(
+          'javascript',
+          '// a rule\nexport const rules = { total: (o) => o.qty * 2, name: "x" };',
+        )
       ).lines,
     );
     const used = new Set(

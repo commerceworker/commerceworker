@@ -60,8 +60,8 @@
     {
       // Interprets a pinned flow version for one order. One instance per order "generation".
       "name": "commerceworker-order",
-      "binding": "ORDER_LOOP",
-      "class_name": "OrderLoop",
+      "binding": "ORDER_WORKFLOW",
+      "class_name": "OrderWorkflow",
       "limits": { "steps": 10000 },
       // Finished instances are kept a week, failed ones a month (the most Workflows keeps): long
       // enough to look into a failure. Order history itself lives in D1 and the OrderAgent.

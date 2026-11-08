@@ -50,7 +50,7 @@ state and call methods, never write state.
 ## Reports
 
 `report(r)` merges a report from the Workflow (see
-[OrderLoop Workflow](workflow.md#reports-to-the-agent)):
+[Order Workflow](workflow.md#reports-to-the-agent)):
 
 - **Sequenced** reports (with `seq`) are fresh if they come from a newer generation, or the same
   generation with a higher `seq`. Only fresh ones update `plan`, `order` and `vars`. A plan never

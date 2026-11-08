@@ -53,7 +53,7 @@ afterEach(async () => {
 
 /** A B2B order over its credit limit, waiting on the sales approval. */
 async function waitingOrder() {
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();
@@ -232,7 +232,7 @@ describe('assistant heuristics (no model)', () => {
 
 describe('assistant actions', () => {
   it('submits a cart only once it is ready, as the person, through the assistant', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -456,7 +456,7 @@ describe('assistant socket', () => {
   };
 
   it('holds a confirm card to what its first look showed, wherever it is shown again', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -523,7 +523,7 @@ describe('assistant socket', () => {
   });
 
   it('runs a page’s edits as tool calls of their own, with no model', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -685,7 +685,7 @@ describe('assistant socket', () => {
   });
 
   it('keeps a page edit’s line to what it did, and its payloads off the fields a source writes', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -874,7 +874,7 @@ describe('assistant socket', () => {
   });
 
   it('edits flows from their pages: save, create, duplicate, archive, and a test run on its card', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

@@ -36,7 +36,7 @@ export {
 } from './plugin-host';
 export { DryRunSecrets } from './plugin-installs';
 export { Replenish } from './replenish';
-export { OrderLoop } from './workflow';
+export { OrderWorkflow } from './workflow';
 
 /** The hourly cron in wrangler.jsonc that runs `reindexProducts`. */
 const REINDEX_CRON = '15 * * * *';

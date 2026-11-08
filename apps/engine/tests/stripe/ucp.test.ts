@@ -50,7 +50,7 @@ describe('UCP checkout with Stripe', () => {
   });
 
   it('holds the quoted total at completion, and the order adopts and captures that hold', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

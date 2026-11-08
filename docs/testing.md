@@ -101,7 +101,7 @@ Workflows against local D1 and R2, from the engine's own `wrangler.jsonc`:
 
 - `remoteBindings: false` and the binding `AI_MODE: 'mock'`, so every AI node, the copilot and the assistant use
   their heuristics. No network or Cloudflare account is needed.
-- `TIME_SCALE: '1'`; tests skip waits with `introspectWorkflow(env.ORDER_LOOP)` and
+- `TIME_SCALE: '1'`; tests skip waits with `introspectWorkflow(env.ORDER_WORKFLOW)` and
   `modifyAll(m => { m.disableSleeps(); m.disableRetryDelays(); m.forceEventTimeout({ name }) })`,
   forcing named `waitForEvent` steps (by step key, for example `mgr#1`) to time out.
 - `tests/setup.ts` applies `packages/db/migrations` (read with `readD1Migrations`, bound as `TEST_MIGRATIONS`) to the test D1, then the demo data in `packages/db/seed` (bound as `TEST_SEED`): the demo customers, catalog, stores and rates the tests order against, which the migrations no longer carry.

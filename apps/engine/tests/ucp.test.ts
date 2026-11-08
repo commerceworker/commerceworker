@@ -207,7 +207,7 @@ describe('UCP checkout', () => {
 
 describe('UCP completion and order events', () => {
   it('places the order, which adopts the payment, and tells the platform as it ships', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

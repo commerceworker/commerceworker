@@ -89,8 +89,12 @@ jobs:
       # one retry instead of the job's whole budget.
       - name: Resolve the Playwright version
         id: playwright
+        # `pnpm exec` can print more than Playwright's one line, and a line without `key=` breaks
+        # $GITHUB_OUTPUT: take the first version number and fail if there is none.
         run: |
-          echo "version=$(pnpm --filter @commerceworker/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+          version=$(pnpm --filter @commerceworker/web exec playwright --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
       - name: Cache WebKit
         id: webkit
@@ -133,9 +137,12 @@ jobs:
   # before it to finish cleanly; an empty ring is skipped. See docs/operations.md. A ring after
   # staging runs past a skipped one (`!failure()`), so it also needs plan to have run: on a pull
   # request plan is skipped, its outputs are empty, and the ring's matrix couldn't be built.
+  # Deploys are off until the repository variable DEPLOY_ENABLED is `true` (Settings → Secrets and
+  # variables → Actions → Variables). Without it a push to main still runs verify, and every ring
+  # below is skipped, since each needs this job.
   plan:
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

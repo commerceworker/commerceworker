@@ -35,7 +35,7 @@ afterEach(async () => {
 
 /** A B2B order over its credit limit, waiting on the sales approval. */
 async function waitingOrder() {
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();
@@ -371,7 +371,7 @@ describe('MCP', () => {
   });
 
   it('builds a cart as the person, and submits it only with a confirmation', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

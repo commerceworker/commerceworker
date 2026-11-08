@@ -115,7 +115,7 @@ const ratesFlow = (id: string) => ({
 let introspector: Awaited<ReturnType<typeof introspectWorkflow>> | undefined;
 async function rate(input: Partial<OrderInput> = {}) {
   await introspector?.dispose();
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();

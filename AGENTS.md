@@ -1,6 +1,6 @@
 # AGENTS.md
 
-CommerceWorker is API-first, agent-first commerce infrastructure on Cloudflare; every order runs as an Order Loop (the `OrderLoop` Workflow). It's a pnpm + Turborepo + Biome monorepo; read README.md for the architecture, `docs/port-map.md` for where each part came from, and `PRODUCT.md` / `docs/brand/` for voice.
+CommerceWorker is API-first, agent-first commerce infrastructure on Cloudflare; every order runs as an Order Flow (the `OrderWorkflow` Workflow). It's a pnpm + Turborepo + Biome monorepo; read README.md for the architecture, `docs/port-map.md` for where each part came from, and `PRODUCT.md` / `docs/brand/` for voice.
 
 ## Layout
 
@@ -9,7 +9,7 @@ One platform, one product (CommerceWorker). Commerce and content run side by sid
 | App | Role |
 |---|---|
 | `apps/web` | Commerce admin and REST API (React Router on Workers): flows, orders, approvals, catalog, team |
-| `apps/engine` | Order Loops: the `OrderLoop` Workflow, OrderAgent, CartAgent, AssistantAgent, UCP, A2A, MCP, plugins |
+| `apps/engine` | Order Flows: the `OrderWorkflow` Workflow, OrderAgent, CartAgent, AssistantAgent, UCP, A2A, MCP, plugins |
 | `apps/catalog`, `apps/catalog-edge` | Sharded product catalog and its cached public read edge |
 | `apps/studio` | Content admin (React Router 8 SSR) and human auth; fronts `apps/api` with a signed principal |
 | `apps/api` | Content Management and Preview REST, MCP, OAuth, live (Hono, from `packages/http`) |
@@ -68,7 +68,7 @@ pnpm --filter @commerceworker/marketing dev   # commerceworker.com (build: link 
 - Test files are named for the capability under test, never for a roadmap phase.
 - Biome reads only an `.astro` file's frontmatter, so `biome.json` turns its unused-import and unused-variable rules off for `.astro` files; `astro sync && tsc --noEmit` still catches what's really unused. Don't add `biome-ignore` comments for them.
 - The marketing site's copy (`apps/marketing/src/i18n/`) claims only what the product does today, in the voice of `docs/brand/messaging.md`; `es.ts` carries every key of `en.ts` (a test holds them together). Pricing and legal pages aren't published until pricing is decided and counsel supplies the text (`docs/brand/legal-outline.md`).
-- **Brand vocabulary.** The product is CommerceWorker (one word) in copy and `commerceworker` in code. OrderLoop is retired as a name; it survives only as the `OrderLoop` Workflow class and the capability "Order Loops". Never name a competing commerce platform; say "the surveyed platform". Don't use third-party commerce vocabulary in errors, permissions or headers.
+- **Brand vocabulary.** The product is CommerceWorker (one word) in copy and `commerceworker` in code. The order engine this started from is never named in the repo, like the platform's own sources; its Workflow is the `OrderWorkflow` class (binding `ORDER_WORKFLOW`) and the capability is "Order Flows". Never name a competing commerce platform; say "the surveyed platform". Don't use third-party commerce vocabulary in errors, permissions or headers.
 - Never use a trailing "z" in endpoint names (`/health`, not `/healthz`).
 - Production deploys from CI: merging to `main` runs `.github/workflows/ci.yml` (migrate D1, catalog, catalog-edge, engine, web, docs). Don't deploy or run remote migrations by hand; if the deploy job fails, re-run its failed jobs.
 - `packages/core` has no bindings and no Cloudflare imports. Anything that needs `env` belongs in an app.

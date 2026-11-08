@@ -33,7 +33,7 @@ Manufacturers, distributors and wholesale-plus-DTC brands. They have negotiated 
 
 ## Pillars
 
-1. **Every order is a workflow you can see.** Order Loops are durable flow graphs with saga rollback, approvals and a live view, for every order model and channel.
+1. **Every order is a workflow you can see.** Order Flows are durable flow graphs with saga rollback, approvals and a live view, for every order model and channel.
 2. **Built for how B2B buys.** Companies, price books, quotes, purchase orders, approvals, credit and budgets are core model. (Quotes, companies and credit are on the roadmap at P5; say "planned" until they ship.)
 3. **Agent-ready by construction.** Use-cases are reachable over REST and MCP (full parity is P2), and UCP checkout ships. ACP is planned. A2A and the assistant are included.
 4. **Your commerce, your deployment.** One isolated stack per customer, with no multi-tenant pool.
@@ -49,7 +49,7 @@ Manufacturers, distributors and wholesale-plus-DTC brands. They have negotiated 
 
 ## Risks
 
-- **Breadth reads as immaturity.** Lead with Order Loops and B2B as the wedge, and earn design-partner proof before marketing breadth.
+- **Breadth reads as immaturity.** Lead with Order Flows and B2B as the wedge, and earn design-partner proof before marketing breadth.
 - **Platform dependence.** Frame Cloudflare as substrate the customer owns, and be explicit about data portability and the API contract.
 - **The agent story outruns demand.** Present agent-readiness as a consequence of REST/MCP parity, not as the headline.
 

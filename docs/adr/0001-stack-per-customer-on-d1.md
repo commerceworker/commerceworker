@@ -6,7 +6,7 @@
 
 **Why.**
 - Commerce Worker v1 ran a multi-tenant pool on six Neon Postgres databases with a control plane. It reached 19 Workers, and its last work went into decoupling from Neon.
-- OrderLoop ran one stack per customer on Cloudflare primitives, and that model is proven in CI.
+- The order engine this started from ran one stack per customer on Cloudflare primitives, and that model is proven in CI.
 
 **Consequences.**
 - D1's limits are design inputs: 100 bound parameters, one writer, 10 GB.
