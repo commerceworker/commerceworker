@@ -43,7 +43,7 @@ describe('a removed plugin', () => {
   });
 
   it('fails an order at its node and rolls back the steps before it', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

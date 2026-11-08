@@ -40,7 +40,7 @@ afterEach(async () => {
 });
 
 async function fastWorkflows() {
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();
@@ -307,7 +307,7 @@ describe('A2A', () => {
   });
 
   it('holds a cart submit proposed in chat to the cart it showed', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

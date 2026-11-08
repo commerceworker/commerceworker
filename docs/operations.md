@@ -579,7 +579,7 @@ registry file. Compared with a customer's deployment:
 - **Failing scenarios.** `SIMULATE_FAILURES` is `"true"`, so the scenarios that fail on purpose do.
   A customer's deployment leaves it off and drops `meta.simulate` from every order.
 - **Nightly reset.** `.github/workflows/demo-reset.yml` runs at 04:00 UTC (and from the Actions
-  tab): it stops the orders still running, applies `packages/db/reset/demo.sql` (everything
+  tab), once the repository variable `DEPLOY_ENABLED` is `true`: it stops the orders still running, applies `packages/db/reset/demo.sql` (everything
   visitors made, the audit log (`demo.sql` drops the `audit_events_keep_90_days` trigger around the delete and recreates it) and the demo visitor's sessions; people, settings, integrations,
   `cus_internal`, `USD` and the price sources stay) and loads the demo data again. Durable Object
   state of old orders stays behind, unreachable once their rows are gone.

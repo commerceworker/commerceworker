@@ -404,7 +404,7 @@ export class OrderAgent extends Agent<Env, State> {
     if (!this.state.instanceId) return;
     // `rollback` is newer than the installed workers-types.
     const st = (await (
-      await this.env.ORDER_LOOP.get(this.state.instanceId)
+      await this.env.ORDER_WORKFLOW.get(this.state.instanceId)
     ).status()) as InstanceStatus & {
       rollback?: { outcome: 'complete' | 'failed'; error: { message: string } | null } | null;
     };
@@ -544,7 +544,7 @@ export class OrderAgent extends Agent<Env, State> {
     if (own) throw new Error(own);
     const w = this.state.waits.find((x) => x.kind === 'approval' && x.nodeId === nodeId);
     if (!w || !this.state.instanceId) throw new Error('That node is not waiting for an approval');
-    const instance = await this.env.ORDER_LOOP.get(this.state.instanceId);
+    const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
     await instance.sendEvent({ type: w.eventType, payload: { decision, by, note: note ?? null } });
     // The AI gate that sent the order here learns whether the review was needed.
     const feedback = aiGateFeedback(this.state, nodeId, decision);
@@ -591,7 +591,7 @@ export class OrderAgent extends Agent<Env, State> {
       throw new Error(`payload must be an object of at most ${MAX_EVENT_PAYLOAD_BYTES} bytes`);
     const w = this.state.waits.find((x) => x.kind === 'event' && x.event === event);
     if (!w || !this.state.instanceId) return { delivered: false };
-    const instance = await this.env.ORDER_LOOP.get(this.state.instanceId);
+    const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
     await instance.sendEvent({ type: w.eventType, payload: { ...payload, event, at: Date.now() } });
     if (caller)
       await recordAudit(this.env, 'order.event_delivered', {
@@ -629,7 +629,7 @@ export class OrderAgent extends Agent<Env, State> {
   private async cancelOrder(reason: string) {
     if (this.state.instanceId) {
       try {
-        await (await this.env.ORDER_LOOP.get(this.state.instanceId)).terminate();
+        await (await this.env.ORDER_WORKFLOW.get(this.state.instanceId)).terminate();
       } catch (err) {
         console.warn('terminate', err);
       }

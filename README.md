@@ -2,9 +2,9 @@
 
 **Commerce that runs as code.** CommerceWorker is API-first, agent-first commerce infrastructure that runs entirely on Cloudflare: Workers, D1, Durable Objects, Workflows, Queues, R2, KV, Workers AI and Email Routing. Each customer gets an isolated deployment. Catalog, pricing, promotions, cart, checkout, inventory, payments and B2B are one set of capabilities, served the same way to storefronts, operators and AI agents (REST, MCP, UCP, A2A).
 
-Every order is an **Order Loop**: a durable workflow, drawn as a flow graph in React Flow, that runs from intake to its outcome. That covers B2B, retail and direct-to-consumer, marketplace, subscription, procurement and replenishment orders, from any channel. Loops pause for people, roll back their own effects, and show their live state.
+Every order is an **Order Flow**: a durable workflow, drawn as a flow graph in React Flow, that runs from intake to its outcome. That covers B2B, retail and direct-to-consumer, marketplace, subscription, procurement and replenishment orders, from any channel. Loops pause for people, roll back their own effects, and show their live state.
 
-CommerceWorker began as the OrderLoop codebase, renamed, and is converging on a hexagonal architecture: a pure domain, ports, application use-cases, and Cloudflare adapters bound only at composition roots. Commerce Worker v1 contributes what it has that runs without Postgres. Positioning and messaging are in [`docs/brand/`](docs/brand/); what came from where is in [`docs/port-map.md`](docs/port-map.md).
+CommerceWorker began as a renamed order engine codebase, and is converging on a hexagonal architecture: a pure domain, ports, application use-cases, and Cloudflare adapters bound only at composition roots. Commerce Worker v1 contributes what it has that runs without Postgres. Positioning and messaging are in [`docs/brand/`](docs/brand/); what came from where is in [`docs/port-map.md`](docs/port-map.md).
 
 ## How it works
 
@@ -12,7 +12,7 @@ CommerceWorker began as the OrderLoop codebase, renamed, and is converging on a 
 browser ──► apps/web (React Router on Workers) ──RPC──► apps/engine
               │ D1: flows + versions, orders index,        ├─ OrderAgent DO (one per order, Agents SDK):
               │     approvals, mock back office            │    live state, waits, approvals
-              │ flow editor, live order view, /api/v1       ├─ OrderLoop Workflow: interprets the pinned
+              │ flow editor, live order view, /api/v1       ├─ OrderWorkflow: interprets the pinned
               ├─ /agents/order-agent/:id WebSocket ────────►│    flow graph (step.do / sleep / waitForEvent / rollback)
               ├─ /agents/assistant-agent/* WebSocket ──────►├─ AssistantAgent DO (one per person): the workspace assistant
               ├─ /mcp (OAuth, MCP clients) ────────────────►│    its tools, served to MCP clients

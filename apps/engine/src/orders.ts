@@ -14,7 +14,7 @@ import { rememberAddress } from './customer-addresses';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
 import { documentStore, orderRecords } from './wire';
-import type { OrderLoopParams } from './workflow';
+import type { OrderWorkflowParams } from './workflow';
 
 /**
  * An order whose meta came from a caller (the binding: the web app's pages, the REST API, signed
@@ -156,7 +156,7 @@ async function launch(
   // (`ai.extract` reads it back from there).
   if (order.documentKey) delete order.documentText;
   await orderAgent(env, orderId).init(order, flow, instanceId);
-  const params: OrderLoopParams = {
+  const params: OrderWorkflowParams = {
     orderId,
     flowId: flow.id,
     version: flow.version,
@@ -165,7 +165,7 @@ async function launch(
     vars: req.vars ?? {},
   };
   try {
-    await env.ORDER_LOOP.create({ id: instanceId, params });
+    await env.ORDER_WORKFLOW.create({ id: instanceId, params });
   } catch (err) {
     // A concurrent replay created it first.
     if (!(await instanceExists(env, instanceId))) throw err;
@@ -174,7 +174,7 @@ async function launch(
 
 export async function instanceExists(env: Env, id: string) {
   try {
-    await env.ORDER_LOOP.get(id);
+    await env.ORDER_WORKFLOW.get(id);
     return true;
   } catch {
     return false;

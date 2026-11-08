@@ -40,7 +40,7 @@ const stamps = async (orderId: string) =>
 
 let introspector: Awaited<ReturnType<typeof introspectWorkflow>> | undefined;
 async function introspect() {
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();

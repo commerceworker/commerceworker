@@ -16,7 +16,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Off, like CI's deploys, until the repository variable DEPLOY_ENABLED is `true`.
   plan:
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

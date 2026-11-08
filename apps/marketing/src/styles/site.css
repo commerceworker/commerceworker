@@ -203,7 +203,7 @@ pre {
   color: var(--muted-foreground);
 }
 
-/* An Order Loop: the steps in order, the loop's run state on the active one. */
+/* An Order Flow: the steps in order, the flow's run state on the active one. */
 .loop {
   display: flex;
   flex-wrap: wrap;

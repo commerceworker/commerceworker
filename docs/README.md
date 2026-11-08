@@ -17,15 +17,15 @@ matter to someone with the source or a Cloudflare account (file paths, bindings,
 | [Configuration](configuration.md) | Engine, web and catalog variables, secrets, bindings, routes |
 | [Architecture](architecture.md) | The web app, the engine, the product catalog Worker, RPC, sockets, connectors, MCP, A2A, the assistant |
 | [Planner](planner.md) | Readiness, skips, joins and loops in `packages/core/src/graph.ts` |
-| [OrderLoop Workflow](workflow.md) | How the Workflow interprets a flow: steps, waits, rollback, continue-as-new |
+| [Order Workflow](workflow.md) | How the Workflow interprets a flow: steps, waits, rollback, continue-as-new |
 | [OrderAgent](order-agent.md) | The per-order Durable Object: state, reports, waits, the socket |
 | [Plugins](plugins.md) | Optional features as their own Workers: the manifest and `PluginRpc` contract, writing, installing and removing one |
 | [Data model](data-model.md) | D1 tables, R2 keys and the catalog's stores |
 | [Product editor](product-editor.md) | The plan for catalog overrides, staged publishing, the gap index and assistant drafts, PR by PR |
 | [Testing](testing.md) | The test suites, what each covers, and the recorded runs on the docs home page |
-| [Port map](port-map.md) | Where each part came from (OrderLoop and Commerce Worker v1) and what is still to lift, by phase |
+| [Port map](port-map.md) | Where each part came from (the order engine and Commerce Worker v1) and what is still to lift, by phase |
 | [Pattern inventory](patterns.md) | Every architectural pattern and whether it is merged, partial or still to merge |
-| [Decisions](adr/) | ADRs: one stack per customer on D1, OrderLoop as the base, converging on a hexagonal architecture |
+| [Decisions](adr/) | ADRs: one stack per customer on D1, the order engine as the base, converging on a hexagonal architecture |
 | [Brand](brand/) | Positioning, messaging, naming and voice |
 
 Links to `https://docs.commerceworker.com/…` point at the public pages these build on. Keep these files

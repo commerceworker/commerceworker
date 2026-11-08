@@ -149,7 +149,7 @@ describe('punchout, end to end', () => {
     expect((await api().cartSnapshot(cartId!))?.cart?.status).toBe('returned');
 
     // 4. Their system sends the PO; it starts one order, however often it is sent.
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
@@ -175,7 +175,7 @@ describe('punchout, end to end', () => {
 
 describe('a purchase order changed or cancelled by the buyer', () => {
   it('cancels the order a delete names, and replaces it on an update', async () => {
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();

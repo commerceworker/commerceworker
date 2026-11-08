@@ -30,11 +30,11 @@ export const en = {
       'CommerceWorker is API-first commerce infrastructure on Cloudflare. Each customer gets an isolated deployment, and people and agents reach every capability through the same interface.',
     ctaStart: 'Get started',
     ctaSignIn: 'Sign in',
-    loopTitle: 'Every order is an Order Loop.',
+    loopTitle: 'Every order is an Order Flow.',
     loopBody:
-      'An Order Loop is a durable workflow drawn as a graph. Each step shows its live state, the approvals it waits for, and its history. Every channel and order model runs the same way: storefront, marketplace, subscription and purchase order.',
+      'An Order Flow is a durable workflow drawn as a graph. Each step shows its live state, the approvals it waits for, and its history. Every channel and order model runs the same way: storefront, marketplace, subscription and purchase order.',
     loopSteps: ['Intake', 'Price', 'Approve', 'Reserve', 'Authorize', 'Ship'],
-    loopFoot: 'A failed step rolls back what the loop did, in reverse order, to a known state.',
+    loopFoot: 'A failed step rolls back what the flow did, in reverse order, to a known state.',
     apiTitle: 'REST and MCP. Same orders, same rules.',
     apiBody:
       'Your storefront calls the REST API. An agent calls the MCP server. Both read the same order, decide the same approvals and are held to the same role.',
@@ -44,7 +44,7 @@ export const en = {
       'Agentic checkout speaks UCP, and other agents follow orders over A2A. ACP is planned.',
     b2bTitle: 'Built for how B2B buys.',
     b2bBody:
-      'Purchase orders arrive by email, punchout or EDI 850 and run through the same loop as a web order.',
+      'Purchase orders arrive by email, punchout or EDI 850 and run through the same flow as a web order.',
     b2bSteps: [
       { title: 'Request', body: 'A purchase order arrives by email, punchout or EDI 850.' },
       { title: 'Check', body: 'Policy, credit and budget checks run on the order.' },
@@ -64,14 +64,14 @@ export const en = {
   features: {
     metaTitle: 'Features: CommerceWorker',
     metaDescription:
-      'Order Loops, agent surfaces, B2B intake, catalog and checkout, content management and isolated deployments on Cloudflare.',
+      'Order Flows, agent surfaces, B2B intake, catalog and checkout, content management and isolated deployments on Cloudflare.',
     title: 'Features',
     intro:
       'What CommerceWorker does today. Each section links to the documentation that covers it.',
     more: 'Read more',
     sections: [
       {
-        heading: 'Order Loops',
+        heading: 'Order Flows',
         doc: '/guides/building-flows/',
         items: [
           {
@@ -84,7 +84,7 @@ export const en = {
           },
           {
             title: 'Rollback',
-            body: 'Reserving stock, authorizing payment and creating a shipment register a compensation. A failed loop undoes them in reverse order.',
+            body: 'Reserving stock, authorizing payment and creating a shipment register a compensation. A failed flow undoes them in reverse order.',
           },
         ],
       },
@@ -111,7 +111,7 @@ export const en = {
         doc: '/guides/inbound-orders/',
         items: [
           {
-            title: 'Every channel, one loop',
+            title: 'Every channel, one flow',
             body: 'Signed webhooks from a storefront, marketplace or POS, Shopify orders, EDI X12 850 purchase orders and order email all start the same kind of order.',
           },
           {

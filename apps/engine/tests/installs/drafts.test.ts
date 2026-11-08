@@ -79,7 +79,7 @@ const ruleFlow = (id: string, type: string, limit: number) => ({
 let introspector: Awaited<ReturnType<typeof introspectWorkflow>> | undefined;
 async function run(flowId: string) {
   await introspector?.dispose();
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
     await m.disableRetryDelays();

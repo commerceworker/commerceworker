@@ -79,7 +79,7 @@ beforeAll(async () => {
   await ensureTemplates(env);
 });
 beforeEach(async () => {
-  introspector = await introspectWorkflow(env.ORDER_LOOP);
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
   });

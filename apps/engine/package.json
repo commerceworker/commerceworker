@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Order engine Worker: the OrderAgent Durable Object (one per order), the OrderLoop Workflow that interprets flow graphs, mock commerce connectors, Workers AI nodes and the EngineApi RPC entrypoint.",
+  "description": "Order engine Worker: the OrderAgent Durable Object (one per order), the OrderWorkflow that interprets flow graphs, mock commerce connectors, Workers AI nodes and the EngineApi RPC entrypoint.",
   "scripts": {
     "dev": "wrangler dev --port 8788",
     "deploy": "wrangler deploy",

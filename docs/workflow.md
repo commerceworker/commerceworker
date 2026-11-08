@@ -1,9 +1,9 @@
-# OrderLoop Workflow
+# Order Workflow
 
 How one generic Workflow interprets a pinned flow version durably, with deterministic step names, saga rollback and continue-as-new.
 
-`CommerceWorker` (`apps/engine/src/workflow.ts`, Workflow `commerceworker-order`, binding `ORDER_LOOP`)
-interprets every flow. One instance runs one order generation; its params are `OrderLoopParams`:
+`OrderWorkflow` (`apps/engine/src/workflow.ts`, Workflow `commerceworker-order`, binding `ORDER_WORKFLOW`)
+interprets every flow. One instance runs one order generation; its params are `OrderWorkflowParams`:
 `orderId`, `flowId`, `version`, `generation`, `order` and `vars`.
 
 ## Run

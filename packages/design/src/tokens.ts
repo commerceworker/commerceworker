@@ -151,7 +151,7 @@ const mix = (a: string, pct: number, b: string) => `color-mix(in oklch, ${a} ${p
  */
 const CW_TOKENS = Object.keys(LIGHT).filter((t) => t !== 'radius') as Token[];
 
-/** The status signals and node categories the Order Loops docs components draw with, as `--ol-*`. */
+/** The status signals and node categories the Order Flows docs components draw with, as `--ol-*`. */
 const SIGNALS: Token[] = [
   'ok',
   'run',

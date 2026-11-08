@@ -51,7 +51,7 @@ import { emit, orderSummary } from './outbox';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
 import { capReason, failureReason } from './words';
 
-export type OrderLoopParams = {
+export type OrderWorkflowParams = {
   orderId: string;
   flowId: string;
   version: number;
@@ -77,8 +77,8 @@ export const effectKey = (generation: number, stepKey: string) =>
 /** "goods.received" → "goods_received": where an event's payload lands in vars. */
 export const eventVar = (event: string) => event.replace(/[^a-zA-Z0-9]+/g, '_');
 
-export class OrderLoop extends WorkflowEntrypoint<Env, OrderLoopParams> {
-  override async run(event: Readonly<WorkflowEvent<OrderLoopParams>>, step: WorkflowStep) {
+export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> {
+  override async run(event: Readonly<WorkflowEvent<OrderWorkflowParams>>, step: WorkflowStep) {
     const p = event.payload;
     const agent = orderAgent(this.env, p.orderId);
     const flow = JSON.parse(
@@ -184,7 +184,7 @@ export class OrderLoop extends WorkflowEntrypoint<Env, OrderLoopParams> {
   /** Starts the next generation. Retry-safe: a retry after `create` succeeded finds the instance. */
   private async continueAsNew(
     step: WorkflowStep,
-    p: OrderLoopParams,
+    p: OrderWorkflowParams,
     ctx: RunContext,
     key: string,
   ) {
@@ -195,9 +195,9 @@ export class OrderLoop extends WorkflowEntrypoint<Env, OrderLoopParams> {
       // An order started before documents moved to R2 may still carry the text; drop it once stored.
       const { documentText: _text, ...stored } = ctx.order;
       const order = stored.documentKey ? stored : ctx.order;
-      const params: OrderLoopParams = { ...p, generation, order, vars: ctx.vars };
+      const params: OrderWorkflowParams = { ...p, generation, order, vars: ctx.vars };
       try {
-        await env.ORDER_LOOP.create({ id, params });
+        await env.ORDER_WORKFLOW.create({ id, params });
       } catch (err) {
         if (!(await instanceExists(env, id))) throw err;
       }
@@ -212,7 +212,7 @@ export class OrderLoop extends WorkflowEntrypoint<Env, OrderLoopParams> {
     ctx: RunContext,
     node: FlowNode,
     key: string,
-    p: OrderLoopParams,
+    p: OrderWorkflowParams,
     report: (r: Omit<Report, 'seq' | 'generation'>, durable?: boolean) => Promise<void>,
     registry: NodeRegistry,
   ): Promise<Outcome> {

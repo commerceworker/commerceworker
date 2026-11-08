@@ -44,7 +44,7 @@ pnpm test                                                # everything, through t
   R2, from the engine's own `wrangler.jsonc` (`remoteBindings: false`).
 - Mocked: AI (`AI_MODE: 'mock'`, heuristics for every AI node, the copilot and the assistant) and,
   in the `stripe` project, Stripe (`installStripeFake()` spies on `fetch`). No network, no account.
-- Waits: `introspectWorkflow(env.ORDER_LOOP)` and
+- Waits: `introspectWorkflow(env.ORDER_WORKFLOW)` and
   `modifyAll(m => { m.disableSleeps(); m.disableRetryDelays(); m.forceEventTimeout({ name }) })`,
   where `name` is the step key (`mgr#1`).
 - Setup: `tests/setup.ts` applies `packages/db/migrations`, then the demo data in

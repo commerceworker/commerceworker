@@ -30,7 +30,7 @@ import { A2A_LEGACY_PROTOCOL_VERSION, A2A_PROTOCOL_VERSION, agentCard } from '@c
 import { Refused } from '../assistant/data';
 import { runTool } from '../assistant/tools';
 import { forwardedPrincipal, stillActive } from '../principal';
-import { OrderLoopExecutor, PrincipalUser, principalOf } from './executor';
+import { OrderExecutor, PrincipalUser, principalOf } from './executor';
 import { PushSender, SqlPushStore } from './push';
 import { isTerminal, SqlTaskStore } from './store';
 
@@ -43,7 +43,7 @@ class A2AHandler extends DefaultRequestHandler {
   constructor(
     private readonly env: Env,
     private readonly store: SqlTaskStore,
-    executor: OrderLoopExecutor,
+    executor: OrderExecutor,
     pushStore: SqlPushStore,
     push: PushSender,
   ) {
@@ -88,7 +88,7 @@ export class A2AAgent extends DurableObject<Env> {
     const handler = new A2AHandler(
       env,
       this.store,
-      new OrderLoopExecutor(env, this.store),
+      new OrderExecutor(env, this.store),
       pushStore,
       this.push,
     );

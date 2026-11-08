@@ -52,7 +52,7 @@ afterEach(async () => {
 for (const [name, sample, volatile] of RUNS) {
   it(`still runs the ${name} drawn on the docs home page`, async () => {
     await ensureTemplates(env);
-    introspector = await introspectWorkflow(env.ORDER_LOOP);
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
     await introspector.modifyAll(async (m) => {
       await m.disableSleeps();
       await m.disableRetryDelays();
