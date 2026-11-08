@@ -99,8 +99,6 @@ import {
   verifyWebhook,
   x12850ToInbound,
 } from '@commerceworker/core';
-import { webhookReceipts } from '@commerceworker/db';
-import { eq, lt } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   cancelInput,
@@ -122,7 +120,7 @@ import { isCartStatus, listCarts } from './carts.server';
 import { handleCatalog } from './catalog-api.server';
 import { sha256Hex } from './credentials';
 import { decodeCursor, encodeCursor } from './cursor';
-import { db, engine } from './env.server';
+import { engine } from './env.server';
 import { ensureSeeded, listFlows } from './flows.server';
 import {
   createIntegration,
@@ -154,6 +152,7 @@ import {
   listSubscriptions,
   rotateSubscription,
 } from './webhooks.server';
+import { webhookReceipts } from './wire.server';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
@@ -822,22 +821,9 @@ export async function handleSignedEvent(request: Request): Promise<Response> {
 const RECEIPT_TTL_MS = 10 * 60_000;
 
 /** Records a delivered signature; false when it was already recorded. */
-async function claimReceipt(id: string): Promise<boolean> {
-  const now = Date.now();
-  const [row] = await db()
-    .insert(webhookReceipts)
-    .values({ id, receivedAt: now })
-    .onConflictDoNothing()
-    .returning();
-  await db()
-    .delete(webhookReceipts)
-    .where(lt(webhookReceipts.receivedAt, now - RECEIPT_TTL_MS));
-  return !!row;
-}
+const claimReceipt = (id: string) => webhookReceipts().claim(id, Date.now(), RECEIPT_TTL_MS);
 
-async function releaseReceipt(id: string) {
-  await db().delete(webhookReceipts).where(eq(webhookReceipts.id, id));
-}
+const releaseReceipt = (id: string) => webhookReceipts().release(id);
 
 /**
  * Starts an order from a storefront, marketplace, POS or other channel. The flow comes from the

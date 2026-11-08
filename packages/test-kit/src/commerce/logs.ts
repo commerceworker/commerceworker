@@ -7,6 +7,7 @@ import type {
   IntakeLog,
   PaymentEventLog,
   UsageStore,
+  WebhookReceipts,
 } from '@commerceworker/ports/commerce';
 
 export class InMemoryIntakeLog implements IntakeLog {
@@ -34,6 +35,19 @@ export class InMemoryPaymentEventLog implements PaymentEventLog {
 
   async release(id: string) {
     this.events.delete(id);
+  }
+}
+
+export class InMemoryWebhookReceipts implements WebhookReceipts {
+  readonly receipts = new Map<string, number>();
+  async claim(id: string, now: number, ttlMs: number) {
+    for (const [k, at] of this.receipts) if (at < now - ttlMs) this.receipts.delete(k);
+    if (this.receipts.has(id)) return false;
+    this.receipts.set(id, now);
+    return true;
+  }
+  async release(id: string) {
+    this.receipts.delete(id);
   }
 }
 
