@@ -1,0 +1,212 @@
+/**
+ * Email intake: the Worker `email()` entrypoint Cloudflare Email Routing delivers to.
+ *
+ * A message to a configured mailbox (orders@, po@, purchasing@ by default; INTAKE_MAILBOXES)
+ * from an authenticated, recognised sender starts an order on that mailbox's flow. The body and
+ * attachments (PDF, Office, CSV, HTML via Workers AI `toMarkdown`) become the order's
+ * `documentText` for the AI extract node, the raw .eml goes to R2, and the sender gets an
+ * acknowledgement reply. The Message-ID is the idempotency key, so a redelivered message never
+ * starts a second order. Everything else is rejected at SMTP time with a reason, and every
+ * message is recorded in `inbound_emails`.
+ */
+
+import {
+  authenticated,
+  CUSTOMER_MATCHED_BY,
+  composeDocument,
+  flowForMailbox,
+  htmlToText,
+  type IntakeAttachment,
+  MAX_INTAKE_BYTES,
+  parseMailboxes,
+  resolveSender,
+  splitAddress,
+} from '@commerceworker/core';
+import type { InboundEmail } from '@commerceworker/ports/commerce';
+import PostalMime, { type Attachment } from 'postal-mime';
+import { callOptions, withTimeout } from './ai';
+import { loadFlowVersion } from './flows';
+import { startOrderOnce } from './orders';
+import { documentStore, intakeLog, pricingStore } from './wire';
+
+/** Attachments the intake reads directly as text. */
+const TEXT_TYPES = /^(text\/(plain|csv|tab-separated-values)|application\/(json|xml))/i;
+/** Attachments sent to Workers AI `toMarkdown` (PDF, Office, HTML, images). */
+const CONVERT_TYPES =
+  /^(application\/(pdf|vnd\.openxmlformats|vnd\.ms-excel|vnd\.oasis\.opendocument)|text\/html|image\/(png|jpe?g|webp))/i;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+/** Attachments read per message; the rest are skipped. */
+const MAX_ATTACHMENTS = 10;
+/** How long one `toMarkdown` conversion may take before the attachment is skipped. */
+const CONVERT_TIMEOUT_MS = 20_000;
+
+export type IntakeOutcome =
+  | { status: 'accepted'; orderId: string; replayed: boolean }
+  | { status: 'rejected'; reason: string }
+  | { status: 'duplicate'; orderId?: string };
+
+export async function receiveEmail(
+  message: ForwardableEmailMessage,
+  env: Env,
+): Promise<IntakeOutcome> {
+  const receivedAt = Date.now();
+  const messageId =
+    message.headers.get('message-id')?.trim() || `<no-id-${receivedAt}-${crypto.randomUUID()}>`;
+  const subject = (message.headers.get('subject') ?? '').slice(0, 300);
+  const mailbox = splitAddress(message.to);
+  const record = (
+    fields: Omit<
+      InboundEmail,
+      'id' | 'messageId' | 'mailbox' | 'sender' | 'subject' | 'receivedAt'
+    >,
+  ) =>
+    intakeLog(env).record({
+      id: `eml_${receivedAt.toString(36)}${crypto.randomUUID().slice(0, 8)}`,
+      messageId,
+      mailbox: `${mailbox.local}@${mailbox.domain}`,
+      sender: message.from.toLowerCase(),
+      subject,
+      receivedAt,
+      ...fields,
+    });
+  const reject = async (reason: string): Promise<IntakeOutcome> => {
+    message.setReject(reason);
+    await record({ status: 'rejected', reason });
+    return { status: 'rejected', reason };
+  };
+
+  const flowId = flowForMailbox(message.to, parseMailboxes(env.INTAKE_MAILBOXES));
+  if (!flowId) return reject(`No mailbox ${mailbox.local}@ here`);
+  if (message.rawSize > MAX_INTAKE_BYTES) return reject('Message too large');
+  const checked = String(env.INTAKE_REQUIRE_AUTH) !== 'false';
+  if (checked && !authenticated(message.headers.get('authentication-results'), message.from)) {
+    return reject('Message failed SPF, DKIM and DMARC');
+  }
+  // Only customers the sender could be: this exact address, or another at the same domain.
+  const from = splitAddress(message.from);
+  const known = from.domain
+    ? await pricingStore(env).customersByEmail(`${from.local}@${from.domain}`, from.domain)
+    : [];
+  const sender = resolveSender(message.from, known, env.INTAKE_ALLOWLIST);
+  if (!sender.allowed) return reject('Sender is not a known customer');
+
+  const flow = await loadFlowVersion(env, flowId);
+  if (!flow) return reject('Mailbox is not configured');
+
+  const raw = new Uint8Array(await new Response(message.raw).arrayBuffer());
+  const parsed = await PostalMime.parse(raw);
+  const attachments = await readAttachments(env, parsed.attachments ?? []);
+  const text = parsed.text?.trim() || (parsed.html ? htmlToText(parsed.html) : '');
+  const documentText = composeDocument({ from: message.from, subject, text, attachments });
+
+  const result = await startOrderOnce(env, {
+    flowId,
+    idempotencyKey: `email:${messageId}`,
+    input: {
+      model: flow.model,
+      channel: 'email',
+      title: subject || `Email from ${message.from}`,
+      customerId: sender.customerId,
+      currency: 'USD',
+      lines: [],
+      documentText,
+      meta: {
+        via: 'email',
+        from: message.from,
+        to: message.to,
+        subject,
+        messageId,
+        senderMatch: sender.via,
+        attachments: attachments.map((a) => a.filename),
+        // Unchecked, anyone can send as the customer: no exemptions (`customerTrusted`).
+        ...(sender.customerId && !checked
+          ? { [CUSTOMER_MATCHED_BY]: 'unauthenticated_email' }
+          : {}),
+      },
+    },
+  });
+  if ('mismatch' in result) return reject('Message-ID reused for a different message');
+
+  // The raw message, kept with the order's other documents.
+  const r2Key = await documentStore(env).put(
+    result.orderId,
+    'inbound',
+    'message.eml',
+    raw,
+    'message/rfc822',
+    'email',
+  );
+
+  if (result.replayed) {
+    await record({
+      status: 'duplicate',
+      orderId: result.orderId,
+      r2Key,
+      attachments: attachments.length,
+    });
+    return { status: 'duplicate', orderId: result.orderId };
+  }
+  await record({
+    status: 'accepted',
+    orderId: result.orderId,
+    r2Key,
+    attachments: attachments.length,
+  });
+
+  if (String(env.INTAKE_REPLY) !== 'false') {
+    try {
+      await message.reply({
+        from: { email: message.to, name: 'CommerceWorker' },
+        subject: subject.toLowerCase().startsWith('re:')
+          ? subject
+          : `Re: ${subject || 'your order'}`,
+        text: [
+          `Thanks, we received your ${flow.model === 'procurement' ? 'request' : 'order'}.`,
+          '',
+          `Reference: ${result.orderId}`,
+          `It is now being processed${attachments.length ? ` (${attachments.length} attachment${attachments.length === 1 ? '' : 's'} read)` : ''}. We will email you if we need anything else.`,
+          '',
+          '— CommerceWorker',
+        ].join('\n'),
+      });
+    } catch (err) {
+      // Replies need a DMARC-aligned original; a failed acknowledgement never fails intake.
+      console.warn('intake reply failed', err instanceof Error ? err.message : err);
+    }
+  }
+  return { status: 'accepted', orderId: result.orderId, replayed: false };
+}
+
+/**
+ * The attachments an order's extraction reads. Conversions go through the AI Gateway like any
+ * model call (counted, rate limited, metadata `{ prompt: "attachment" }`) and never leave the
+ * document in its logs: it is the buyer's own PO.
+ */
+export async function readAttachments(env: Env, atts: Attachment[]): Promise<IntakeAttachment[]> {
+  const out: IntakeAttachment[] = [];
+  for (const a of atts.slice(0, MAX_ATTACHMENTS)) {
+    const filename = a.filename || 'attachment';
+    const bytes =
+      typeof a.content === 'string'
+        ? new TextEncoder().encode(a.content)
+        : new Uint8Array(a.content);
+    if (bytes.byteLength > MAX_ATTACHMENT_BYTES) continue;
+    if (TEXT_TYPES.test(a.mimeType)) {
+      out.push({ filename, text: new TextDecoder().decode(bytes) });
+    } else if (CONVERT_TYPES.test(a.mimeType) && String(env.AI_MODE) !== 'mock') {
+      try {
+        const res = await withTimeout(
+          env.AI.toMarkdown(
+            { name: filename, blob: new Blob([bytes], { type: a.mimeType }) },
+            callOptions(env, 'attachment'),
+          ),
+          CONVERT_TIMEOUT_MS,
+        );
+        if (res.format !== 'error') out.push({ filename, text: res.data });
+      } catch (err) {
+        console.warn('toMarkdown failed', filename, err instanceof Error ? err.message : err);
+      }
+    }
+  }
+  return out;
+}

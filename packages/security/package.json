@@ -1,0 +1,25 @@
+{
+  "name": "@commerceworker/security",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free trust-boundary primitives shared by the web, api and media Workers: the deployment roles, the signed principal envelope (x-cw-principal) the web gateway forwards to the api, and the WebCrypto credential primitives (PBKDF2 passwords, tokens).",
+  "exports": {
+    ".": "./src/index.ts",
+    "./assistant-key": "./src/assistant-key.ts",
+    "./credentials": "./src/credentials.ts",
+    "./principal": "./src/principal.ts",
+    "./roles": "./src/roles.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@commerceworker/typescript-config": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

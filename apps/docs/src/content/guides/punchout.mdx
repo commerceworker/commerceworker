@@ -1,0 +1,184 @@
+---
+title: Punchout
+description: Let customers shop from inside their procurement system (Ariba, Coupa, SAP and others) over cXML or OCI, send the priced cart back, and start the order when their purchase order arrives.
+---
+
+With punchout, a customer's buyer starts in their own procurement system, "punches out" to your
+CommerceWorker catalog, fills a [cart](/guides/carts/) priced for their company, and sends it back.
+Their system turns the cart into a purchase order after its own approvals, and sends that PO back
+to CommerceWorker, which starts the order on your flow.
+
+Punchout is an add-on your workspace may have installed. When it is, admins see **Punchout** in
+the sidebar under **From plugins** (on a phone, under **More**).
+
+## Supported protocols
+
+| Protocol | Session starts with | The cart goes back as | The order arrives as |
+|---|---|---|---|
+| **cXML 1.2** (Ariba, Coupa, Jaggaer and most others) | A `PunchOutSetupRequest` posted to the setup URL | A `PunchOutOrderMessage`, posted to the buyer's `BrowserFormPost` URL | A cXML `OrderRequest` posted to the order URL |
+| **OCI 4.0** (SAP SRM and S/4HANA) | The catalog URL opened (GET or POST) with `USERNAME`, `PASSWORD` and `HOOK_URL` | OCI `NEW_ITEM-…` fields posted to `HOOK_URL` | Your SAP integration's usual channel (EDI or email) |
+
+## Adding a partner
+
+On the **Punchout** page, add one partner per customer system:
+
+- **Protocol**: cXML or OCI.
+- **Identity**: for cXML, the customer's `From` credential: its **domain** (usually `NetworkID`
+  or `DUNS`) and identity (their network id). For OCI, the `USERNAME` their system sends.
+- **Customer**: the CommerceWorker customer the carts and orders are for, so they get that customer's
+  contract prices.
+- **Flow**: the published flow that prices their carts and runs their orders. It needs a Price
+  lines step.
+- **Return hosts**: the host names their system may receive carts on (for example
+  `service.ariba.com`). CommerceWorker sends a cart back only to an https URL on one of these hosts.
+- **Frame origins** (optional): origins allowed to show the catalog inside their system's page.
+- **Idle timeout**: how long a cart stays open after the buyer stops working on it (5 minutes to
+  24 hours). While they add lines, search, chat, add or open files, or open the cart again, the session keeps
+  going (your team working on the cart doesn't count), up to 24
+  hours from when it started; the cart page tells them when it ends and warns them near the end.
+
+Adding the partner shows its **secret once**: give it to the customer's procurement admin as the
+cXML `SharedSecret` (or the OCI `PASSWORD`). **Rotate secret** issues a new one and the old one
+stops working at once. **Disable** refuses new sessions and orders from that partner.
+
+## What to give the customer's procurement admin
+
+Open a partner on the **Punchout** page for its setup notes: everything its procurement admin
+needs except the secret, which you send them separately. The URLs are in full, on your CommerceWorker
+address. Your workspace may give punchout a shorter address, such as `/punchout/` in place of
+`/plugins/punchout/`; the notes use it when it has one, and both work.
+
+For a **cXML** partner:
+
+- **Setup URL**: `https://<your CommerceWorker address>/plugins/punchout/cxml/setup`, where their system
+  posts the `PunchOutSetupRequest`.
+- **Order URL**: `https://<your CommerceWorker address>/plugins/punchout/cxml/order`, where it posts
+  each `OrderRequest`.
+- **From**: their credential, the domain and identity entered on the partner. CommerceWorker finds the
+  partner by it.
+- **To**: your supplier credential, as entered on the partner (`NetworkID` / `commerceworker` unless you
+  changed it). Carts sent back carry it as their `From`.
+- **Sender**: their system's credential, with the partner's secret as its `SharedSecret`.
+- **BrowserFormPost**: chosen by their system for each session; it must be an https URL on one of
+  the partner's return hosts.
+- A sample `PunchOutSetupRequest` with `SECRET` in place of the secret, and a `curl` command that
+  sends it. Saved as `setup.xml` with the real secret in place, it should be answered with status
+  `200` and a `StartPage` URL.
+
+For an **OCI** partner:
+
+- **Catalog URL**: `https://<your CommerceWorker address>/plugins/punchout/oci/setup`, opened with `GET`
+  or a form `POST`.
+- **Parameters**: `USERNAME` (the identity entered on the partner), `PASSWORD` (its secret) and
+  `HOOK_URL` (set by their system for each session, on one of the partner's return hosts).
+- The fields the cart comes back with, a sample of the parameters with `SECRET` in place of the
+  secret, and a `curl` command that should be answered with a `302` to a one-time cart link.
+
+OCI sends the secret in the URL, where browsers and proxies may keep it, so rotate an OCI partner's
+secret regularly.
+
+A sample request that's let in opens a real cart session, which closes unused after the partner's
+idle timeout.
+
+## Testing a partner
+
+**Test**, on the partner's row or its page, checks that a session from that partner would be let in
+and could open a cart, without opening one, starting an order or sending any event. It doesn't need
+the secret. Each check passes or fails with what to fix:
+
+| Check | Passes when |
+|---|---|
+| Partner record | It has its name, credentials, flow, return hosts, a secret and an idle timeout |
+| Return hosts | Each is a plain host name; carts go back only over https to them |
+| Frame origins | Each is an https origin (none is fine: the catalog then can't be shown inside their system's page) |
+| Status | The partner is active |
+| Commerce model | It's one of CommerceWorker's [commerce models](/guides/commerce-models/), so its orders can start |
+| Cart | CommerceWorker would open the cart a session asks for, returning to each of the return hosts, up to ten (never your CommerceWorker address itself) |
+| Flow | The flow is published and has a Price lines step |
+| Customer | The customer exists, or none is set |
+
+Test checks your side only. The secret, and the URLs and credentials in their system, are tested
+by sending the sample request from the partner's page, or by a buyer punching out.
+
+## Platform notes
+
+Every procurement system names its settings differently; what follows is what CommerceWorker expects of
+each. Where a setting lives in the system is for its admin to find, usually in its supplier or
+punchout configuration.
+
+### SAP Ariba (cXML)
+
+- Add the partner as **cXML**. Requests through Ariba Network usually carry the buyer's Ariba
+  Network ID (`AN…`) as the `From` identity, in the `NetworkID` domain.
+- The `SharedSecret` must be the partner's secret. On Ariba Network the shared secret belongs to
+  your supplier account's cXML setup, so confirm with the customer's Ariba admin which secret their
+  requests carry before you hand it over.
+- Ask their admin for the host of their `BrowserFormPost` URL and add it as a return host.
+- Set the setup URL as your punchout URL and the order URL as where cXML orders are sent.
+
+### Coupa (cXML)
+
+- Add the partner as **cXML**, with the `From` domain and identity their Coupa instance sends.
+- In the supplier's punchout configuration in Coupa, their admin enters the setup URL, the
+  credentials and the partner's secret as the shared secret.
+- Carts usually go back to their Coupa instance, such as `northwind.coupahost.com`; add that host
+  as a return host.
+- For orders to arrive, the supplier's purchase orders must be sent as cXML to the order URL, with
+  the same credentials and secret.
+
+### SAP SRM and S/4HANA (OCI)
+
+- Add the partner as **OCI**. Its identity is the `USERNAME` their catalog call sends.
+- In the catalog's call settings, their admin adds `USERNAME` and `PASSWORD` (the partner's secret)
+  as fixed parameters, and `HOOK_URL` as the return URL their system fills in for each session.
+  The `~OkCode`, `~TARGET` and `~CALLER` their system sends are echoed back with the cart, when
+  each is a short word of letters, digits, `_` and `-` (up to 20 characters); any other value is
+  dropped. Without them, the cart goes back with `~OkCode=ADDI` and `~CALLER=CTLG`, as SAP's OCI
+  specification describes, and no `~TARGET`. Other parameters their system adds are ignored.
+- Add the SAP system's host (the host of `HOOK_URL`) as a return host, and its https origin as a
+  frame origin if it shows the catalog inside its own page.
+- The cart goes back as `NEW_ITEM-…` fields, one set per line numbered from `[1]`: description,
+  quantity, unit (`EA`), price, price unit (`1`), currency, the SKU as `VENDORMAT` and the cart line
+  as `EXT_PRODUCT_ID`. OCI has no order channel: purchase orders arrive through your SAP integration
+  as before.
+
+### Any other cXML system
+
+- CommerceWorker speaks cXML 1.2. A setup request may be `create`, `edit` or `inspect`; an `edit` or
+  `inspect` opens the cart with the lines their system sent.
+- The buyer is named from the request's `UserEmail` (or `Email`), `UniqueName` or `UserId`, and
+  `UserFullName` or `UserPrintableName` extrinsics, so the cart shows who it's for.
+- Every answer is HTTP `200` with a cXML `Status`: `401` for an unknown identity or wrong secret,
+  `403` for a return URL on a host not listed, `409` for a change that can't be applied yet or at
+  all.
+- An `OrderRequest` is found by its `From` and `SharedSecret` like a setup request, and acted on
+  once per `payloadID`: send a changed PO under a new one, as type `update` or `delete`.
+- Each returned line carries its cart and line in `SupplierPartAuxiliaryID`; keep it on the PO's
+  lines so the order can be traced to the cart.
+
+## What happens in a session
+
+1. The buyer clicks your catalog in their system. Their system sends the setup request; CommerceWorker
+   checks the partner's identity and secret and that the return URL is one of its hosts, and
+   answers with a one-time link to a new cart.
+2. The buyer's browser opens the cart. A cXML `edit` session starts with the lines their system
+   sent back. They add and change lines, see prices for their company as they go, and can chat
+   with your team, who see the same cart on the [Carts](/guides/carts/) page.
+3. **Return cart to your system** sends the priced lines back. Each line carries its cart and line
+   reference (cXML `SupplierPartAuxiliaryID`, OCI `EXT_PRODUCT_ID`), so the PO can be traced to it.
+4. When their PO arrives (cXML `OrderRequest`, type `new`), the order starts on the partner's flow
+   for the partner's customer, with the PO number as its external id and the channel **EDI**. A PO
+   sent again starts nothing new: the same order is answered.
+5. If they change the PO (type `update`), a new order starts with the changed lines and the order
+   the earlier version started is then cancelled; a change CommerceWorker can't accept (a currency
+   with no exchange rate, say) is refused and the earlier order keeps running. If they cancel the
+   PO (type `delete`), its order is cancelled, and the PO can't be changed or sent as new again.
+   An order that has already ended (shipped and paid, say) can't be changed or cancelled this way,
+   and neither can one that another change is still being applied to: their system gets cXML
+   status `409`, and can send the change again once the other is done.
+
+A cXML setup or order request with an unknown identity or wrong secret is answered with cXML
+status `401`, and a return URL on a host not listed with `403`, each over HTTP 200 as cXML
+expects. A buyer who opens the catalog again with the cookie of a cart already sent back gets a
+new cart. OCI setup takes the buyer straight to the cart, which may be shown inside the
+partner's frame origins.

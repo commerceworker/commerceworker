@@ -1,0 +1,441 @@
+/*
+ * The marketing site in Ledger. Hand-written; every colour is a token from the palette the layout
+ * writes on :root (generated from @commerceworker/design), so the site follows the admins and the
+ * docs in both schemes. Voice and restraint: DESIGN.md and docs/brand/. No gradients, no hero
+ * metrics, no identical card rows; colour marks state and the one primary action.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+a {
+  color: inherit;
+}
+
+:where(a, button):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+code,
+pre {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.wrap {
+  width: min(72rem, 100% - 2rem);
+  margin-inline: auto;
+}
+
+.muted {
+  color: var(--muted-foreground);
+}
+
+.skip {
+  position: absolute;
+  left: -100vw;
+}
+
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 10;
+  padding: 0.5rem 0.75rem;
+  background: var(--card);
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+
+.top {
+  border-bottom: 1px solid var(--rule);
+}
+
+.top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.5rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.top nav {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  font-size: 0.875rem;
+}
+
+.top nav a {
+  text-decoration: none;
+  color: var(--muted-foreground);
+}
+
+.top nav a:hover,
+.top nav a[aria-current="page"] {
+  color: var(--ink);
+}
+
+/* The one primary action: an ink pill, as in the admins. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: 0 1rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground) !important;
+  font-weight: 500;
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.button.secondary {
+  background: transparent;
+  color: var(--ink) !important;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+/* Touch: a 44px target without growing the control. */
+@media (pointer: coarse) {
+  .top nav a {
+    padding-block: 0.75rem;
+  }
+}
+
+@media (max-width: 40rem) {
+  .top-row {
+    flex-wrap: wrap;
+    padding-block: 0.5rem;
+  }
+  .top nav {
+    gap: 0.875rem;
+  }
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────── */
+
+.hero {
+  padding-block: 5rem 4rem;
+}
+
+.hero h1 {
+  max-width: 18ch;
+  margin: 0;
+  font-size: clamp(2.25rem, 1.6rem + 3vw, 3.5rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 650;
+}
+
+.lead {
+  max-width: 40rem;
+  margin: 1.25rem 0 0;
+  font-size: 1.125rem;
+  color: var(--muted-foreground);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.band {
+  padding-block: 4rem;
+  border-top: 1px solid var(--rule);
+}
+
+.split {
+  display: grid;
+  gap: 2.5rem;
+  align-items: start;
+}
+
+@media (min-width: 56rem) {
+  .split {
+    grid-template-columns: 5fr 7fr;
+  }
+}
+
+.band h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 1.25rem + 1vw, 2rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+.band p {
+  margin: 1rem 0 0;
+  max-width: 36rem;
+}
+
+.foot-note {
+  margin-top: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+/* An Order Loop: the steps in order, the loop's run state on the active one. */
+.loop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 1.5rem;
+  list-style: none;
+  border-radius: 1.5rem;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.loop li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.loop li + li::before {
+  content: "";
+  width: 1.25rem;
+  height: 1px;
+  background: var(--edge);
+}
+
+.loop span {
+  padding: 0.375rem 0.75rem;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+  background: var(--paper);
+}
+
+.loop .done span {
+  color: var(--ok);
+}
+
+.loop .waiting span {
+  color: var(--wait);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* REST and MCP side by side: two panels, one order. */
+.pair {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 40rem) {
+  .pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.panel {
+  margin: 0;
+  border-radius: 1rem;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  overflow: hidden;
+}
+
+.panel figcaption {
+  padding: 0.625rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel pre {
+  margin: 0;
+  padding: 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+/* The B2B path: numbered steps on a rule. */
+.steps {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+@media (min-width: 48rem) {
+  .steps {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.steps li {
+  counter-increment: step;
+  padding-top: 1rem;
+  border-top: 2px solid var(--rule);
+}
+
+.steps li:last-child {
+  border-top-color: var(--ink);
+}
+
+.steps h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.steps h3::before {
+  content: counter(step) ". ";
+  color: var(--muted-foreground);
+}
+
+.steps p {
+  margin: 0.375rem 0 0;
+  font-size: 0.9375rem;
+  color: var(--muted-foreground);
+}
+
+.close {
+  padding-block: 5rem;
+  border-top: 1px solid var(--rule);
+}
+
+/* ── Features page ────────────────────────────────────────────────────── */
+
+.page-head {
+  padding-block: 4rem 2rem;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: clamp(2rem, 1.6rem + 2vw, 2.75rem);
+  letter-spacing: -0.02em;
+  font-weight: 650;
+}
+
+.feature {
+  padding-block: 2.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.feature-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.feature h2 {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+
+.feature-head a {
+  font-size: 0.875rem;
+  color: var(--link);
+}
+
+.feature dl {
+  display: grid;
+  gap: 1.5rem;
+  margin: 1.25rem 0 0;
+}
+
+@media (min-width: 48rem) {
+  .feature dl {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.feature dt {
+  font-weight: 600;
+}
+
+.feature dd {
+  margin: 0.375rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.9375rem;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+
+.foot {
+  margin-top: 2rem;
+  padding-block: 3rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.875rem;
+}
+
+.foot-grid {
+  display: grid;
+  gap: 2rem;
+}
+
+@media (min-width: 48rem) {
+  .foot-grid {
+    grid-template-columns: 2fr 1fr 1fr;
+  }
+}
+
+.foot h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.foot ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.foot a {
+  text-decoration: none;
+}
+
+.foot a:hover {
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .top nav a,
+  .button {
+    transition:
+      color 150ms,
+      background-color 150ms;
+  }
+}

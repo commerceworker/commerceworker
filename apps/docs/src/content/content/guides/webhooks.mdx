@@ -1,0 +1,210 @@
+---
+title: Webhooks
+description: Subscribe a URL to content events, verify each delivery's signature, and handle retries.
+---
+
+A webhook POSTs a JSON event to your URL whenever something it subscribes to happens: rebuild a
+static site when an article is published, purge a CDN when an asset changes, notify a channel when
+a release ships.
+
+## Before you start
+
+Managing webhooks needs `space:admin`, in the admin, over the REST API or with the
+[MCP tools](/content/guides/mcp/) (`webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`,
+`webhook_deliveries`, `webhook_test`, `webhook_resend`), which take the same fields.
+
+## Subscribe
+
+In **Settings → Webhooks**, or with a key holding `space:admin`:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/webhooks" \
+  -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{
+    "url": "https://example.com/hooks/commerceworker",
+    "topics": ["entry.published", "entry.unpublished"],
+    "secret": "a-long-random-string",
+    "headers": { "x-site": "marketing" }
+  }'
+```
+
+- **`topics`** are the event types to send, or `["*"]` for all of them.
+- **`secret`** signs every delivery; keep it somewhere your receiver can read it. It is never
+  returned by the API.
+- **`headers`** are added to every request, for routing or a static credential on your side.
+- **`active: false`** pauses a webhook without deleting it.
+- **`allEnvironments: true`** sends it the events of every environment in the space (see below).
+
+In the admin, **Send events from every environment** is `allEnvironments`: off, the webhook hears
+the environment you're viewing. The table's **Environments** column shows each webhook's scope
+(**All environments**, or the environment's id), and **Edit** can change it.
+
+The URL must be a public `http` or `https` address (use `https`). Loopback, link-local and private
+addresses, and `localhost`, `.local` and `.internal` names, are refused with a 422 on create and
+update.
+
+### Which environments a webhook hears
+
+A webhook is created for the environment in the route and receives only that environment's
+events: one made under `/environments/staging` never fires for a publish in `main`. With
+`"allEnvironments": true` it is **space-wide** and receives the events of every environment in the
+space. Responses show which with `environmentId`: the environment's id, or `null` for a space-wide
+webhook.
+
+**Through an alias, a webhook is space-wide.** A webhook is never tied to an alias's current
+target: when the alias was repointed it would go quiet, and deleting the old target would delete it.
+So one created under an alias (`/environments/production/webhooks`, where `production` is an alias)
+is space-wide unless you say otherwise, and `"allEnvironments": false` there is refused with a 422.
+To hear one environment only, create the webhook under that environment's own id.
+
+Under an environment, the routes see that environment's webhooks and every space-wide one: the
+list returns both, and a webhook scoped to another environment answers 404 to update, delete and
+the delivery log. To change the scope, send `allEnvironments` on update: `true` makes the webhook
+space-wide, `false` scopes it to the environment in the route (so a space-wide webhook can be moved
+to any environment), and leaving it out keeps the scope as it is. Under an alias, `false` is
+refused (422) for the same reason as on create.
+
+Webhooks created before environment scoping existed are space-wide. A space-wide webhook gets
+every environment's events, so if `staging` changes shouldn't rebuild production, read
+`scope.environmentId` in the payload and ignore the events you don't want (or scope the webhook).
+`environment_alias.changed` carries the alias name as `scope.environmentId`, so only space-wide
+webhooks receive it. Deleting an environment deletes the webhooks scoped to it, so its own
+`environment.deleted` event may or may not reach them: only space-wide webhooks receive it
+reliably.
+
+| Route (under `/spaces/{space}/environments/{env}`) | Does |
+| --- | --- |
+| `GET /webhooks` | List this environment's webhooks and the space-wide ones (without secrets) |
+| `POST /webhooks` | Create one: `url`, `topics`, `secret`, optional `headers`, `active`, `allEnvironments` |
+| `PUT /webhooks/{id}` | Change any of those fields; send only what changes |
+| `DELETE /webhooks/{id}` | Delete it (204) |
+| `GET /webhooks/{id}/deliveries` | The delivery log; `limit` up to 100 |
+| `POST /webhooks/{id}/test` | Queue a `webhook.test` event for this webhook (202) |
+| `POST /webhooks/{id}/deliveries/{deliveryId}/resend` | Send a logged delivery's event again (202) |
+
+## Events
+
+Every event has an `id` (stable, so you can deduplicate), a `type`, the `scope`
+(`{ spaceId, environmentId }`) and `occurredAt`, plus:
+
+| Type                     | Also carries                                          | Sent when                               |
+| ------------------------ | ----------------------------------------------------- | --------------------------------------- |
+| `entry.published`        | `entryId`, `contentTypeApiId`, `version`, `fields`    | An entry is published                   |
+| `entry.unpublished`      | `entryId`, `contentTypeApiId`                         | An entry is unpublished, or trashed while live |
+| `entry.moved`            | `entryId`, `contentTypeApiId`, `position`, `published` | An entry moved in its type's manual order (live; no publish) |
+| `asset.published`        | `assetId`, `replacedVersion` (when it delivered a new file in that version's place) | An asset is published                   |
+| `asset.unpublished`      | `assetId`                                             | An asset is unpublished, or archived, deleted or expired while live |
+| `asset.deleted`          | `assetId`, `r2Key` or `videoId`                       | An asset is deleted permanently         |
+| `asset.file_replaced`    | `assetId`, `version`, `previousVersion`, `r2Key`, `etag`, `restoredFrom` | An asset's file was replaced or an older version restored (delivery changes only on republish) |
+| `asset.rights_changed`   | `assetId`                                             | A published asset's rights changed      |
+| `asset.expired`          | `assetId`, `expiresAt`                                | A published asset's rights expired and it was unpublished |
+| `asset.ingested`         | `assetId`, `version`, `published`, `contentHash`, `duplicateOf` | An uploaded file was processed (hashed, measured, indexed) |
+| `asset_collection.changed` | `collectionId` | A collection is created, renamed or deleted, or its assets are added, removed or reordered (also for each collection a deleted asset leaves) |
+| `asset_share.created`, `asset_share.revoked` | `linkId` | A share link is created or revoked (see [Share assets with a link](/content/guides/share-links/)) |
+| `redirects.changed`      | `count` | Redirects are created, changed, deleted, imported or collapsed (not for the redirect a slug change writes on publish; that publish sends `entry.published`) |
+| `menus.changed`          | `menuId`, `handle` | A menu is created, saved, reordered or deleted (both absent when a snapshot import writes several; not for a publish that changes what a menu resolves to, which sends `entry.published` or `entry.unpublished`) |
+| `content_type.published` | `contentTypeApiId`, `version`                         | A content type's definition is published |
+| `content_type.deleted` | `contentTypeApiId`, `version`                         | A content type was deleted |
+| `release.published`      | `releaseId`, `entryIds`                               | A release is published (after its entries' own events) |
+| `environment_alias.changed` | `targetEnvironmentId` (`null` when removed)        | An alias is created, repointed or removed; `scope.environmentId` is the alias name |
+| `environment.deleted`    | `entryIds`                                            | An environment is deleted; `scope` is the deleted environment, and a large one sends several events splitting `entryIds`. Reliably delivered only to space-wide webhooks (the deleted environment's own are being removed) |
+| `bulk.job_completed`     | `jobId`, `action` (`publish`, `unpublish`, `trash`, `restore`, `purge`, `import`, `asset_reindex`, `asset_move`, `asset_tag`, `asset_publish`, `asset_unpublish`, `asset_archive`, `content_type_delete`, `set_fields`, `starter_install`), `total`, `succeeded`, `failed` | A bulk job finishes |
+| `workflow_run.completed`, `workflow_run.declined`, `workflow_run.cancelled`, `workflow_run.failed`, `workflow_run.rolled_back` | `runId`, `workflowId`, `version`, `entryId`, `contentTypeApiId`, `reason` | A workflow run ends, one topic per outcome |
+| `workflow.task_opened`   | `taskId`, `runId`, `nodeId`, `kind` (`approval`, `event`, `review`), `entryId`, `contentTypeApiId`, `title`, `assignee`, `requiredScope`, `deadline` | A run opens an approval, event wait or agent review |
+
+A bulk publish or unpublish sends each entry as its own `entry.published` or `entry.unpublished`
+event, followed by `bulk.job_completed` for the job.
+
+`workflow.webhook` (`runId`, `nodeId`, `entryId`, `payload`) is different: the **Webhook** node of a
+[workflow](/content/reference/nodes/#content.webhook) sends it to the URL set on the node, not to your
+subscriptions. It is signed with an empty secret, so don't treat its signature as a credential.
+
+```json
+{
+  "id": "0192f3a4-7c1e-7b2a-9d4e-5f6a7b8c9d0e",
+  "type": "entry.published",
+  "scope": { "spaceId": "acme", "environmentId": "main" },
+  "occurredAt": "2026-10-30T09:15:02.481Z",
+  "entryId": "0192f3a4-6b0d-7a19-8c3d-4e5f6a7b8c9d",
+  "contentTypeApiId": "article",
+  "version": 4,
+  "fields": { "title": { "en-US": "Hello, world" } }
+}
+```
+
+An event is recorded in the same transaction as the change it describes, so you receive it if and
+only if the change happened, never for a publish that was rolled back.
+
+## Verify the signature
+
+Each delivery carries these headers (and any you set on the webhook):
+
+| Header                       | Value                                              |
+| ---------------------------- | -------------------------------------------------- |
+| `x-commerceworker-event`      | The event type                                     |
+| `x-commerceworker-event-id`   | The event's `id`: dedupe on it (a retry and a resend carry the same one) |
+| `x-commerceworker-resend-of`  | On a resend only: the delivery it repeats          |
+| `x-commerceworker-timestamp`  | The event's `occurredAt`; for a resend, when it was sent |
+| `x-commerceworker-signature`  | `sha256=` and the hex HMAC-SHA256 of `timestamp.body` with your secret |
+
+`verifyWebhook(request, secret)` from `@commerceworker/sdk/webhooks` does this for you and
+returns the parsed event, or `null` (in browsers, Workers, Node, Deno and Bun). To do it
+yourself: compute the HMAC over the timestamp, a `.`, and the raw request body exactly as received
+(before parsing it), and compare in constant time. A retry is the same event with its original
+`occurredAt` and signature, so a freshness window rejects retries that arrive later than the
+window (the example below uses five minutes). Widen it to cover your retry tolerance, or rely on
+deduplicating by event `id`.
+
+```ts
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export function verify(rawBody: string, headers: Headers, secret: string): boolean {
+  const timestamp = headers.get('x-commerceworker-timestamp') ?? '';
+  const signature = headers.get('x-commerceworker-signature') ?? '';
+  const expected = `sha256=${createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')}`;
+  const fresh = Math.abs(Date.now() - Date.parse(timestamp)) < 5 * 60_000;
+  return (
+    fresh &&
+    signature.length === expected.length &&
+    timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+  );
+}
+```
+
+## Retries and the delivery log
+
+Answer with any 2xx status to acknowledge. A non-2xx answer, a redirect, a timeout (10 seconds) or
+a network error counts as a failure and is retried, for up to **8 attempts** in all. The waits
+between attempts grow by four times each, from 30 seconds: 30 s, 2 min, 8 min, 32 min, about 2 h,
+then 6 h twice, so the last attempt comes about 15 hours after the first. After the eighth the
+delivery is logged as failed and given up. Because a delivery can be retried, handle each event
+`id` once. A bulk publish sends each entry as its own
+`entry.published` or `entry.unpublished` delivery; if some of those fail, only the ones that failed
+are retried, with the same event ids.
+
+Every attempt is logged with its event type, status and attempt number: **Settings → Webhooks →
+Deliveries**, or `GET …/webhooks/{id}/deliveries`. A webhook you deleted, paused or unsubscribed
+from the event gets no further retries.
+
+## Test and resend
+
+**Send test** on a webhook (or `POST …/webhooks/{id}/test`, `webhook_test`) queues a
+`webhook.test` event for that webhook alone, whatever its topics and even while it is paused, so
+you can try a receiver before turning it on. It carries `webhookId` and a fixed `message`, is
+signed like any delivery, and shows up in the delivery log under the `eventId` the call returns.
+
+**Resend** on a delivery (or `POST …/webhooks/{id}/deliveries/{deliveryId}/resend`,
+`webhook_resend`) sends that delivery's event again: the same `id`, signed with the time it is
+sent, so it passes your freshness window, with `x-commerceworker-resend-of` naming the delivery it
+repeats. A bulk publish's entries are sent as they are published now. The new attempt is logged
+with `resendOf`. A receiver that deduplicates by `id` treats it as already handled. Events are kept
+for the event retention (7 days by default); one past it can't be resent (409), and that can
+happen a little before its delivery leaves the log.
+
+Both are queued (202), sent once and never retried; send again if one fails.
+
+## Next steps
+
+- [Reading content](/content/guides/reading-content/) for the live stream and `since=` when you'd rather pull.
+- [API keys and access](/content/guides/api-keys/) for the `space:admin` key that manages webhooks.
+- [REST API](/content/reference/rest-api/) for errors and conventions.

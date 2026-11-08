@@ -1,0 +1,25 @@
+{
+  "name": "@commerceworker/plugin-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A test-only plugin built with @commerceworker/plugin-sdk that exercises every extension point: nodes with and without a rollback, an event subscription and pages. Its own tests run the contract suite; the engine's tests bind it. Never deployed.",
+  "scripts": {
+    "types": "wrangler types",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

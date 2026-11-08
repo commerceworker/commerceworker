@@ -1,0 +1,38 @@
+---
+import { copy } from '../i18n';
+import Base from '../layouts/Base.astro';
+import { docsUrl, type Locale } from '../lib/site';
+
+interface Props {
+  locale: Locale;
+}
+const { locale } = Astro.props;
+const t = copy(locale).features;
+---
+
+<Base locale={locale} path="/features/" title={t.metaTitle} description={t.metaDescription}>
+  <section class="page-head wrap">
+    <h1>{t.title}</h1>
+    <p class="lead">{t.intro}</p>
+  </section>
+  <div class="wrap">
+    {
+      t.sections.map((section) => (
+        <section class="feature">
+          <div class="feature-head">
+            <h2>{section.heading}</h2>
+            <a href={docsUrl(section.doc)}>{t.more}</a>
+          </div>
+          <dl>
+            {section.items.map((item) => (
+              <div>
+                <dt>{item.title}</dt>
+                <dd>{item.body}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))
+    }
+  </div>
+</Base>

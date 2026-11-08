@@ -1,0 +1,140 @@
+---
+/*
+ * OpenAPI explorer: Scalar over /openapi.json, which src/pages/openapi.json.ts builds from the
+ * web app's source. A page of its own rather than a Starlight route, because Scalar owns the
+ * viewport (sidebar, search, request panel) and Starlight's chrome would be a second sidebar.
+ *
+ * It keeps the docs' look: the Ledger palette and faces from @commerceworker/design, the app's top bar,
+ * and the reader's theme. Starlight stores the choice as `starlight-theme` ('light', 'dark' or
+ * 'auto' for Match system), the inline script applies it before first paint, and Scalar's own
+ * toggle is hidden, so there is one switch.
+ *
+ * The bundle is the lockfile's `@scalar/api-reference`, vendored into public/vendor/ at build.
+ */
+
+import '@fontsource-variable/inter/wght.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import { FONTS, palette, scalarThemeCss } from '@commerceworker/design/tokens';
+
+// Biome parses only the frontmatter, so constants used in the markup read as dead.
+// Served from this site (scripts/vendor-scalar.mjs copies the lockfile's pinned bundle at build),
+// so the page needs no third-party script host.
+const SCALAR_JS_URL = '/vendor/scalar/standalone.js';
+
+const config = {
+  url: '/openapi.json',
+  layout: 'modern',
+  defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
+  servers: [
+    { url: 'https://app.commerceworker.com', description: 'commerceworker.com' },
+    {
+      url: '{origin}',
+      description: 'Local dev (pnpm web:dev)',
+      variables: { origin: { default: 'http://localhost:5173' } },
+    },
+  ],
+  agent: { disabled: true },
+  mcp: { disabled: true },
+  showDeveloperTools: 'never',
+  hideDarkModeToggle: true,
+  withDefaultFonts: false,
+  // The palette from @commerceworker/design, the same tokens the docs' theme.css is generated from.
+  customCss: scalarThemeCss(),
+  metaData: { title: 'CommerceWorker API reference' },
+};
+
+const light = palette('light');
+const dark = palette('dark');
+// The app's top bar (apps/web/app/routes/shell.tsx): 48px, a rule under it, the wordmark.
+const headerCss = `
+:root {
+  --bg: ${light.paper};
+  --rule: ${light.rule};
+  --ink: ${light.ink};
+  --muted: ${light['muted-foreground']};
+  --link: ${light.link};
+  --scalar-custom-header-height: 3rem;
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  --bg: ${dark.paper};
+  --rule: ${dark.rule};
+  --ink: ${dark.ink};
+  --muted: ${dark['muted-foreground']};
+  --link: ${dark.link};
+  color-scheme: dark;
+}
+html, body { margin: 0; background: var(--bg); }
+::selection { background: color-mix(in oklch, var(--link) 24%, transparent); }
+.ref-header {
+  position: sticky; top: 0; z-index: 1000; box-sizing: border-box;
+  height: var(--scalar-custom-header-height);
+  display: flex; align-items: center; gap: 1.5rem; padding-inline: 1.25rem;
+  background: var(--bg); border-bottom: 1px solid var(--rule);
+  font-family: ${FONTS.sans}; font-size: 0.8125rem; color: var(--muted);
+}
+.ref-header a { color: var(--muted); text-decoration: none; }
+.ref-header a:hover { color: var(--ink); }
+.ref-header a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
+.ref-header .ref-title {
+  display: inline-flex; align-items: center; gap: 0.5rem; white-space: nowrap;
+  font-weight: 600; font-size: 1rem; letter-spacing: -0.015em; color: var(--ink);
+}
+.ref-title svg { width: 1.25rem; height: 1.25rem; }
+.ref-note { margin-inline-start: auto; }
+.ref-note a { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 50rem) { .ref-note { display: none; } }
+`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CommerceWorker API reference</title>
+    <meta
+      name="description"
+      content="OpenAPI 3.1 reference for the CommerceWorker REST API: flows, orders, events, approvals and webhook subscriptions."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script is:inline>
+      (() => {
+        let stored = null;
+        try {
+          stored = localStorage.getItem('starlight-theme');
+        } catch {}
+        const dark =
+          stored === 'dark' ||
+          (stored === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <style is:inline set:html={headerCss}></style>
+  </head>
+  <body>
+    <header class="ref-header">
+      <a class="ref-title" href="/"
+        ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+          ><path d="M20 12a8 8 0 1 1-3.1-6.3"></path><path d="M17.5 2.5v4h-4"></path><rect
+            x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"></rect></svg
+        >CommerceWorker</a
+      >
+      <a href="/reference/rest-api/">REST API guide</a>
+      <a href="/guides/outbound-webhooks/">Webhooks</a>
+      <p class="ref-note">
+        Response bodies are described in the <a href="/reference/rest-api/">REST API</a> guide.
+      </p>
+    </header>
+    <div id="app"></div>
+    <script is:inline src={SCALAR_JS_URL}></script>
+    <script is:inline define:vars={{ config }}>
+      Scalar.createApiReference('#app', {
+        ...config,
+        forceDarkModeState: document.documentElement.dataset.theme,
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,45 @@
+---
+title: How a Delivery API read is authenticated and cached
+---
+flowchart LR
+    accTitle: How a Delivery API read is authenticated and cached
+    accDescr: A Delivery API GET at cdn.{domain} reaches the delivery worker's uncached gateway, which first rate-limits the client IP to 1200 requests a minute ①. It then authenticates the CDA or CPA key on every request: the principal is read from KV_CACHE by the key's peppered hash, and only on a key-value miss is the key looked up on a database read replica and the principal cached for up to 60 seconds under the principals tag for its space ②. A bad key or a rate-limited client gets a 401 or 429 that is never cached. The gateway reduces the principal to a visibility profile, a hash of space, key kind, sorted scopes and content grants, and forwards a canonical URL built from that profile, the path and the sorted query, with the principal in an internal header ③. The edge cache in front of the Delivery entrypoint answers a hit with the body every reader of that profile shares ④; on a miss the entrypoint runs the delivery routes against a database read replica and returns a 200 with a strong ETag and the environment's cache-tag, which the cache stores ⑤. Back in the gateway, an If-None-Match that names the ETag gets a 304, and anything else gets the body ⑥.
+
+    Consumer([Delivery API consumer]):::external
+
+    subgraph Gateway["delivery gateway: uncached, publicly routed"]
+        Limit{Under 1200 a minute for this IP?}
+        Auth[authenticateCached]
+        Profile[Visibility profile and canonical URL]:::focal
+        Cond{If-None-Match names the ETag?}
+    end
+
+    subgraph Internal["Not routable from outside: trusts its principal header"]
+        Cache[(Edge cache, keyed by profile and URL)]:::focal
+        DEnt[Delivery entrypoint routes]:::primary
+    end
+
+    KV[(KV_CACHE principal cache)]:::store
+    D1R[(Database read replica)]:::store
+    Reject([401 or 429, never cached]):::external
+    Answer([Response to the consumer]):::external
+
+    Consumer -->|"GET /delivery/… with bearer key"| Limit
+    Limit -->|"① no: rejects"| Reject
+    Limit -->|yes: authenticates| Auth
+    Auth -->|"② reads principal by key hash"| KV
+    Auth -.->|on key-value miss, looks up key| D1R
+    Auth -->|rejects bad key| Reject
+    Auth -->|passes principal| Profile
+    Profile -->|"③ forwards canonical URL"| Cache
+    Cache -->|"④ hit: returns shared body"| Cond
+    Cache -->|"miss: invokes"| DEnt
+    DEnt -->|"⑤ reads published content"| D1R
+    DEnt -->|stores 200 with ETag and cache-tag| Cache
+    Cond -->|"⑥ yes: answers 304"| Answer
+    Cond -->|no: answers 200 with body| Answer
+
+    classDef focal    stroke-width:2px,font-weight:bold
+    classDef primary  stroke-width:1px
+    classDef external stroke-width:1px,stroke-dasharray:4 3
+    classDef store    stroke-width:1px

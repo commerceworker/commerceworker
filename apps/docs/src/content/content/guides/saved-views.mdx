@@ -1,0 +1,95 @@
+---
+title: Saved views
+description: Save the entries list's filters, search, sort and columns as a named view, for yourself or the whole space, and run views from the API, MCP and the SDK.
+---
+
+A saved view is a named entries list: its filters (including grouped _and_/_or_ conditions), its
+search, its sort and the columns it shows, for one content type or for every type. Keep views for
+yourself, or share them with everyone in the space. A view belongs to the space, so every
+environment shows the same views.
+
+## Before you start
+
+- Opening, running and keeping your own views needs `preview:read`, the scope the entries list
+  needs. Sharing a view, and changing or deleting a shared one, also needs `content:manage`. See
+  [Team and roles](/content/guides/team-and-roles/).
+- Personal views belong to a person. An API key has no person behind it, so it can only save
+  shared views.
+- You keep up to 50 personal views in a space; a space holds up to 100 shared views.
+
+## In the admin
+
+Open a content type's entries. The list's filters, search, sort and columns are part of its
+address, so you can copy the URL and send it: whoever opens it sees the same list, filtered by
+their own role.
+
+- **Views** (before the search) picks a saved view: yours first, then those shared with the space.
+  _All entries_ clears the view.
+- **Save as new view…** names what the list shows now. With `content:manage` you can share it with
+  the space as you save it.
+- Once you change the filters, search, sort or columns of an open view, its button says _edited_;
+  **Save changes** writes them over the view.
+- **Rename…**, **Share with the space** or **Stop sharing**, and **Delete view…** act on the open
+  view. Without `content:manage`, a shared view can be opened but not changed.
+- Only the person who created a shared view can stop sharing it, which makes it theirs alone again.
+  Anyone else can use **Save as new view…** to keep their own copy.
+- **Mine** is saved with a view too. In a shared view it means each reader's own entries, not
+  the entries of whoever saved it.
+- **Columns** picks what shows after the title: the status, when the entry last changed, and any
+  of the type's own fields. The choice is saved with the view. A view over every type keeps the
+  status and when it changed only. On a phone, where rows don't show field columns, there is no column picker, and a row shows its
+  status whatever the columns are.
+
+## What a shared view can show
+
+A view never shows anyone more than they could filter for themselves. Running a view is your own
+entries query: your role decides which content types you see, and fields your role hides are left
+out of every row. A view whose filters, sort or search touch a field your role hides isn't offered
+to you at all, and a view of a content type you can't read isn't listed either. If a column of a
+view shows a field your role hides, you don't see that column, and saving your changes leaves it in
+place for everyone else.
+
+## From the API
+
+```sh
+# Save a shared view of articles, newest first, with grouped conditions.
+curl -X POST "$API/spaces/$SPACE/environments/main/saved-views" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{
+    "name": "News or long reads",
+    "contentTypeApiId": "article",
+    "visibility": "shared",
+    "query": {
+      "where": { "or": [
+        { "field": "section", "op": "eq", "value": "news" },
+        { "field": "wordCount", "op": "gte", "value": 2000 }
+      ] },
+      "order": [{ "field": "sys.updatedAt", "direction": "desc" }]
+    },
+    "columns": ["section", "sys.status"]
+  }'
+
+# One page of its entries, as you.
+curl "$API/spaces/$SPACE/environments/main/saved-views/$VIEW/entries?limit=20" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+The `query` takes the same filters and `where` groups as the
+[Preview and Delivery query string](/content/guides/reading-content/), and is checked just as strictly: a
+malformed part is a `422` that names it. Another person's personal view is a `404`. The routes are
+in the [REST API reference](/content/reference/rest-api/), under _Saved views_.
+
+Because views belong to the space and content types to an environment, a view can outlive its type
+there. A run in that environment returns no entries and `typeMissing: true`, so you can tell it
+from a list that matched nothing. The view is still there: you can rename it, change its query,
+reset it with `columns: null` or delete it. Only setting named columns is refused, as there is no
+type to check them against.
+
+The management SDK has `cma.savedViews.{list, get, run, create, update, delete}`
+([SDKs](/content/guides/sdks/#site-features)), and agents have the `views_*` [MCP tools](/content/guides/mcp/).
+
+## Next steps
+
+- [Reading content](/content/guides/reading-content/#filters) for the filters a view saves.
+- [Editing and publishing](/content/guides/editing-and-publishing/#change-many-entries-at-once) to act on the entries a view lists.
+- [MCP server](/content/guides/mcp/) to let an agent run your views.

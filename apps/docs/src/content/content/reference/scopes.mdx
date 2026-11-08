@@ -1,0 +1,31 @@
+---
+title: Permission scopes
+description: Every scope a key, role or token can hold, what it allows, and the defaults each key kind gets.
+---
+
+import Scopes from '../../../components/content/Scopes.astro';
+
+Every API route and MCP tool checks one scope against the space it acts on. The scopes and the
+per-kind defaults below are generated from the same definitions the API checks against.
+
+## Scopes
+
+<Scopes show="scopes" />
+
+## Defaults per key kind
+
+A key gets its kind's scopes unless it is minted with an explicit, narrower list or bound to a
+[role](/content/guides/api-keys/#roles).
+
+<Scopes show="kinds" />
+
+## Narrowing further
+
+- The [built-in roles](/content/guides/team-and-roles/) (Viewer, Approver, Editor, Manager, Administrator)
+  are named scope sets, each including the one before it.
+- A **role** adds per-content-type grants (`read`, `write`, `publish`) and per-field rules
+  (denied or read-only) on top of scopes.
+- A **personal access token** or an **OAuth token** never exceeds the person it acts for: its
+  scopes are the intersection of what it was granted and what that person's role allows now.
+- A workflow [stage](/content/guides/workflows/#stages) or [approval](/content/guides/approvals/#approvals) names
+  the scope needed to move an entry into it or decide it.

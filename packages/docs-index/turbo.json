@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The embed's source is the repo's docs/, outside this package, so turbo has to be told:
+    // without it an edited page would hit the cache and leave the embed stale.
+    "generate": {
+      "inputs": ["scripts/generate.ts", "$TURBO_ROOT$/docs/*.md"],
+      "outputs": ["src/generated.ts"]
+    }
+  }
+}

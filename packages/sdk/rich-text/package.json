@@ -1,0 +1,37 @@
+{
+  "name": "@commerceworker/sdk-rich-text",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Render CommerceWorker rich text (RichTextDocument) to HTML, Markdown or plain text. Zero dependencies; any framework, any runtime.",
+  "homepage": "https://docs.commerceworker.com/content/guides/sdks/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/commerceworker/commerceworker",
+    "directory": "packages/sdk/rich-text"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@commerceworker/typescript-config": "workspace:*",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

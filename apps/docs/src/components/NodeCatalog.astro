@@ -1,0 +1,123 @@
+---
+/*
+ * The node catalog, rendered from NODE_SPECS in @commerceworker/core at build time. Labels, config
+ * fields, defaults and output branches come from the same objects the editor's palette and the
+ * engine read, so this page cannot drift. Pass `category` to render one group.
+ */
+import {
+  CATEGORY_LABELS,
+  NODE_SPECS,
+  type NodeCategory,
+  type NodeSpec,
+} from '@commerceworker/core';
+import NodeIcon from './NodeIcon.astro';
+
+interface Props {
+  category: NodeCategory;
+}
+
+const { category } = Astro.props;
+const specs: readonly NodeSpec[] = NODE_SPECS.filter((s) => s.category === category);
+
+const show = (v: unknown) =>
+  v === undefined ? '' : typeof v === 'string' ? (v === '' ? '""' : v) : JSON.stringify(v);
+const label = CATEGORY_LABELS[category];
+---
+
+<div class="ol-catalog" data-category={category} aria-label={label}>
+  {
+    specs.map((s) => (
+      <section class="ol-node" id={s.type}>
+        <div class="ol-node-head">
+          <span class="ol-run-cat" data-cat={s.category} title={label}>
+            <NodeIcon name={s.icon} size={16} />
+          </span>
+          <h3>{s.label}</h3>
+          <code class="ol-node-type">{s.type}</code>
+          {(s.rollback || s.waits) && (
+            <span class="ol-run-tags">
+              {[s.rollback && 'undo', s.waits && 'waits'].filter(Boolean).join(' · ')}
+            </span>
+          )}
+        </div>
+        <p>{s.description}</p>
+        <ul class="ol-node-facts">
+          <li>
+            <span class="ol-fact-label">Outputs</span>
+            {s.outputs.length === 0 ? (
+              'none: ends the run'
+            ) : typeof s.outputs === 'function' ? (
+              'one per entry in Routes'
+            ) : (
+              <span class="ol-outputs">
+                {s.outputs.map((o) => (
+                  <code>{o}</code>
+                ))}
+              </span>
+            )}
+          </li>
+          {s.rollback && (
+            <li>
+              <span class="ol-fact-label">Undo</span>compensated when the order fails or is cancelled
+            </li>
+          )}
+          {s.waits && (
+            <li>
+              <span class="ol-fact-label">Waits</span>for a person or an event
+            </li>
+          )}
+          {s.loop && (
+            <li>
+              <span class="ol-fact-label">Loop</span>accepts a <code>next</code> back-edge
+            </li>
+          )}
+          {s.retries !== undefined && (
+            <li>
+              <span class="ol-fact-label">Retries</span>
+              {s.retries} by default
+            </li>
+          )}
+        </ul>
+        {s.fields.length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Kind</th>
+                <th>Default</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.fields.map((f) => (
+                <tr>
+                  <td>
+                    <code>{f.key}</code>
+                    {f.required && ' (required)'}
+                  </td>
+                  <td>{f.kind}</td>
+                  <td>{f.default !== undefined && <code>{show(f.default)}</code>}</td>
+                  <td>
+                    {f.label}
+                    {f.options && (
+                      <>
+                        {'. One of '}
+                        {f.options.map((o, i) => (
+                          <>
+                            {i > 0 && ', '}
+                            <code>{o}</code>
+                          </>
+                        ))}
+                      </>
+                    )}
+                    {f.hint && `. ${f.hint}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    ))
+  }
+</div>

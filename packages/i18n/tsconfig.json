@@ -1,0 +1,5 @@
+{
+  "extends": "@commerceworker/typescript-config/react-app.json",
+  "compilerOptions": { "resolveJsonModule": true },
+  "include": ["src/**/*", "vitest.config.ts"]
+}

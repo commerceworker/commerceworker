@@ -1,0 +1,37 @@
+{
+  "name": "@commerceworker/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CommerceWorker public docs: one Starlight static site for commerce and content, deployed as a Workers static-assets site. Reference pages render from @commerceworker/core, @commerceworker/domain and both APIs OpenAPI documents at build time.",
+  "scripts": {
+    "prepare:data": "tsx scripts/content-openapi.ts && node scripts/vendor-scalar.mjs",
+    "dev": "pnpm prepare:data && astro dev",
+    "build": "pnpm prepare:data && astro build && node scripts/check-links.mjs",
+    "preview": "astro preview",
+    "deploy": "pnpm build && wrangler deploy",
+    "lint": "biome check .",
+    "check-types": "tsx scripts/content-openapi.ts && astro sync && tsc --noEmit"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "catalog:",
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/design": "workspace:*",
+    "@commerceworker/domain": "workspace:*",
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource/ibm-plex-mono": "catalog:",
+    "astro": "catalog:",
+    "lucide": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@commerceworker/http": "workspace:*",
+    "@commerceworker/platform": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@scalar/api-reference": "catalog:",
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

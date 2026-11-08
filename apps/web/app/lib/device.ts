@@ -1,0 +1,86 @@
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+
+/**
+ * Whether a media query matches, following changes live. The server can't know the viewport, so
+ * server rendering and the hydrating render both see `false`; pick the query so that `false` is
+ * the safe answer (e.g. ask "is this wide enough to edit?", not "is this narrow?").
+ */
+export function useMedia(query: string) {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const m = window.matchMedia(query);
+      m.addEventListener('change', onChange);
+      return () => m.removeEventListener('change', onChange);
+    },
+    [query],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => window.matchMedia(query).matches,
+    () => false,
+  );
+}
+
+/** Tailwind's `lg`: the width the full flow editor, order and assistant layouts need. */
+export const WIDE = '(min-width: 1024px)';
+
+/** A finger rather than a mouse or trackpad, checked when it matters (an Enter key, say). */
+export const coarse = () => window.matchMedia('(pointer: coarse)').matches;
+
+/**
+ * While mounted, mirrors the visual viewport (what's left above the on-screen keyboard) into CSS:
+ * `--vvh` and `--vvtop` on <html>, and `data-keyboard` while the keyboard is up, so a fixed panel
+ * can pin itself to the visible area. iPadOS doesn't resize the page for its keyboard and the
+ * window shrinks along with it, so "up" means the visible height is under 80% of the tallest seen
+ * at this width; the tallest resets when the width changes (rotation, Split View).
+ */
+export function useVisualViewport(active = true) {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!active || !vv) return;
+    const root = document.documentElement;
+    let width = 0;
+    let tallest = 0;
+    const update = () => {
+      if (vv.width !== width) {
+        width = vv.width;
+        tallest = 0;
+      }
+      tallest = Math.max(tallest, vv.height);
+      root.style.setProperty('--vvh', `${vv.height}px`);
+      root.style.setProperty('--vvtop', `${vv.offsetTop}px`);
+      root.toggleAttribute('data-keyboard', vv.height < tallest * 0.8);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+      root.removeAttribute('data-keyboard');
+      root.style.removeProperty('--vvh');
+      root.style.removeProperty('--vvtop');
+    };
+  }, [active]);
+}
+
+/** Running from the Home Screen as its own app, not in a browser tab. */
+export function isStandalone() {
+  if (window.matchMedia('(display-mode: standalone)').matches) return true;
+  return (navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
+/** An iPhone or iPad. iPadOS says it's a Mac; its touch points give it away. */
+export const isIos = () =>
+  /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/**
+ * A ⌘ or Ctrl shortcut as this device writes it: "⌘J" on a Mac, iPhone or iPad, "Ctrl+J"
+ * elsewhere. It reads ⌘ until mounted, so the server's HTML matches the first render.
+ */
+export function useShortcutLabel(key: string) {
+  const [apple, setApple] = useState(true);
+  useEffect(() => setApple(/Mac|iPhone|iPad|iPod/.test(navigator.platform)), []);
+  return apple ? `⌘${key}` : `Ctrl+${key}`;
+}

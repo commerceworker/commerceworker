@@ -1,0 +1,39 @@
+{
+  "name": "@commerceworker/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Order engine Worker: the OrderAgent Durable Object (one per order), the OrderLoop Workflow that interprets flow graphs, mock commerce connectors, Workers AI nodes and the EngineApi RPC entrypoint.",
+  "scripts": {
+    "dev": "wrangler dev --port 8788",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "catalog:",
+    "@ai-sdk/provider": "catalog:",
+    "@cloudflare/ai-chat": "catalog:",
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/db": "workspace:*",
+    "@commerceworker/ports": "workspace:*",
+    "@modelcontextprotocol/server": "catalog:",
+    "agents": "catalog:",
+    "ai": "catalog:",
+    "drizzle-orm": "catalog:",
+    "postal-mime": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-decorators": "catalog:",
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@commerceworker/plugin-sdk": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

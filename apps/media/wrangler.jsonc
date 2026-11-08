@@ -1,0 +1,72 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Template; scripts/fleet.ts renders wrangler.<id>.json per deployment (route media.<domain>).
+  // The media Worker: published asset files at /<space>/<env>/<asset>/v<n>/<token>/<variant>/<file>. The
+  // default entrypoint is the uncached gateway (canonical URL, format negotiation, signed draft
+  // reads); `Media` is the cached entrypoint behind Workers Caching, which checks the KV gate on a
+  // miss. It writes nothing anywhere: the engine owns the gate, and D1 is read through replicas.
+  "name": "commerceworker-media",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "minify": true,
+  "upload_source_maps": true,
+  // Edge-facing and cache-first, like delivery: no Smart Placement. Image transforms run in the
+  // Images binding, not on this Worker's CPU.
+  "limits": { "cpu_ms": 1000 },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.01,
+    "logs": { "enabled": true, "invocation_logs": false }
+  },
+  "cache": { "enabled": true, "cross_version_cache": true },
+  "exports": {
+    "default": { "type": "worker", "cache": { "enabled": false } },
+    "Media": { "type": "worker", "cache": { "enabled": true } }
+  },
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "commerceworker_metrics" }],
+  // Read only: the gate fallback and rendition presets, through read-replica sessions.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  // The published-asset gate (asset-gate:<space>:<env>:<id>), written by the engine.
+  "kv_namespaces": [{ "binding": "KV_CACHE" }],
+  "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "commerceworker-media" }],
+  "images": { "binding": "IMAGES" },
+  // Password attempts on a share link, per link and client address (scripts/fleet.ts renders the
+  // namespace per deployment slot).
+  "ratelimits": [
+    {
+      "name": "RATE_LIMIT_SHARE_UNLOCK",
+      "namespace_id": "1006",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "commerceworker-media-purge",
+        "max_batch_size": 100,
+        "max_batch_timeout": 12,
+        "max_concurrency": 1,
+        "max_retries": 10,
+        "retry_delay": 30,
+        "dead_letter_queue": "commerceworker-media-purge-dlq"
+      },
+      { "queue": "commerceworker-media-purge-dlq", "max_batch_size": 100, "max_batch_timeout": 30 }
+    ]
+  },
+  "vars": {
+    // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
+    "QUEUE_SUFFIX": "",
+    "ROLE": "media"
+  }
+  // Secret: MEDIA_SIGNING_SECRET, the same as the api's and delivery's: it verifies the token in
+  // every published path and Preview's short-lived signed draft reads. Required with DB bound.
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The admin web app and the public front door: it renders the admin (React Router, SSR) and
+  // forwards the api's surfaces to the api Worker over the API service binding
+  // (app/lib/gateway.server.ts). Rendered per deployment from the registry; ids here are
+  // placeholders.
+  "name": "commerceworker-studio",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-10-01",
+  // global_fetch_strictly_public: single sign-on fetches the identity provider's discovery
+  // document and keys from the public internet only.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true }
+  },
+  // A runaway request stops at 5 s of CPU. Rendering and a PBKDF2 sign-in use well under a second.
+  "limits": { "cpu_ms": 5000 },
+  "upload_source_maps": true,
+  // The same D1 the api uses: the auth tables (migration 0002_auth) live beside the content.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/store/migrations"
+    }
+  ],
+  // API: the api Worker (REST, MCP, OAuth, media). DELIVERY: the delivery Worker, which answers
+  // bearer-key /delivery/* calls on this origin through its cache, exactly as on the cdn host.
+  "services": [
+    { "binding": "API", "service": "commerceworker-api" },
+    { "binding": "DELIVERY", "service": "commerceworker-delivery" }
+  ],
+  // Per-address limits on the sign-in paths that need no session (passkey, SSO start) and on SCIM
+  // (app/lib/rate-limit.ts).
+  "ratelimits": [
+    { "name": "API_LIMIT", "namespace_id": "1005", "simple": { "limit": 600, "period": 60 } }
+  ],
+  "vars": {
+    // Single sign-on (app/lib/sso.server.ts): the OpenID Connect issuer and client id. With the
+    // OIDC_CLIENT_SECRET secret, they put "Sign in with single sign-on" on the sign-in page;
+    // admins set the rest on the Team page. Empty: no SSO.
+    "OIDC_ISSUER": "",
+    "OIDC_CLIENT_ID": "",
+    // "true" when the provider leaves out email_verified for addresses it owns (Entra ID).
+    "OIDC_TRUST_EMAIL": "",
+    // Password reset codes (app/lib/password-reset.server.ts) go out through Email Sending:
+    // scripts/fleet.ts adds the `send_email` binding (EMAIL) and these when the deployment names a
+    // sender. Empty: no email, and only an admin resets a password (local development prints the
+    // email to the log instead).
+    "EMAIL_FROM": "",
+    "EMAIL_FROM_NAME": ""
+  }
+  // Secrets (wrangler secret put): SETUP_TOKEN — the one-time setup code that creates an admin on
+  // /setup (app/lib/setup.server.ts). PRINCIPAL_KEY — signs the x-cw-principal header forwarded to
+  // the api (the api holds the same key). DATA_KEY (and DATA_KEY_PREVIOUS during a rotation) —
+  // encrypts authenticator secrets stored in D1. PASSWORD_PEPPER — mixed into every password hash;
+  // never change or remove it once set. OIDC_CLIENT_SECRET — the identity provider's client secret.
+}

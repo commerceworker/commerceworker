@@ -1,0 +1,85 @@
+---
+title: CommerceWorker reference architecture
+---
+flowchart LR
+    accTitle: CommerceWorker reference architecture, one customer deployment
+    accDescr: Three kinds of client reach one customer deployment. Admin users sign in at the web worker ①, which forwards their requests to the api worker over the API service binding with a signed x-cw-principal header ②. API and MCP agents call the api directly with bearer tokens ③. The api commits each write to the primary database as one unit of work that includes an outbox row ④, then relays the outbox onto the commerceworker-events queue in waitUntil ⑤. The engine worker, which has no public route, consumes those events and runs webhooks, search and vector indexing and live fan-out ⑥, and enqueues purge tags that the delivery and media workers drain against their own caches ⑦. Public delivery consumers call the delivery gateway with CDA or CPA keys; it authenticates every request from a principal cached in the key-value store ⑧ and forwards a canonical URL keyed by visibility profile to the cached Delivery entrypoint, which reads a database read replica only on a miss ⑨. The engine alone writes the media gate in the key-value store ⑩. The media gateway checks each published file URL's token and forwards it to the cached Media entrypoint, which reads the gate, the bytes from object storage and resized variants from edge image transforms ⑪. Uploads land in object storage through the api's signed PUT; its object-create notification feeds the asset-events queue, and the engine starts one AssetIngestWorkflow per file version, which calls edge inference through the AI gateway and writes embeddings to the vector index ⑫. The api and delivery workers reach the engine's stateful objects and durable workflows through script_name bindings ⑬.
+
+    Admin([Admin users in a browser]):::external
+    Agents([API and MCP agents]):::external
+    Consumers([Public delivery consumers]):::external
+
+    subgraph Deployment["One customer deployment, one registry entry"]
+        direction LR
+
+        subgraph Routed["Publicly routed: verifies every credential"]
+            Web[web worker: admin UI and gateway]:::primary
+            Api[api worker: Management, Preview, MCP]:::primary
+            DGw[delivery gateway, uncached]:::primary
+            MGw[media gateway, uncached]:::primary
+        end
+
+        subgraph Internal["No public route: trusts only its own caller"]
+            DEnt[Delivery entrypoint, edge cache]:::primary
+            MEnt[Media entrypoint, edge cache]:::primary
+            Engine[engine worker: queue consumers and cron]:::primary
+            DO[(Stateful objects: LiveHub, SearchShard, CostGuard)]:::store
+            WF[Durable workflows: Agent, Editorial, AssetIngest]:::primary
+        end
+
+        D1P[(Primary database)]:::focal
+        D1R[(Read replicas)]:::store
+        KV[(KV_CACHE: principals, media gate)]:::store
+        R2[(Object storage MEDIA_BUCKET)]:::store
+        EvQ[(commerceworker-events queue)]:::focal
+        AssetQ[(commerceworker-asset-events queue)]:::store
+        PurgeQ[(purge and media-purge queues)]:::store
+        Vec[(Vector index)]:::store
+    end
+
+    AI([Edge inference via the AI gateway]):::external
+    Media([Image transforms and video]):::external
+
+    Admin -->|"① signs in at &lt;domain&gt;"| Web
+    Web -->|"② forwards, signed x-cw-principal"| Api
+    Web -.->|forwards bearer delivery calls| DGw
+    Web -->|reads auth tables| D1P
+    Agents -->|"③ call REST and MCP with bearer tokens"| Api
+
+    Api ==>|"④ commits unit with outbox row"| D1P
+    Api ==>|"⑤ relays outbox in waitUntil"| EvQ
+    EvQ ==>|"⑥ delivers event batches"| Engine
+    Engine -->|reads and writes| D1P
+    Engine -->|"⑦ enqueues purge tags"| PurgeQ
+    PurgeQ -->|drains, rationed| DGw
+    PurgeQ -->|drains, rationed| MGw
+
+    Consumers -->|"⑧ read with CDA or CPA keys"| DGw
+    DGw -->|looks up cached principal| KV
+    DGw -->|"⑨ forwards canonical URL per profile"| DEnt
+    D1P -.->|replicates to| D1R
+    DEnt -->|reads on cache miss| D1R
+
+    Engine -->|"⑩ writes and removes media gate"| KV
+    Consumers -->|"⑪ fetch published files"| MGw
+    MGw -->|forwards canonical media URL| MEnt
+    MEnt -->|reads gate on miss| KV
+    MEnt -->|reads bytes| R2
+    MEnt -->|resizes variants| Media
+
+    Api -->|"⑫ stores uploads via signed PUT"| R2
+    R2 -.->|notifies object-create| AssetQ
+    AssetQ -->|delivers upload events| Engine
+    Engine -->|starts runs| WF
+    WF -->|calls models| AI
+    WF -->|upserts embeddings| Vec
+    Api -->|creates video uploads| Media
+
+    Api -->|"⑬ binds by script_name"| DO
+    Api -->|starts runs by script_name| WF
+    DGw -->|binds LiveHub, SearchShard| DO
+
+    classDef focal    stroke-width:2px,font-weight:bold
+    classDef primary  stroke-width:1px
+    classDef external stroke-width:1px,stroke-dasharray:4 3
+    classDef store    stroke-width:1px

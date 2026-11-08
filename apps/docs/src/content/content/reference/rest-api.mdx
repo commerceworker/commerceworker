@@ -1,0 +1,85 @@
+---
+title: REST API
+description: Base URLs, authentication, conventions and every operation the API serves, generated from the API's own routes.
+---
+
+import EndpointIndex from '../../../components/content/EndpointIndex.astro';
+
+## Base URL and paths
+
+A workspace serves the API from two addresses, for example for a workspace at
+`your-workspace.commerceworker.com`:
+
+| Surface    | Address                                    | Paths                                       | Key kind |
+| ---------- | ------------------------------------------ | ------------------------------------------- | -------- |
+| Management | `https://api.your-workspace.commerceworker.com` | `/spaces/{space}/environments/{env}/…`, plus space-level `/spaces/{space}/…` | CMA |
+| Preview    | `https://api.your-workspace.commerceworker.com` | `/preview/{space}/{env}/…`                  | CPA      |
+| Delivery   | `https://cdn.your-workspace.commerceworker.com` | `/delivery/{space}/{env}/…`                 | CDA      |
+
+The `cdn.` address is the cached, read-only Delivery API meant for sites and apps. The admin's own
+address forwards these paths to the API too, which is how the admin itself calls it.
+
+`{env}` is an environment id or an alias. The OpenAPI 3.1 document for all of it is at
+[`/openapi.json`](/content/openapi.json) here, and every deployment serves its own at `GET /openapi.json`.
+The [OpenAPI explorer](/content/api/) lets you browse it and send requests.
+
+## Conventions
+
+- **Authentication**: `Authorization: Bearer <token>` on every request. See
+  [API keys and access](/content/guides/api-keys/).
+- **Bodies** are JSON (`content-type: application/json`).
+- **IDs** are UUIDv7: time-ordered, so sorting by id sorts by creation time.
+- **Field values** are keyed by field, then by locale, on every write and on reads without
+  `locale=`: `{ "title": { "en-US": "Hello" } }`.
+- **Timestamps** are ISO 8601 in UTC.
+- **Lists** return `{ "items": [...] }`; page with `limit` (at most 100) and `skip`. Where a list
+  has a `total`, it is the number of items in the response, not the number of matches, so keep
+  paging until a page comes back with fewer than `limit`.
+- **Errors** are described in [Errors](#errors) below.
+- **Read your writes**: every API response carries an `x-cw-bookmark` header. Send the last value
+  back on your next request and its reads are at least that fresh, even when a read replica
+  answers.
+- **Scopes**: each operation needs one [permission scope](/content/reference/scopes/), checked against the
+  space in the path.
+
+## Errors
+
+Errors use the HTTP status and a body with a stable `code`:
+
+```json
+{ "error": { "code": "validation_failed", "message": "One or more fields are invalid", "issues": [{ "field": "title", "message": "Required" }] } }
+```
+
+`issues` appears on a 422 for a validation failure and lists each field and why. A 409 may add
+`details` saying what it conflicts with: saving a content type that removes a field or block type
+that entries still hold lists each one and its entries in `details.fieldsInUse` /
+`details.variantsInUse`.
+
+| Status | `code` | When |
+| ------ | ------ | ---- |
+| 400 | `invalid_state`, `query_too_broad`, `capability_denied` | The request is understood but the resource's state forbids it (deleting an entry that isn't in the trash, publishing an archived asset), a query matched too many candidates to evaluate exactly (narrow it with `content_type` or a more selective filter), or a plugin used a capability it wasn't granted |
+| 401 | `unauthorized`, `http_error` | No token, one that isn't valid, or an expired preview token |
+| 403 | `forbidden` | The token lacks the scope, the content-type grant, or the space |
+| 404 | `not_found` | No such entry, type, release… |
+| 409 | `conflict`, `last_admin`, `publish_gated` | A unique value already taken, a delete blocked by links, an `expectedVersion` that no longer matches, a file replace another commit beat, a change that would leave the space with no administrator (`last_admin`), or a publish of an entry a [gated workflow](/content/guides/workflows/#gate-publishing) covers, made outside a run of it (`publish_gated`; the body adds `entries`, each with its `entryId` and the `workflows` whose runs may publish it) |
+| 409 | `asset_in_use` | Deleting an asset that entries still link to. The body adds `usage`, the first 50 links (each with `fromEntryId`, `fromField`, the entry's `contentTypeApiId` and `entryTitle`), and `total`, every link counted. Archive the asset or remove the links first |
+| 409 | `asset_embargoed`, `asset_expired` | Publishing an asset under [embargo](/content/guides/media/#rights-expiry-and-embargo) (the body adds `embargoUntil`) or whose rights expired (`expiresAt`), or setting an embargo on a published asset |
+| 412 | none | A second `PUT` through a signed upload URL: it stores its file once. The body is plain text, not JSON. The Management SDK counts a 412 on a retry as stored (an earlier attempt's bytes landed and its answer was lost) and throws one on a first attempt |
+| 413 | `payload_too_large` | The request body is over the limit (5 MiB by default; the workspace's administrator can change it) |
+| 422 | `validation_failed`, `hook_rejected` | Validation failed (`issues` lists each field), or a hook or plugin refused the change on policy grounds (`hook_rejected`, with the reason as `message`) |
+| 429 | `rate_limited` | Too many requests for the key or address (the response carries `Retry-After`, in seconds), or an AI budget or a reindex cooldown for the space was hit; retry later |
+| 501 | `not_configured` | The workspace doesn't have an optional capability this call needs, such as a video host or image transformer |
+| 500 | `internal`, `secret_unreadable` | A server fault; retry later and report it if it persists |
+
+The 413 and the request-rate 429 are written before a route runs, so their body is flat,
+`{ "code", "message" }`, without the `error` wrapper. Read `code` from either place. The Delivery
+API at the `cdn.` address answers a rate-limited request with `{ "error": "rate limited" }` and
+`Retry-After: 60`, so branch on the status there.
+
+## Operations
+
+Every operation the API serves, grouped as the explorer groups them. This list is generated from
+the API's routes when these docs are built; request and response bodies are in the
+[explorer](/content/api/).
+
+<EndpointIndex />

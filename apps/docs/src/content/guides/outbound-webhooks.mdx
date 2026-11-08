@@ -1,0 +1,171 @@
+---
+title: Outbound webhooks
+description: Subscribe an endpoint to signed order and cart events, verify them, and handle retries and duplicates.
+---
+
+import NodeEvents from '../../components/NodeEvents.astro';
+import Values from '../../components/Values.astro';
+
+CommerceWorker POSTs signed order and cart events to the endpoints you subscribe. The events are
+<Values of="outbound-events" />.
+
+## Subscribing
+
+Subscriptions are managed through the [REST API](/reference/rest-api/) with an `admin`
+[API token](/guides/team-and-roles/#api-tokens); there is no UI for them. Creating, rotating and deleting a subscription is recorded in the [audit log](/guides/team-and-roles/#audit-log).
+
+```bash
+curl -X POST https://app.commerceworker.com/api/v1/webhook-subscriptions \
+  -H "Authorization: Bearer $COMMERCEWORKER_TOKEN" -H 'content-type: application/json' \
+  -d '{ "url": "https://erp.example.com/hooks/commerceworker", "events": ["order.shipped", "order.paid"] }'
+```
+
+- `url` must be `https`, with a public host name: an IP address, `localhost` or an internal name
+  (`.internal`, `.local`, `.lan`, a single label, a wildcard-DNS service such as `nip.io`) returns
+  `400`. Deliveries go to public addresses only, never private or loopback ones. A redirect from
+  your receiver isn't followed: it counts as a failed delivery and is retried, so point the
+  subscription at the final URL.
+  (A plain `http` URL for `localhost`, `127.0.0.1` or `[::1]` is accepted when subscribing but is
+  never reached.)
+- `events` is a list of the event names above, or `["*"]` for every event (the default). `"*"`
+  includes the `cart.*` events: a receiver subscribed to `"*"` gets cart events, whose `orderId`
+  is `null` until the cart is submitted, so check `event` before reading `orderId`. An unknown
+  name returns `400`.
+
+The `201` response is `{ "subscription": { … }, "secret": "whsec_…" }`. **The secret is returned
+once**, here; listing subscriptions never shows it. Store it with the receiver.
+
+| Route | Does |
+|---|---|
+| `GET /api/v1/webhook-subscriptions` | List subscriptions (no secrets), at most 500 |
+| `POST /api/v1/webhook-subscriptions` | Create one; returns the secret |
+| `POST /api/v1/webhook-subscriptions/:id/rotate` | Issue a new secret (admin); returns it once |
+| `DELETE /api/v1/webhook-subscriptions/:id` | Delete one |
+| `GET /api/v1/webhook-subscriptions/:id/deliveries` | The 50 most recent deliveries, newest first |
+
+## When events are sent
+
+Some nodes send an event when they finish:
+
+<NodeEvents />
+
+The ending events cover every way an order ends:
+
+| Event | Sent by |
+|---|---|
+| `order.completed`, `order.declined`, `order.cancelled`, `order.failed` | An [End node](/reference/nodes/#control.end) with that outcome |
+| `order.failed` | A node that throws after its retries, so the order fails without reaching an End node |
+| `order.cancelled` | A cancel from the order page, the assistant or `POST /api/v1/orders/:id/cancel` |
+
+### Cart events
+
+A [cart](/guides/carts/) sends an event when it opens and when it ends, once each:
+
+| Event | Sent when |
+|---|---|
+| `cart.created` | A cart is opened, from the Carts page, the API, MCP, the assistant or an integration such as [punchout](/guides/punchout/) |
+| `cart.submitted` | A cart is submitted as an order; `orderId` names the order |
+| `cart.returned` | A cart a customer opened from their own purchasing system is sent back to it |
+| `cart.canceled` | A cart is cancelled, or a customer's cart is closed by their data subject request |
+| `cart.expired` | A cart a customer opened from their own system wasn't sent back before its session ended |
+
+Changing a cart (its lines, quantities, codes, ship-to, a lock) sends nothing: a cart changes on
+every edit while people build it, and what it came to is in the event it ends with.
+
+## The request
+
+```http
+POST /hooks/commerceworker HTTP/1.1
+content-type: application/json
+x-commerceworker-signature: t=1760340000,v1=5f2c…
+x-commerceworker-event: order.shipped
+x-commerceworker-delivery: whd_ord_…_ship_1_whs_…
+
+{
+  "id": "whd_ord_…_ship_1_whs_…",
+  "event": "order.shipped",
+  "occurredAt": 1760340000123,
+  "orderId": "ord_…",
+  "data": { … }
+}
+```
+
+`data` depends on what sent the event:
+
+- **A node** (`order.paid`, `order.invoiced`, `order.shipped`, `order.ready_for_pickup`, `order.delivered`, `order.refunded`, `order.payout_scheduled`):
+  `{ order, node: { id, type, output } }`, where `output` is the node's output.
+- **An End node**: `{ order, outcome, reason }`.
+- **A node that threw**: `{ order, outcome: "failed", reason, node: { id, type, error } }`. `reason`
+  is a one-line summary for people (at most 200 characters); `node.error` is the whole error.
+- **A cancel**: `{ order, outcome: "cancelled", reason }`.
+- **A cart event**: `{ cart }`. The body has `cartId` in place of a required `orderId`, and
+  `orderId` is the order a submitted cart became (`null` before that).
+
+`order` is a summary: `id`, `model`, `channel`, `externalId`, `title`, `customerId`, `currency`, `subtotal`, `shipping`, `tax`, `total`
+(all in `currency`), `fxRate` (units of `currency` per USD) and `baseTotal` (the total in USD).
+
+`cart` is the cart as it was when the event was sent: `id`, `title`, `status`, `flowId`, `source`
+(`staff`, or `external` for one a customer's system opened), `pluginId` (the integration that
+opened an external cart), `customerId`, `lines` (`sku` and `qty`), `quote` (`currency`,
+`subtotal`, `shipping`, `tax`, `total`; `null` while no price is current, as on a cart just
+opened), `orderId`, `createdAt`, `updatedAt` and `version`. It never carries the cart's ship-to,
+chat, files, promotion codes or who its buyer is. A cart's `status` is `canceled` for both
+`cart.canceled` and `cart.expired`.
+
+## Rotating the secret
+
+`POST /api/v1/webhook-subscriptions/:id/rotate` (an `admin` token) returns `{ "subscription", "secret" }`
+with a new `secret`, shown once. For 24 hours each delivery is signed with both the new secret and
+the previous one, so the receiver can switch without rejecting any: the header then carries two
+`v1=` signatures (`t=1760340000,v1=<new>,v1=<previous>`). While that lasts, listing subscriptions
+shows `previousExpiresAt`. Rotating again replaces the overlap. `404` for an unknown id.
+
+## Verifying the signature
+
+Each subscription signs with its own secret, in the same scheme as
+[signed inbound events](/guides/approvals-and-events/#signed-events):
+`t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`. Verify against the raw body,
+before parsing it: compute the HMAC of `` `${t}.${raw}` `` with the secret, compare it with `v1`
+(any one of them, during a rotation) in constant time, and reject a `t` more than 5 minutes from now. In Node:
+
+```ts
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verify(secret: string, raw: string, header: string | null): boolean {
+  const parts = Object.fromEntries((header ?? '').split(',').map((p) => p.split('=', 2)));
+  const t = Number(parts.t);
+  if (!t || !parts.v1 || Math.abs(Date.now() / 1000 - t) > 300) return false;
+  const expected = Buffer.from(createHmac('sha256', secret).update(`${t}.${raw}`).digest('hex'));
+  const given = Buffer.from(parts.v1);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+const raw = await request.text();
+if (!verify(secret, raw, request.headers.get('x-commerceworker-signature')))
+  return new Response('Bad signature', { status: 401 });
+```
+
+## Retries and duplicates
+
+Any `2xx` response counts as delivered; anything else, or no response within 10 seconds, is a
+failure.
+
+- **Node and End events, and failures:** retried 5 times with exponential backoff from 10 seconds.
+- **`order.cancelled` on cancel:** retried 5 times, 10 seconds doubling each time.
+- **Cart events:** retried for about a day: 10 seconds doubling to an hour, then hourly, 32 times
+  in all.
+
+Each attempt only resends deliveries that haven't succeeded. When retries run out the delivery
+stays `failed` in the deliveries list, and the order carries on: a subscriber being down never
+fails an order.
+
+The delivery id (`X-CommerceWorker-Delivery`, and `id` in the body) is derived from the order, the
+step that sent it and the subscription (for a cart event, the cart, the event and the
+subscription), and stays the same across retries. Use it to dedupe:
+a receiver can see the same delivery more than once.
+
+Each delivery row records `status` (`pending`, `delivered` or `failed`), `attempts`,
+`responseStatus`, `lastError` and `deliveredAt`. A cart's row has the cart's id in `orderId`.
+When a data subject request erases a cart's buyer, or a customer whose account the cart is for or
+whose order it became, the cart's deliveries are deleted, sent or not, and are not retried, as an
+erased order's are; the cart's title loses their name.

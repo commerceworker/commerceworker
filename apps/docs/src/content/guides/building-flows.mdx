@@ -1,0 +1,177 @@
+---
+title: Building flows
+description: Draw a flow in the editor, wire branches, joins and loops, validate it and publish a version orders can run on.
+---
+
+import Values from '../../components/Values.astro';
+
+A flow is a JSON graph of [catalog nodes](/reference/nodes/) and the edges between them. The
+editor at `/flows/:flowId` saves it as a draft. Publishing snapshots the draft as an
+immutable, numbered version, and every order pins the version it started on.
+
+## Creating a flow
+
+**New flow** on `/flows` opens a form that takes a name (with Describe it, the first words of your description stand in if you leave it empty), a [commerce model](/guides/commerce-models/) (<Values of="order-models" />) and a
+starting point:
+
+| Start | What you get |
+|---|---|
+| Template | The [built-in flow](/guides/templates/) for that model |
+| Blank | One `trigger.manual` node named `start` |
+| Describe it | A graph drafted by the [copilot](/guides/ai/#the-flow-copilot) from your description, laid out automatically |
+
+The flow id is a slug of the name plus a short suffix. A new flow is a draft until you publish it,
+and it gets no inbound orders until something routes to it (see below); you can always start orders
+on it by hand. Creating a flow, **Duplicate**, **Archive** and **Restore** go through the assistant too, with no
+card, since none of them changes what runs. **Duplicate** on a flow's card copies its current draft into a new, unpublished flow,
+which is also how to start from a built-in flow other than your model's default.
+
+## The flows list
+
+`/flows` groups flows by commerce model, selling and then buying, and filters by name, description
+or order type. Each card shows:
+
+- **Live v3**, with **unpublished changes** when the draft differs from the published version, or
+  **Draft, never published**;
+- **Receives**: the inbound orders that start it, from the routes your deployment sets for a model and
+  channel, the model's default flow (for the orders nothing else routes) and the email intake
+  mailboxes. A routed flow that was never published refuses those orders, and the card says so;
+- **Running**: how many orders are still running on it, and how many of those are on older versions,
+  linked to the orders list filtered to that flow;
+- **Steps**: whether a person decides, the events it waits for and how many steps it has.
+
+**Archive** sets aside a draft that was never published, so no order can be on it; **Archived drafts**
+lists them, and **Restore** brings one back.
+
+## The editor
+
+- **Palette.** Every node type in the catalog, grouped as Triggers, Commerce, Control and AI.
+  Drag one onto the canvas.
+- **Canvas.** Each output branch of a node is its own handle; an edge leaves from
+  the branch it belongs to. A `control.loop` node has a second input, `next`, for its back-edge.
+  A flow too wide to read whole opens on its first loop or wait, the part an order spends its
+  time in, rather than on the trigger. **Jump to** lists the flow's loops and waits (approvals,
+  events and timed waits) by label and centres the one you pick; the order page's graph has it
+  too. **Fit view** (the corner control) never shrinks the labels past reading: when the whole
+  flow doesn't fit, it shows as much as fits around the selected node, or around where you are.
+- **Inspector.** The selected node's label and config fields, generated from the node's catalog
+  entry, plus its per-node `retries` and `timeout`. Validation messages appear beside the field.
+  A **Provider** field (on shipping rate, create shipment, return label, tax and address
+  validation) picks `builtin` or an installed plugin that provides that service; see
+  [Providers](/guides/fulfillment/#providers).
+  While the assistant panel is open, the inspector folds away to give the canvas room, and comes
+  back when you select a node.
+- **Ask.** Opens the [assistant](/guides/assistant/) about this flow, with the graph on screen
+  (unsaved changes included) as context. A change it proposes ("add a fraud check after credit")
+  comes back to the editor as a proposal that shows what it adds, removes, edits and rewires;
+  nothing changes until you accept it, and accepting is one undoable edit.
+
+**Save** stores the draft and returns the current validation errors and warnings. **Publish** and
+**Test run** save the draft first, then ask on the [assistant](/guides/assistant/#edits-from-a-page)'s
+confirm card. For a publish, the card shows what changed since the live version. For a test run,
+it says whether the run publishes a new version first and which input it starts with. **Not now**
+on the card leaves the draft saved and nothing published. The card holds the draft it showed: if
+the draft is saved again before you confirm (in another tab, or by someone else), the confirm is
+refused and nothing is published. An archived flow must be restored before a test run. **Test run** publishes when the draft
+differs from the published version, then starts a sample order on it: the input of the first
+[dashboard scenario](/guides/templates/#scenarios) that uses this flow, else the first one for its
+model, else an empty `manual` order. A workspace without the demo data has no scenarios, so the
+test run starts an empty order.
+
+The built-in templates publish themselves again when they change, replacing edits made to them
+here (see [Seeding](/guides/templates/#seeding)). To customise one, make your own flow from it.
+
+## Validation
+
+Validation runs in the editor as you edit, on save, and before publishing. Publishing is refused while there are errors.
+
+Errors:
+
+- A node id appears twice, or a node's type isn't in the catalog.
+- A config field is missing when required, or fails its kind's check (see the
+  [node catalog](/reference/nodes/) for each field's kind).
+- The flow doesn't have exactly one trigger, or an edge points into a trigger.
+- An edge points at a missing node, or leaves from an output the source node doesn't have.
+- Forward edges form a cycle. Repeating steps needs a Loop node with a `next` back-edge.
+- A `next` edge targets anything but a Loop node, or comes from outside that loop's body.
+- A non-trigger node has no incoming forward edge.
+
+Warnings, which don't block publishing: a duplicate edge, and a node with outputs but no
+outgoing edge ("the run ends there").
+
+## How a run moves through the graph
+
+- **Branches.** A node finishes by choosing its output branches: `true`/`false` for a
+  Condition, `approved`/`rejected`/`escalated` for an Approval, one route for the Agent router,
+  `out` for single-output nodes. Edges on the chosen branches become active; the rest become
+  inactive.
+- **Joins.** A node with several inputs runs once every input is resolved and at least one is
+  active. So a node after an `if/else` runs once, whichever side was taken.
+- **Skips.** A node whose inputs are all inactive is skipped (status `skipped`), and so is
+  everything downstream that depends only on it.
+- **Parallel work.** Every node that is ready at the same time starts in the same batch.
+- **Loops.** A Loop node evaluates `while` each time it is entered, up to `maxIterations`. On
+  `body` it runs the nodes reachable from its `body` output; the last of them connects back to the
+  loop's `next` input. When the condition is false (or the limit is reached) it takes `done`. Each
+  iteration runs afresh; an iteration never reuses an earlier one's results.
+- **Continue as new.** `control.continue_as_new` ends the current run and starts a new one on the
+  same flow version, with the order and variables carried over. The order keeps its id; its
+  `generation` goes up by one. Use it for long-lived loops such as subscriptions, so the run's
+  history stays bounded.
+
+## Ending a run
+
+A `control.end` node finishes the order with an outcome:
+
+| Outcome | Order status | Notes |
+|---|---|---|
+| `completed` | `completed` | The normal ending |
+| `declined` | `declined` | A policy or approval "no": not a person cancelling |
+| `cancelled` | `cancelled` | Ends the run as cancelled |
+| `failed` | `failed`, then `rolled_back` | Runs every completed step's rollback, in reverse order |
+
+`reason` is a template and becomes the order's reason, kept to one line of at most 200 characters. Every End node also sends the matching
+`order.<outcome>` [outbound webhook](/guides/outbound-webhooks/). A run whose remaining nodes
+are all skipped, with no End node reached, finishes as `completed`.
+
+A commerce node that still fails after its retries fails the order the same way, without reaching an
+End node. The order's reason then names the step and the error's first line, or says "Database error
+at" the step when the database refused; the whole error is on that step in the order's graph. Only nodes tagged **undo** in the [node catalog](/reference/nodes/) have rollbacks: reserve inventory
+(releases the reservation), authorize payment (voids the hold), create shipment and ready for
+pickup (cancel the shipment or staged pickup, and restock what it consumed), generate invoice (voids an unpaid Stripe invoice and takes an on-account charge back off the balance), deliver digital goods (revokes the codes), split by
+seller (cancels the seller orders) and seller payouts (reverses scheduled payouts).
+
+## Expressions and templates
+
+Condition, Wait (`until`), Set variables, Loop (`while`) and Refund (`amount`) take
+[JSON Logic](/reference/expressions/) expressions. Text fields interpolate `{{path}}` templates,
+for example `Approve order {{order.id}}`. Both read the run context:
+
+| Path | Holds |
+|---|---|
+| `order` | The order: lines, totals, `customerId`, `currency`, `meta`, … as nodes update it |
+| `nodes.<id>` | The output of each node that has run (latest iteration) |
+| `vars` | Run variables: set by Set variables, AI nodes (`into`), event payloads, and the `vars` passed when the order starts |
+| `input` | The order's `meta` |
+| `now` | When the current run started, epoch ms |
+| `ref` | How the customer knows the order: its outside number (`externalId`), else its title, else its id. The built-in flows use it in customer emails |
+
+The [expressions reference](/reference/expressions/) has the operators and the policy rules.
+
+## Retries and timeouts
+
+Each commerce, AI, Condition and Set node runs as one durable step. Its retry limit is the node's
+`retries`, else the node type's default (`commerce.charge` has `0`), else `3`, with a 5-second
+exponential backoff. An AI node whose model call fails uses these retries before it falls back
+to its heuristic on the last attempt ([AI nodes](/guides/ai/)). Its timeout is the node's
+`timeout`, else `"5 minutes"`. Approval,
+Wait-for-event and Wait nodes don't use these; their waits have their own `timeout` field.
+
+## Publishing and versions
+
+Saving a draft on purpose (**Save** or ⌘S, not an autosave), publishing, and test runs are recorded in the [audit log](/guides/team-and-roles/#audit-log); each version keeps who published it.
+
+Publishing saves the draft and stores it as the flow's next version. Versions are immutable. An order started through the API runs the latest published version
+unless the request names one (`version`); a running order keeps its version even after you
+publish again. Restarting an order from its page starts a new order on the flow's current
+version, with the same customer and lines and without `meta.simulate`.

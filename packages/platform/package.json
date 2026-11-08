@@ -1,0 +1,50 @@
+{
+  "name": "@commerceworker/platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Cloudflare runtime every commerceworker Worker shares: bindings (env), deployment config, the composition root (wire), ids, metrics, queue message shapes, secrets-at-rest key handling, the Durable Object classes and their clients, and the Workflows clients. Workers import this; they never import each other.",
+  "exports": {
+    "./asset-ingest": "./src/asset-ingest.ts",
+    "./asset-zip": "./src/asset-zip.ts",
+    "./auth-rate-limit": "./src/auth-rate-limit.ts",
+    "./config": "./src/config.ts",
+    "./dead-letters": "./src/dead-letters.ts",
+    "./data-key": "./src/data-key.ts",
+    "./do/cost-guard": "./src/do/cost-guard.ts",
+    "./do/live-access": "./src/do/live-access.ts",
+    "./do/live-hub": "./src/do/live-hub.ts",
+    "./do/rate-limiter": "./src/do/rate-limiter.ts",
+    "./do/search-shard": "./src/do/search-shard.ts",
+    "./editorial-host": "./src/editorial-host.ts",
+    "./env": "./src/env.ts",
+    "./ids": "./src/ids.ts",
+    "./messages": "./src/messages.ts",
+    "./metrics": "./src/metrics.ts",
+    "./purge": "./src/purge.ts",
+    "./wire": "./src/wire.ts",
+    "./workflows": "./src/workflows.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@commerceworker/adapters": "workspace:*",
+    "@commerceworker/agent-runtime": "workspace:*",
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/store": "workspace:*",
+    "@commerceworker/domain": "workspace:*",
+    "@commerceworker/ports": "workspace:*",
+    "@commerceworker/redaction": "workspace:*",
+    "@commerceworker/security": "workspace:*",
+    "@commerceworker/test-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

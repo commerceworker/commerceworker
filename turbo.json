@@ -1,0 +1,47 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "ui": "tui",
+  "tasks": {
+    // Writes the gitignored embeds (packages/docs-index/src/generated.ts from docs/*.md,
+    // packages/http/src/mcp/skills.generated.ts from packages/http/skills/**) and the themes the
+    // design packages generate from their tokens. Never committed; every task that compiles,
+    // bundles or tests code that imports an embed depends on this one.
+    "generate": {
+      "outputs": [
+        "src/generated.ts",
+        "src/mcp/skills.generated.ts",
+        "$TURBO_ROOT$/apps/docs/src/styles/theme.css",
+        "$TURBO_ROOT$/docs/diagrams/themes/ledger-*.json"
+      ]
+    },
+    "build": {
+      "dependsOn": ["^build", "^generate", "generate"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["build/**", "dist/**"]
+    },
+    // The docs site's type check and build both run astro sync (and its OpenAPI generator); side by
+    // side they collide, so the build follows its own type check.
+    "@commerceworker/docs#build": {
+      "dependsOn": ["^build", "^generate", "generate", "check-types"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["build/**", "dist/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    // Only the embeds, on purpose: a failing dependency's own tests must not silently skip a
+    // package's tests.
+    "test": {
+      "dependsOn": ["^generate", "generate"],
+      "outputs": []
+    },
+    "check-types": {
+      "dependsOn": ["^check-types", "^generate", "generate"]
+    },
+    "dev": {
+      "dependsOn": ["^generate", "generate"],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

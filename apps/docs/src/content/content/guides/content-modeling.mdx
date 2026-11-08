@@ -1,0 +1,238 @@
+---
+title: Content modeling
+description: Design content types from typed fields, arrange how the admin lays them out, and change a live model without breaking what reads it.
+---
+
+A content model is the set of content types in a space. You define it in the admin (**Content →
+New content type**) or over the API and MCP. Good models describe content by what it
+*is* (an article, an author, a promo block) rather than where it appears, so the same entry can
+feed a website, an app, an email and an agent.
+
+## Content types
+
+A content type has:
+
+- an **`apiId`**, the stable identifier the API and SDKs use (`article`), which never changes;
+- a **name** people see (`Article`);
+- a **display field**, the field used as each entry's title in lists, pickers and search results;
+- an ordered list of **fields**;
+- optionally a **URL pattern**, where its entries live on your site;
+- optionally a **preview URL**, where your site shows a draft of one of its entries;
+- optionally **singleton**: it holds one entry only.
+- optionally a **group**, **description** and **icon**, and an editor **layout** (see
+  [Organizing the model](#organizing-the-model)).
+
+Creating or changing a content type makes a draft definition. Each revision bumps the type's
+`version`; publishing makes that version what Delivery serves and emits a
+`content_type.published` event, so integrations (generated types, caches) can react. The admin's
+content type dialog publishes as it saves.
+
+Until a revision is published, Delivery keeps serving the definition last published: GraphQL's
+schema, the routes, the sitemap and menus don't change, and the Management API and MCP show the
+draft. Changing a field's type takes effect in GraphQL at the publish, so a published value the new
+type can't represent comes back `null` with an error on that field. Update those entries, or add a
+new field instead, before publishing that kind of change.
+
+A type that has never been published is in the GraphQL schema as it stands, but not in the routes,
+the sitemap or menus. Entries don't wait for their type: you can write and publish them under a draft
+definition, and the REST API serves them as stored, including a value for a field only the draft has.
+GraphQL still has the published field. If `rating` is an `Integer` as published and a `Symbol` in a
+draft, an entry published with `rating: "great"` comes back from REST as `"great"`, and from GraphQL as
+`null` with an error on that field, until the type is published.
+
+### URL pattern
+
+A URL pattern is a path starting with `/` that says where a type's entries live on your site, for
+example `/blog/{slug}`. Its placeholders are `{id}` (the entry id), `{locale}`, or the API ID of one
+of the type's own `Slug` fields; anything else is refused. In the content type dialog it is the
+**URL pattern** field; over the API and MCP it is `urlPattern` on `POST …/content-types` and
+`model_create_content_type` (`null` clears it). When a publish changes a slug the pattern names on
+an entry that was already published, CommerceWorker writes a `301` from the old path to the new one;
+see [Redirects](/content/guides/redirects/#redirect-slug-changes). A revision that removes a slug a kept
+pattern names is refused.
+
+### Preview URL
+
+A preview URL is your own frontend's draft view for the type's entries, for example
+`https://site.example/__preview?entry={id}#token={token}`. A
+[preview link](/content/guides/editing-and-publishing/#preview-drafts) fills it for an entry and returns it
+as `frontendUrl`, beside the Preview API URL, and the editor's **Copy preview link** copies it.
+Its placeholders, each filled URL-encoded, are `{id}`, `{token}` (required: the frontend reads the
+draft with it), `{locale}`, `{space}`, `{environment}`, and `{field:<apiId>}` for one of the type's
+own `Symbol`, `Slug`, `Integer`, `Number` or `Date` fields; anything else is refused. While a field
+it names is empty in the link's locale, the link has no `frontendUrl`.
+
+Put `{token}` after `#`, as above: a fragment never reaches your server, so the token stays out of
+its access logs and of the `Referer` your page sends. Your page reads it from `location.hash`. The
+token reads that one entry, drafts included, until it expires (72 hours unless the link asks for
+less), so share the link only with whoever should see the draft.
+
+It is an `https` URL with a plain host name (no wildcard, no placeholder in the host, no
+credentials). Plain `http` to `localhost` or `127.0.0.1` is accepted only on a local stack
+(`pnpm dev`), never on a deployment. In the content type dialog it is the **Preview URL** field;
+over the API and MCP it is `preview: { urlTemplate }` on `POST …/content-types` and
+`model_create_content_type` (`null` clears it). Setting or changing it needs read access to the
+type's entries as well as `content:manage`, because it decides where their preview tokens go; a
+promotion that adds or changes it asks for approval for the same reason. It is editor-only:
+Delivery never serves it. The admin doesn't frame your site yet; that comes with live preview.
+
+### Singletons
+
+A singleton type holds at most one entry outside the trash: site settings, a home page, a footer.
+In the content type dialog it is **One entry only (singleton)**; over the API and MCP it is
+`singleton: true` on `POST …/content-types` and `model_create_content_type` (left out of a
+revision, it stays as it was). A second entry is refused with `409` on every path that makes one:
+create, bulk create, duplicate, import, a snapshot restore, a promotion or an environment merge.
+Trashing the entry frees the place; restoring it is refused while another entry has taken it.
+Turning `singleton` on is refused while the type has more than one entry outside the trash, and
+names them. A promotion that would give a singleton a second entry is refused when it is
+requested, before anyone approves it. Cloning an environment, or exporting and importing one,
+keeps the flag.
+
+The admin's sidebar opens a singleton's entry in the editor (or a new one when it has none)
+instead of a list. Delivery serves it by the type's API ID, with no entry id:
+`GET …/singletons/{apiId}` (see [Reading content](/content/guides/reading-content/#singletons)). Delivery
+goes by the type as last published: turning `singleton` on or off takes effect there (REST and
+GraphQL alike) when you publish the type. Turned off in a draft, the type can take more entries
+at once; until that draft is published, Delivery serves the published entry with the lowest id.
+
+## Fields
+
+Each field has a type, which decides the value it holds and how it is edited: short and long text,
+rich text, numbers, dates, locations, links to entries and assets, components that group nested
+fields, and lists of any of these. A field also says whether it is **required**, **localized** (a
+separate value per locale) and **unique**, and can carry a default value and validations. Every
+type, its value and the validations it takes are in the [field types reference](/content/reference/field-types/):
+[rich text](/content/reference/field-types/#rich-text),
+[components and repeaters](/content/reference/field-types/#components-and-repeaters),
+[blocks](/content/reference/field-types/#blocks), [references](/content/reference/field-types/#references),
+[validations](/content/reference/field-types/#validations), [dates](/content/reference/field-types/#dates) and
+[lists](/content/reference/field-types/#lists).
+
+## Organizing the model
+
+- **Group** files a type in the admin's sidebar under a heading (`Marketing`, `Docs`); types
+  without one are listed first.
+- **Description** says what the type is for, for editors choosing one and agents reading the model.
+- **Icon** is a short name the admin draws beside the type (`newspaper`, `calendar`).
+- **Layout** arranges the entry form into tabs, and fields within a tab into named groups, which
+  can start collapsed. It is for editors only: nothing about storage, validation or delivery
+  changes, and Delivery never serves it. Each field sits in one place; fields the layout doesn't
+  place follow on the first tab, so a new field always shows up.
+
+```json
+{
+  "group": "Editorial",
+  "icon": "newspaper",
+  "layout": {
+    "tabs": [
+      { "apiId": "content", "name": "Content", "groups": [{ "fields": ["title", "body"] }] },
+      { "apiId": "seo", "name": "SEO", "groups": [{ "name": "Search", "fields": ["seo"], "collapsed": true }] }
+    ]
+  }
+}
+```
+
+Set them in the content type dialog, or over the API and MCP (`model_create_content_type`); left
+out of a save they stay as they are, and `null` clears one. Removing a field removes it from the
+layout.
+
+## Field guidance
+
+Every field can carry plain-text guidance for whoever fills it, editor or agent:
+
+| Attribute     | At most | Where it shows                                                        |
+| ------------- | ------- | --------------------------------------------------------------------- |
+| `help`        | 500     | Under the input on the entry form, and in the field's brief to AI     |
+| `placeholder` | 200     | In the empty input; never stored as a value                           |
+| `description` | 2000    | What the field means: read from the model by agents and API clients, and in the brief to AI |
+
+Set them in the admin from a field's **Guidance** button in the content type dialog, or on the
+field definition through the API or MCP (`model_create_content_type`). Agents get them with the
+rest of the definition from `model_get_content_type`, and AI drafting and autofill write to them.
+Generated TypeScript types carry a field's description (or help) as its doc comment.
+
+## Conditional field rules
+
+A field's `rules` hide or disable it while another field matches. A shipping address can show only
+when the delivery method is `post`; a price can lock once the status is `sold`:
+
+```json
+{
+  "apiId": "price",
+  "name": "Price",
+  "type": "Number",
+  "rules": [{ "action": "disable", "when": { "field": "status", "operator": "eq", "value": "sold" } }]
+}
+```
+
+- **`hide`**: the field leaves the entry form and isn't required. A value it already holds is kept,
+  and comes back into view when the rule stops matching.
+- **`disable`**: the field is read-only and keeps its stored value; a write that changes it is
+  refused. A new entry's disabled field keeps its default (or stays empty).
+
+`when.field` names a field beside this one, or a field inside a component beside it with a dot path
+(`hero.style`). The operators are `eq` and `ne` (equal or not to a string, number or boolean), `in`
+(one of a list), `empty` and `notEmpty`, and `gt` and `lt` (for a number field). Any matching rule
+applies, up to ten per field. Inside a list of components, a field can be hidden per item but not
+disabled.
+
+Rules are judged on the values being written, the same way everywhere: the entry form hides and
+locks fields as you type, and the API, MCP agents and AI drafting are held to them on save. AI
+drafting and autofill never write a hidden or disabled field. Add rules in the admin from a field's
+**Rules** button in the content type dialog, or on the field definition over the API and MCP.
+Generated TypeScript types make a required field that a rule can hide optional.
+
+Hide and disable are editorial aids, not access control: a hidden value is still stored and
+delivered, and anyone who can write the entry can open a disabled field by changing the value its
+rule reads. To keep a field from a role, use the role's field rules (denied or read-only fields,
+see [Roles](/content/guides/api-keys/#roles)).
+
+## Changing a model
+
+- **Adding a field** is safe: existing entries simply have no value for it until edited. Make it
+  optional first if entries already exist, then fill it (AI autofill can help, see
+  [AI features](/content/guides/ai/)) before making it required.
+- **Adding a block type**, or an optional field to one, is safe. **Removing a block type** is
+  refused while any entry (a draft, the trash or a published version) still has a block of it;
+  the error lists those entries, so change or remove their blocks first.
+- **Removing a field**, at any depth (a component's field, a block type's field), is refused the
+  same way while any entry still holds a value for it: the `409` lists each field and its entries
+  (`details.fieldsInUse`). There is no override. Clear the value in those entries (save them
+  without it), publish the ones that are live so the published version drops it too, and purge any
+  in the trash; then remove the field.
+- **Tightening a rule** (a Date's `format` or `dateRange`, an asset link's `assetMimeTypes`) is
+  saved even when entries already hold values it refuses, and the response says how many under
+  `warnings` (`{ field, entries, message }`). Each of those entries is refused on its next save
+  until the value is changed.
+- **Renaming** a field's name is safe; its `apiId` is what code depends on, so treat that as
+  permanent.
+- **Keep the model in a file.** `commerceworker model export` writes it out, and `commerceworker
+  model apply --dry-run` shows what a changed file would add, change and remove before anything
+  does; see the [command-line tool](/content/guides/cli/#the-content-model-as-code).
+- **Cloning a type** copies its fields, display field, singleton flag, group, description, icon,
+  agent instructions, layout and preview URL under a new API ID and name, as a draft with no entries; its URL pattern stays behind,
+  so two types never route the same paths. In the admin it is **Clone…** in the type's menu on the Content page; over the API
+  `POST …/content-types/{apiId}/clone` with `{ apiId, name }`, over MCP `model_clone_content_type`.
+- **Deleting a type** is refused, naming every reason, while anything depends on it: entries (the
+  trash included), another type whose links are restricted to it (in a component or block too), a
+  menu or slug redirect naming one of its entries, or its URL pattern (clear it first, so the
+  site's routes change on purpose). `GET …/content-types/{apiId}/dependents` lists them. To delete
+  a type with its entries, ask for it (`DELETE …/content-types/{apiId}?purge_entries=true`,
+  `model_delete_content_type` with `purgeEntries`, or the checkbox in the admin's delete dialog,
+  confirmed by typing the API ID): a background job moves each entry to the trash and deletes it
+  permanently, keeping any that another type's published entry links to, and the type goes when
+  none are left. That takes `content:write` and `content:publish` as well as `content:manage`.
+  What became of the type is recorded on the job, as `config.typeDeletion` on `GET
+  …/bulk/jobs/{id}` (`{ deleted: true }`, or `{ deleted: false, reason }`); the admin shows it on
+  the job's card. A deleted type sends `content_type.deleted`.
+- **Try risky changes in an environment.** Clone `main` into a `staging` environment, change the
+  model there, point a preview at it, then merge it back. See
+  [Environments](/content/guides/environments/).
+
+## Next steps
+
+- [Editing and publishing](/content/guides/editing-and-publishing/): write entries against the model.
+- [SDKs](/content/guides/sdks/#typed-content): generate TypeScript types from the model
+  (`GET …/content-types?format=typescript` returns the same output).
+- [Environments](/content/guides/environments/): change the model on a copy before it reaches `main`.

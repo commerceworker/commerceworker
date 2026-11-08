@@ -1,0 +1,251 @@
+---
+title: MCP server
+description: Connect Claude, Claude Code, Cursor or any MCP client to CommerceWorker at /mcp, with the same tools as the assistant, limited by role.
+---
+
+import McpSkills from '../../components/McpSkills.astro';
+import McpTools from '../../components/McpTools.astro';
+
+CommerceWorker serves its workspace tools to [Model Context Protocol](https://modelcontextprotocol.io)
+clients at `https://app.commerceworker.com/mcp`. They are the
+tools of [the assistant](/guides/assistant/), so a client can check what needs attention, find and
+read orders and carts, and, with the right role, decide approvals, cancel orders, or build a
+[cart](/guides/carts/) and submit it as an order. Each person is limited to
+what their role allows.
+
+The server is stateless: every request is answered by a fresh server that lists only the tools
+the caller's role can use. It speaks streamable HTTP: the 2026-07-28 revision of the protocol,
+and the 2025 revisions (2025-11-25 and earlier) served the same stateless way. Another agent that speaks Agent2Agent rather than MCP
+connects at `/a2a`; see [A2A endpoint](/reference/a2a/). AI shopping platforms that buy from you use a separate endpoint and credential; see [Agentic checkout (UCP)](/reference/ucp/).
+
+## Connecting
+
+### Claude and Claude Desktop
+
+Add a custom connector with the URL `https://app.commerceworker.com/mcp`. The client discovers the
+authorization server, registers itself and opens CommerceWorker's consent page in your browser:
+
+1. Sign in with your own account. Two-factor sign-in applies.
+2. Check which app is asking and where access will be sent. An app that registered itself is
+   marked as unverified; an app on your own computer gets an extra warning.
+3. Choose a role. You are offered your own role and the roles below it, lowest first, and the
+   lowest (`viewer`) is selected. `admin` is never offered, so a connected app can't use `draft_plugin`; an admin API token can. That role is the grant's scope.
+4. Select **Connect**. **Cancel** refuses the app.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http commerceworker https://app.commerceworker.com/mcp
+```
+
+Claude Code runs the same browser flow the first time you use the server. To skip the browser, pass
+an [API token](/guides/team-and-roles/#api-tokens):
+
+```bash
+claude mcp add --transport http commerceworker https://app.commerceworker.com/mcp \
+  --header "Authorization: Bearer cmw_live_…"
+```
+
+### Cursor and other clients
+
+A client that takes a URL and headers can send `Authorization: Bearer cmw_live_…` with every
+request. In Cursor's `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "commerceworker": {
+      "url": "https://app.commerceworker.com/mcp",
+      "headers": { "Authorization": "Bearer cmw_live_…" }
+    }
+  }
+}
+```
+
+A client that runs OAuth itself starts from the `401` a request without a token gets: its
+`WWW-Authenticate` names the resource metadata and the scopes, `viewer approver operator` (the
+roles an app can be granted). It finds the authorization server from
+`/.well-known/oauth-protected-resource/mcp`. It registers with dynamic client registration at
+`/oauth/register` or with a Client ID Metadata Document (an `https` `client_id`), sends the person
+to `/oauth/authorize` (authorization code with PKCE, `S256`, required of every client, including
+one that registered with a secret) and exchanges the code at `/oauth/token`. A refresh token works
+once: each refresh returns a new one. Retrying the old one within a minute (an answer that never
+arrived) still works; presenting it again later revokes the connection, since only a copy would.
+
+A client or directory that discovers servers before connecting can read the
+[Server Card](https://modelcontextprotocol.io/seps/2127-mcp-server-cards) at
+`https://app.commerceworker.com/mcp/server-card`, listed in `/.well-known/ai-catalog.json`. It names the
+server, the endpoint and the protocol revisions it speaks. It lists no tools: those depend on who
+connects, so a client learns them once connected.
+
+A token carries the role it was created with and its expiry. `/mcp` accepts the same bearer
+credentials as the [REST API](/reference/rest-api/): `cmw_live_` tokens. These work on `/a2a` too. A bearer that isn't a valid token is `401`, and an expired token is
+refused (`401` with the reason), as there.
+
+## Tools
+
+A client sees only the rows its role can use. **Write** tools are the ones the
+assistant stops to confirm; over MCP they take two calls, described next.
+
+<McpTools />
+
+Each tool has a title, a description, a JSON input schema and an output schema. Results come back
+as JSON text and as `structuredContent` that matches the output schema; a field not in the schema
+may be added later, so a client should ignore fields it doesn't know. `assess_order` and
+`propose_flow_change` wait on a model: a client that sends a progress token hears when they start.
+A refusal from live data (nothing is waiting on that event, the approval is
+already decided, the order has finished, you started the order and the workspace [separates approvals](/guides/team-and-roles/#approvals), a cart is locked or not priced yet) is returned as a tool error the model can read, not a
+protocol error. Any other failure is a tool error saying something went wrong on CommerceWorker's side,
+without the details. A tool the role can't use is not listed, and calling it by name fails as
+unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
+
+## Actions wait for the person
+
+An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order`, `submit_cart`,
+`publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`,
+`verify_tax_certificate`, `revoke_tax_certificate`, the admin tools (`set_member_role`,
+`set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
+`uninstall_plugin`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart` and `test_flow`) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
+agrees depends on the client.
+
+### Clients that ask their person
+
+A client on the 2026-07-28 revision that declares form elicitation is asked to confirm. The
+first call changes nothing and returns `input_required` with one elicitation, `confirm`: its
+message is the preview (what will happen), and it asks for `{ "confirm": true }`. The client shows
+it to the person, then retries the same call with their answer and the `requestState` it was
+given. The action runs only if the person accepted with `confirm: true`; a decline, a cancel or
+any other answer is a tool error, nothing happens, and that request state is used up. The same
+rules as a code apply to the request state: it belongs to the same person, tool and input, lasts
+5 minutes and works once. It is not a code: sent as `confirmation` it is refused, a code from the
+two-call flow is refused as request state, and on a client that elicits any `confirmation` is
+refused. So a model can't confirm on the person's behalf; what remains trusted is the client,
+which shows the question and reports the answer.
+
+### Other clients: two calls
+
+Any other client, including every 2025-era one, gets a preview and a code. The first call
+changes nothing and returns:
+
+```json
+{
+  "preview": { … },
+  "confirmation": "cfm_…",
+  "expiresAt": 1760000000000,
+  "next": "Nothing has happened yet. …"
+}
+```
+
+The `preview` is what the assistant's confirm card shows: the order or flow, and where the
+action leads. If the action is blocked (for example, you started the order and the workspace
+separates approvals), the call returns a tool error with the reason and no code. The tool
+descriptions and the server's instructions tell the model to show the preview to the person and to
+call again only once they agree. Here the model relays the code, so it is the model that is
+trusted to ask: prefer a client that elicits for anyone who can approve, cancel or publish.
+
+The action runs when the same person calls again with the same input plus `confirmation`, within
+5 minutes. A code works once. A code used by someone else, for another tool or with a different
+input (key order doesn't matter), or one that expired or was used, is refused with a tool error;
+call without it for a new preview. The role and the order's state are checked again when the
+action runs. A `submit_cart` code is also held to the cart as the preview showed it: if anything
+changed the cart in between (a `change_cart`, someone on the cart's page), the confirmed call is
+refused with "The cart changed since you confirmed; preview it again" and nothing is submitted.
+The same holds when the person confirms through an eliciting client.
+
+Reads, `propose_flow_change`, `draft_plugin`, `draft_product_content`, `create_cart` and
+`change_cart` do not take a code: a cart is only a draft of an order until `submit_cart`, and a
+product draft changes nothing until a person publishes it. Over [A2A](/reference/a2a/), typed skills
+(and `place_order`) run directly, as REST calls do, and `chat` already asks for `{ "confirm": true }`.
+
+Annotations also tell a client when to confirm:
+
+| Tools | Hints |
+|---|---|
+| Reads and `propose_flow_change` | `readOnlyHint: true` |
+| `draft_plugin`, `draft_product_content`, `create_cart`, `change_cart`, `create_flow`, `duplicate_flow`, `archive_flow` | save a draft (nothing runs until an admin approves the plugin, someone publishes the product's drafts or submits the cart): not read-only, not destructive, not idempotent |
+| `decide_approval`, `decide_approvals`, `cancel_order`, `submit_cart`, `publish_flow`, `publish_catalog`, `uninstall_plugin` | `destructiveHint: true`; all but `publish_flow` are also `idempotentHint: true` |
+| `deliver_event`, `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow`, `create_promotion`, `set_promotion_status`, `verify_tax_certificate`, `revoke_tax_certificate`, `set_member_role`, `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin` | writes, not destructive |
+
+`cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
+`assess_order` set `openWorldHint: true` (a started order runs its flow for real):
+cancelling voids payments and cancels shipments with the carrier, a submitted cart's order runs its
+flow (payments and shipping included), the stock review places reorders with suppliers, and an
+assessment may fetch an `https` image. The other tools set it to `false`.
+
+## Carts
+
+`list_carts` and `get_cart` read the carts your team opens on the Carts page; a cart a customer
+opened from their own purchasing system is not reached here. `get_cart` gives each line's
+`lineId`, which `change_cart` names in `set_qty`, `set_qtys` (several lines in one op, all or
+none) and `remove`, and the `shippingOptions` the
+flow offers for the cart's `shipTo`, whose `id` `set_shipping_option` names (`set_ship_to` sets the
+address). `change_cart` takes up to 20 `ops`,
+applied in order as you, each priced again by the cart's flow; it stops at the first one the cart
+refuses (a locked or ended cart, a line that is gone) and says how many went in. A cart's chat and
+files are never served, and its title and line names come back as one short line each.
+`submit_cart` also takes an optional `cartVersion` (the `version` you read), refused when the cart
+has changed since; the confirmation holds it to the cart as previewed either way.
+
+## Skills
+
+CommerceWorker also serves skills: written workflows that combine the tools above, such as triaging
+what needs attention or reviewing an approval. A client that supports the
+[Skills extension](https://modelcontextprotocol.io/extensions/skills/overview) on the 2026-07-28
+revision can list them and load one when it fits, or when you pick it. As with tools, you are
+offered only the skills your role can follow:
+
+<McpSkills />
+
+A skill is instructions, not an extra permission. Its actions still wait for you, as above. Each
+skill is a `SKILL.md` at `skill://<name>/SKILL.md`, listed with its digest and size so your client
+can check what it loads, and may be cached by the client for five minutes. Clients on the 2025
+revisions can list and read them too; whether a client offers them to you depends on its support
+for the extension.
+
+## Who did it
+
+Each write is also an [audit log](/guides/team-and-roles/#audit-log) event, `via` MCP with the `tool`; read-only tools are not logged.
+
+A write made over MCP is attributed to the person who approved the connection, with the channel:
+`<email> via MCP`. That string is the approval's `by` or ends the cancel reason, as `<email> via
+assistant` does for the panel (see [Who decided](/guides/team-and-roles/#who-decided)). A client
+using an API token acts as `token:<name>`.
+
+## Disconnecting
+
+**Account** lists **Connected apps** (MCP clients and A2A agents alike): the app's name, whether it
+connected over MCP or A2A, the address its access goes to, the role you granted and when it
+connected.
+**Disconnect** revokes the grant, and the app has to be connected again. Connecting and
+disconnecting are recorded in the [audit log](/guides/team-and-roles/#audit-log) as
+`oauth.app_connected` and `oauth.app_disconnected`. Access tokens last one hour and refresh
+tokens 30 days.
+
+## Security
+
+- **One endpoint per token.** `/mcp` and `/a2a` are separate OAuth resources of one authorization
+  server. A client requests `https://app.commerceworker.com/mcp` (a client that names no resource, and grants
+  made before A2A existed, are for MCP), and the access token it gets is refused at `/a2a`; an
+  A2A token is likewise refused here. Each endpoint publishes its own metadata at
+  `/.well-known/oauth-protected-resource/<path>`.
+- **Role cap.** A grant is never higher than the role of the person who approved it, and the
+  consent page offers no more. Pick the lowest role the client needs.
+- **Checked on every request.** CommerceWorker re-reads the person each time. A disabled or deleted
+  person's grants stop working at once. The role is the lower of the one granted and the
+  person's current role, so demoting someone narrows the apps they connected. A person whose role
+  must use two-factor sign-in and hasn't set it up, or who is still on a temporary password, gets
+  `403`.
+- **Credentials stay at the edge.** CommerceWorker resolves the caller before the request reaches the
+  tools; `Authorization` and cookies go no further, and the model never sees a token.
+- **Origin.** A request whose `Origin` is not an `http` or `https` origin is refused with `403`.
+  Other origins are accepted on purpose. The Origin check in the MCP specification guards against
+  DNS rebinding, where a web page reaches a server that trusts the browser it runs in. `/mcp` trusts
+  no browser: every request needs a bearer token, which a browser never attaches by itself, and
+  cookies are removed before the request reaches the tools. A page on another origin can't call it
+  as you unless it already holds your token.
+- **Rate limits.** Each caller (a person's grant or an API token) has 300 requests a minute on
+  `/mcp`, and another 300 on `/a2a`; over that it answers `429` with `Retry-After: 60`.
+  `/oauth/register` allows 10 requests a minute and `/oauth/token` 60, per address; over that it
+  answers `429 { "error": "slow_down" }` with `Retry-After: 60`.
+- **Tokens at rest.** Tokens are stored hashed and grant data encrypted.
+

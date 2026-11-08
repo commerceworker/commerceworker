@@ -1,0 +1,89 @@
+---
+title: Share assets with a link
+description: Give someone without an account a read-only page of a published asset or a collection, with an expiry, an optional password, and a link you can revoke.
+---
+
+A **share link** opens a read-only page of one published asset, or of a collection's published
+assets, for anyone who has the link. It is for sending a file to a client or a press kit to a
+journalist, without an account or a delivery key. The page lists the files with a preview and, if
+you allow it, a download button.
+
+## Before you start
+
+- Creating, listing and revoking links needs `content:publish`. The list carries each link's URL, so
+  it is as sensitive as the links.
+- An asset must be **published** to be shared. A draft or archived asset is refused with a **409**:
+  publish it first.
+- A link shows only what is published when someone opens it. Unpublishing an asset removes it from
+  the page (and from its files) within a couple of minutes, and a collection's page lists only its
+  published members, so a draft is never exposed through a link.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Create a link
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/share-links" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{
+    "targetType": "collection",
+    "targetId": "'"$COLLECTION_ID"'",
+    "expiresAt": "2026-12-01T00:00:00Z",
+    "allowDownload": true,
+    "password": "correct horse battery"
+  }'
+```
+
+| Field | What it is |
+| --- | --- |
+| `targetType`, `targetId` | `asset` or `collection`, and its id (an unknown target is a **404**) |
+| `expiresAt` | When the link stops working: between 5 minutes and 90 days from now |
+| `allowDownload` | Whether the page offers downloads; otherwise files open in the browser only |
+| `password` | Optional, 8 to 256 characters. The page asks for it first. It is stored only as a salted hash and never returned |
+
+The response (`201`) is the link: `id`, `expiresAt`, `allowDownload`, `hasPassword`, `createdAt`,
+`createdBy` and `url`, which looks like
+`https://media.your-workspace.commerceworker.com/s/{space}/{env}/{linkId}/{token}`. The token is part of the address, so
+the address can't be guessed or edited into another link's. `GET …/share-links` lists links newest
+first (`targetType`, `targetId` and `includeInactive=true` filter; expired and revoked links are
+left out by default), and `GET …/share-links/{id}` reads one.
+
+## What the visitor sees
+
+Opening the link shows a page with the files. The same address returns JSON when asked for it
+(`?format=json`, or an `Accept: application/json` header): the title, `expiresAt`, `allowDownload`
+and a `files` array with each file's name, type, size, dimensions and `href`. A file is at
+`…/f/{assetId}/{fileName}` under the link; adding `?download` makes it a download, and is
+honoured only when the link has `allowDownload`. Pages are marked `noindex`, and a file can be
+fetched with a byte range.
+
+With a password, the visitor first sees a form. A right password sets a cookie for that link
+only, which lasts up to 12 hours and never past the link's expiry. A wrong one shows the form again,
+and after 10 attempts in a minute from one address, or from all addresses together, the page
+answers **429** until the minute passes.
+A file requested without the cookie answers **401**.
+
+## Expiry and revoking
+
+A link is checked on every request. Once `expiresAt` passes it answers **410** at once. To end one
+earlier, `DELETE …/share-links/{id}` revokes it (calling it again changes nothing; a revoked link
+can't be restored, so create a new one). A revoked link answers **410** within seconds, and the
+copies of its page held at the edge are purged. A link to a collection also stops showing an
+asset when that asset is unpublished, and a deleted collection's links stop opening.
+
+Webhooks get `asset_share.created` and `asset_share.revoked` (with `linkId`), so you can audit who
+shared what; see [Webhooks](/content/guides/webhooks/).
+
+## From code
+
+The MCP tools are `share_links_list`, `share_link_create`, `share_link_get` and `share_link_revoke`, with the same
+scope. The Management SDK has `cma.assets.shareLinks.create`, `list`, `get` and `revoke`
+([SDKs](/content/guides/sdks/#writing-content)).
+
+To hand someone every file of a collection at once, build a [zip download](/content/guides/media/#download-as-a-zip)
+instead.
+
+## Next steps
+
+- [Media and assets](/content/guides/media/) to organize the library and its collections.
+- [Delivering assets](/content/guides/delivering-assets/) to serve published files to your own site instead.

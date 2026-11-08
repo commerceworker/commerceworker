@@ -1,0 +1,216 @@
+---
+title: Navigation menus
+description: Build named menus of entry, taxonomy and URL links, reorder them, and render them from Delivery, resolved against what is published.
+---
+
+A menu is a named tree of links, such as your header navigation (`main`) or your footer (`footer`).
+CommerceWorker serves no site, so a menu is data: you keep it here, Delivery hands it out resolved,
+and your front end renders it. Each environment has its own menus, and they travel with
+[snapshots, exports and clones](/content/guides/environments/#export-and-import-a-snapshot).
+
+## Before you start
+
+- Reading menus needs `preview:read`; creating, changing, reordering or deleting them needs
+  `content:manage`. Delivery's menu routes need `delivery:read`. See
+  [Team and roles](/content/guides/team-and-roles/).
+- An environment holds up to 100 menus. A menu holds up to 250 items in all, nested at most 3
+  levels deep (top-level items are level 1).
+- To link an entry, its content type needs a [URL pattern](/content/guides/content-modeling/#url-pattern)
+  such as `/blog/{slug}`: that is where the link points.
+
+## Live, not versioned
+
+A menu has no draft or published state: a saved change is what Delivery serves next. What keeps a
+menu from showing unpublished work is that its links are resolved when Delivery reads it. An item
+that links to an entry is served only while that entry is published, with the URL its published
+fields give it. Publishing a page makes its menu item appear, unpublishing it takes the item away,
+and a slug change moves the link, all without saving the menu again.
+
+## Items
+
+Each item has a link, and optionally a label, a target and attributes:
+
+| Field      | Meaning                                                                                                   |
+| ---------- | --------------------------------------------------------------------------------------------------------- |
+| `id`       | Stable within the menu. Give one or leave it out and one is made; moves name items by it                  |
+| `link`     | Where the item points (below)                                                                              |
+| `label`    | Up to 120 characters. Required for a URL link; left out, an entry's display field or a term's label is used |
+| `target`   | `_blank` opens the link in a new tab; `_self` or nothing, the same one                                    |
+| `attrs`    | Up to 8 of `rel`, `title`, `class`, `aria-label` and `data-*`, each up to 256 characters                  |
+| `children` | Nested items, the same shape                                                                               |
+
+A link is one of three kinds:
+
+| Link                                                            | Resolves to                                                                       |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `{ "type": "entry", "entryId": "…" }`                           | The published entry's path from its type's URL pattern, in the requested locale   |
+| `{ "type": "term", "termKind": "tag" \| "concept", "termId": "…" }` | The term's label and slug; `url` is `null`, so route the term by its slug yourself |
+| `{ "type": "url", "url": "…" }`                                 | The URL as written                                                                |
+
+A URL link takes a site path (`/about`, `/search?q=x`), a fragment or query on the current page
+(`#top`, `?page=2`), an absolute `http://` or `https://` URL without credentials, or a `mailto:` or
+`tel:` link. Anything else, such as `javascript:`, `data:` or a protocol-relative `//host`, is
+refused. Attributes are limited to the names above so an item never carries an event handler, a
+style or its own `href`.
+
+A save is refused with `422`, naming each bad item by its path (`items[0].children[1].link`), for a
+malformed item, a link to an entry or term that doesn't exist, or a link to an entry whose content
+type has no URL pattern. Only links the save adds are checked, so a link that went stale later
+never blocks the rest of the menu from being saved.
+
+## Manage menus in the admin
+
+**Settings > Menus** lists the environment's menus and opens one as an indented tree. Each item shows
+the label and URL Delivery would serve, or why it serves nothing. Add an item as a URL, an entry
+(picked by search) or a tag or concept. Reorder from the keyboard: each row has **Move up**, **Move
+down**, **Out a level** and **In a level** buttons, and Alt+arrow keys on a focused row do the same.
+If someone else saved the menu since you opened it, your change is refused and you're asked to
+reload.
+
+## Manage menus over the API
+
+| Route                                   | Does                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `GET …/menus`                           | `{ items, total }`: every menu by handle, with `itemCount` and `revision`, without items  |
+| `POST …/menus`                          | Creates `{ handle, name, description?, items? }`; `409` when the handle is taken          |
+| `GET …/menus/{id}`                      | The menu with its item tree and `revision`                                                |
+| `GET …/menus/{id}/preview`              | Each item as Delivery would resolve it now (below); `?locale=`                            |
+| `GET …/menus/resolve/{handle}`          | The menu exactly as Delivery serves it, with your role's content grants; `?locale=`       |
+| `PATCH …/menus/{id}`                    | Fields left out keep their value; `items` replaces the whole tree; `revision` optional    |
+| `POST …/menus/{id}/move`                | `{ itemId, parentId, index, revision? }` moves an item and everything under it           |
+| `DELETE …/menus/{id}`                   | `?revision=` optional                                                                     |
+
+`…` is `/spaces/{space}/environments/{env}`. A handle is lowercase letters and digits joined by `-`
+or `_`, up to 64 characters, and unique in the environment.
+
+Every save bumps the menu's `revision`. Send the revision you read with a change and a menu someone
+saved since is refused with `409`, so two editors can't silently overwrite each other; leave it out
+and the change applies to the menu as it now stands.
+
+**Move** reorders without sending the tree back: `parentId` is the new parent's item id, or `null`
+for the top level, and `index` is the position among the new siblings (past the end appends). A
+move under the item itself, or one that would nest past 3 levels, is refused with `422`; an item or
+parent not in the menu is `404`.
+
+```json
+POST /spaces/your-space/environments/main/menus
+{
+  "handle": "main",
+  "name": "Main navigation",
+  "items": [
+    { "id": "home", "label": "Home", "link": { "type": "url", "url": "/" } },
+    {
+      "id": "docs",
+      "link": { "type": "entry", "entryId": "0190b3f2-…" },
+      "children": [
+        { "label": "Status", "link": { "type": "url", "url": "https://status.example.com" }, "target": "_blank", "attrs": { "rel": "noopener" } }
+      ]
+    },
+    { "link": { "type": "term", "termKind": "tag", "termId": "0190b3f9-…" } }
+  ]
+}
+```
+
+### Preview
+
+`GET …/menus/{id}/preview` returns every item with the label and URL Delivery would serve and a
+`status`, dropping nothing, so you can see why an item isn't showing:
+
+| Status        | Meaning                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
+| `live`        | Delivery serves it                                                              |
+| `unpublished` | The entry exists but isn't published                                            |
+| `missing`     | The entry or term no longer exists                                              |
+| `no_url`      | The entry's type has no published URL pattern, or a slug it names has no value in this locale |
+| `hidden`      | It links to a content type your role can't read (or its URL is built from a field your role is denied) |
+
+## Read menus from Delivery
+
+| Route                                         | Returns                                                     |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| `GET /delivery/{space}/{env}/menus`           | `{ items, total }`: each menu's `handle`, `name` and optional `description` |
+| `GET /delivery/{space}/{env}/menus/{handle}`  | The menu resolved: `{ handle, name, description?, locale, items }`; `404` for an unknown handle |
+
+`?locale=` resolves labels, slugs and paths in that locale, following the space's fallbacks; it
+defaults to the space's default locale. Each delivered item has `id`, `label`, `url`, optional
+`target` and `attrs`, `entry: { id, contentType }` for an entry link, `term: { kind, id, slug,
+schemeId? }` for a term link, and `children`.
+
+An item whose link doesn't resolve is dropped and **its children take its place**: the entry is
+unpublished or deleted, the term is deleted, its type has no published URL pattern, a slug has no
+value in the locale, the key is limited to content types that don't include the entry's type, or
+the key is denied a slug field the type's URL pattern names. A key denied the type's display field
+gets the item's own label, or the entry's id, never the field's value. Unpublishing a section page
+never hides the pages under it.
+
+Content grants apply on the management side too: a role limited to some content types sees an
+entry link to another type as `hidden` in the preview, without its title, and linking an entry it
+can't read is refused as if the entry didn't exist.
+
+Menu responses are cached like other Delivery reads. They are purged when a menu is saved, moved
+or deleted, and when an entry is published or unpublished, since either can change what a menu
+resolves to. The whole menu is read in one database round trip.
+
+## Render a menu
+
+`@commerceworker/sdk` reads menus with `menus()` and `menu(handle, { locale })`:
+
+```ts
+import { createDeliveryClient, type DeliveredMenuItem } from '@commerceworker/sdk';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CDA_TOKEN!,
+});
+
+const main = await client.menu('main', { locale: 'de' });
+
+const render = (items: readonly DeliveredMenuItem[]): string[] =>
+  items.flatMap((item) => [
+    `${item.label} → ${item.url ?? `/tags/${item.term?.slug}`}`,
+    ...render(item.children).map((line) => `  ${line}`),
+  ]);
+console.log(render(main.items).join('\n'));
+```
+
+`menu()` throws a `DeliveryError` with status `404` for a handle no menu has.
+`@commerceworker/sdk/management` manages them under `menus`: `list`, `get`, `preview`, `resolve`,
+`create`, `update`, `moveItem` and `delete`.
+
+```ts
+import { createManagementClient } from '@commerceworker/sdk/management';
+
+const cma = createManagementClient({
+  baseUrl: 'https://api.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CMA_TOKEN!,
+});
+
+const footer = await cma.menus.create({
+  handle: 'footer',
+  name: 'Footer',
+  items: [{ id: 'legal', label: 'Legal', link: { type: 'url', url: '/legal' } }],
+});
+await cma.menus.moveItem(footer.id, {
+  itemId: 'legal',
+  parentId: null,
+  index: 0,
+  revision: footer.revision,
+});
+```
+
+## Agents
+
+The MCP server has `menus_list`, `menus_get`, `menus_preview`, `menus_resolve` (the menu exactly as
+Delivery serves it), `menus_create`, `menus_update`, `menus_move_item` and `menus_delete`. See
+[MCP server](/content/guides/mcp/).
+
+## Next steps
+
+- [Content modeling](/content/guides/content-modeling/#url-pattern) for the URL pattern entry links use.
+- [Reading content](/content/guides/reading-content/) for the other Delivery routes.
+- [SDKs](/content/guides/sdks/) for the clients.
+- [REST API](/content/reference/rest-api/) lists every menu route.

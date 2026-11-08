@@ -1,0 +1,108 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commerceworker-web",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-10-01",
+  // global_fetch_strictly_public: MCP clients that identify by a Client ID Metadata Document
+  // (an https client_id) are fetched from the public internet only.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Every request is logged and traced (sampling 1 = all of them); lower the rate once traffic
+  // makes the volume or cost matter.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "issues": { "enabled": true },
+    "traces": { "enabled": true }
+  },
+  // A runaway request stops at 5 s of CPU (the default is 30 s). Rendering, a PBKDF2 sign-in and an
+  // EDI batch each use well under a second.
+  "limits": { "cpu_ms": 5000 },
+  // Runs near D1 and the engine rather than near the visitor: most requests make several calls to
+  // each.
+  "placement": { "mode": "smart" },
+  "upload_source_maps": true,
+  // Trace events also go to Workers Logpush: the deployment's job (scripts/provision.sh) keeps
+  // them in its logs bucket past Workers Logs' 7 days. See docs/operations.md, "Logs".
+  "logpush": true,
+  // Served only at app.commerceworker.com, so the zone's rules apply to every request: no workers.dev or
+  // preview URL as a second way in.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "app.commerceworker.com", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  // Same bucket as the engine: the web app serves invoices, POs and inbound documents from it.
+  "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
+  "services": [
+    { "binding": "ENGINE", "service": "commerceworker-engine", "entrypoint": "EngineApi" },
+    // The product catalog's admin API (/api/v1/catalog).
+    { "binding": "CATALOG", "service": "commerceworker-catalog", "entrypoint": "CatalogApi" }
+  ],
+  // OAuth for MCP clients (@cloudflare/workers-oauth-provider): registered clients, grants and
+  // tokens (hashed; props encrypted). No id: the namespace is created on first deploy.
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
+  // Per-address limits on OAuth client registration and token requests, which need no sign-in.
+  "ratelimits": [
+    {
+      "name": "OAUTH_REGISTER_LIMIT",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "OAUTH_TOKEN_LIMIT",
+      "namespace_id": "1002",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    // Per caller (app/lib/rate-limit.ts): each API token or person on /api/v1, each MCP or A2A
+    // principal, each webhook integration. The registry's `limits` changes them per deployment.
+    { "name": "API_LIMIT", "namespace_id": "1003", "simple": { "limit": 600, "period": 60 } },
+    { "name": "AGENT_LIMIT", "namespace_id": "1004", "simple": { "limit": 300, "period": 60 } },
+    { "name": "WEBHOOK_LIMIT", "namespace_id": "1005", "simple": { "limit": 1200, "period": 60 } }
+  ],
+  "vars": {
+    // Plugins' other paths, JSON of alias → plugin id (e.g. "/punchout/" → punchout): a request
+    // under the alias is answered as under /plugins/<id>/. scripts/fleet.ts renders it from the
+    // registry's plugins.<id>.alias; this is app.commerceworker.com's (deployments/commerceworker.jsonc).
+    "PLUGIN_ALIASES": "{\"/punchout/\":\"punchout\"}",
+    // Inbound orders: JSON from "model:channel" or "model:*" to a flow id. Anything not routed
+    // starts the model's default template.
+    "ORDER_ROUTES": "",
+    // EDI 850s: JSON from a trading partner's ISA sender id to the customer it orders for. A
+    // sender not listed here is refused.
+    "EDI_PARTNERS": "",
+    // "true" only on a demo deployment (scripts/fleet.ts sets it): one-click sign-in as a shared
+    // operator, with people, tokens, integrations and webhooks locked (app/lib/demo.server.ts).
+    "DEMO_MODE": "",
+    // Single sign-on (app/lib/sso.server.ts): the OpenID Connect issuer and client id, from the
+    // registry's `sso`. With the OIDC_CLIENT_SECRET secret, they put "Sign in with single sign-on"
+    // on the sign-in page; admins set the rest on the Team page. Empty: no SSO.
+    "OIDC_ISSUER": "",
+    "OIDC_CLIENT_ID": "",
+    // "true" when the provider leaves out email_verified for addresses it owns (Entra ID): the
+    // registry's sso.trustEmail. Otherwise an unverified email never matches anyone.
+    "OIDC_TRUST_EMAIL": "",
+    // Turnstile on password sign-in and /setup (app/lib/turnstile.server.ts): the widget's public
+    // site key, from the registry's turnstileSiteKey, checked with the TURNSTILE_SECRET_KEY secret.
+    // Empty: no check, as in local development.
+    "TURNSTILE_SITE_KEY": ""
+  }
+  // Secrets (wrangler secret put): SETUP_TOKEN — the one-time setup code that creates an admin on
+  // /setup (app/lib/setup.server.ts); a new one recovers admin access. SHOPIFY_WEBHOOK_SECRET —
+  // the Shopify app's client secret; enables POST /api/v1/channels/shopify/orders, with
+  // SHOPIFY_SHOPS, the *.myshopify.com stores it takes orders from.
+  // STRIPE_WEBHOOK_SECRET — the Stripe webhook endpoint's signing secret (whsec_…); enables
+  // POST /api/v1/webhooks/stripe. PRINCIPAL_KEY — signs what this Worker forwards to the engine.
+  // DATA_KEY (and DATA_KEY_PREVIOUS during a rotation) — encrypts the secrets stored in D1.
+  // PASSWORD_PEPPER — mixed into every password hash (pbkdf2p); never change or remove it once set.
+  // OIDC_CLIENT_SECRET — the identity provider's client secret for single sign-on.
+  // TURNSTILE_SECRET_KEY — the Turnstile widget's secret, required with TURNSTILE_SITE_KEY. Signed webhooks
+  // use integration keys (/api/v1/integrations), stored in D1, not a secret here.
+}

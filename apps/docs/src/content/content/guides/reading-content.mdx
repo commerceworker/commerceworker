@@ -1,0 +1,346 @@
+---
+title: Reading content
+description: The Delivery and Preview APIs - filtering, sorting, locales, embedded references, delta sync, search, GraphQL and live updates.
+---
+
+Sites and apps read content through two read-only APIs:
+
+- **Delivery**, `/delivery/{space}/{env}`, serves **published** content. Use a Delivery (CDA) key.
+  This page is about Delivery.
+- **Preview**, `/preview/{space}/{env}`, serves the **latest saved** version, drafts included. Use
+  a Preview (CPA) key, and only from a staging site or server. See [Preview](#preview) for how it
+  differs.
+
+Delivery is served from the workspace's `cdn.` address (`$CDN` below), a cached read path of its
+own; Preview is served from its `api.` address (`$API`), uncached. `{env}` may be an environment
+or an alias, so production can read `/delivery/acme/production`
+while you change which environment `production` points to.
+
+## Entries
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries/$ENTRY_ID?locale=en-US&include=1" \
+  -H "Authorization: Bearer $CDA"
+```
+
+A delivered entry is `{ id, contentType, fields, publishedAt }`. Lists return
+`{ items, total }`, where `total` is the number of items on this page, not the number of matches;
+page with `limit` and `skip` until a page comes back short.
+
+`include` embeds links wherever an entry holds them: in `Link` and list fields, inside components,
+and inside rich text, where an embed or entry link's `data.target` becomes the linked entry or
+asset. A link to something unpublished, or beyond the depth, stays `{ "id": …, "linkType": … }`.
+
+| Parameter      | Example                         | Meaning                                                    |
+| -------------- | ------------------------------- | ---------------------------------------------------------- |
+| `content_type` | `content_type=article`          | Only entries of this type                                  |
+| `locale`       | `locale=de-DE`                  | Resolve every field to this locale, following fallbacks     |
+| `include`      | `include=2`                     | Embed linked entries and assets, up to this depth (0 to 10) |
+| `limit`, `skip`| `limit=20&skip=40`              | Paging; `limit` is at most 100                             |
+| `order`        | `order=-sys.publishedAt,fields.title` | Sort; `-` for descending                             |
+| `select`       | `select=fields.title,fields.slug` | Return only these fields                                 |
+| `query`        | `query=launch`                  | Full-text match over text fields                           |
+| `since`        | `since=2026-10-01T00:00:00Z`    | Only entries changed since then, for delta sync            |
+
+Without `locale`, each field is keyed by locale (`{ "title": { "en-US": "…" } }`); with it, each
+field is a plain value, with the [fallback chain](/content/start/concepts/#locales) applied. A locale the
+space doesn't deliver is never served: naming it answers `404` (on entries, menus, taxonomy and
+assets alike), the fallback chain skips it, and it is left out of every per-locale map (asset
+text included), of the sitemap's alternates, of GraphQL, of search matches and snippets, of the
+live stream, and of what list filters, ordering and `query=` compare. A locale the space doesn't
+have at all still resolves to the default.
+
+### Singletons
+
+A [singleton type](/content/guides/content-modeling/#singletons) has one entry, read by the type's API ID:
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/singletons/settings?locale=en-US&include=1" \
+  -H "Authorization: Bearer $CDA"
+```
+
+It returns the published entry in the same shape as `…/entries/{id}`, and takes `locale` and
+`include`. It answers `404` when the type is not a singleton as last published, or its entry is
+not published.
+
+### Filters
+
+Filter on any field with `fields.<apiId>`, and on system fields with `sys.<name>`:
+
+| Filter                                | Matches                                 |
+| ------------------------------------- | --------------------------------------- |
+| `fields.category=news`                | equal                                   |
+| `fields.category[ne]=news`            | not equal                               |
+| `fields.category[in]=news,events`     | any of                                  |
+| `fields.category[nin]=news,events`    | none of                                 |
+| `fields.price[gte]=10&fields.price[lt]=50` | ranges: `gt`, `gte`, `lt`, `lte`   |
+| `fields.hero[exists]=true`            | has a value                             |
+| `fields.price[between]=10,50`         | in the range, both ends included        |
+| `fields.title[match]=launch`          | text contains (case-insensitive)        |
+| `fields.title[startsWith]=launch`     | text starts with (case-insensitive)     |
+| `fields.seo.title[match]=guide`       | a component's member; through a list of components, any element's |
+| `fields.author[ref]=<entryId>`        | the link field links to that entry      |
+| `fields.related[refIn]=<id>,<id>`     | it links to any of them                 |
+| `links_to_entry=<entryId>`            | any field links to that entry (`<id>,<id>` for any of several) |
+| `sys.publishedAt[gt]=2026-10-01`      | system fields work the same way         |
+| `order=-sys.firstPublishedAt`         | newest first by first publish, not by the last republish |
+| `content_type=article&order=sys.position` | the type's manual order (creation order until entries are moved) |
+
+Delivery reads the links of the published version, Preview those of the current one, in any
+locale. A link counts where the content type declares one: a Link field, a list of links, a
+rich-text embed or a component's Link member; a lookalike `{ "id", "linkType" }` inside a JSON
+field does not. Reference filters can't target an id containing `"`, `\` or a non-ASCII
+character (refused with `422`). An empty `links_to_entry=` is no filter. On Delivery a link counts
+as the type declared it when the entry was published, so editing the type later doesn't hide it. A key whose role hides a field cannot use `links_to_entry`,
+which looks inside every field.
+
+A component member is filtered by its path, `fields.seo.title`. A `where` tree names at most 4
+paths (`422` past that); top-level path filters have no cap, and past 4 the extra ones cost a
+wider scan rather than a refusal. A query-string key with more than 4 segments, or a numeric segment (`fields.blocks.0`), isn't a
+filter and is ignored, as before; the same path inside `where` is refused with `422`.
+
+### OR and AND groups
+
+Filters in the query string all have to match. For "this or that", pass `where`, a JSON tree of
+`and` and `or` groups over the same filters (each `{ "field", "op", "value" }`, `op` defaulting to
+`eq`), ANDed with the other parameters:
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article" \
+  --data-urlencode 'where={"or":[{"field":"fields.title","op":"startsWith","value":"How"},{"and":[{"field":"fields.category","value":"news"},{"field":"fields.views","op":"gte","value":100}]}]}' \
+  -G -H "Authorization: Bearer $CDA"
+```
+
+Groups nest at most 4 deep and hold at most 20 filters in all, the parameter at most 8,192
+characters; a malformed tree is refused with `422`, naming where in it the problem is. Repeated
+`where` parameters are ANDed, sharing those limits; an empty `where=` is no filter. Filter tags and concepts by id
+(`metadata.tags`) inside `where`; slugs work only as top-level parameters.
+
+### Behaviour changes
+
+- A path filter such as `fields.seo.title=…` now filters by the component member. Before, a
+  dotted key was not a filter and was ignored.
+- `match` on a list field (a list of Symbols, or a path through a list of components) matches
+  when any element contains the text. Before, it never matched a list.
+- An empty `match` (`fields.title[match]=`) still means "has a value", and an `in` list may still
+  be longer than 100 values; the stricter checks apply to the new operators and to `where`.
+- During a rollback to a Worker from before these filters, it ignores the parameters it doesn't
+  know (`where`, `links_to_entry`, `[ref]`, `[startsWith]`, a path filter) and answers without
+  them: a wider list, not an error.
+
+Entries a role-bound key can't read are left out of lists, and denied fields are removed; see
+[Roles](/content/guides/api-keys/#roles).
+
+## Tags and concepts
+
+Archive pages ("everything tagged *News*") read the space's taxonomy and filter entries by it.
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/taxonomy/tags/news?locale=de-DE" \
+  -H "Authorization: Bearer $CDA"
+```
+
+```json
+{
+  "id": "…",
+  "slug": "news",
+  "label": "Nachrichten",
+  "description": "What happened this week",
+  "count": 42,
+  "countsByContentType": { "article": 40, "page": 2 }
+}
+```
+
+| Request                                   | Returns                                                       |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `…/taxonomy/tags`                         | Every tag, by slug, as `{ items }`                            |
+| `…/taxonomy/tags/{slug}`                  | One tag; `404` when no tag has the slug                       |
+| `…/taxonomy/concepts?scheme={schemeId}`   | Every concept (of one scheme), with `schemeId` and `broaderId` |
+| `…/taxonomy/concepts/{slug}?scheme={id}`  | One concept; `409` when two schemes share the slug and no `scheme` is given |
+
+`label` is in the `locale` you ask for, following the [fallback chain](/content/start/concepts/#locales)
+to the default locale's label; without `locale` you get the default label and `labels`, every
+locale's. `count` is how many **published** entries carry the term (drafts, unpublished and
+trashed entries don't count); `content_type=article` counts articles only. A role-bound key counts
+only the content types it may read.
+
+Then list the archive's entries by the term's slug (or its id, with `metadata.tags`):
+
+| Filter                                  | Matches                                   |
+| --------------------------------------- | ----------------------------------------- |
+| `metadata.tags.slug=news`               | entries tagged `news`                     |
+| `metadata.tags.slug[in]=news,sport`     | tagged with any of them                   |
+| `metadata.tags.slug[nin]=news`          | not tagged `news`                         |
+| `metadata.concepts.slug=cats`           | entries carrying the concept `cats`       |
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article&metadata.tags.slug=news&order=-sys.publishedAt&limit=20" \
+  -H "Authorization: Bearer $CDA"
+```
+
+A slug is unique among the environment's tags (a concept's, within its scheme), and it never
+changes when an editor renames the term: only setting a new slug moves an archive URL.
+
+## Assets
+
+`GET /delivery/{space}/{env}/assets` and `…/assets/{id}` return published assets as
+`{ id, title, description, altText, focalPoint, contentType, size, width, height, kind, url,
+renditions, srcset, placeholder, video?, rights?, file }`. With `?locale=`, the title, description and alt text
+are one locale's text. The list pages with `limit` and `cursor` (the response's `nextCursor`) and
+filters by `kind`, `tag` and `folder`.
+
+`…/assets?q=coffee` searches published assets instead (file name, title, caption, alt text, tag
+names and the text of documents, by words and by meaning) and answers `{ items, total, facets }`.
+A search needs a key with **`search:read`** as well as `delivery:read`; without it the answer is
+**403**. See [Delivering assets](/content/guides/delivering-assets/#search).
+
+Their URLs point at the workspace's `media.` address, are immutable and carry a signature (use
+them as given; an edited one is a `404`): `url` is the original,
+`renditions` your space's named sizes and `srcset` a ladder of widths for responsive images.
+Unpublishing an asset stops its URLs, and so does its rights' expiry (they answer `410 Gone`). Preview's `…/assets` routes return drafts in the same shape
+with short-lived signed URLs. See [Delivering assets](/content/guides/delivering-assets/).
+
+`…/assets/{id}/transform` is deprecated: see [the transform endpoint](/content/guides/delivering-assets/#the-transform-endpoint-deprecated).
+
+A key bound to a [role](/content/guides/api-keys/#roles) with content grants gets an empty asset list
+(`{ "items": [], "total": 0 }`, plus empty `facets` for a search) and a **403** on a single asset: assets aren't covered by
+per-content-type grants, so they stay closed to it.
+
+## Search
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/search?q=waterproof+running+shoes&top_k=10" \
+  -H "Authorization: Bearer $CDA"
+```
+
+Search is **hybrid** by default, combining keyword and semantic matching; pass `mode=semantic` or
+`mode=lexical` to use one. Hits are `{ entryId, score, snippet }`. It needs `search:read`, which
+Delivery keys have.
+
+## GraphQL
+
+Each environment has a GraphQL endpoint whose schema is generated from your published content
+types: one type per content type, with typed fields and linked entries as nested objects, plus a
+typed `asset` query (see [Delivering assets](/content/guides/delivering-assets/#graphql)).
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/graphql" \
+  -H "Authorization: Bearer $CDA" -H 'content-type: application/json' \
+  -d '{ "query": "{ articleCollection(limit: 5, locale: \"en-US\") { id title } }" }'
+```
+
+Each content type gets `article(id:, locale:)` and `articleCollection(...)` root queries, plus
+`asset(id:)` and `search(query:, topK:)`. A singleton type's root takes no `id`: `settings(locale:)`
+is its published entry. A collection takes:
+
+| Argument | Meaning |
+| --- | --- |
+| `locale` | Resolve every field to this locale |
+| `limit`, `skip` | Paging; `limit` is at most 100 |
+| `where` | A JSON object of the [filters](#filters) above, keyed the same way: `{"fields.category[in]": ["news", "events"], "fields.price[gte]": 10}`. `and` and `or` keys hold [groups](#or-and-and-groups): `{"or": [{"field": "title", "op": "startsWith", "value": "A"}, …]}` |
+| `order` | A list of sort keys, `["-sys.publishedAt", "fields.title"]` |
+| `search` | Full-text match over text fields, like `query=` |
+
+Each field resolves to one value, in the `locale` you pass or, without one, the space's default
+locale. Linked entries resolve one level deep. A GraphiQL page at `/graphiql/{space}/{env}` lets you explore
+it (queries still need a key).
+
+The schema changes when a content type is published: a live type keeps the definition last published
+through any draft. Two things to expect:
+
+- A type that has never been published is in the schema as it stands, and changes as it is saved.
+  Publish a type before you rely on its shape.
+- An entry can be published while its type has a draft. If it holds a value for a field only the draft
+  has, the REST API serves that value at once, and GraphQL has no such field until the type is
+  published.
+
+## Live updates
+
+`GET /delivery/{space}/{env}/live` is a Server-Sent Events stream of published-content events for
+the environment: `entry.published`, `entry.unpublished`, `entries.published_bulk`,
+`asset.published`, `asset.unpublished`, `content_type.published`, `release.published` and
+`environment_alias.changed`. Add `?types=entry.published,entry.unpublished` to receive only those
+types. A key sees only what it could read: with a role that limits content types or
+hides fields, it gets events for its types only, with those fields left out. An
+`entry.published` carries only the locales the space delivers. The server ends each
+stream after ten minutes, so reconnect when it closes (as `EventSource` does on its own); that is
+also when a revoked key or a changed role takes effect. Use it to refresh a page or invalidate a cache the moment content changes, instead of polling. For server-to-server notifications, use [webhooks](/content/guides/webhooks/).
+
+## Routes
+
+`GET /delivery/{space}/{env}/routes` returns where each published content type's entries live on
+your site, so a front end can route pages from the content model instead of hard-coding them:
+
+```json
+{
+  "items": [
+    { "contentType": "article", "urlPattern": "/blog/{slug}" },
+    { "contentType": "page", "urlPattern": "/{slug}" }
+  ],
+  "total": 2
+}
+```
+
+Only published content types that have a URL pattern are listed, sorted by `contentType`. A
+pattern's placeholders are `{id}`, `{locale}` or one of the type's Slug fields (see
+[Content modeling](/content/guides/content-modeling/)). A key whose role limits it to some content types
+sees only their routes. A type with an unpublished revision stays listed under its last published
+pattern until the revision is published.
+
+## Redirects, menus and the sitemap
+
+Each of these has its own guide; Delivery's side of them is short.
+
+**Redirects.** `GET /delivery/{space}/{env}/redirects` returns the environment's enabled redirects as `{ items,
+total }`, each with `id`, `source`, `destination`, `status` and an optional `locale`; `GET
+…/redirects/resolve?path=&locale=` answers one path with `{ redirect, status, location }`, or `404`.
+CommerceWorker serves no site, so your front end or an edge function applies them. See
+[Redirects](/content/guides/redirects/).
+
+**Menus.** `GET /delivery/{space}/{env}/menus` lists the navigation menus' handles and names; `GET
+…/menus/{handle}?locale=` returns one as a tree ready to render: entry links carry the published
+entry's URL from its type's URL pattern, and an item whose entry isn't published is dropped, its
+children taking its place. See [Navigation menus](/content/guides/menus/).
+
+**Sitemap.** `GET /delivery/{space}/{env}/sitemap` lists your published pages, each with its paths per locale
+and `lastmod`, leaving out pages marked `noindex` or canonical elsewhere; `GET …/sitemap.xml?base=`
+answers the XML a crawler reads. See [SEO and sitemaps](/content/guides/seo/).
+
+## Caching
+
+Delivery answers from a cache in front of the database. Your key is checked on every request,
+before the cache, so revoking a key or narrowing its role takes effect at once where it was made
+and within about a minute in other locations; keys that may see the same content share cached
+responses. A cached response is fresh for a minute and is purged
+when anything in its environment is published, unpublished, re-pointed by an alias change or has its redirects or menus changed;
+responses carry an `ETag`, so `If-None-Match` gets a `304` when nothing changed.
+
+You don't need a long cache of your own in front of it. For static sites, rebuild on the
+`entry.published` [webhook](/content/guides/webhooks/) or use `since=` to fetch only what changed.
+
+## Preview
+
+Preview is served from the `api.` address (uncached) and has three routes: `GET
+/preview/{space}/{env}/entries`, `…/entries/{id}` and `…/suggest`. It takes `locale`, `content_type`
+and the same filters as Delivery, but ignores `include`, so linked entries stay as references, and
+it has no assets, search, GraphQL or live routes. Its entries list pages with a cursor, and refuses
+`skip`: pass the response's `nextCursor` back as `cursor` (with the same filters and `order`) until
+there is none. Each entry carries `updatedAt`, and `order=-sys.updatedAt` lists the most recently
+changed first. It also carries who wrote it: `createdAt`, `createdBy`, `updatedBy` (who made the
+last change) and `firstPublishedAt`, each null when unknown, and `sys.createdBy=me` lists the
+caller's own entries (for an API key, `me` is its kind, so every key of that kind). `createdBy`
+and `updatedBy` go only to people on the team and to keys with a management scope: a preview key
+gets entries without them, and filtering or sorting on them from one answers `400`. Delivery serves `firstPublishedAt` and no other authorship: who created or
+changed an entry names people and keys. `…/singletons/{apiId}` returns a singleton's entry as it
+is now, a draft included. `…/entries/{id}` also accepts
+`?preview_token=`, a shareable link token minted from the entry, in place of a bearer key. Roles and
+denied fields apply as they do on Delivery.
+
+## Next steps
+
+- [Build your own frontend](/content/guides/your-own-frontend/) puts reading, rendering and refreshing
+  together in three steps.
+- [SDKs](/content/guides/sdks/) wrap these routes for JavaScript, React, Vue, edge and mobile.
+- [Webhooks](/content/guides/webhooks/) push changes to your server.
+- [API keys and access](/content/guides/api-keys/) covers keys, roles and scopes.
+- [REST API](/content/reference/rest-api/) lists every route.

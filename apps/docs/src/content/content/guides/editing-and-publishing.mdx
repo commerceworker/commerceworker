@@ -1,0 +1,323 @@
+---
+title: Editing and publishing
+description: Save drafts and versions, publish and unpublish, use the trash, collaborate on an entry, share previews, change entries in bulk and import content.
+---
+
+You will write entries as drafts, publish them to delivery, and recover from mistakes with
+versions and the trash. Everything below works from the admin (**Content**), the Management API
+and the [MCP server](/content/guides/mcp/).
+
+## Before you start
+
+- Saving, duplicating, trashing, commenting and creating preview links need `content:write`.
+- Publishing, unpublishing, scheduling, deleting permanently and bulk jobs need `content:publish`,
+  which you can withhold from writers so that everything they write goes through someone who may
+  publish. See [Team and roles](/content/guides/team-and-roles/).
+- Reading drafts, versions and the trash needs `preview:read`.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Save drafts and restore versions
+
+Every save appends a new immutable version of the entry; nothing is overwritten. The entry's state
+follows from which version is live:
+
+- <span class="cw-badge" data-state="draft">Draft</span>: never published, or unpublished since.
+- <span class="cw-badge" data-state="published">Published</span>: delivery serves the latest version.
+- <span class="cw-badge" data-state="changed">Changed</span>: published, with newer edits saved but
+  not live. Readers keep seeing the published version until you publish again.
+
+The editor's **Details** names who created the entry, and when, and who edited it last: a
+teammate (by name when you administer the space), **You**, or the kind of writer (an API key, an
+agent, a workflow, a schedule). An entry from before this was recorded reads **Unknown**. In the
+entries list, **Mine** shows only the entries you created (`sys.createdBy=me` on the API).
+
+The entry's **History** lists every version. **Compare** one with the current draft, or with the
+live version when the entry is published, and **restore** an old version: it is copied forward as a
+new draft, so history is never rewritten.
+
+| Do this             | API                                                     | Scope             |
+| ------------------- | ------------------------------------------------------- | ----------------- |
+| Save a draft        | `PUT …/entries/{id}` with `{ "fields": … }`             | `content:write`   |
+| Change SEO metadata | `PATCH …/entries/{id}/seo` ([SEO](/content/guides/seo/))        | `content:write`   |
+| List versions       | `GET …/entries/{id}/versions`                           | `preview:read`    |
+| Compare two         | `GET …/entries/{id}/versions/diff?from=3&to=draft`      | `preview:read`    |
+| Restore one         | `POST …/entries/{id}/versions/{version}/restore`        | `content:write`   |
+| Duplicate           | `POST …/entries/{id}/duplicate`                         | `content:write`   |
+
+**Duplicate** (in the entries list's row menu, or `entries_duplicate` over MCP) copies the fields
+and taxonomy metadata into a new draft. A role needs read and write on the type. The copy holds
+every field, and the response leaves out the ones the role may not read.
+
+### What a comparison shows
+
+`from` and `to` each take a version number, `draft` (the current draft) or `published` (what
+delivery serves; `404` when the entry has never been published). The answer lists every field, in
+the content type's order and named as the type names it, with what changed in each locale:
+
+- **Text** changes word by word: `{ "type": "text", "segments": [{ "kind": "removed", "text":
+  "Spring" }, { "kind": "added", "text": "Summer" }, { "kind": "unchanged", "text": " launch" }] }`.
+- **Rich text** changes block by block (a paragraph, a heading, one list item, one table row, an
+  embed), each changed block with its own word diff; a paragraph made a heading, or a change to
+  formatting only, says so.
+- **Links** name the entry or asset before and after, by id.
+- **Lists and blocks** match elements by their key (a block's `_key`, a link's target, a tag's
+  text) and report each one added, removed, changed or **moved**.
+- **Components** list their nested fields the same way; numbers, dates, booleans, locations and
+  JSON show both values.
+
+The diff is structured data, never HTML: render it as you render the content. Fields your role may
+not read are left out. Over MCP, `entries_diff_versions` takes the same `from` and `to` and
+returns the same shape.
+
+## Validate without saving
+
+To check fields before saving them, send them to `POST …/entries/validate` (`content:write`) or
+the MCP tool `entries_validate`. Give `contentTypeApiId` (`contentType` over MCP) to judge them as a
+new entry, or `entryId` (`id`) to judge them as a new version of that entry:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/validate" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "contentTypeApiId": "post", "fields": { "title": { "en-US": "Hello" } } }'
+```
+
+It runs the checks the save would make, in the same order, and writes nothing. A pass answers `200`
+with `{ valid: true, fields, skippedHooks }`: `fields` as the save would store them (defaults
+applied on a new entry, slugs normalized). A failure answers exactly as the save would: `422` with
+the field issues, `409` for a unique value another entry holds, `400 invalid_state` for an entry in
+the trash. Link targets are checked when you publish, not when you save, so not here either.
+Plugins on `entry:beforeSave` run only when they hold no capabilities;
+`skippedHooks` names the ones that didn't run, which may still change or refuse the real save.
+
+## Publish and unpublish
+
+**Publish** makes the entry's latest version the one delivery serves; **Unpublish** takes it off
+delivery and leaves the drafts in place.
+
+| Do this   | API                           | MCP                  |
+| --------- | ----------------------------- | -------------------- |
+| Publish   | `POST …/entries/{id}/published`   | `entries_publish`   |
+| Unpublish | `DELETE …/entries/{id}/published` | `entries_unpublish` |
+
+Publishing validates the entry against its content type and checks that everything it links to
+exists. When a workflow that [gates publishing](/content/guides/workflows/#gate-publishing) covers the
+entry, a direct publish is refused with `409 publish_gated`, for everyone; only a run of that
+workflow publishes it. A published entry emits `entry.published`, which refreshes delivery caches, updates search
+and notifies [webhooks](/content/guides/webhooks/).
+
+If the entry's content type has a [URL pattern](/content/guides/content-modeling/#url-pattern) and the
+publish changes a slug it names, the old path is redirected to the new one in the same step. See
+[Redirects](/content/guides/redirects/#redirect-slug-changes).
+
+To publish several entries together, use a [release](/content/guides/releases-and-scheduling/). To publish
+later, schedule it. To put a review in front of publishing, use a [workflow](/content/guides/workflows/).
+
+## Use the trash
+
+**Move to trash** unpublishes the entry first if it was live and hides it from every list. In the
+entries list, **View trash** shows what's there and **Restore** brings an entry back as a draft,
+never straight to published.
+
+| Do this            | API                                                  | MCP                    |
+| ------------------ | ---------------------------------------------------- | ---------------------- |
+| Move to trash      | `DELETE …/entries/{id}`                              | `entries_trash`        |
+| List the trash     | `GET /preview/{space}/{env}/entries?trashed=true`    | `entries_list_trashed` |
+| Restore            | `POST …/entries/{id}/restore`                        | `entries_restore`      |
+| Delete permanently | `DELETE …/entries/{id}/permanent`                    | `entries_purge`        |
+
+**Delete permanently** is the one action with no way back, so it needs `content:publish` and works
+only on an entry already in the trash. It is refused with a `409` that names the published entries
+still linking to it, unless you pass `?force=true`.
+
+To trash, restore or delete many entries, tick them in the list (or in the trash) and use the bar
+that appears; **Delete permanently** asks first and names what it will delete. Over the API these
+are [background jobs](#change-many-entries-at-once) with the actions `trash`, `restore` and
+`purge`. Each entry goes through the same rules as one at a time, and an entry a rule refuses (one
+not in the trash, one published entries link to, one whose unique value was taken since) fails as
+its own item in the job's report. A job never forces a purge. An entry already where the action
+puts it counts as succeeded: one already in the trash for `trash`, one already out of it for
+`restore`, and, for `purge`, one already gone or an id that never existed. That is what lets a
+retried batch report the same totals as the first run. These jobs work through 50 entries per
+batch.
+
+Starting them needs `content:publish` and a role that holds the job's actions on every content type alike: one with no per-content-type
+grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
+unpublish `unpublish`, trash `write` and `delete` and not a withheld `unpublish`, restore
+`write`, purge `publish` and `delete`)
+and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
+to some types, or with field rules, doesn't. For any other role the admin disables
+the actions it can't start and says why.
+
+### Empty the trash automatically
+
+By default the trash keeps entries until someone deletes them. A space admin can set a retention
+window instead, in **Settings → Trash**, with `PUT …/trash-settings` (`{ "retentionDays": 30 }`,
+1 to 3,650; `null` turns it off) or with the MCP tool `trash_settings_set` (`trash_settings_get`
+reads it). Once a window is set, an hourly sweep deletes permanently every entry that has been in
+the trash longer, in every environment of the space, including what was already there. It deletes
+only what **Delete permanently** could: an entry published entries link to stays in the trash, and
+nothing is forced.
+
+## Comment and assign tasks
+
+Each entry has a comment thread and a task list, in the editor's collaboration panel. Comment to
+discuss a change; create a task to ask someone for one, with an assignee and a status of `open` or
+`resolved`.
+
+| Do this            | API                                                          | MCP             |
+| ------------------ | ------------------------------------------------------------ | --------------- |
+| Read or add comments | `GET` / `POST …/entries/{id}/comments` (`body`, `parentId`)  | `comments_list`, `comments_add` |
+| Read or create tasks | `GET` / `POST …/entries/{id}/tasks` (`body`, `assignee`)     | `tasks_list`, `tasks_create`    |
+| Resolve or reassign  | `PUT …/tasks/{id}` (`status`, `assignee`)                    | `tasks_resolve`                 |
+
+Workflows can add comments and assign people too (see the
+[`content.comment`](/content/reference/nodes/#content.comment) and
+[`content.assign`](/content/reference/nodes/#content.assign) nodes).
+
+## Preview drafts
+
+Drafts are readable through the Preview API with a Preview (CPA) key, so a staging site can show
+unpublished changes exactly as the live site will.
+
+To show a draft to someone without a key, create a **preview link**. In the editor, press **Copy
+preview link** (it copies your site's draft view when the type has a
+[preview URL](/content/guides/content-modeling/#preview-url), else the Preview API URL); over the API:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/preview-link" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "ttlHours": 24, "previewBaseUrl": "https://preview.example.com" }'
+```
+
+`ttlHours` defaults to 72 and is at most 8,760; `previewBaseUrl` defaults to the request's origin;
+`locale` (the space's default if absent) is the locale `frontendUrl` is filled in.
+The response is `{ url, frontendUrl?, token, expiresAt }`, where `url` is
+`{previewBaseUrl}/preview/{space}/{env}/entries/{id}?preview_token=…` and `frontendUrl`, when the
+entry's type has a [preview URL](/content/guides/content-modeling/#preview-url), is that template filled
+for the entry and the token. Over MCP it is `entries_preview_link`, which returns the path as
+`previewPath` instead of `url` when the deployment has no public admin origin (`OAUTH_ISSUER`). The token opens only that
+entry, through `GET /preview/{space}/{env}/entries/{id}?preview_token=…`, until it expires. See
+[Reading content](/content/guides/reading-content/#preview) for the Preview routes.
+
+On a previewed page, the SDKs can mark each rendered value with the field it came from, so
+clicking it opens that field in the editor. See [SDKs](/content/guides/sdks/#inline-editing).
+
+## Change many entries at once
+
+In the entries list, select rows and press **Publish selected**, **Unpublish selected** or **Move
+to trash**. Over
+the API, the synchronous routes take up to 1,000 entries per request:
+
+- `POST …/bulk/entries` creates entries (`content:write`).
+- `POST …/bulk/entries/publish` and `…/bulk/entries/unpublish` take `{ "ids": [ … ] }`
+  (`content:publish`).
+
+For bigger sets, start a background job yourself; nothing switches to a job automatically:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "action": "publish", "entryIds": ["…", "…"] }'
+```
+
+`action` is `publish`, `unpublish`, `trash`, `restore` or `purge`. A job takes 1 to 250,000 ids
+(100,000 for `trash`, `restore` and `purge`, which run in smaller batches)
+and answers `202`. Starting, cancelling and reading the report of a
+job need `content:publish` and a role that holds the job's actions on every content type alike: one with no per-content-type
+grants, or one whose grants are a single `*` grant holding them (publish needs `publish`,
+unpublish `unpublish`, trash `write` and `delete` and not a withheld `unpublish`, restore
+`write`, purge `publish` and `delete`)
+and restricting no field. The Editor, Manager and Administrator presets qualify; a role limited
+to some types, or with field rules, doesn't (an import's job needs a role with no per-type grants).
+Follow it at
+`GET …/bulk/jobs/{id}`, read per-entry failures at `…/bulk/jobs/{id}/report` and stop it with
+`POST …/bulk/jobs/{id}/cancel`. The MCP tools are `bulk_job_start`, `bulk_job_status`,
+`bulk_job_report` and `bulk_job_cancel`.
+
+Each content type also has a manual order. Read it with `order=sys.position` (newest entries go
+at the end), and move an entry with `POST …/entries/{id}/move`, sending `{ "after": "<id>" }` or
+`{ "before": "<id>" }` (`null` for first or last). A move takes effect at once, published or not,
+and makes no new version. The MCP tool is `entries_move`, and the SDK's is `cma.entries.move`.
+
+To set the same values on many entries of one content type, start a field edit:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/bulk/jobs/set-fields" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "contentTypeApiId": "article", "entryIds": ["…", "…"],
+        "fields": { "category": { "en-US": "news" } } }'
+```
+
+`fields` maps each field to the locales to set; only those change, and `null` clears a locale.
+Each entry is saved as a new draft with the checks an edit makes, so publish them afterwards. An
+unknown field or locale, or a value for a unique field (clearing one is fine), is refused before
+the job starts. An entry that refuses its save (a value its field rejects, an entry in the trash),
+is missing or is of another type is a failure in the report. The job shows the names of the fields
+it sets, never their values. A field edit needs `content:write`, `write` on the type and on every field
+sent, not a role on every type; its report needs a role with no field rules on the type. The MCP
+tool is `bulk_job_set_fields`, and the SDK's is `cma.bulkJobs.setFields`.
+
+An entry a [gated workflow](/content/guides/workflows/#gate-publishing) covers fails as its own item, in
+the synchronous summary and in a job's report, with the `publish_gated` message naming the
+workflow; the rest of the batch still publishes.
+
+## Import content
+
+Import brings entries in from a file as drafts, in three steps. In the admin, open a content type
+and press **Import**; the API and MCP follow the same order.
+
+1. **Analyze.** Choose the file and its format (CSV, JSON or WordPress export). The analysis
+   reports what would be created, updated and skipped, the source fields nothing maps to (what the
+   import would throw away) and the records that would fail. It writes nothing, and an empty
+   mapping is a valid first analysis. (`POST …/imports/analyze`, `import_analyze`;
+   `GET …/imports/sources` lists the formats.)
+2. **Map.** Map source columns to the type's fields, optionally naming an identity field so
+   re-imports update rather than duplicate, and set `conflicts` (`skip`, `update` or `fail`).
+   Analyze again until the report is what you want.
+3. **Run.** The import creates entries through the same validation as any write
+   (`POST …/imports`, `import_execute`), or as a resumable background job with progress per batch
+   (`POST …/imports/job`; follow it at `…/bulk/jobs/{id}`). Entries arrive as drafts; publish
+   them with a bulk job afterwards.
+
+All three need `content:write`, and a [role](/content/guides/api-keys/#roles) limits an import as it limits
+any write: an import into a type the role can't write is refused, and a record that would set a
+field the role denies or makes read-only is skipped and reported with the records that fail. An
+update leaves those fields as they are. A background job is checked when it starts. From a terminal or CI, `commerceworker import` in the
+[command-line tool](/content/guides/cli/#import-a-file) runs the same steps. To copy a whole environment
+instead, see
+[Environments](/content/guides/environments/).
+
+### Import a space export
+
+A JSON space export (the format with `contentTypes`, `entries`, `assets`, `locales` and `tags`,
+whose rich text is a node tree) brings a whole space at once: its content model, locales with their
+fallbacks, tags, entries and assets. It imports into an environment with **no content types yet**.
+In the admin, open **Content** in an empty environment and choose **import a space export**, or pick
+the **Space export** format on any import screen.
+
+1. **Check.** The report (`POST …/imports/space-export/analyze`, `space_export_analyze`) counts
+   what would be imported and lists what wouldn't: fields with no equivalent here (a resource
+   link), validations editors here wouldn't be held to (asset size, date ranges, allowed rich-text
+   nodes), links whose target isn't in the file, and entries that would fail validation (a missing
+   required field, a repeated unique value), each with why. It writes nothing.
+2. **Run.** `POST …/imports/space-export` (`space_export_import`) writes the model and tags, then
+   runs a job that copies each asset's file from its URL into this space's storage and creates the
+   assets and entries, then a second job that publishes what the export had published. Follow both
+   at `…/bulk/jobs/{id}`.
+
+Every entry and asset gets a new id, and every link, rich-text embed and entry hyperlink points at
+it, including links forward in the file and cycles. A link to something not imported is dropped (a
+hyperlink keeps its text). Rich-text nodes map one to one; a node with no equivalent keeps its text
+as a paragraph. An entry published with newer unpublished changes imports as a draft, since the
+export only carries the draft.
+
+Both need `content:manage`. If the export has locales this space lacks, the report says so; a space
+admin can set `addLocales` (the **Add the export's locales** box) to add them with their fallbacks.
+The export's default locale must be the space's.
+
+## Next steps
+
+- [Releases and scheduling](/content/guides/releases-and-scheduling/): publish many entries as one, or later.
+- [Workflows](/content/guides/workflows/): put a review between "save" and "publish".
+- [Reading content](/content/guides/reading-content/): how your site reads what you publish.

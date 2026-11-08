@@ -1,0 +1,215 @@
+---
+title: Workflows
+description: Route entries through validation, policy checks, approvals and AI steps, drawn as a graph of catalog nodes and published as immutable versions.
+---
+
+A workflow is the path an entry takes between "someone wrote this" and "it's live", or anything
+else that should happen to content: a translation, a freshness review, a moderation check. You
+draw it as a graph in the admin's **Workflows** screen: **nodes** from the
+[node catalog](/content/reference/nodes/), joined by **edges** that leave a node from one of its output
+branches. Then you start runs of it on entries.
+
+:::caution[What isn't enforced yet]
+The graph editor, manual runs, run timelines, tasks, the **Approvals** inbox and
+[publish gating](#gate-publishing) work today. Only `trigger.manual` starts a run: the event and
+schedule triggers can be placed in a graph and published, but nothing starts a run from them.
+:::
+
+## Before you start
+
+- Creating, editing and publishing a workflow needs `content:manage`.
+- Starting or cancelling a run needs `content:write` on the entry's content type; reading runs and
+  tasks needs `preview:read`.
+- Deciding an approval needs the scope the approval names (`workflow:approve` by default). See
+  [Approvals and reviews](/content/guides/approvals/).
+- Changing the space's separation-of-duties default needs `space:admin`.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Create and run your first workflow
+
+1. **Create it.** Open **Workflows**, press **New workflow**, name it and start from a
+   [template](#templates) or **Blank**. **Draft with AI** proposes a graph from a description
+   instead; you review it before saving.
+2. **Draw it.** Drag nodes from the palette and connect an output to an input. For a first
+   review, use a **Submit for review** trigger (`trigger.manual`), an **Approval** node, and a
+   **Publish** node on the `approved` branch. Press **Save draft**. The templates start from
+   event or schedule triggers, so a workflow you want to start by hand needs a `trigger.manual`
+   trigger of its own.
+3. **Publish it.** Press **Publish**. The graph is checked and becomes version 1 (see
+   [Versions](#versions)).
+4. **Start a run on an entry.** The admin has no start button yet; use the API or MCP:
+
+   ```sh
+   curl -s "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/workflow-runs" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{ "workflowId": "'"$WORKFLOW_ID"'" }'
+   ```
+
+   The run acts as the caller and uses the latest published version unless you pass `version`.
+   One run per workflow and entry can be active at a time (`409` otherwise).
+5. **Decide the approval.** The run pauses at the approval and a task appears in **Approvals**.
+   Someone with the right scope approves or rejects it there, and the run continues on that branch.
+
+## Nodes
+
+Every node has a type from the catalog, a label, and config fields the editor's inspector shows and
+validates. Nodes fall into four groups:
+
+- **Triggers** say what starts a run: a person submitting an entry for review, an entry being
+  created, saved, published or unpublished, a publish request, a release going live, or a
+  schedule. A workflow has exactly one trigger and can be narrowed to some content types. Today
+  only `trigger.manual` starts runs (see the caution above). The workflow list
+  (`GET …/workflows`, or the `workflow_list` MCP tool) reports each workflow's published trigger
+  (`publishedTrigger`, whatever its draft says now) and the other published workflows on the same
+  trigger whose content types overlap.
+- **Content** nodes act on the entry: validate it, check editorial policy, publish, unpublish,
+  schedule, add it to a release, publish a release (`content.publish_release`), set fields or
+  tags, record a stage, assign someone, comment, notify, or call a webhook.
+- **Control** nodes shape the run: branch on a condition, wait for an approval, an event or a
+  duration, set a value, loop, restart as a fresh run with the variables carried forward
+  (`control.continue_as_new`), or end with an outcome.
+- **AI** nodes classify, route, summarize, assess, translate, autofill, suggest tags, enrich and
+  moderate, each through the same AI features editors use.
+
+The [node catalog](/content/reference/nodes/) lists every type with its fields, defaults and outputs.
+
+## Branches and edges
+
+A node's outputs are the branches it can take: `content.validate` has `valid` and `invalid`,
+`control.approval` has `approved`, `rejected` and `escalated`, most nodes have just `out`. An edge
+leaves from one output and enters another node.
+
+When a node finishes, the edges on the branch it took become active and the others are skipped.
+A node runs once all of its inputs are settled and at least one is active, so two branches can
+rejoin a shared node; a node that only skipped branches lead to is skipped too.
+
+A `control.loop` node accepts a `next` back-edge, for "revise and resubmit" cycles; each pass
+through the loop body is a fresh iteration.
+
+## Expressions and templates
+
+- **Conditions** (`logic` fields, such as `control.condition`'s `expression` or a trigger's
+  `when`) are [JSON Logic](https://jsonlogic.com/): for example
+  `{ "in": ["legal", { "var": "entry.tags" }] }` is true when the entry is tagged `legal`.
+- **Text fields** accept `{{path}}` templates over the run: `Review “{{ref}}”` names the entry,
+  and `{{nodes.validate.issues}}` inserts an earlier node's output.
+- **Durations** are written as `"30 seconds"`, `"2 days"`, `"1 week"`.
+
+Every node also takes `retries` (0 to 10) and a `timeout`, outside its config.
+
+## Versions
+
+Editing a workflow changes its draft. **Publishing** checks the graph (exactly one trigger, no
+edges to missing nodes, every node connected, every config field valid) and appends an immutable,
+numbered version. A run pins the version it started on, so editing a workflow never changes runs
+already under way. Warnings, such as a duplicate edge, don't block publishing; errors do.
+
+## Gate publishing
+
+Turn on **Gate publishing** (`gatesPublish`) and publish the workflow, and the entries it covers
+publish only from a run of it: its **Publish** (`content.publish`) node, or its **Publish release**
+(`content.publish_release`) node for the members of a release it covers. The workflow covers the
+content types in its `contentTypes`, or every type when that list is empty. Gating comes from the
+**latest published version**, never the draft: a gate you switch on in the draft does nothing
+until you publish it.
+
+A gated workflow must be one a run can publish from: it starts from **Submit for review**
+(`trigger.manual`, the only trigger that starts runs today) and has a **Publish** or **Publish
+release** node. Saving a gated draft that isn't reports a warning, and publishing it is refused
+with `422`. A published version that isn't (one published before this rule) doesn't gate.
+
+Every other way of publishing a covered entry is refused with `409` and the code `publish_gated`,
+whoever asks, administrators and the admin token included:
+
+- **Publish** in the admin, `POST …/entries/{id}/published` and the `entries_publish` MCP tool.
+- Bulk publish and bulk jobs: the entry is reported as a failed item; the rest of the batch
+  publishes.
+- A release holding the entry: the whole release is refused, naming every gated entry. Adding the
+  entry is allowed, and the check runs when the release publishes, because gating can be switched
+  on in between.
+- A scheduled publish: refused when you schedule it, and the action fails with the same reason if
+  gating was switched on before it ran. A workflow's **Schedule** (`content.schedule`) node is
+  refused too, because the scheduled publish doesn't run inside the workflow.
+- A plugin's `content.publish`.
+
+The error body names each refused entry and the workflows whose runs may publish it:
+
+```json
+{ "error": { "code": "publish_gated", "message": "Entry \"…\" publishes only through a run of the workflow \"Legal review\". Start a run of the workflow on it, or have an admin publish a version of the workflow with publish gating off.", "entries": [{ "entryId": "…", "workflows": [{ "id": "…", "name": "Legal review" }] }] } }
+```
+
+When several gated workflows cover an entry, a run of any one of them may publish it; a run of a
+workflow that doesn't cover the entry may not. There is no override: to publish directly, switch
+**Gate publishing** off and publish the workflow, or delete the workflow. Unpublishing is never
+gated, and an environment [snapshot import](/content/guides/environments/#export-and-import-a-snapshot)
+republishes what was live in its source past every gate in the target.
+
+## Stages
+
+A **stage** records where an entry is in a workflow ("In review", "Approved"), shown in the
+entry editor. The `content.stage` node sets it; each stage names the scope needed to move an entry
+into it, so "Approved" can require `content:publish` while "In review" needs only
+`content:write`.
+
+Stages work through the API today:
+
+```sh
+# Define a workflow from ordered stages (needs content:manage).
+curl -s "$API/spaces/$SPACE/environments/main/workflows" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{
+    "name": "Review",
+    "steps": [
+      { "id": "draft",     "name": "Draft",     "requiredScope": "content:write" },
+      { "id": "in_review", "name": "In review", "requiredScope": "content:write" },
+      { "id": "approved",  "name": "Approved",  "requiredScope": "content:publish" }
+    ]
+  }'
+
+# Move an entry into a stage (the target stage's scope is checked).
+curl -s "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/workflow/transition" \
+  -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{ "workflowId": "'"$WORKFLOW_ID"'", "toStepId": "in_review" }'
+```
+
+A stage-defined workflow is stored as a graph like any other: a manual trigger, then each stage
+with an approval in front of it that only someone holding the stage's scope can decide.
+
+## Runs, tasks and settings
+
+A run records each node's outcome as it goes. Run statuses are `queued`, `running`, `waiting`,
+`completed`, `declined` (ended by a policy or an approval decision), `cancelled`, `failed` and
+`rolled_back`. Cancelling stops the run, undoes finished steps that can be undone, newest first,
+and closes its open tasks.
+
+| Do this                    | API                                                                    | MCP                                        |
+| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| Start a run                | `POST …/entries/{id}/workflow-runs` (`workflowId`, `version`, `input`, `vars`) | `workflow_run_start`               |
+| List runs                  | `GET …/workflow-runs?entryId=&workflowId=&status=`                     | `workflow_run_list`                        |
+| Read a run                 | `GET …/workflow-runs/{id}`                                             | `workflow_run_get`                         |
+| Read its timeline          | `GET …/workflow-runs/{id}/timeline` (oldest first), `…/node-runs`      |                                            |
+| Cancel a run               | `POST …/workflow-runs/{id}/cancel` (`reason`)                          | `workflow_run_cancel`                      |
+| Send an event to a wait    | `POST …/workflow-runs/{id}/events` (`event`, `payload`)                | `workflow_event_deliver`                   |
+| List or read tasks         | `GET …/workflow-tasks?status=&kind=`, `…/workflow-tasks/{id}`          | `workflow_task_list`                       |
+| Approve or reject          | `POST …/workflow-tasks/{id}/decide` (`decision`, `note`)               | `workflow_task_decide`                     |
+| Check a graph              | `POST …/workflows/validate`                                            | `workflow_validate`                        |
+| Draft a graph with AI      | `POST …/workflows/copilot` (read-only: it never saves)                | `workflow_copilot`                         |
+| Save and publish           | `PUT …/workflows/{id}/draft`, `POST …/workflows/{id}/versions`         | `workflow_save_draft`, `workflow_publish`  |
+| Space settings             | `GET` / `PUT …/workflow-settings` (`separateDuties`)                   | `workflow_settings_set`                    |
+
+Runs need the deployment's workflow engine; without it the run routes answer `501`. An event wait
+(`control.wait_event`) shows up as a task that only the event itself moves on.
+
+## Templates
+
+New workflows can start from a [template](/content/reference/workflow-templates/): editorial review with an
+optional legal sign-off, moderate-then-publish, enrich with review, translate on publish, and a
+quarterly freshness review. Each is an ordinary workflow you can change before publishing.
+
+## Next steps
+
+- [Approvals and reviews](/content/guides/approvals/): who may decide, separation of duties and escalation.
+- [Node catalog](/content/reference/nodes/): every node type with its fields and branches.
+- [Workflow templates](/content/reference/workflow-templates/): the built-in starting points.
+- [MCP server](/content/guides/mcp/): drive workflows from an agent.

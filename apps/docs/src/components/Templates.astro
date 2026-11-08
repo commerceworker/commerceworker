@@ -1,0 +1,75 @@
+---
+/*
+ * The seeded flows, rendered from TEMPLATES in @commerceworker/core: the same builders the seed
+ * publishes as version 1 of each flow. Each node links to its catalog entry.
+ */
+import {
+  nodeSpec,
+  ORDER_CHANNEL_LABELS,
+  ORDER_MODEL_LABELS,
+  TEMPLATES,
+} from '@commerceworker/core';
+import NodeIcon from './NodeIcon.astro';
+
+const flows = Object.values(TEMPLATES).map((t) => t());
+---
+
+{
+  flows.map((f) => (
+    <section class="ol-node" id={f.id}>
+      <div class="ol-node-head">
+        <h3>{f.name}</h3>
+        <code class="ol-node-type">{f.id}</code>
+      </div>
+      <p>{f.description}</p>
+      <ul class="ol-node-facts">
+        <li>
+          <span class="ol-fact-label">Model</span>
+          {ORDER_MODEL_LABELS[f.model]}
+        </li>
+        <li>
+          <span class="ol-fact-label">Channels</span>
+          {f.channels.map((c) => ORDER_CHANNEL_LABELS[c]).join(', ')}
+        </li>
+        <li>
+          <span class="ol-fact-label">Nodes</span>
+          {f.nodes.length}
+        </li>
+        <li>
+          <span class="ol-fact-label">Edges</span>
+          {f.edges.length}
+        </li>
+      </ul>
+      <details>
+        <summary>Nodes</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Label</th>
+              <th>Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {f.nodes.map((n) => (
+              <tr>
+                <td>
+                  <code>{n.id}</code>
+                </td>
+                <td>{n.label}</td>
+                <td>
+                  <a class="ol-node-link" href={`/reference/nodes/#${n.type}`}>
+                    <span class="ol-run-cat" data-cat={nodeSpec(n.type)?.category}>
+                      <NodeIcon name={nodeSpec(n.type)?.icon ?? 'Circle'} size={13} />
+                    </span>
+                    {nodeSpec(n.type)?.label ?? n.type}
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </section>
+  ))
+}

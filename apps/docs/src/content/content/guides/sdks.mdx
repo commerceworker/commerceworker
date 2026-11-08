@@ -1,0 +1,393 @@
+---
+title: SDKs
+description: Typed clients for the Delivery and Management APIs, React and Vue bindings, an edge client, typed content from your model, and inline editing on previews.
+---
+
+One package, `@commerceworker/sdk`. Import the subpath you use; nothing else ends up in your
+bundle.
+
+```sh
+npm install @commerceworker/sdk
+```
+
+| Import                            | For                                                                   |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `@commerceworker/sdk`              | Delivery and Preview, in any JavaScript runtime. No dependencies      |
+| `@commerceworker/sdk/rich-text`    | Render rich text to HTML, Markdown or plain text                      |
+| `@commerceworker/sdk/webhooks`     | Verify a signed webhook delivery                                      |
+| `@commerceworker/sdk/redirects`    | Apply the space's redirects in a front-door edge function             |
+| `@commerceworker/sdk/react`        | React hooks and components, plus inline editing                       |
+| `@commerceworker/sdk/vue`          | Vue 3 composables and components                                      |
+| `@commerceworker/sdk/edge`         | A tiny single-locale Delivery client for edge functions               |
+| `@commerceworker/sdk/react-native` | Delivery with offline sync for mobile apps                            |
+| `@commerceworker/sdk/management`   | The Management API: model, author, publish, administer (server only)  |
+| `@commerceworker/sdk/codegen`      | TypeScript types generated from your content model                    |
+
+The package also installs the [`commerceworker` command](/content/guides/cli/). React and Vue are optional
+peer dependencies: install the one you use (`npm install react` or `npm install vue`).
+
+## Reading content
+
+```ts
+import { createDeliveryClient, imageProps } from '@commerceworker/sdk';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CDA_TOKEN!,
+});
+
+const article = await client.getEntry('0192f3a4-…', { locale: 'en-US', include: 1 });
+
+const latest = await client
+  .query()
+  .contentType('article')
+  .locale('en-US')
+  .limit(10)
+  .fetch();
+
+const hits = await client.search('waterproof running shoes', { topK: 5 });
+
+const hero = await client.getAsset(heroId, { locale: 'en-US' });
+const props = imageProps(hero, { sizes: '(min-width: 960px) 960px, 100vw', priority: true });
+// { src, srcSet, sizes, width, height, alt, loading, decoding, fetchPriority, style }
+
+for await (const asset of client.iterateAssets({ kind: 'image' })) {
+  // every published image, a page at a time
+}
+
+// An archive page: the tag, then its entries.
+const tag = await client.getTag('news', { locale: 'de-DE' }); // { label, description, count, … }
+const tagged = await client.query().contentType('article').tagged('news').limit(20).fetch();
+
+// An author page: the articles linking to them, and those starting with "How" or highly read.
+const byAuthor = await client
+  .query()
+  .contentType('article')
+  .references('author', authorId)
+  .or({ field: 'title', op: 'startsWith', value: 'How' }, { field: 'views', op: 'gte', value: 100 })
+  .fetch();
+```
+
+`listTags`, `getTag`, `listConcepts` and `getConcept` read the [taxonomy](/content/guides/reading-content/#tags-and-concepts):
+each term's slug, label in your locale, description and how many published entries carry it.
+`tagged(...slugs)` on a query (or `tags: [...]` on `listEntries`) keeps the entries carrying any
+of those tags; a filter on `metadata.concepts.slug` does the same for concepts.
+`references(field, ...ids)` keeps the entries whose link field links to one of the entries,
+`linksTo(...ids)` those linking from any field, and `or(...)` adds a
+[group](/content/guides/reading-content/#or-and-and-groups) any one of whose conditions may match.
+
+`getAsset`, `listAssets`, `iterateAssets`, `searchAssets`, `getCollection` and
+`iterateCollection` read [delivered assets](/content/guides/delivering-assets/). `imageProps` turns one
+into `<img>` attributes (the width ladder as `srcset`, alt text, the focal point and placeholder
+colour as `style`), and `assetUrl` and `srcset` give single values; see
+[build an image component](/content/guides/delivering-assets/#build-an-image-component).
+
+A rich-text `embed` node (a video, post or track) carries structured metadata, never the
+provider's HTML, so your front end decides how it looks. `embedCard(node)` returns a safe default,
+a link card: `{ href, title, provider, providerName, kind, authorName?, thumbnail? }`, with an
+https `href` and a lazy, referrer-free thumbnail, or `undefined` for any other node. For a player,
+build it yourself from `provider` and `url` (an `<iframe>` of the provider's player, sized by
+`aspectRatio`). See [rich text](/content/reference/field-types/#rich-text).
+
+The client takes the same filters, ordering and projection as the
+[Delivery API](/content/guides/reading-content/), throws `DeliveryError` on a failed request (with the
+`status`, the API's error `code` and the parsed `body`), and can keep a short in-memory cache
+(`cacheTtlMs`). Pass `preview: true` with a Preview key to read drafts;
+Preview is served from the workspace's `api.` address, so point `baseUrl` there
+(`https://api.your-workspace.commerceworker.com`) for a preview client.
+
+### React and Vue
+
+```tsx
+import { CommerceworkerProvider, useEntry } from '@commerceworker/sdk/react';
+
+function Article({ id }: { id: string }) {
+  const { data, error, loading } = useEntry(id, { locale: 'en-US' });
+  if (loading) return <p>Loading…</p>;
+  if (error) return <p>Couldn't load this article.</p>;
+  return <h1>{String(data?.fields.title)}</h1>;
+}
+
+// <CommerceworkerProvider client={client}><Article id="…" /></CommerceworkerProvider>
+```
+
+`useAsset(id)` fetches an asset and `<Image asset={…} sizes="…" />` renders it with
+`imageProps`; nothing renders while it loads.
+
+`@commerceworker/sdk/vue` has the same surface as composables (`useEntry`, `useEntries`,
+`useAsset`, `useSemanticSearch`) and a `<CwImage>` component, installed with
+`app.use(createCommerceworker(client))`. Both fetch on the
+client only, so server rendering stays predictable.
+
+### Edge devices and mobile
+
+`@commerceworker/sdk/edge` is a tiny client for edge functions, kiosks and devices. It always asks
+for one locale, so values come back flat with no reference graph, and can project to the fields
+you name:
+
+```ts
+import { createEdgeClient } from '@commerceworker/sdk/edge';
+
+const edge = createEdgeClient({
+  baseUrl: 'https://cdn.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CDA_TOKEN!,
+  locale: 'en-US',
+});
+const posts = await edge.list('article', { limit: 10, pick: ['title', 'slug'] });
+```
+
+`@commerceworker/sdk/react-native` adds offline sync. `createOfflineDelivery` pulls entries
+published since its last cursor (the [`since`](/content/guides/reading-content/#entries) parameter) into
+storage you pass it, then reads from there without a network. Storage is pluggable: any object
+with `getItem`, `setItem` and `removeItem`, such as `AsyncStorage` or MMKV; `InMemoryStorage` is
+there for tests. Entries unpublished since the last sync are not removed locally yet. `useOfflineEntries(store)` wraps it in a hook.
+`imageSource(asset, { width, dpr: PixelRatio.get() })` is an `<Image source>` with the width step
+for the device's density and the image's size in dp.
+
+### Rendering rich text
+
+Rich text arrives as a document tree, not HTML. `@commerceworker/sdk/rich-text` renders it in any
+framework, with all text escaped and only safe links emitted:
+
+```ts
+import { toHtml } from '@commerceworker/sdk/rich-text';
+
+const html = toHtml(entry.fields.body, {
+  entryHref: (target) => `/${target.fields?.slug}`,
+  renderEntry: (target) => renderMyBlock(target),
+});
+```
+
+Embedded images come out sized and lazy, with the delivered `srcset`. `toMarkdown`,
+`toPlainText` and `excerpt` cover agents, search and meta descriptions. Override any node with
+`nodes: { paragraph: (node, next) => … }`.
+
+### Site features
+
+The delivery client reads each site feature; each links to the guide that is its home.
+
+**Routes.** `client.routes()` returns `{ contentType, urlPattern }` for every published content type with a URL
+pattern, sorted by content type, so a front end can route pages from the content model (see
+[Routes](/content/guides/reading-content/#routes)).
+
+**Sitemap.** `client.sitemap({ from, limit, base })` returns a page of the sitemap, `{ items, next }`: each
+published page's paths per locale and its `lastmod` (see [SEO and sitemaps](/content/guides/seo/#the-sitemap)).
+The management client changes an entry's SEO metadata with `cma.entries.setSeo(id, change)`.
+
+**Blocks.** `cma.entries.outlineBlocks(id)` lists an entry's blocks by key, and
+`cma.entries.patchBlocks(id, { expectedVersion, ops })` inserts, updates, moves, removes and
+duplicates them by key as one new draft (see [Field types](/content/reference/field-types/#blocks)).
+
+**Redirects.** `client.redirects()` returns the environment's enabled redirects and
+`client.resolveRedirect(path, { locale })` asks Delivery about one path (`null` when none matches).
+The subpath `@commerceworker/sdk/redirects` applies them in a front-door edge function:
+`createRedirectHandler`, `createRedirectMatcher` and `applyRedirects`. See
+[Redirects](/content/guides/redirects/#apply-redirects-at-the-edge). The management client has
+`cma.redirects.{list, get, create, update, delete, import, resolve, analyze, collapseChains}`, and a
+content type draft takes `urlPattern`.
+
+**Singletons.** `client.getSingleton('settings', { locale, include })` returns a
+[singleton type's](/content/guides/content-modeling/#singletons) one entry by the type's API ID (from a
+preview client, as it is now). The management client's content type draft takes `singleton` and a
+[preview URL](/content/guides/content-modeling/#preview-url) (`preview: { urlTemplate }`;
+`cma.entries.previewLink(id, { locale })` returns it filled as `frontendUrl`), and
+`cma.contentTypes.{dependents, delete, clone}` check, delete (`{ purgeEntries: true }` starts the
+job that deletes its entries first) and copy a type.
+
+**Saved views.** `cma.savedViews.{list, get, run, create, update, delete}` manages the named entries queries the
+admin's views menu offers; `run(id, { limit, cursor, locale })` returns one page of a view's
+entries with your own grants applied. See [Saved views](/content/guides/saved-views/).
+
+**Menus.** `client.menus()` lists the navigation menus and `client.menu(handle, { locale })` returns one
+resolved for rendering, published entries only. The management client has
+`cma.menus.{list, get, preview, resolve, create, update, moveItem, delete}`. See
+[Navigation menus](/content/guides/menus/#render-a-menu).
+
+## Writing content
+
+```ts
+import { createManagementClient } from '@commerceworker/sdk/management';
+
+const cma = createManagementClient({
+  baseUrl: 'https://api.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CMA_TOKEN!,
+});
+
+const { entry } = await cma.entries.create({
+  contentTypeApiId: 'article',
+  fields: { title: { 'en-US': 'Hello, world' } },
+});
+await cma.entries.publish(entry.id, { expectedVersion: entry.currentVersion });
+```
+
+`create`, `get` and `update` return an `EntryView`, `{ entry, fields }`: the entry's metadata
+(`id`, `currentVersion`, status) and its draft values. `publish`, `unpublish` and
+`versions.restore` take an optional `{ expectedVersion }`, the `currentVersion` you read; if the
+draft has moved on, the call fails with a **409** and changes nothing, so you never publish text
+you haven't seen.
+
+Every method maps to one Management route: content types, entries and their versions, the asset
+library, bulk jobs, releases, scheduled actions, webhooks, taxonomy (`cma.taxonomy.tags`,
+`schemes`, `concepts`: create and update with a `slug`, `description` and `labels` per locale; lists
+carry each term's published `usage`), environments and keys. The client is
+exactly as powerful as its token; the server checks every call. Keep the token on a server: a
+Management key never belongs in a browser or app bundle.
+
+### Assets
+
+```ts
+// Any size: one signed upload up to 100 MiB, a multipart upload above it.
+const asset = await cma.assets.upload(
+  { fileName: file.name, contentType: file.type, body: file, folderId },
+  { onProgress: ({ loaded, total }) => setProgress(loaded / total) },
+);
+await cma.assets.setMetadata(asset.id, { altText: { 'en-US': 'A cup of coffee' } });
+await cma.assets.publish(asset.id);
+
+for await (const a of cma.assets.iterate({ kind: 'image', status: 'all' })) {
+  // every image in the library, fetched a page at a time
+}
+```
+
+`upload` retries each part on its own, sends `concurrency` parts at once (default 4) and calls
+`onProgress` after each; a failed or aborted upload (`signal`) is aborted on the server too. A
+signed upload stores its file once: if a retry is answered `412`, an earlier attempt's bytes
+landed and only its answer was lost, so the upload counts as stored; a `412` on the first attempt
+throws. `cma.assets.replaceFile(id, { fileName, contentType, body })` replaces a file the same way,
+whatever its size, and returns the asset at its new version; `startReplace` and `commitFile` are
+its single-upload steps one at a time, and `uploads` the multipart ones.
+
+The `Asset` type is complete: `file` (with `placeholder`, and `video` with `status` and the
+playback URLs on a hosted video), `metadata` (`altText`, `tags`, `focalPoint`, `fields`), `rights`,
+`version`, `ingestStatus`, `duplicateOf` and `aiSuggestions`. Beyond reading and editing, the
+`assets` namespace has `versions` and `restoreVersion`, `setRights`, `usage`,
+`transformUrl(id, { width, fit, format })`, `generateAltText(id, { apply })` and
+`autoTag(id, { apply })`, `videos.create` and `videos.refresh`, `bulk` (follow it with
+`cma.bulkJobs.get`, and stop it with `cma.bulkJobs.cancel`, which lets a running batch finish and
+undoes nothing), and the `folders`, `collections`, `shareLinks`, `zips` and `renditions`
+namespaces. `iterate`, `collections.iterate` and `collections.iterateAssets` follow `nextCursor` as
+the loop reads. A Delivery client reads a collection's published assets with
+`client.getCollection(id, { limit, cursor, locale })`.
+
+### Errors
+
+A failed call throws `ManagementError` with the `status`, the API's error `code`, the parsed
+`error` object and the raw `body` ([error codes](/content/reference/rest-api/#errors)). Guards narrow it to
+the details a code carries:
+
+```ts
+import { isAssetInUse, isAssetRightsError } from '@commerceworker/sdk/management';
+
+try {
+  await cma.assets.publish(id);
+} catch (err) {
+  if (isAssetRightsError(err) && err.error.code === 'asset_embargoed') {
+    showMessage(`Embargoed until ${err.error.embargoUntil}`);
+  } else throw err;
+}
+```
+
+`isAssetInUse` (a delete refused while entries link to the asset: `error.usage` and
+`error.total`), `isAssetRightsError` (`embargoUntil` or `expiresAt`), `isValidationError`
+(`error.issues`), `isConflict`, `isNotFound` and `isRateLimited`.
+
+### Reading your own writes
+
+A read right after a write can be answered by a read replica that hasn't caught up yet. The
+Management client and a preview client handle this for you: each one sends back the
+`x-cw-bookmark` the api last answered it with, so its next read is at least that fresh. To carry
+it to another client, say from a server action to the browser's preview client, pass
+`client.bookmark` along and give it to the other client as its `bookmark` option:
+
+```ts
+// Server action
+await cma.entries.update(entryId, { title: { 'en-US': 'Hello again' } });
+return { bookmark: cma.bookmark };
+
+// Browser
+const preview = createDeliveryClient({ ...previewOptions, preview: true, bookmark });
+```
+
+The bookmark only ever goes to the client's own `baseUrl` origin. Pass `readYourWrites: false` to
+turn it off. A Delivery client doesn't use one: Delivery is cached and catches up with a
+publish shortly after, not on the next request.
+
+## Typed content
+
+Generate TypeScript types from your space's content types, so `entry.fields.title` is a `string`
+rather than `unknown`, with the [`commerceworker` command](/content/guides/cli/):
+
+```sh
+npx commerceworker types --out src/generated/content-types.ts
+```
+
+Signed in with `commerceworker login`, or in CI with `COMMERCEWORKER_URL`, `COMMERCEWORKER_TOKEN`,
+`COMMERCEWORKER_SPACE` and `COMMERCEWORKER_ENVIRONMENT` set. To generate from content types you
+already have, `generateTypes(contentTypes)` from `@commerceworker/sdk/codegen` returns the source.
+
+```ts
+import type { ArticleFields } from './generated/content-types.js';
+
+const article = await client.getEntry<ArticleFields>(id, { locale: 'en-US' });
+article.fields.title; // string
+```
+
+Each content type becomes a delivery shape (`ArticleFields`, one value per field) and a management
+shape (`ArticleDraftFields`, keyed by locale). A field's `in` validation becomes a union of its
+allowed values (an option's `value`, not its label), and its description or help text becomes the
+property's doc comment, with a Date field's format. A list of numbers is `number[]`, and a required
+field that a [conditional rule](/content/guides/content-modeling/#conditional-field-rules) can hide is
+optional. Regenerate after upgrading: an older generator types number lists as `string[]`. The
+same output is served at `GET …/content-types?format=typescript`.
+
+:::caution[Upgrade before labelling options]
+A field's `in` list can hold `{ value, label }` options. SDK releases from before that throw when
+generating types for one, and typed `validations` as an array. Upgrade `@commerceworker/sdk` and
+regenerate your types before a content type gains a labelled option; code that walks
+`validations.in` itself reads an option's value as `typeof o === 'object' ? o.value : o`.
+:::
+
+## Inline editing
+
+On a preview, the SDKs can mark each rendered value with the entry and field it came from; an
+overlay then outlines a value on hover and opens that field in the editor on click. Two parts: mark
+the values, and mount the overlay once.
+
+```tsx
+import { InlineEditor, useEditable } from '@commerceworker/sdk/react';
+
+function Title({ entry }) {
+  const editable = useEditable();
+  return <h1 {...editable(entry, 'title')}>{entry.fields.title}</h1>;
+}
+
+// Once, near the root of the preview site:
+<InlineEditor adminUrl="https://your-workspace.commerceworker.com" />
+```
+
+`editable()` adds a `data-cw-ref` attribute only when the client was created with `preview: true`.
+In production it returns nothing, so the same components ship without revealing entry ids or field
+names. Outside React, call `client.editable(entry, 'title')` for the attributes and
+`mountInlineEditor({ adminUrl })` from `@commerceworker/sdk/inline-edit` to mount the overlay;
+it returns a handle with `setEnabled()` and `destroy()`.
+
+Editing starts off, because intercepting every click would stop you following links on the preview.
+A built-in toggle switches it on; pass `defaultEnabled` to start with it on, `toggle={false}` to
+drive it from your own control, or `onEdit` to handle the click yourself (open a side panel, say)
+instead of navigating to the admin.
+
+## Next steps
+
+- [Command-line tool](/content/guides/cli/) for the same operations from a terminal or CI, and the
+  content model as a file.
+- [Agent skills](/content/guides/agent-skills/) to teach a coding agent these SDKs.
+- [Reading content](/content/guides/reading-content/) for the parameters the clients map to.
+- [API keys and access](/content/guides/api-keys/) for the key each client needs.
+- [Webhooks](/content/guides/webhooks/) to rebuild when content changes.
+- [REST API](/content/reference/rest-api/) for every Management route.

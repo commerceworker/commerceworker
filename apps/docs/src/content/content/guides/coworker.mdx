@@ -1,0 +1,135 @@
+---
+title: Coworker
+description: Open Coworker, the admin's assistant, ask it about your content, confirm the changes it makes, and see what it can touch and how long chats are kept.
+---
+
+Coworker is CommerceWorker's assistant: a chat panel in the admin. Ask it about your content, how a feature works or what
+is waiting to be published, or have it create, tag, publish or schedule entries. It answers from
+live data through tools, and anything that changes something waits for your confirm.
+
+It works as you. Every tool call runs with your live permissions, in the space and environment
+the header has chosen, so it can never do what you couldn't do yourself or what an
+[MCP client](/content/guides/mcp/) with your access couldn't.
+
+## Opening it
+
+- The **Coworker** button in the header, or <kbd>⌘J</kbd> (<kbd>Ctrl</kbd>+<kbd>J</kbd>)
+  anywhere, which also closes it.
+- Changing something from a page. See [Edits from a page](#edits-from-a-page).
+
+On a wide screen the panel is a column beside the page, and it reopens on your next visit if you
+left it open. On a narrow screen, such as a phone, it is a sheet between the header and the tab
+bar; <kbd>Esc</kbd> closes the sheet.
+
+Enter sends and Shift+Enter starts a new line. On a phone or tablet Return starts a new line and
+the send button sends. **Stop** ends a reply in progress. A message written while a reply is still
+streaming is held above the prompt, where you can remove it, and is sent when the reply ends.
+
+## Edits from a page
+
+Changes you make on the Content pages go through Coworker. The page's button doesn't change
+anything itself: Coworker runs the tool for exactly what you pressed, with no model involved.
+Each edit stays in the conversation as a line that says what it did and links to the entry, such
+as **Published · Spring launch notes**.
+
+- **An action** stops at a confirm card in the panel, which opens if it was closed, and the page
+  waits for your answer. **Confirm** does it; **Not now** leaves everything as it was. Actions
+  are publishing and unpublishing an entry, moving it to the trash, deleting it for good,
+  restoring a version from the history panel, and changing several entries at once.
+  Publishing an entry that has been live lists the fields that change, and **Review changes** shows
+  each one's published and draft values. If the card can't show that, **Confirm** stays off and
+  the card says what to do: try again, switch back to the space or environment you asked in, or
+  choose **Not now** and ask again.
+- **An edit** runs at once, doesn't open the panel, and leaves a line. Edits are saving a draft,
+  creating an entry, duplicating one and restoring one from the trash.
+
+When Coworker can't be reached, the panel says so in one quiet line (**Can't reach Coworker right
+now. Edits you make on the page still go through.**). The page then makes each
+edit itself, confirming in its own dialog where it confirmed before. That dialog holds a publish
+the same way: if it can't show what goes live, **Publish entry** stays off until **Try again** can.
+
+## Asking it things
+
+Ask in plain language: "What changed since it was last published?", "Which of these are still
+drafts?", "Suggest tags for this entry". Reads run without asking and show as a line in the
+conversation, such as **Found entries · 10 results** once done.
+
+Anything the model proposes that changes something stops at a confirm card, the same as a page
+action, and nothing is sent until you confirm. Each card says who asked for it: **You asked for
+this on the page**, or **Coworker suggests this**, with the time it was made.
+
+A proposal's card shows what it would change, read from CommerceWorker rather than from anything
+the model wrote. A publish lists the fields that go live, from the entry's version history. A
+draft save lists the fields that change, and **Review changes** shows each one as it is now and
+after saving; a field the save leaves out is removed from the draft. A change to many entries
+names the first five and counts the rest. Tagging names the tags, and adding to a release names
+the release. **Confirm** stays off until the card has read this; if it can't, the card offers
+**Try again**.
+
+A declined card's line says what stayed as it was, such as **Not published · Spring launch
+notes**. A card that nobody answers is let go after a day.
+
+A card that publishes, unpublishes or restores an entry is held to the entry as it was when the
+card was made: the version on your screen for a page's card, the current version when the model
+proposed it. If someone saves a newer draft before you confirm, the card is refused and nothing
+changes, so a confirm never publishes or overwrites a draft you haven't seen. Ask again for a
+card that shows the entry as it is now. Your role and access to the space are checked again
+for every message, so a role change or a revoked space takes effect in an open conversation.
+
+## The context chip
+
+The chip beside the send button says what "this" means: the entry open on the page, the content
+type whose list you are on, or **Everything** elsewhere. Open it to switch between the page and
+everything. The page's context travels with each message.
+
+## Copying, editing and asking again
+
+Point at a message to show its actions:
+
+- **Copy** copies the text.
+- **Edit** on one of your messages opens it for changes. **Send again** replaces that message and
+  every reply after it. Escape cancels.
+- **Answer again** on the latest reply asks for a new answer to the same question.
+
+A message from before a confirm card offers only **Copy**: editing or asking again never reaches
+back past an action. If a reply fails, the panel says so with **Try again**.
+
+**New conversation**, in the panel's menu, asks first and then deletes the conversation. Changes
+you confirmed stay made and stay in the audit log.
+
+## What it can and can't do
+
+It offers a fixed set of [MCP tools](/content/guides/mcp/), by their MCP names.
+
+| Kind | Tools |
+| --- | --- |
+| Reads, no confirm | `docs_search`, `docs_read`, `model_list_content_types`, `model_get_content_type`, `entries_query`, `entries_get`, `entry_blocks_outline`, `entries_suggest`, `content_search`, `entries_list_versions`, `entries_diff_versions`, `entries_list_trashed`, `releases_list`, `releases_get`, `comments_list`, `tasks_list`, `taxonomy_list_tags`, `assets_list`, `workflow_task_list` |
+| Edits, run at once from a page | `entries_create`, `entries_update`, `entry_blocks_patch`, `entries_duplicate`, `entries_restore`, `entries_set_metadata`, `entry_apply_tags`, `comments_add`, `releases_add_entry` |
+| Actions, always ask first | `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_purge`, `entries_restore_version`, `entries_bulk_action`, `bulk_job_start`, `schedule_action`, `releases_publish` |
+
+Before the workspace has a space, it offers only `space_starters_list` and `space_create`, and
+only to a workspace admin: it asks what the first space will hold and proposes one, which you
+confirm on its card. Those two never run inside a space, and nothing else runs without one.
+
+A write the model proposes always waits for your confirm, whichever row it is in. Every other MCP
+tool stays MCP's alone. Whatever arguments it is given, a call runs in the space and environment
+you are working in, with your role's [scopes](/content/reference/scopes/): without permission to
+publish, a publish fails.
+
+Replies come from models running at the edge. If the models error or don't answer in time, a
+simple built-in fallback answers the turn with the same tools and the same confirms, and page
+edits never involve a model.
+
+## Privacy and retention
+
+A conversation is yours alone: only you can open it. It is kept until it has been untouched for
+30 days, then deleted; any new activity starts that period again. It is also deleted if your
+account is removed or disabled. Signing out ends your access to it until you sign back in.
+
+Confirmed changes are ordinary changes with an ordinary audit trail, and outlive the conversation.
+
+## Next steps
+
+- [MCP server](/content/guides/mcp/): the tools Coworker uses, for your own agents.
+- [Editing and publishing](/content/guides/editing-and-publishing/): the actions Coworker confirms before it runs.
+- [Team and roles](/content/guides/team-and-roles/): the roles whose scopes bound what Coworker can do.

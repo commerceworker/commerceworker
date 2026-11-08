@@ -1,0 +1,19 @@
+// Static-assets Worker for commerceworker.com. No runtime code: Astro's dist/ is served as is.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commerceworker-marketing",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // Served only at its custom domains: no workers.dev or preview URL as a second address. www
+  // serves the same pages, each naming the apex as its canonical URL.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "commerceworker.com", "custom_domain": true },
+    { "pattern": "www.commerceworker.com", "custom_domain": true }
+  ]
+}

@@ -1,0 +1,105 @@
+---
+title: Concepts
+description: Spaces, environments, content types, entries, versions, locales and the three APIs, in the words the rest of these docs use.
+---
+
+## Spaces and environments
+
+A **workspace** is one CommerceWorker deployment: its admin, its API addresses and its accounts. It
+holds one or more **spaces**. A space is the container for content: its content types, entries,
+assets, keys, webhooks and workflows. Everything you do to content happens inside one space.
+
+An **environment** is a branch of a space. Every space starts with `main`. Creating another one
+makes an empty environment; to try a content-model change on a copy of what's live, **clone**
+`main` into a new environment instead, then compare the two and merge the changes back. An
+**alias** is a stable name that points at an environment, so a site can read from `production`
+while you switch which environment that is. See [Environments](/content/guides/environments/).
+
+Every API path names both: `/spaces/{space}/environments/{env}/…` for management,
+`/delivery/{space}/{env}/…` and `/preview/{space}/{env}/…` for reading.
+
+## Content types and fields
+
+A **content type** describes one kind of content (an article, a product page, an author) as an
+ordered list of typed **fields**. Each field has an `apiId`, a type, and flags for whether it is
+required, localized or unique. One field is the **display field**: the entry's title in lists and
+pickers.
+
+Content types are versioned too: changing one makes a new draft definition, and publishing it makes
+the change live. Until then, Delivery keeps serving the definition last published. See
+[Content modeling](/content/guides/content-modeling/).
+
+## Entries and versions
+
+An **entry** is one piece of content of a given type. Saving an entry never overwrites it: it
+appends a new immutable **version**. Publishing points delivery at one of those versions. So an
+entry's state is derived from two pointers, the latest version and the published one:
+
+| State                                                    | Meaning                                                        |
+| -------------------------------------------------------- | -------------------------------------------------------------- |
+| <span class="cw-badge" data-state="draft">Draft</span>         | Never published, or unpublished since.                         |
+| <span class="cw-badge" data-state="published">Published</span> | Delivery serves the latest version.                            |
+| <span class="cw-badge" data-state="changed">Changed</span>     | Published, with newer saved edits that are not live yet.       |
+| <span class="cw-badge" data-state="archived">Archived</span>   | In the trash (status `archived`): hidden from lists and from delivery. |
+
+The admin calls the archived state **trash** (**Move to trash**, **View trash**); restoring an
+entry from it brings it back as a draft. Any version can be compared with another or restored as a
+new draft. See
+[Editing and publishing](/content/guides/editing-and-publishing/).
+
+## Locales
+
+A space has a default locale and a list of others, each optionally falling back to another (for
+example `fr-CA` → `fr` → the default). Field values are stored per locale:
+`{ "title": { "en-US": "Hello", "de-DE": "Hallo" } }`. A field that isn't localized still uses
+this shape, with one value under the default locale, so reading and writing look the same for
+every field. Ask the Delivery API for one locale and it resolves the fallback chain for you.
+
+Each locale can also be **not delivered**: editors write and preview it, and Delivery leaves it
+out (a request naming it is `404`, fallback chains skip it, the sitemap lists no alternate for it)
+until it is turned on. A locale also has a text **direction**, `ltr` or `rtl` (from its language
+unless set), which the editor uses for its inputs. Both are set with `PUT …/locale-settings`
+(`space:admin`) or the `locale_settings_set` tool; the default locale is always delivered.
+
+## Assets and references
+
+An **asset** is a file (an image, a PDF, a video) with a localized title and description. Files go
+straight to object storage through a short-lived upload URL; they never pass through the API.
+Assets are published like entries. See [Media and assets](/content/guides/media/).
+
+A **reference** is a `Link` field pointing at another entry or an asset. Publishing checks that
+what an entry links to exists, delivery can embed linked entries in the response, and the admin
+can show what links to any entry.
+
+## Releases, workflows and reviews
+
+- A **release** groups entries that should go live together (assets are published on their own),
+  and publishes them as one unit, now or at a scheduled time. See [Releases and scheduling](/content/guides/releases-and-scheduling/).
+- A **workflow** routes entries through validation, policy checks, approvals and AI steps. See
+  [Workflows](/content/guides/workflows/).
+- An **agent review** is an AI proposal waiting for a person to approve or reject it. See
+  [Approvals and reviews](/content/guides/approvals/).
+
+## The three APIs, and MCP
+
+| API                  | Base path                 | For                                                |
+| -------------------- | ------------------------- | -------------------------------------------------- |
+| Management (CMA)     | `/spaces/{space}/…`       | Modeling, authoring, publishing and administration |
+| Delivery (CDA)       | `/delivery/{space}/{env}` | Published content, search, GraphQL, live updates   |
+| Preview (CPA)        | `/preview/{space}/{env}`  | Draft content, for previews and staging sites      |
+
+Each takes a bearer token: an **API key** of the matching kind, whose **scopes** decide what it may
+do. The **MCP server** exposes the same operations as tools for AI agents, with the same keys and
+the same checks. See [API keys and access](/content/guides/api-keys/) and [MCP server](/content/guides/mcp/).
+
+## Events
+
+Publishing, unpublishing and other changes emit **events** such as `entry.published`, recorded in
+the same transaction as the change. Events drive [webhooks](/content/guides/webhooks/), which lists them.
+
+## Next steps
+
+- [Content modeling](/content/guides/content-modeling/): define the types and fields.
+- [Editing and publishing](/content/guides/editing-and-publishing/): drafts, versions, the trash and previews.
+- [Environments](/content/guides/environments/): clone, compare and merge.
+- [API keys and access](/content/guides/api-keys/): the keys and scopes behind the three APIs.

@@ -1,0 +1,37 @@
+{
+  "name": "@commerceworker/store",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "D1 persistence: the sqlite schema, hand-written migrations, and the D1 ContentStore adapter (unit of work, guards, lease-claimed outbox, read-replica sessions).",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./auth": "./src/auth.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:query-counts:update": "vitest run test/query-counts.test.ts --update"
+  },
+  "dependencies": {
+    "@commerceworker/domain": "workspace:*",
+    "@commerceworker/ports": "workspace:*",
+    "drizzle-orm": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/graphql-gen": "workspace:*",
+    "@commerceworker/seed": "workspace:*",
+    "@commerceworker/test-kit": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "graphql": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

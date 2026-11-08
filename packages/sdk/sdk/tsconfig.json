@@ -1,0 +1,10 @@
+{
+  "extends": "@commerceworker/typescript-config/base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  // The bin shim only imports the CLI, which type-checks itself (with Node's types).
+  "exclude": ["src/bin.ts"]
+}

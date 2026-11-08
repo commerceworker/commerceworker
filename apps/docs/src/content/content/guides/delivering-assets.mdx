@@ -1,0 +1,356 @@
+---
+title: Delivering assets
+description: Serve published images and files from stable, cacheable URLs, with responsive renditions your front end can drop into an image component.
+---
+
+A published asset is served from the workspace's `media.` address at a URL that never changes
+meaning, so browsers and CDNs can keep it for a year. You never build these URLs yourself: every
+asset Delivery returns (on its own, in a list, or embedded in an entry) carries them.
+
+## The delivered asset
+
+```sh
+curl -s "$CDN/delivery/$SPACE/main/assets/$ASSET_ID?locale=en-US" \
+  -H "Authorization: Bearer $CDA"
+```
+
+```json
+{
+  "id": "0193…",
+  "title": "Trail runner",
+  "description": null,
+  "altText": "A runner on a mountain trail at dawn",
+  "focalPoint": { "x": 0.4, "y": 0.35 },
+  "contentType": "image/jpeg",
+  "size": 482113,
+  "width": 2400,
+  "height": 1600,
+  "kind": "image",
+  "url": "https://media.acme.commerceworker.com/acme/main/0193…/v1/kJ3x…Qw/o/trail.jpg",
+  "renditions": {
+    "card": "https://media.acme.commerceworker.com/acme/main/0193…/v1/kJ3x…Qw/r-card/trail.jpg"
+  },
+  "srcset": [
+    { "width": 320, "url": "https://media.acme.commerceworker.com/acme/main/0193…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto" },
+    { "width": 640, "url": "…/w640/trail.jpg?fm=auto" }
+  ],
+  "placeholder": { "thumbhash": "3PcNNYSFeXh/...", "dominantColor": "#3b4a2f" },
+  "rights": { "credit": "Ada Lovelace", "license": "CC-BY-4.0" },
+  "file": { "url": "…/v1/kJ3x…Qw/o/trail.jpg", "fileName": "trail.jpg", "contentType": "image/jpeg" }
+}
+```
+
+| Field                                | What it is                                                                                     |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `title`, `description`, `altText`    | One locale's text with `?locale=` (falling back like entry fields), else a value per locale    |
+| `kind`                               | `image`, `video`, `audio`, `document` or `other`                                               |
+| `url`                                | The original file; for a video, its HLS manifest                                               |
+| `renditions`                         | Your space's named presets, by name, for images that can be resized                            |
+| `srcset`                             | Widths 320, 640, 960, 1280, 1920 and 2560, up to the image's own width                         |
+| `placeholder`                        | `{ thumbhash, dominantColor }` for a raster image, else `null` ([below](#placeholders))        |
+| `video`                              | For a video: `status`, `hlsUrl`, `dashUrl`, `thumbnailUrl`, `durationSeconds`                  |
+| `rights`                             | `credit` and `license`, when the asset has them                                               |
+| `file`                               | The stored file description, kept for existing integrations; `file.url` is `url`               |
+
+`GET /delivery/{space}/{env}/assets` lists published assets in publish order: pass `limit`, then
+the response's `nextCursor` back as `cursor` for the next page, and filter with `kind`, `tag` (a
+taxonomy tag id) and `folder` (a folder id, or `root`). Embedded assets in entries have the same
+shape, flattened to the entry request's `locale`.
+
+## Placeholders
+
+Processing shrinks a JPEG, PNG, WebP, AVIF or GIF of up to 20 MiB to 32 pixels and computes two
+values from it, so a page can paint something before the image loads:
+
+- `thumbhash`: a [ThumbHash](https://evanw.github.io/thumbhash/) (base64), about 25 bytes that
+  decode on the client to a blurred preview with the image's aspect ratio and transparency;
+- `dominantColor`: `#rrggbb`, the cheapest placeholder, a solid background.
+
+`placeholder` is `null` for hosted videos, SVGs, documents and other non-raster files, for larger
+images, and for images processed before placeholders existed or whose placeholder couldn't be made
+(nothing is backfilled: [reprocess](/content/guides/media/#what-happens-after-an-upload) them). It is data,
+never a URL or markup, and follows the file's version.
+
+## URLs
+
+```
+https://media.{workspace}/{space}/{env}/{assetId}/v{version}/{token}/{variant}/{fileName}
+```
+
+Use the URLs Delivery gives you; don't build them. The `token` is a signature over the space,
+environment, asset and version, so a URL can't be had by editing another one: swapping the
+environment, or the version, gives a `404`. That also means an asset taken down in one
+environment can't be reached through another environment's copy of it.
+
+| Variant     | Serves                                                                          |
+| ----------- | ------------------------------------------------------------------------------- |
+| `o`         | The original bytes                                                              |
+| `w{width}`  | The image scaled down (never up) to one ladder width: 320 to 2560               |
+| `r-{name}`  | One of your space's renditions                                                  |
+
+- **Immutable.** The version is in the URL, so a URL's bytes never change; responses are
+  `Cache-Control: public, max-age=31536000, immutable` and carry an `ETag`. An asset whose rights
+  expire is cached only until they do (`max-age` is the time left, without `immutable`), and is
+  `410` after.
+- **Formats.** `srcset` URLs end in `?fm=auto`: the image comes back as AVIF or WebP when the
+  browser's `Accept` header allows, else in its own format, with `Vary: Accept`. Other query
+  parameters are ignored (apart from `download`, below).
+- **Byte ranges.** Originals answer `Accept-Ranges: bytes`. One `Range: bytes=…` header gets a
+  `206` with `Content-Range`, so audio and video can seek and a download can resume; a range
+  starting past the end is `416` with `Content-Range: bytes */<size>`. Several ranges, another unit
+  or a malformed header get the whole file as `200`, as does an `If-Range` that isn't the file's
+  current `ETag`. Width steps and renditions are always served whole.
+- **Inline or download.** Every file comes with `Content-Disposition: inline; filename="…";
+  filename*=UTF-8''…` naming it. Add `?download` (any value) to get `attachment`, so a link saves
+  the file instead of opening it. Types the media origin never renders (SVG, HTML) are always
+  `attachment`. `download` doesn't make a second cached copy.
+- **Crops follow the focal point.** A rendition that crops (`fit: crop`) keeps the asset's focal
+  point in frame.
+- **Nothing else exists.** Widths off the ladder, unknown renditions, an older version, a wrong
+  token and a wrong file name are `404`. Only JPEG, PNG, WebP, AVIF and GIF images have variants; SVGs, documents
+  and other files have only `o`. Videos play from their own stream URLs.
+
+```html
+<img
+  src="https://media.…/v1/kJ3x…Qw/w960/trail.jpg?fm=auto"
+  srcset="https://media.…/v1/kJ3x…Qw/w320/trail.jpg?fm=auto 320w, https://media.…/v1/kJ3x…Qw/w640/trail.jpg?fm=auto 640w, https://media.…/v1/kJ3x…Qw/w960/trail.jpg?fm=auto 960w"
+  sizes="(min-width: 960px) 960px, 100vw"
+  alt="A runner on a mountain trail at dawn"
+/>
+```
+
+### The transform endpoint (deprecated)
+
+`GET /delivery/{space}/{env}/assets/{id}/transform?w=800` is deprecated. It answers a permanent,
+cacheable `301` to the matching media URL: the ladder width at or above `w`, or the rendition
+named by `?rendition=`. Use `srcset` and `renditions` instead.
+
+## Renditions
+
+A rendition is a named size your front ends share (`thumbnail`, `card`, `og`): a width, a height,
+a fit (`clip`, `crop`, `fill`, `max`, `scale`), a format (`auto`, `jpg`, `png`, `webp`, `avif`) and
+a quality. They belong to the space, so every environment offers the same ones; a space has up to
+20. Manage them in the Management API (`/spaces/{space}/environments/{env}/asset-renditions`, which
+needs `content:manage` to change) or with the `asset_renditions_*` [MCP tools](/content/guides/mcp/).
+
+Changing or deleting a rendition keeps its URLs; the copies cached at the edge are purged within a
+couple of minutes. Browsers that already hold a copy keep it until their own cache lets go, so
+give a changed preset a new name when that matters.
+
+## Search
+
+`GET /delivery/{space}/{env}/assets?q=coffee` searches published assets by file name, title,
+caption, alt text, tag names and the text of documents, by words and by meaning, best match first:
+
+```json
+{
+  "items": [{ "id": "…", "kind": "image", "url": "https://media.example.com/…" }],
+  "total": 1,
+  "facets": { "kind": { "image": 1 }, "tag": {}, "folder": { "root": 1 } }
+}
+```
+
+It needs a key with `search:read` as well as `delivery:read` (a **403** otherwise; the default
+delivery key has both). `kind`, `tag`, `folder` and `locale` work as on the listing, and `limit`
+is at most 100 (a search has no further pages). Each facet counts the matches under every other filter, so a client can
+show how many of each kind remain while one is chosen. Only published assets are searched, as
+they were published (with the text of the published file version); drafts never appear, and the
+results are cached like any delivery read, refreshed when an asset is published, unpublished, or
+processed while published. In `@commerceworker/sdk`:
+`client.searchAssets('coffee', { kind: 'image' })`.
+
+## Collections
+
+`GET /delivery/{space}/{env}/collections/{id}` returns a [collection](/content/guides/media/#collections)
+by name with its **published** members in the collection's order, each in the delivered asset
+shape above. Drafts and archived members are left out, so a collection can list fewer assets than
+it holds. `limit` (at most 100), `cursor` and `locale` work as on the asset listing, and
+`nextCursor` pages. It needs `delivery:read`; a key restricted by content grants gets a **403**, as
+it does for assets, and an unknown collection is a **404**. The response is cached like any
+delivery read and refreshed when the collection changes (webhooks get `asset_collection.changed`)
+or when a member is published or unpublished. In `@commerceworker/sdk`:
+`client.getCollection(id, { limit, cursor, locale })` returns `{ id, name, description?, items,
+nextCursor? }`.
+
+## Unpublishing and expiry
+
+Unpublishing, archiving or deleting an asset stops its URLs: they answer `404` once the edge
+copies are purged, which takes a couple of minutes. Republishing the same file serves the same
+URLs again.
+
+An asset whose rights carry an expiry (`rights.expiresAt`, set in Management) answers
+`410 Gone` from that moment: its files are cached only until then, never immutably. Within a
+minute CommerceWorker unpublishes it (webhooks get `asset.unpublished` and `asset.expired`), and its
+URLs answer `404` once purged. An asset under embargo can't be published before
+`rights.embargoUntil`.
+
+Replacing an asset's file doesn't change what delivery serves until the asset is published again.
+The republish delivers the new file under new URLs (the version, `v<n>`, is in the path), and the
+old version's URLs answer `404` once purged; keep the URLs you store fresh by reading them from
+delivery rather than saving them once.
+
+## Preview
+
+`GET /preview/{space}/{env}/assets` and `…/assets/{id}`, with a Preview key, return assets as they
+are now (drafts included, archived ones left out) in the same shape. Every URL in them is signed
+and short-lived (at least 15 minutes, and the same URL for a while, so browsers can cache it):
+fetch the asset again rather than storing its URLs. Management reads (`/spaces/…/assets`) hand
+out the same kind of short-lived URL.
+
+## GraphQL
+
+`asset(id:, locale:)` returns a typed `Asset`:
+
+```graphql
+{
+  asset(id: "0193…", locale: "de-DE") {
+    title
+    altText
+    altTextEn: altText(locale: "en-US")
+    url
+    card: url(rendition: "card")
+    medium: url(width: 800)
+    srcset { width url }
+    placeholder { thumbhash dominantColor }
+    focalPoint { x y }
+    video { status hlsUrl thumbnailUrl }
+    rights { credit license }
+  }
+}
+```
+
+`url(width:)` picks the ladder width at or above the one asked for (the largest past it);
+`url(rendition:)` is `null` for a rendition the space doesn't have, and `placeholder` is `null` when the asset has none.
+
+## SDKs
+
+```ts
+import { assetUrl, createDeliveryClient, imageProps, srcset } from '@commerceworker/sdk';
+
+const asset = await client.getAsset(id, { locale: 'en-US' });
+const page = await client.listAssets({ kind: 'image', limit: 50 });
+for await (const a of client.iterateAssets({ kind: 'image' })) {
+  // every published image, fetched a page at a time as the loop asks for more
+}
+for await (const a of client.iterateCollection(collectionId)) {
+  // a collection's published members, in its order
+}
+
+assetUrl(asset, { width: 800 });       // the w960 step
+assetUrl(asset, { rendition: 'card' }); // undefined if the space has no "card"
+srcset(asset);                          // "…/w320/… 320w, …/w640/… 640w, …"
+imageProps(asset, { sizes: '50vw' });   // every <img> attribute, below
+```
+
+Types generated by `@commerceworker/sdk/codegen` include `DeliveredAsset`, the same shape.
+
+## Build an image component
+
+`imageProps(asset, options)` from `@commerceworker/sdk` turns a delivered asset into the
+attributes of an `<img>`; `<Image>` (React, `@commerceworker/sdk/react`), `<CwImage>` (Vue,
+`@commerceworker/sdk/vue`) and `imageSource` (React Native) put them on each framework's own image.
+
+| Option      | Effect                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| `sizes`     | The `sizes` attribute. Default `(max-width: {width}px) 100vw, {width}px` with `width`, else `100vw` |
+| `width`     | The width it renders at: `src` is the ladder step at or above it, and `width`/`height` scale to it  |
+| `rendition` | Serve that rendition as the only `src`: no `srcset`, and only `width` if you gave one; ignored if the space lacks it |
+| `locale`    | The locale to take alt text from when the asset was fetched without `?locale=`                     |
+| `priority`  | For the image that paints first: `loading="eager"` and `fetchpriority="high"` instead of lazy      |
+
+It returns `{ src, srcSet, sizes, width, height, alt, loading, decoding, fetchPriority, style }`,
+or `undefined` for an asset with no image to show: audio, documents, and a video without a
+thumbnail. A hosted video gives its `video.thumbnailUrl` as `src`. Every URL is one Delivery
+returned, never one it built or extended; a URL that isn't `http(s)` or relative is dropped.
+
+**`srcset` and `sizes`, or `<picture>`.** The width ladder is one image at several widths, which
+is what `srcset` with `w` descriptors is for (an image wider than the ladder's last step below its
+own width gets its original as the top candidate): the browser takes `sizes` (how wide the image is in
+your layout), multiplies by the screen's density and fetches the smallest step that covers it.
+The steps already negotiate AVIF or WebP (`?fm=auto`), so `<picture>` with `type` sources adds
+nothing for format. Use `<picture>` for art direction, a different crop at a breakpoint: a
+`<source media="…" srcset="…">` per rendition, with the `<img>` from `imageProps` as the fallback.
+Getting `sizes` right matters more than anything else here; with the default `100vw`, a phone
+downloads a full-screen-width image for a thumbnail.
+
+**Focal point.** `style.objectPosition` is the asset's focal point as percentages (`40% 35%`). It
+takes effect when the image fills a box of another shape with `object-fit: cover`, which keeps the
+subject in frame as the box changes shape. Renditions that crop use the same point on the server.
+
+**Placeholder.** `style.backgroundColor` is the placeholder's `dominantColor`, so the image's box
+shows its main colour until the bytes arrive; together with `width` and `height`, which reserve
+its space, the page doesn't jump. For a blurred preview instead, decode `placeholder.thumbhash`
+with the `thumbhash` package (`thumbHashToDataURL`) and use it as a `background-image`. The SDKs
+don't, to stay free of dependencies.
+
+**Alt text.** `alt` is the asset's alt text, else its title, else empty. Empty marks the image
+decorative, so screen readers skip it: write alt text for any image that carries meaning. With a
+`locale`, only that locale's text is used. Without one, an asset fetched without `?locale=` gives
+the first non-empty value in its map, which may be another language: fetch with `?locale=` or pass
+`locale`. An `alt` you pass to the components wins.
+
+```tsx
+// React
+import { Image, useAsset } from '@commerceworker/sdk/react';
+
+function Hero({ id }: { id: string }) {
+  const { data } = useAsset(id, { locale: 'en-US' });
+  return (
+    <Image
+      asset={data}
+      sizes="(min-width: 960px) 960px, 100vw"
+      priority
+      style={{ width: '100%', height: 420, objectFit: 'cover' }}
+    />
+  );
+}
+```
+
+```vue
+<!-- Vue -->
+<script setup lang="ts">
+import { CwImage, useAsset } from '@commerceworker/sdk/vue';
+const props = defineProps<{ id: string }>();
+const { data } = useAsset(() => props.id, { locale: 'en-US' });
+</script>
+
+<template>
+  <CwImage :asset="data" :width="320" class="card-image" />
+</template>
+```
+
+```tsx
+// React Native
+import { Image, PixelRatio } from 'react-native';
+import { imageProps, imageSource } from '@commerceworker/sdk/react-native';
+
+const source = imageSource(asset, { width: 320, dpr: PixelRatio.get() });
+// { uri: the step for 320 × dpr, width: 320, height: from the aspect ratio }
+{source && <Image source={source} alt={imageProps(asset)?.alt ?? ''} />}
+```
+
+`imageSource(asset, { width, dpr, rendition })` gives the rendition, else the ladder step at or
+above `width × dpr`, else the original, with `width` and `height` in density-independent pixels;
+`imageUrl` gives the URL alone.
+
+### Moving off `file.url`
+
+Integrations that read `file.url` keep working: it is the same URL as `url`. New code reads `url`
+for the original, `srcset` for responsive images and `renditions` for your named sizes, or uses
+the helpers above. The old transform URL (`…/assets/{id}/transform?w=…`) answers a `301` to the
+matching width step, so links to it still resolve, but each one costs a redirect: replace them
+with `srcset` and `renditions`.
+
+## Local development
+
+A local stack has no media address. Delivered assets then keep the api's signed, short-lived
+`url` (root-relative), with no `renditions` and an empty `srcset`; the rest of the shape is the
+same. `imageProps` and the components degrade to that one `src`,
+so the same code renders locally, just without responsive widths. Don't store the URLs you see
+locally; they expire.
+
+## Next steps
+
+- [Media and assets](/content/guides/media/) to upload files and set alt text and a focal point.
+- [Reading content](/content/guides/reading-content/) for the entries that reference these assets.
+- [SDKs](/content/guides/sdks/) for the image helpers in every client.

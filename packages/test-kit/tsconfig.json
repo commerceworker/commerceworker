@@ -1,0 +1,5 @@
+{
+  "extends": "@commerceworker/typescript-config/worker.json",
+  "compilerOptions": {},
+  "include": ["src/**/*"]
+}

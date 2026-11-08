@@ -1,0 +1,103 @@
+---
+/**
+ * Every page's shell: head (title, description, canonical, hreflang, social tags), the Ledger
+ * palette for both schemes, the header and the footer. The theme follows the system; the palette
+ * comes from @commerceworker/design at build time, so the site can't drift from the admins.
+ */
+import '@fontsource-variable/inter/wght.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import { palette, type Scheme } from '@commerceworker/design/tokens';
+import Mark from '../components/Mark.astro';
+import { copy } from '../i18n';
+import { joinCanonical } from '../lib/canonical-url';
+import { APP_ORIGIN, docsUrl, type Locale, localePath, SITE_ORIGIN, socialMeta } from '../lib/site';
+import '../styles/site.css';
+
+interface Props {
+  locale: Locale;
+  /** The page's path without the locale prefix, e.g. "/" or "/features/". */
+  path: string;
+  title: string;
+  description: string;
+  /** False for a page with no counterpart in the other locale (404): no alternates, no index. */
+  translated?: boolean;
+}
+
+const { locale, path, title, description, translated = true } = Astro.props;
+const t = copy(locale);
+const here = localePath(locale, path);
+const other: Locale = locale === 'en' ? 'es' : 'en';
+
+const vars = (scheme: Scheme) =>
+  Object.entries(palette(scheme))
+    .map(([k, v]) => `--${k}:${v};`)
+    .join('');
+const themeCss = `:root{color-scheme:light;${vars('light')}}@media (prefers-color-scheme:dark){:root{color-scheme:dark;${vars('dark')}}}`;
+---
+
+<!doctype html>
+<html lang={locale}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {
+      translated ? (
+        <>
+          <link rel="canonical" href={joinCanonical(SITE_ORIGIN, here)} />
+          <link rel="alternate" hreflang="en" href={joinCanonical(SITE_ORIGIN, localePath('en', path))} />
+          <link rel="alternate" hreflang="es" href={joinCanonical(SITE_ORIGIN, localePath('es', path))} />
+          <link rel="alternate" hreflang="x-default" href={joinCanonical(SITE_ORIGIN, localePath('en', path))} />
+        </>
+      ) : (
+        <meta name="robots" content="noindex" />
+      )
+    }
+    {socialMeta({ title, description, pathname: here }).map((m) =>
+      'name' in m ? <meta name={m.name} content={m.content} /> : <meta property={m.property} content={m.content} />,
+    )}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="sitemap" href="/sitemap.xml" />
+    <style is:inline set:html={themeCss}></style>
+  </head>
+  <body>
+    <a class="skip" href="#main">{t.nav.skip}</a>
+    <header class="top">
+      <div class="wrap top-row">
+        <a class="brand" href={localePath(locale, '/')}><Mark /> CommerceWorker</a>
+        <nav aria-label={t.nav.features}>
+          <a href={localePath(locale, '/features/')} aria-current={path === '/features/' ? 'page' : undefined}>{t.nav.features}</a>
+          <a href={docsUrl('/')}>{t.nav.docs}</a>
+          <a href={localePath(other, translated ? path : '/')} hreflang={other} lang={other}>{t.nav.language}</a>
+          <a class="button" href={APP_ORIGIN}>{t.nav.signIn}</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer class="foot">
+      <div class="wrap foot-grid">
+        <div>
+          <a class="brand" href={localePath(locale, '/')}><Mark size={20} /> CommerceWorker</a>
+          <p class="muted">{t.footer.tagline}</p>
+        </div>
+        <div>
+          <h2>{t.footer.product}</h2>
+          <ul>
+            <li><a href={localePath(locale, '/features/')}>{t.nav.features}</a></li>
+            <li><a href={docsUrl('/content/')}>{t.footer.contentDocs}</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>{t.footer.developers}</h2>
+          <ul>
+            <li><a href={docsUrl('/')}>{t.footer.docs}</a></li>
+            <li><a href={docsUrl('/reference/rest-api/')}>{t.footer.restApi}</a></li>
+            <li><a href={docsUrl('/reference/mcp/')}>{t.footer.mcp}</a></li>
+          </ul>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

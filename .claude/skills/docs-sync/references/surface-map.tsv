@@ -1,0 +1,186 @@
+# Source surface → docs that describe it. One source of truth, read by the docs-sync skill and by
+# .claude/hooks/docs-impact.sh and docs-drift.sh. Columns are TAB-separated:
+#   1. extended regex over repo-relative paths
+#   2. space-separated docs pages: a published page relative to apps/docs/src/content/ (".mdx"
+#      implied), a maintainer page under docs/ (unpublished: internals, deploy, configuration), or
+#      a path starting with apps/ or packages/ for a non-page file that mirrors the source
+#   3. "gen" when a reference page renders from this source at build time (rebuild, then check the
+#      prose around it), else "prose"
+# Keep rows narrow: a row that matches everything nags on every edit and gets ignored.
+^packages/core/src/catalog\.ts$	reference/nodes guides/building-flows guides/ai	gen
+^packages/core/src/templates\.ts$	guides/templates guides/commerce-models start/getting-started index	gen
+^packages/core/src/graph\.ts$	docs/planner.md guides/building-flows start/concepts	prose
+^packages/core/src/types\.ts$	start/concepts guides/commerce-models reference/rest-api reference/expressions	gen
+^packages/core/src/api\.ts$	reference/rest-api docs/architecture.md docs/order-agent.md	prose
+^packages/core/src/logic\.ts$	reference/expressions	prose
+^packages/core/src/policy\.ts$	reference/expressions	gen
+^packages/core/src/address\.ts$	reference/expressions	prose
+^packages/core/src/fulfillment\.ts$	guides/fulfillment docs/testing.md	prose
+^packages/core/src/pricing\.ts$	reference/expressions docs/data-model.md	prose
+^packages/core/src/shipping\.ts$	guides/fulfillment reference/expressions reference/rest-api docs/configuration.md	prose
+^apps/web/app/lib/approvals\.ts$	guides/approvals-and-events	prose
+^packages/core/src/webhooks\.ts$	guides/outbound-webhooks guides/approvals-and-events reference/rest-api reference/a2a	gen
+^(packages/core/src/integrations|apps/web/app/lib/integrations\.server)\.ts$	reference/rest-api guides/approvals-and-events guides/inbound-orders guides/marketplace guides/team-and-roles docs/data-model.md docs/configuration.md	prose
+^apps/web/workers/app\.ts$	docs/architecture.md reference/rest-api guides/team-and-roles reference/a2a	prose
+^apps/web/app/lib/(api\.server|api-schemas|openapi)\.ts$	reference/rest-api guides/inbound-orders guides/product-catalog	gen
+^packages/core/src/inbound\.ts$	guides/inbound-orders reference/rest-api docs/configuration.md	gen
+^apps/web/app/lib/auth\.server\.ts$	guides/team-and-roles reference/rest-api docs/configuration.md docs/deploy.md docs/architecture.md	prose
+^apps/web/app/lib/webhooks\.server\.ts$	guides/outbound-webhooks reference/rest-api	prose
+^apps/web/app/lib/scenarios\.ts$	guides/templates start/getting-started	prose
+^apps/web/app/(lib/metrics\.server\.ts|components/performance\.tsx)$	docs/data-model.md start/getting-started	prose
+^apps/web/app/components/decision\.tsx$	guides/approvals-and-events	prose
+^apps/web/app/routes/flow-(editor|action)\.tsx?$	guides/building-flows	prose
+^apps/web/app/routes/(approvals|order)\.tsx$	guides/approvals-and-events	prose
+^apps/web/app/app\.css$	packages/design/src/tokens.ts apps/docs/src/styles/brand.css apps/docs/DESIGN.md	prose
+^packages/design/src/tokens\.ts$	apps/docs/src/styles/theme.css apps/docs/DESIGN.md	gen
+^apps/web/app/(routes/shell|components/(flow-node|node-icon|status|page))\.tsx$	apps/docs/src/styles/brand.css apps/docs/DESIGN.md	prose
+^apps/engine/src/workflow\.ts$	docs/workflow.md guides/approvals-and-events guides/building-flows	prose
+^apps/engine/src/agent\.ts$	docs/order-agent.md guides/approvals-and-events guides/ai	prose
+^apps/engine/src/nodes\.ts$	reference/expressions guides/building-flows docs/workflow.md	prose
+^apps/engine/src/connectors\.ts$	docs/architecture.md guides/templates	prose
+^apps/engine/src/outbox\.ts$	guides/outbound-webhooks	prose
+^apps/engine/src/ai\.ts$	guides/ai	prose
+^apps/engine/src/email\.ts$	guides/email-intake docs/architecture.md docs/data-model.md	prose
+^packages/core/src/intake\.ts$	guides/email-intake	prose
+^apps/web/app/routes/commerce\.tsx$	guides/email-intake	prose
+^apps/engine/src/(orders|replenish|api|index)\.ts$	docs/architecture.md docs/workflow.md reference/rest-api	prose
+^apps/(engine|web)/wrangler\.jsonc$	docs/configuration.md docs/deploy.md docs/architecture.md reference/a2a	prose
+^apps/web/\.dev\.vars\.example$	docs/configuration.md docs/local-development.md	prose
+^packages/db/(src/schema\.ts|migrations/)	docs/data-model.md guides/marketplace	prose
+^(apps|packages)/[^/]+/(vitest\.config\.ts|tests/)	docs/testing.md	prose
+^(\.github/workflows/|scripts/provision\.sh$)	docs/deploy.md	prose
+^package\.json$	docs/local-development.md docs/deploy.md	prose
+^packages/core/src/roles\.ts$	guides/team-and-roles docs/order-agent.md	prose
+^apps/web/app/(lib/team\.server\.ts|lib/auth\.server\.ts|lib/credentials\.ts|lib/throttle\.ts|lib/origin\.ts|lib/audit(\.server)?\.ts|lib/tokens\.ts|lib/sessions\.ts|lib/totp\.ts|lib/two-factor(\.server)?\.ts|lib/settings\.server\.ts|routes/shell\.tsx|routes/audit\.tsx|routes/(team|account|login|login-two-factor)\.tsx)$	guides/team-and-roles reference/rest-api docs/configuration.md	prose
+^apps/engine/src/(assistant/|principal\.ts$)	guides/assistant guides/ai docs/architecture.md reference/mcp reference/a2a	prose
+^packages/core/src/assistant\.ts$	guides/assistant guides/ai reference/mcp reference/a2a	gen
+^apps/web/app/(components/assistant/|lib/assistant\.tsx$)	guides/assistant	prose
+^packages/core/src/(catalog|templates)\.ts$	guides/marketplace	gen
+^apps/engine/src/mcp\.ts$	reference/mcp guides/assistant docs/architecture.md	prose
+^apps/web/app/(lib/oauth\.server|routes/oauth-authorize)\.tsx?$	reference/mcp reference/a2a guides/team-and-roles docs/architecture.md docs/configuration.md	prose
+^apps/docs/src/components/McpTools\.astro$	reference/mcp	gen
+^packages/core/src/mcp-skills\.ts$	reference/mcp	gen
+^apps/docs/src/components/McpSkills\.astro$	reference/mcp	gen
+^apps/web/app/lib/mcp-discovery\.ts$	reference/mcp docs/architecture.md	prose
+^(packages/core/src/(catalog|templates|inbound|webhooks)\.ts|apps/engine/src/(connectors|nodes)\.ts|packages/db/(src/schema\.ts|migrations/0020_fulfillment\.sql)|apps/web/app/routes/order-new\.tsx)$	guides/fulfillment	gen
+^packages/core/src/catalog\.ts$	docs/workflow.md docs/planner.md	prose
+^packages/core/src/(webhooks|assistant)\.ts$	docs/workflow.md docs/architecture.md	prose
+^apps/engine/src/outbox\.ts$	docs/workflow.md docs/data-model.md	prose
+^apps/engine/src/(connectors|flows|orders)\.ts$	docs/data-model.md	prose
+^packages/db/src/flows\.ts$	docs/data-model.md	prose
+^apps/web/app/lib/(flows|orders)\.server\.ts$	docs/data-model.md	prose
+^apps/web/app/lib/origin\.ts$	docs/architecture.md	prose
+^apps/engine/src/principal\.ts$	docs/order-agent.md docs/architecture.md	prose
+^apps/docs/src/data/runs/	docs/testing.md index	prose
+^(turbo\.json|pnpm-workspace\.yaml|\.github/workflows/ci\.yml)$	docs/testing.md	prose
+^apps/engine/src/assistant/	docs/architecture.md docs/testing.md	prose
+^apps/engine/src/a2a/	reference/a2a docs/architecture.md guides/assistant docs/testing.md	prose
+^packages/core/src/a2a\.ts$	reference/a2a docs/architecture.md	gen
+^apps/docs/src/components/A2a(Skills|TaskStates)\.astro$	reference/a2a	gen
+^packages/core/src/channels/(shopify|x12)\.ts$	guides/channel-adapters reference/rest-api docs/configuration.md guides/payments	prose
+^apps/engine/src/(payments|stripe|gateway|billing|payment-events)\.ts$	guides/payments docs/architecture.md docs/configuration.md docs/data-model.md docs/workflow.md	prose
+^apps/engine/src/(billing|payment-events)\.ts$	guides/approvals-and-events docs/order-agent.md	prose
+^apps/web/app/lib/stripe\.server\.ts$	guides/payments guides/approvals-and-events reference/rest-api docs/architecture.md docs/configuration.md docs/deploy.md	prose
+^packages/core/src/(money|payments)\.ts$	guides/payments docs/architecture.md	prose
+^apps/web/app/(lib/sso(\.server)?\.ts|routes/login-sso(-callback)?\.ts)$	guides/team-and-roles start/getting-started docs/architecture.md docs/configuration.md docs/operations.md docs/data-model.md	prose
+^scripts/fleet\.ts$	docs/operations.md docs/configuration.md docs/deploy.md	prose
+^apps/web/app/lib/scim(\.server)?\.ts$	guides/team-and-roles docs/architecture.md docs/data-model.md docs/operations.md docs/testing.md	prose
+^packages/core/src/(checkout|ucp/[^/]+)\.ts$	reference/ucp docs/architecture.md docs/testing.md	gen
+^apps/docs/src/components/UcpValues\.astro$	reference/ucp	gen
+^apps/engine/src/ucp/	reference/ucp docs/architecture.md docs/configuration.md docs/data-model.md docs/testing.md	prose
+^apps/web/app/lib/ucp\.server\.ts$	reference/ucp reference/rest-api guides/team-and-roles docs/architecture.md	prose
+^apps/(engine|web)/tests/(stripe/)?ucp(-helpers)?\.test\.ts$|^apps/engine/tests/ucp-helpers\.ts$|^packages/core/tests/(checkout|ucp)\.test\.ts$	docs/testing.md	prose
+^packages/core/src/types\.ts$	guides/commerce-models	prose
+^apps/web/app/lib/(audit|demo\.server)\.ts$	guides/team-and-roles reference/ucp	prose
+^packages/db/migrations/0039_ucp\.sql$	docs/data-model.md reference/ucp	prose
+^apps/engine/src/(retention|agent|env\.d)\.ts$	docs/data-model.md docs/order-agent.md docs/configuration.md reference/ucp	prose
+^(packages/core/src/encryption|apps/engine/src/data-key|apps/web/app/lib/data-key\.server)\.ts$	docs/architecture.md docs/operations.md docs/configuration.md docs/data-model.md docs/testing.md guides/team-and-roles	prose
+^scripts/(fleet\.ts|provision\.sh)$	docs/deploy.md docs/operations.md docs/configuration.md docs/testing.md	prose
+^apps/catalog/src/	guides/product-catalog docs/architecture.md docs/data-model.md docs/configuration.md docs/testing.md	prose
+^apps/catalog/wrangler\.jsonc$	docs/configuration.md docs/deploy.md docs/architecture.md docs/data-model.md	prose
+^apps/catalog-edge/(src/|vitest\.config\.ts$)	guides/product-catalog docs/architecture.md docs/data-model.md docs/testing.md docs/local-development.md	prose
+^apps/catalog-edge/wrangler\.jsonc$	docs/configuration.md docs/deploy.md docs/architecture.md docs/operations.md	prose
+^packages/core/(src/product/|package\.json$)	guides/product-catalog docs/architecture.md docs/data-model.md docs/testing.md	prose
+^deployments/	docs/operations.md	prose
+^packages/core/package\.json$	docs/architecture.md	prose
+^apps/web/app/lib/catalog-api\.server\.ts$	guides/product-catalog reference/rest-api guides/team-and-roles docs/architecture.md docs/configuration.md docs/testing.md	prose
+^packages/core/src/audit\.ts$	guides/team-and-roles reference/rest-api	prose
+^(packages/core/src/(plugins|plugin-ui|credentials)|apps/engine/src/(plugins|plugin-host)|apps/web/app/lib/(plugins\.server|plugin-view|nodes)|apps/web/app/routes/plugin-page)\.tsx?$	docs/plugins.md docs/architecture.md docs/configuration.md docs/data-model.md	prose
+^plugins/	docs/plugins.md docs/testing.md	prose
+^packages/plugin-sdk/	docs/plugins.md docs/testing.md docs/architecture.md	prose
+^(apps/web/app/routes/plugins|apps/web/tests/api\.test)\.tsx?$	docs/plugins.md reference/rest-api guides/team-and-roles guides/fulfillment	prose
+^(scripts/plugin-check\.ts|apps/engine/tests/plugin[^/]*|apps/engine/tests/(plugins|sandboxed)/|apps/web/tests/(plugins|plugin-view)\.test\.ts|packages/core/tests/(plugins|plugin-ui)\.test\.ts)	docs/plugins.md docs/testing.md	prose
+^deployments/	docs/plugins.md	prose
+^apps/web/app/lib/(api\.server|openapi)\.ts$	docs/plugins.md	prose
+^apps/engine/src/outbox\.ts$	docs/plugins.md	prose
+^(\.github/workflows/deploy\.yml|scripts/(fleet|provision)\.(ts|sh))$	docs/plugins.md	prose
+^apps/(web/app/(routes/plugins|lib/plugin-installs\.server)|engine/src/plugin-installs)\.tsx?$	guides/installing-plugins reference/rest-api docs/plugins.md	prose
+^(packages/core/src/cart|apps/engine/src/cart/.*|apps/web/app/(lib/carts\.server|routes/carts?))\.tsx?$	guides/carts docs/architecture.md docs/data-model.md	prose
+^apps/engine/src/(assistant/plugin-draft|plugin-cases)\.ts$	guides/assistant guides/installing-plugins reference/mcp guides/team-and-roles docs/plugins.md	prose
+^(packages/core/src/promotions|apps/web/app/(lib/promotions\.server|routes/promotions))\.tsx?$	guides/promotions docs/data-model.md	prose
+^plugins/punchout/(src/.*|migrations/.*)$	guides/punchout docs/plugins.md docs/testing.md	prose
+^(apps/engine/src/product-index|apps/web/app/lib/product-index\.server)\.ts$	guides/ai guides/team-and-roles docs/architecture.md docs/operations.md docs/configuration.md	prose
+# Content management (apps/studio, api, delivery, media, pipeline and the platform packages;
+# published pages under apps/docs/src/content/content/, maintainer pages under docs/content/):
+^packages/domain/src/workflow/nodes\.ts$	content/reference/nodes content/guides/workflows docs/content/domain-model.md	gen
+^packages/domain/src/workflow/templates\.ts$	content/reference/workflow-templates content/guides/workflows	gen
+^packages/domain/src/auth/auth\.ts$	content/reference/scopes content/guides/api-keys docs/content/auth-and-rbac.md	gen
+^packages/http/src/api/(routes/(management|team|workflows)\.ts|routes/management/|docs/)	content/reference/rest-api docs/content/api-reference.md	gen
+^packages/http/src/api/routes/(delivery|preview)\.ts$	content/reference/rest-api content/guides/reading-content docs/content/api-reference.md	gen
+^apps/studio/app/app\.css$	packages/design/src/tokens.ts apps/docs/src/styles/content.css apps/studio/DESIGN.md	prose
+^packages/domain/src/(content-type|validation|locale|reference|rich-text)/	content/guides/content-modeling content/reference/field-types docs/content/domain-model.md	prose
+^packages/domain/src/(entry|release|scheduling)/	content/guides/editing-and-publishing content/guides/releases-and-scheduling docs/content/domain-model.md	prose
+^packages/application/src/(entries|content-types|versioning|branching)\.ts$	content/guides/content-modeling content/guides/editing-and-publishing docs/content/domain-model.md	prose
+^packages/application/src/(publishing|releases|scheduling)\.ts$	content/guides/editing-and-publishing content/guides/releases-and-scheduling docs/content/events-and-webhooks.md docs/content/consistency.md	prose
+^packages/application/src/(delivery|preview|preview-tokens)\.ts$	content/guides/reading-content docs/content/api-reference.md	prose
+^packages/domain/src/query/	content/guides/reading-content docs/content/api-reference.md	prose
+^packages/application/src/(branching|snapshots|snapshot-jobs|spaces|environment-purge)\.ts$	content/guides/environments docs/content/environments-and-snapshots.md docs/content/domain-model.md	prose
+^apps/studio/app/cms/components/(BranchMerge|layout/EnvironmentSwitcher)\.tsx$	content/guides/environments	prose
+^packages/(application/src/(assets|image|video-assets|media-ai)\.ts$|domain/src/asset/|adapters/src/(blob-r2|images-cf|video-stream)/)	content/guides/media	prose
+^apps/studio/app/cms/components/(MediaLibrary|AssetDetailSheet)\.tsx$	content/guides/media	prose
+^packages/domain/src/workflow/(planner|policy|logic|validate|assess)\.ts$	content/guides/workflows content/guides/approvals docs/content/domain-model.md	prose
+^packages/application/src/(workflows|workflow-runs|workflow-copilot)\.ts$	content/guides/workflows content/guides/approvals docs/content/domain-model.md	prose
+^packages/application/src/(generation|content-ai|media-ai|ai-actions|ai-budget|rag|semantics|search-index)\.ts$	content/guides/ai docs/content/ai-agents-and-search.md	prose
+^packages/adapters/src/(ai-workers|vector-vectorize)/	content/guides/ai docs/content/ai-agents-and-search.md docs/content/configuration.md	prose
+^packages/(agent-runtime/src/|application/src/agent-[a-z-]+\.ts$)	content/guides/ai docs/content/ai-agents-and-search.md	prose
+^packages/http/src/mcp/(server\.ts$|audit\.ts$|tools/)	content/guides/mcp docs/content/mcp.md	prose
+^packages/http/skills/	content/guides/mcp docs/content/mcp.md	prose
+^packages/application/src/(webhooks|hooks)\.ts$	content/guides/webhooks docs/content/events-and-webhooks.md	prose
+^packages/domain/src/(webhook/|events\.ts$)	content/guides/webhooks docs/content/events-and-webhooks.md	prose
+^packages/application/src/events/	docs/content/events-and-webhooks.md docs/content/consistency.md	prose
+^packages/(application/src/plugin[a-z-]*\.ts$|domain/src/plugin/|adapters/src/plugins-cf-loader/)	content/guides/extending docs/content/plugins.md	prose
+^(packages/application/src/(functions|app-extensions)\.ts$|packages/http/src/(api/routes/management|mcp/tools)/(functions|app-extensions|plugins)\.ts$|packages/adapters/src/http-effects/function-invoker\.ts$|apps/studio/app/cms/components/(Functions|AppExtensions|ExtensionFrame|Plugins|PluginSettingsSheet)\.tsx$)	content/guides/extending	prose
+^packages/http/src/api/(auth\.ts$|oauth/|oidc/)	content/guides/api-keys content/guides/team-and-roles docs/content/auth-and-rbac.md	prose
+^packages/application/src/(auth|roles|team|oauth)\.ts$	content/guides/api-keys content/guides/team-and-roles docs/content/auth-and-rbac.md	prose
+^packages/security/src/	docs/content/auth-and-rbac.md docs/content/architecture.md	prose
+^apps/studio/app/lib/(auth|sso|scim|passkeys|two-factor|setup|team)\.server\.ts$	content/guides/team-and-roles docs/content/auth-and-rbac.md docs/content/admin-ui.md	prose
+^apps/studio/app/lib/gateway\.server\.ts$	docs/content/architecture.md docs/content/auth-and-rbac.md	prose
+^packages/store/(migrations/|src/(schema|auth-schema)\.ts$)	docs/content/development.md docs/content/domain-model.md	prose
+^packages/(db/src/(store|exec)|ports/src/content-store)\.ts$	docs/content/consistency.md docs/content/architecture.md	prose
+^apps/(api|engine|delivery|web)/wrangler\.jsonc$	docs/content/configuration.md docs/content/architecture.md	prose
+^packages/platform/src/(env|config|wire)\.ts$	docs/content/configuration.md docs/content/architecture.md	prose
+^packages/platform/src/do/	docs/content/architecture.md docs/content/ai-agents-and-search.md	prose
+^apps/pipeline/src/	docs/content/architecture.md docs/content/events-and-webhooks.md	prose
+^apps/delivery/src/	content/guides/reading-content docs/content/architecture.md docs/content/consistency.md docs/content/events-and-webhooks.md	prose
+^(examples/fleet/|scripts/(fleet\.ts|provision\.sh)$)	docs/content/deployment.md docs/content/configuration.md	prose
+^\.github/workflows/	docs/content/deployment.md docs/content/development.md	prose
+^packages/sdk/[a-z-]+/src/	content/guides/sdks docs/content/sdks.md	prose
+^packages/sdk/(core|react-native)/src/image\.ts$|^packages/sdk/(web|vue)/src/index\.ts$	content/guides/delivering-assets packages/sdk/core/README.md	prose
+^packages/cli/src/	content/guides/cli docs/content/developer-tooling.md packages/cli/README.md	prose
+^packages/cli/src/(commands|run)\.ts$	content/guides/agent-skills skills/building-on-contentworker/SKILL.md skills/modeling-content-with-contentworker/SKILL.md skills/migrating-to-contentworker/SKILL.md	prose
+^skills/	content/guides/agent-skills docs/content/developer-tooling.md	prose
+^apps/studio/app/routes\.ts$	docs/content/admin-ui.md	prose
+^packages/seed/src/	content/start/getting-started docs/content/development.md	prose
+^(packages/(domain|http)/src/assistant/|apps/pipeline/src/assistant\.ts$|apps/studio/app/cms/(components/assistant/|lib/assistant))	content/guides/coworker docs/content/architecture.md	prose
+^apps/media/src/	content/guides/delivering-assets docs/content/architecture.md docs/content/configuration.md docs/content/events-and-webhooks.md	prose
+^packages/(domain/src/asset/delivered|application/src/(asset-delivery|asset-renditions|asset-gate))\.ts$	content/guides/delivering-assets content/guides/reading-content docs/content/domain-model.md docs/content/api-reference.md	prose
+^packages/(domain/src/asset/collection|application/src/(asset-collections|asset-shares|asset-uploads|asset-zip|zip))\.ts$	content/guides/media content/guides/share-links content/guides/delivering-assets docs/content/architecture.md docs/content/domain-model.md docs/content/api-reference.md	prose
+^\.github/workflows/deploy\.yml$	docs/content/backup-and-restore.md docs/content/deployment.md	prose
+^packages/(domain/src/redirect/|application/src/redirects\.ts$|sdk/core/src/redirects\.ts$|db/migrations/0017_redirects\.sql$)	content/guides/redirects docs/content/domain-model.md docs/content/api-reference.md	prose
+^packages/(domain/src/seo/|application/src/seo\.ts$|http/src/api/sitemap-xml\.ts$|http/src/(api/routes/management|mcp/tools)/seo\.ts$)	content/guides/seo docs/content/domain-model.md docs/content/api-reference.md	prose
+^packages/(domain/src/menu/|application/src/menus\.ts$|http/src/mcp/tools/menus\.ts$|http/src/api/routes/management/menus\.ts$|db/migrations/0020_menus\.sql$)	content/guides/menus docs/content/domain-model.md docs/content/api-reference.md docs/content/mcp.md	prose
+^(packages/(domain/src/saved-view/|application/src/saved-views\.ts$|http/src/mcp/tools/saved-views\.ts$|http/src/api/routes/management/saved-views\.ts$|db/migrations/0029_saved_views\.sql$)|apps/studio/app/cms/(components/entries/(SavedViewsMenu|ColumnPicker)\.tsx|lib/entry-url\.ts)$)	content/guides/saved-views docs/content/domain-model.md docs/content/api-reference.md docs/content/mcp.md docs/content/admin-ui.md	prose
+^packages/sdk/(core/src/webhooks\.ts|rich-text/src/)	content/guides/your-own-frontend content/guides/webhooks content/guides/sdks docs/content/sdks.md	prose
+^(scripts/sdk-packages\.ts|\.github/workflows/sdk-(packages|release)\.yml)$	docs/content/deployment.md docs/content/development.md	prose
+^packages/design/src/tokens\.ts$	apps/docs/src/styles/content.css apps/studio/DESIGN.md	prose
+^package\.json$	docs/content/development.md	prose

@@ -1,0 +1,92 @@
+---
+title: Email intake
+description: Start orders from email — mailboxes, who may send, what becomes the order, redelivery and the intake log.
+---
+
+Customers can start an order by emailing an order, an order form or a purchase order to one of the
+workspace's intake addresses. CommerceWorker checks the message, turns it into order input and starts
+the mailbox's flow. Your CommerceWorker administrator sets up the intake domain; the **Email intake**
+section of the Commerce page lists the addresses.
+
+## Mailboxes
+
+The local part of the recipient picks the flow. The defaults:
+
+| Address | Flow |
+|---|---|
+| `orders@` | `tpl-b2b-order` |
+| `po@` | `tpl-b2b-order` |
+| `purchasing@` | `tpl-purchase-request` |
+
+Your administrator can replace them with the workspace's own mailbox mapping, from local part to
+flow id (for example `wholesale@` → `my-wholesale-flow`). Matching ignores case and a `+tag`
+(`orders+acme@` is `orders@`). The order's `model` comes from the flow, its `channel` is `email`,
+and the flow's latest published version runs.
+
+## Who may send
+
+A message is accepted only when all of these hold. Otherwise it is rejected while it is being
+delivered, so the sender's mail server returns a bounce with the reason:
+
+| Check | Rejection reason |
+|---|---|
+| The recipient is a configured mailbox | `No mailbox <local>@ here` |
+| The raw message is at most 10 MiB | `Message too large` |
+| The receiving server's authentication result records `dmarc=pass` for the `From` domain, or `dkim=pass` or `spf=pass` for a domain aligned with it (the same domain, or one a subdomain of the other). Authentication headers that came with the message are ignored, and a pass for an unrelated domain doesn't count | `Message failed SPF, DKIM and DMARC` |
+| The sender is recognised (below) | `Sender is not a known customer` |
+| The mailbox's flow has a published version | `Mailbox is not configured` |
+
+A sender is recognised, in this order, by:
+
+1. **Customer address.** The envelope sender equals a customer's email; the order gets that
+   `customerId`.
+2. **Company domain.** The sender's domain matches exactly one customer's email domain, unless it is
+   a webmail domain (Gmail, Outlook, Yahoo, iCloud, Proton and similar), which never identifies a
+   customer on its own.
+3. **Allowed senders.** The workspace's list of allowed senders (addresses or `@domains`, kept by
+   your administrator). These senders start orders without a `customerId`; the AI extract node then
+   matches the customer by name from the text.
+
+To let a new customer order by email, add them as a customer with their email address; to accept a
+sender who isn't a customer, ask your administrator to add them to the allowed senders.
+
+## What becomes the order
+
+| Order field | From the message |
+|---|---|
+| `title` | The subject, or `Email from <sender>` |
+| `customerId` | The recognised customer, if any |
+| `documentText` | `From:` and `Subject:` lines, the plain-text body (or the HTML body reduced to text), then each readable attachment under `--- Attachment: <filename> ---`; capped at 50,000 characters |
+| `meta` | `via: "email"`, `from`, `to`, `subject`, `messageId`, `senderMatch` (`customer`, `domain` or `allowlist`) and `attachments` (the filenames that were read) |
+
+`lines` start empty: the flow's [Extract order](/reference/nodes/#ai.extract) node reads them from
+`documentText`, as it does for an order whose input carries a document.
+
+At most 10 attachments per message are read, each up to 5 MiB. Plain text, CSV, TSV, JSON and XML
+are read directly. PDF, Office documents, HTML and PNG, JPEG or WebP images are converted to text
+by Workers AI; an attachment whose conversion takes longer than 20 seconds is skipped. Anything else
+is ignored.
+
+The original message is kept with the order's documents, as kind `email`.
+
+## Redelivery
+
+The message's `Message-ID` is the order's idempotency key (`email:<Message-ID>`). If the same
+message is delivered again, it maps to the same order, is logged as `duplicate`, and the sender
+gets no second acknowledgement. A different message that reuses a Message-ID is rejected with
+`Message-ID reused for a different message`.
+
+If CommerceWorker fails while starting the order (as opposed to a rejection above), the message gets a
+temporary failure and the sender's mail server retries it later. The retry maps to the same order.
+
+## Acknowledgement
+
+After starting the order, CommerceWorker replies to the sender from the mailbox address with the order
+reference, unless the workspace has turned replies off. A reply can only go to a message that
+passed DMARC, so a failed reply never fails the intake.
+
+## The intake log
+
+Every message is recorded as `accepted`, `duplicate` or `rejected`, along with the reason, the
+order and the number of attachments read. The Commerce page shows the latest twenty under
+**Email intake**, next to the workspace's mailbox addresses. Messages are kept for 180 days.

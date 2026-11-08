@@ -1,0 +1,4 @@
+{
+  "extends": "@commerceworker/typescript-config/base.json",
+  "include": ["src/**/*", "vitest.config.ts"]
+}

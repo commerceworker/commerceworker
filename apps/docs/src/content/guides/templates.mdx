@@ -1,0 +1,70 @@
+---
+title: Built-in flows
+description: The flow seeded for each commerce model, how seeding works, and the dashboard scenarios that exercise them.
+---
+
+import Templates from '../../components/Templates.astro';
+
+CommerceWorker seeds at least one flow per [commerce model](/guides/commerce-models/). Each is an ordinary flow: open it in the editor,
+change it and publish a new version.
+
+## Seeding
+
+CommerceWorker publishes the built-in flows the first time they are needed: when flows are listed or
+opened, when an order starts, and before the stock review starts a replenishment order. When a
+built-in flow changes in a new CommerceWorker release, the new version is published over the flow's
+draft and over anything you published from the editor since, so keep a customised copy as its own
+flow. A built-in flow that matches an earlier version is never published again, and orders already
+running keep the version they pinned.
+
+## The flows
+
+<Templates />
+
+`tpl-marketplace-order` is the `marketplace` model's flow; [Marketplace](/guides/marketplace/) walks through it.
+`tpl-omnichannel-order` is the `d2c` default and `tpl-pos-sale` the flow for `pos` till sales; [Fulfillment](/guides/fulfillment/) walks through them.
+
+## Scenarios
+
+In workspaces with the demo data loaded, the dashboard's **Demo scenarios** start an order on a built-in flow with a canned input. Each
+exercises a different path:
+
+| Scenario | Flow | Path |
+|---|---|---|
+| Guest checkout | `tpl-storefront-order` | A `b2c` web order with `contact` and no customer: card checkout, and the shipping and return emails go to the contact address |
+| B2B PO by email | `tpl-b2b-order` | AI extracts lines from an email, contract pricing, the credit check passes, the routine assessment is unsure (without the model it always answers 0.5), so the agent router triages and auto-approves; ships, waits for payment |
+| B2B over credit limit | `tpl-b2b-order` | `cus_contoso` is near its limit, so the credit check routes to a person |
+| B2B out of stock | `tpl-b2b-order` | `meta.simulate: "out_of_stock"`: the reservation comes up short and the order fails and rolls back |
+| Procurement request | `tpl-purchase-request` | Eight laptops: AI classifies spend, manager then finance approve, PO, supplier ack, 3-way match |
+| Reorder (stock review) | `tpl-reorder` | The forecast finds SKUs below their reorder point and drafts a replenishment PO |
+| Subscription | `tpl-subscription` | Verify and save the card (no hold), then a loop of wait → charge → ship |
+| Subscription, card fails | `tpl-subscription` | `meta.simulate: "charge_fail"`: the renewal and its retry both fail and the subscription pauses |
+| Storefront order in euros | `tpl-storefront-order` | The retail checkout in `EUR`: USD prices and shipping rates convert at the workspace's stored `EUR` rate, and the order, capture and webhooks are in euros |
+| Marketplace order, two sellers | `tpl-marketplace-order` | `HP-200` from a seller that auto-accepts and `KET-01` from one that is asked: the order waits for Kettle & Co, then ships what was accepted and schedules each seller's payout net of commission. See [Marketplace](/guides/marketplace/) |
+| Buy online, pick up in store | `tpl-omnichannel-order` | A monitor held at the SoHo store with a pickup code; the order waits for `pickup.collected`, then hands it over and captures payment |
+| Ship from store, with an e-book | `tpl-omnichannel-order` | The warehouse has no tees, so they ship from the SoHo store, the nearest to the New York ship-to (which carries coordinates); the e-book is delivered as a code, and payment is captured once both parts are done |
+| Split shipment, nearest store | `tpl-omnichannel-order` | Eight monitors and three tees to San Francisco: no one place has both, so the monitors ship from the warehouse and the tees from the Mission store, as two shipments |
+| Till sale with a gift card | `tpl-pos-sale` | A tee and a gift card at the Mission store: card present, the tee leaves store stock, the gift card gets a code, and the receipt is emailed |
+| Storefront order, returned | `tpl-storefront-order` | Ships and captures, then a return: RMA label, restock, refund. A `return.requested` payload with `lines: [{ sku, qty }]` restocks only those lines; `amount` sets a partial refund |
+
+### Simulating failures
+
+The built-in commerce steps read `order.meta.simulate`, so an order can take a failure path on
+purpose. Only workspaces that allow simulated failures honour it: local development and demo
+workspaces do; elsewhere, including production, the field is dropped when the order starts, whoever
+sends it (the API, inbound orders, email or an agent).
+
+| Value | Effect |
+|---|---|
+| `out_of_stock` | Reserve inventory reports every line short |
+| `payment_decline` | Authorize payment takes `declined` (on Stripe with a test key, through Stripe's always-declined test card; see [Payments](/guides/payments/#testing-against-stripe)) |
+| `charge_fail` | Charge takes `failed` (likewise) |
+| `three_way_mismatch` | 3-way match sees an invoice 10% over the PO and takes `mismatch` |
+
+Restarting an order from its page drops `meta.simulate`, so the retry runs for real.
+
+### Stock review
+
+The stock review runs daily at 06:00 UTC. It scans for
+SKUs at or below their reorder point and, if there are any, starts one order on `tpl-reorder`
+titled `Replenish <skus>`. **Run stock review now**, in the Inventory card on the Commerce page, starts it on demand.

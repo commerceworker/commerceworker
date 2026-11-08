@@ -1,0 +1,213 @@
+---
+title: Field types
+description: Every type a content type's fields can hold, with the value each stores, the validations each takes, and how dates and lists are written.
+---
+
+A content type is an ordered list of typed fields. This page is the reference for those types and
+the rules a field can carry; [Content modeling](/content/guides/content-modeling/) covers designing types,
+arranging the editor and changing a model that is already live.
+
+## The types
+
+| Type        | Holds                                                | Value                          |
+| ----------- | ---------------------------------------------------- | ------------------------------ |
+| `Symbol`    | Short, single-line text: titles, names, labels       | string                         |
+| `Slug`      | A URL-safe identifier, normalized as you type        | string                         |
+| `Text`      | Long, multi-line plain text                          | string                         |
+| `RichText`  | A structured document: headings, lists, tables, links, embeds | object                |
+| `Integer`   | A whole number                                       | integer                        |
+| `Number`    | A decimal number                                     | number                         |
+| `Boolean`   | Yes or no                                            | boolean                        |
+| `Date`      | A date, a date and time, or a time of day ([formats](#dates)) | string                 |
+| `Location`  | A point on a map                                     | `{ "lat": …, "lon": … }`       |
+| `Seo`       | Search title, description, canonical URL, noindex and social image ([SEO](/content/guides/seo/)); one per type | object |
+| `JSON`      | Free-form structured data                            | object                         |
+| `Link`      | A reference to an entry or an asset                  | `{ "id": …, "linkType": … }`   |
+| `Component` | A group of nested fields (a "hero", a "call to action") | object                      |
+| `Array`     | A list of `Symbol`, `Text`, `Integer`, `Number`, `Date`, `Link` or `Component` items | array |
+
+Each field also says whether it is **required**, **localized** (a separate value per locale) and
+**unique** (no two entries of the type may share a value; a clash is refused with the entry that
+holds it). A field can carry a **default value** that new entries start with.
+
+## Rich text
+
+A `RichText` value is a document of nodes: paragraphs, headings, lists, quotes, code blocks, rules,
+tables, links, embedded entries and assets, and external media embeds. Every write is checked
+against that vocabulary, whoever makes it: an unknown node type is refused, a link must point at an
+`http`, `https`, `mailto` or `tel` address (or a relative one), and a document may be at most
+512 KiB and 64 levels deep.
+
+An **embed** holds a video, a post or a track from an allowed provider: YouTube, Vimeo, X, Bluesky,
+Mastodon, Spotify or SoundCloud. It is an `embed` node whose `data` is structured metadata, never the
+provider's player HTML:
+
+```json
+{
+  "nodeType": "embed",
+  "data": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "provider": "youtube",
+    "kind": "video",
+    "title": "Never Gonna Give You Up",
+    "authorName": "Rick Astley",
+    "thumbnail": { "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg", "width": 480, "height": 360 },
+    "width": 200,
+    "height": 113,
+    "aspectRatio": 1.7699
+  },
+  "content": []
+}
+```
+
+Only `url` (https) and `provider` are required. Paste a provider URL into the rich-text editor and it
+becomes an embed with a preview card; the editor fills the rest by calling
+`POST /spaces/<space>/environments/<env>/embeds/resolve` (the `embed_resolve` MCP tool), which asks
+the provider's oEmbed endpoint and returns only these fields. A URL that isn't https or isn't on an
+allowed provider is refused. Imported HTML keeps provider players, tweet blockquotes and WordPress
+embed blocks as embeds, with the URL and provider only.
+
+Your front end decides how an embed looks: a player built from `provider` and `url` (for example
+`https://www.youtube-nocookie.com/embed/<id>` in an `<iframe>` sized by `aspectRatio`), or the safe
+default, a link card with the thumbnail and title, which `embedCard` in `@commerceworker/sdk`
+builds for you. A `mastodon` embed's host is whatever instance the author named, so don't frame it
+in a player unless that instance is on your own list; the link card is always safe.
+
+## Components and repeaters
+
+A `Component` field groups nested fields that belong together: a hero block's heading, image and
+button. An `Array` of components is a **repeater**: a list of feature cards, FAQ items or table
+rows that editors add, remove and reorder.
+
+The admin's content type dialog can't author a `Component` field, because it has no way to define
+the nested fields: create one with the API (`POST …/content-types`) or the
+`model_create_content_type` MCP tool. Existing component fields load and edit in the dialog.
+
+Nested fields are ordinary fields, with three exceptions. They can't be localized on their own
+(localization is decided once, on the field holding the component), they can't be unique, and they
+can't be slugs. Components nest up to three levels; anything deeper is usually better as its own
+content type, linked.
+
+## Blocks
+
+A **blocks** field is a list whose items can each take a different shape: a landing page body made
+of a hero, then a section of rich text, then a call to action, in whatever order the editor picks.
+It is an `Array` of `Component` that lists **variants** instead of one set of fields. In the
+content type dialog, pick **Blocks** as the field's type, then add a block type for each shape
+(a name, an API ID and its fields). In the entry editor, **Add block** offers those types; blocks
+reorder and remove like repeater items.
+
+Over the API or MCP, declare `items.variants` in place of `items.fields`:
+
+```json
+{
+  "apiId": "body", "name": "Body", "type": "Array", "localized": false, "required": false, "position": 2,
+  "items": {
+    "type": "Component",
+    "variants": [
+      { "apiId": "hero", "name": "Hero", "fields": [
+        { "apiId": "heading", "name": "Heading", "type": "Symbol", "localized": false, "required": true, "position": 0 }
+      ] },
+      { "apiId": "cta", "name": "Call to action", "fields": [
+        { "apiId": "target", "name": "Target", "type": "Link", "linkType": "Entry", "localized": false, "required": false, "position": 0 }
+      ] }
+    ]
+  }
+}
+```
+
+Each stored block names its variant in `_type` and carries a `_key` the server assigns when the
+entry is saved: `{ "_type": "hero", "_key": "0192f4a1-…", "heading": "Spring launch" }`. Send
+existing blocks back with their `_key` and they keep it, so a front end can use it as a stable
+identity across reorders. To change a few blocks without resending the field, patch them by
+`_key` (`PATCH …/entries/:id/blocks`, MCP `entry_blocks_patch`): insert, update, move, remove and
+duplicate blocks, all or none, as a new draft. `GET …/entries/:id/blocks` (MCP
+`entry_blocks_outline`) lists every block's key, type and label to build the patch from. A
+variant's fields follow the component rules above. For a slot that
+holds at most one block, set `validations: { size: { max: 1 } }` on the field. Links inside
+blocks resolve with `include` like any other, GraphQL types the field as a union with one type per
+variant, and the generated TypeScript types narrow on `_type`.
+
+## References
+
+A `Link` field points at an entry or an asset; an `Array` of links holds several. Restrict which
+content types a link may target with `linkContentTypes`. Publishing an entry checks that
+everything it links to exists, and an entry other published entries link to can't be permanently
+deleted until those links are removed.
+
+## Validations
+
+| Validation          | Applies to                 | Checks                                       |
+| ------------------- | -------------------------- | -------------------------------------------- |
+| `in`                | Symbol, Text, Integer, Number | The value is one of a list (bare values, or `{ value, label }`) |
+| `regexp`            | Symbol, Text               | The value matches a pattern, or a named [preset](#pattern-presets) |
+| `range`             | Integer, Number            | The value is between a min and a max         |
+| `size`              | Symbol, Text, Array        | Length, or number of items, is within bounds |
+| `linkContentTypes`  | Link, Array of Link        | The linked entry is one of these types       |
+| `dateRange`         | Date                       | The date is between a min and a max          |
+| `assetMimeTypes`    | Asset Link, Array of them  | The linked asset's file is one of these types (`image/*` for a family) |
+
+Validations run on every write, from every surface: the admin, the API, imports, AI drafting and
+agents. An AI agent can't save an entry a person couldn't. `assetMimeTypes` checks the file type an
+asset was declared with when it was uploaded, not the file's contents.
+
+Give `in` options labels and an entry still stores the value: editors pick by label from a select,
+and relabelling an option never invalidates content. Bare values and labelled options mix in one
+list; a value can't be empty, and `'1'` and `1` count as the same value. To replace a rule's
+default error, add `messages`, keyed by rule (`in`, `regexp`, `range`, `size`, `dateRange`,
+`assetMimeTypes`); a message for a rule
+the field doesn't declare is refused, and so is one on a list's elements (`items`), whose rules
+aren't enforced per element yet.
+
+```json
+{
+  "apiId": "zip",
+  "name": "ZIP code",
+  "type": "Symbol",
+  "validations": {
+    "regexp": { "pattern": "^\\d{5}$" },
+    "messages": { "regexp": "Enter a five-digit ZIP code" }
+  }
+}
+```
+
+### Pattern presets
+
+Instead of writing a regular expression, name a preset: `email`, `url` (http or https), `slug`,
+`phone` (international format, `+14155550123`), `hexColor` or `usZipCode`. Saving the type fills in
+the preset's pattern beside its name, so the rule reads the same everywhere:
+
+```json
+{ "apiId": "contact", "name": "Contact email", "type": "Symbol",
+  "validations": { "regexp": { "preset": "email" } } }
+```
+
+In the admin, pick one from **Pattern** in a text field's **Settings**.
+
+## Dates
+
+A `Date` field's `format` says what it holds, and how its value is written:
+
+| `format`   | Value              | Entry form            |
+| ---------- | ------------------ | --------------------- |
+| `date`     | `2026-11-03`       | a date picker         |
+| `datetime` | `2026-11-03T14:30` (seconds and a `Z` or `+01:00` offset optional) | date and time |
+| `time`     | `14:30`            | a time picker         |
+
+Without a format a Date takes any ISO 8601 date string, as before. Bound it with
+`validations.dateRange` (`{ "min": "2026-01-01" }`), written in the same format. In the admin,
+pick the format from **Format** in a Date field's **Settings**.
+
+## Lists
+
+An `Array` of `Symbol`, `Text`, `Integer`, `Number` or `Date` holds a list of those values, each
+checked as one (`"items": { "type": "Integer" }`; a list of dates takes `items.format`). The entry
+form edits it item by item, GraphQL types it as a list of the scalar (`[Int]`) and generated types
+as `number[]` or `string[]`. In the admin, a list field's **Items** picks what it holds; a list of
+links or components keeps the items it was given.
+
+## Next steps
+
+- [Content modeling](/content/guides/content-modeling/) to put fields together into types.
+- [Reading content](/content/guides/reading-content/) for how each value comes back from Delivery.
+- [SDKs](/content/guides/sdks/#typed-content) to generate TypeScript types from your model.

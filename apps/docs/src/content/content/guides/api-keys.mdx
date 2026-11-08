@@ -1,0 +1,123 @@
+---
+title: API keys and access
+description: The three key kinds, scopes, custom roles with per-content-type and per-field rules, personal access tokens, and how a key is checked on every request.
+---
+
+Every request to the API or the MCP server carries a bearer token:
+
+```sh
+curl -s "$API/auth/me" -H "Authorization: Bearer $TOKEN"
+```
+
+`GET /auth/me` returns who the token is and what it may do, which makes it the quickest check that
+a key works. A missing or unknown token is answered with **401**; a valid token without the scope a
+route needs, or used against another space, with **403**. The full list of error responses is in
+the [REST API reference](/content/reference/rest-api/#errors).
+
+## Before you start
+
+Minting and revoking keys, creating roles and listing tokens need `space:admin` in the space. In
+the admin that is the Administrator [role](/content/guides/team-and-roles/).
+
+## Key kinds
+
+| Kind  | Name             | Use it for                                                       |
+| ----- | ---------------- | ---------------------------------------------------------------- |
+| `cma` | Management       | Integrations that write: imports, sync jobs, CI, admin tooling   |
+| `cpa` | Preview          | Staging sites and previews that show drafts                      |
+| `cda` | Delivery         | Production sites and apps: published content only                |
+
+Ship only Delivery keys in anything a visitor can inspect (a browser bundle, a mobile app); they
+can't read drafts or change anything. Each kind gets default [scopes](/content/reference/scopes/); a key can
+be minted with a narrower list.
+
+Create keys in **Settings → API keys**, or with a key that holds `space:admin`:
+
+```sh
+curl -s "$API/spaces/$SPACE/api-keys" \
+  -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{ "kind": "cda", "name": "Website (production)" }'
+```
+
+The raw token is in the response **once**. CommerceWorker stores only a hash of it, so a lost token
+can't be recovered: revoke it and mint another. An agent with `space:admin` does the same over
+[MCP](/content/guides/mcp/): `api_keys_list`, `api_key_create` (the token is in its result, once),
+`api_key_update` (the key's role) and `api_key_revoke`. A personal access token or an app
+connected with OAuth can't mint a key, widen one's role, or widen the role a key holds (403),
+whatever its scopes: a token
+someone handed to a program never turns itself into one that outlives it. Tokens start with `cwk_` and the kind, so a leaked
+one is easy to recognize and scan for.
+
+## Scopes
+
+Scopes are what a key may do: `content:write` to edit drafts, `content:publish` to publish,
+`content:manage` to change the content model, `preview:read` and `delivery:read` to read, and so
+on. Every route checks one, against the space in its path. The full list, with what each allows,
+is in [Permission scopes](/content/reference/scopes/).
+
+## Roles
+
+A **role** narrows a key further, per content type and per field. It has a set of scopes and a
+list of grants:
+
+```json
+{
+  "name": "Blog writer",
+  "scopes": ["content:write", "preview:read"],
+  "contentGrants": [
+    { "contentTypeApiId": "article", "actions": ["read", "write"], "readOnlyFields": ["slug"] },
+    { "contentTypeApiId": "author", "actions": ["read"], "deniedFields": ["email"] }
+  ]
+}
+```
+
+- A key bound to a role can only touch the content types its grants name (`*` matches any type;
+  an exact grant wins over `*`). Types without a grant are invisible to it, in lists too.
+- **Actions** are `read`, `write` and `publish`. Two finer actions come with them: `delete`
+  (moving to the trash, and with `publish` deleting permanently) with `write` or `publish`, and
+  `unpublish` with `publish`. List `deniedActions` to withhold either, so a role can write but not
+  delete, or publish but not unpublish:
+  `{ "contentTypeApiId": "*", "actions": ["read", "write", "publish"], "deniedActions": ["unpublish"] }`.
+  A role that withholds `unpublish` can't take a live entry down any other way either: not in
+  bulk, by trashing it, in a release (adding the item is refused too) or a scheduled action.
+- What a withhold doesn't do:
+  - It doesn't bind a role that also has `space:admin`, which can edit roles and mint keys.
+  - Scheduled actions and workflow runs are checked when they are created or started; taking a
+    permission away later doesn't cancel them. Cancel the action or the run to revoke it.
+  - A grant with `write` but not `publish` can still trash a live entry (which unpublishes it)
+    unless it withholds `unpublish` explicitly: `"deniedActions": ["unpublish"]`.
+- **Denied fields** are removed from every response and refused on write. **Read-only fields**
+  can be read but not written. Leave both out of a save: the new version keeps their stored
+  values, and a denied field's value stays out of the response.
+- Roles are live: editing a role changes what every key bound to it can do on the next request.
+
+Create roles in **Settings → Roles** (where **Access** sets each type's five actions) or at
+`POST /spaces/{space}/roles`, then bind a key with
+`{ "kind": "cma", "roleId": "…" }`.
+
+Every space also has five built-in roles, Viewer, Approver, Editor, Manager and Administrator,
+which you can assign, edit and clone like your own; see [Team and roles](/content/guides/team-and-roles/).
+
+## Personal access tokens
+
+A **personal access token** acts for a person rather than an integration: it carries their
+identity in the audit log and can never do more than they can. Use one for a script or CI job.
+
+Minting one needs both `space:admin` and a signed-in person. API keys, OAuth-connected apps and other personal access tokens are
+refused (403): a credential must not be able to mint a longer-lived one for itself, and there is no
+MCP tool for it. In the admin, create one under **Settings → Access → Connected apps**; over the API,
+a signed-in administrator calls `POST /spaces/{space}/personal-access-tokens` with a `name`, a
+non-empty list of `scopes` and optionally an expiry of 1 to 365 days (`expiresInDays`). The scopes
+you ask for are intersected with your own, and the raw token is shown once. If the person's role is
+later narrowed, the token narrows with it. `GET /spaces/{space}/personal-access-tokens` lists them,
+and they revoke through the API-key routes.
+
+AI clients connecting over MCP get a token a different way, through an approval screen; see
+[MCP server](/content/guides/mcp/#connect-with-oauth).
+
+## Next steps
+
+- [Team and roles](/content/guides/team-and-roles/) for the built-in roles and who can do what.
+- [Permission scopes](/content/reference/scopes/) for the full list.
+- [Reading content](/content/guides/reading-content/) and [SDKs](/content/guides/sdks/) for using a key.
+- [REST API](/content/reference/rest-api/) for conventions and errors.

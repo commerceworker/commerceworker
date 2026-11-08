@@ -1,0 +1,53 @@
+---
+title: Node catalog
+description: Every node type a workflow can use, with its config fields, defaults and output branches.
+---
+
+import NodeCatalog from '../../../components/content/NodeCatalog.astro';
+
+These are the node types the workflow editor's palette offers, with the fields its inspector shows
+and validates. This page is generated from the catalog itself when the docs are built, so it always
+matches what a workflow accepts. Each node's anchor is its type, for example
+[`#control.approval`](#control.approval).
+
+A node's **outputs** are the branches it can take. An edge leaves a node from one output (none
+means `out`); the edges on branches a node didn't take are skipped, along with any node only they
+lead to. See [Branches and edges](/content/guides/workflows/#branches-and-edges).
+
+Field **kinds** decide how a value is edited and checked:
+
+- `duration` is a string such as `"2 days"`;
+- `logic` is a [JSON Logic](https://jsonlogic.com/) expression over the run;
+- `list` is a non-empty list of strings;
+- `contentType`, `field` and `release` are pickers for a content type, one of its fields, or a
+  release;
+- text fields accept `{{path}}` templates. See
+  [Expressions and templates](/content/guides/workflows/#expressions-and-templates).
+
+Every node also takes `retries` (0 to 10) and a `timeout`, outside its config. Nodes marked
+**undo** are reversed if the run later fails; nodes marked **waits** pause the run for a person or
+an event.
+
+## Triggers
+
+A workflow has exactly one trigger. It decides when a run starts and for which entry.
+
+<NodeCatalog category="trigger" />
+
+## Content
+
+Content nodes act on the entry through the same operations as the admin and the API, with the same
+validation and events.
+
+<NodeCatalog category="content" />
+
+## Control
+
+<NodeCatalog category="control" />
+
+## AI
+
+AI nodes call the same [AI features](/content/guides/ai/) editors use, with the same validation; their
+results are proposals unless the node is set to apply them.
+
+<NodeCatalog category="ai" />

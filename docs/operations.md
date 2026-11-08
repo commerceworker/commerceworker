@@ -1,0 +1,741 @@
+# Operations
+
+Run the fleet: one CommerceWorker deployment per customer, each with its own Workers, D1 database, R2
+bucket, AI Gateway, domain and secrets, all in CommerceWorker's Cloudflare account and all deployed by
+CI.
+
+Everything lives on one Cloudflare zone, `commerceworker.com`:
+
+| Host | Serves |
+|---|---|
+| `commerceworker.com`, `www.commerceworker.com` | The marketing site (`apps/marketing`, static assets; `www` names the apex as canonical). The apex's MX stays with company mail |
+| `docs.commerceworker.com` | The public docs (`apps/docs`) |
+| `app.commerceworker.com` | CommerceWorker's own deployment (`deployments/commerceworker.jsonc`) |
+| `catalog.commerceworker.com` | Its public catalog API (the registry's `catalogDomain`) |
+| `demo.commerceworker.com` | The public demo |
+| `<id>.commerceworker.com`, `catalog.<id>.commerceworker.com` | A customer's deployment and its catalog API |
+| `media.<host>` (planned, ROADMAP P3) | The assets service, only for a deployment that turns it on. Others keep product media on their own DAM or CDN |
+
+Order intake mail goes to `orders@`, `po@` and `purchasing@` at each deployment's own host (`orders@app.commerceworker.com`, `orders@<id>.commerceworker.com`). Email Routing is enabled per subdomain, so it never takes the apex's MX.
+
+Session cookies are host-only (`__Host-` prefix, no `Domain`), so one deployment can't set or read another's. Every host on the zone is still the same site to a browser, which is why `SameSite=Lax` alone doesn't separate customers. Requests that change state also check `Origin` (`apps/web/app/lib/origin.ts`). Nothing but CommerceWorker's own code is served on the zone. Turn on DNSSEC, and set CAA records to the certificate authorities Cloudflare issues from.
+
+A deployment shares nothing with another: not data, not secrets, not rate-limit counters. Isolating
+a customer, choosing where their data lives and removing them are all per-deployment operations.
+CommerceWorker itself (`app.commerceworker.com`) is a deployment like the others, the one in the `internal` ring.
+
+## The registry
+
+Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads them.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `id` | required | Lowercase letters, digits and dashes; matches the file name. Names that would read as part of CommerceWorker (`api`, `app`, `docs`, `www`, `staging` and the rest of `RESERVED` in `scripts/fleet.ts`) are refused unless the entry sets `domain` |
+| `ring` | required | `staging`, `internal`, `canary` or `general`: when CI deploys it (see [Rings](#rings)) |
+| `slot` | required | A number from 1 to 999, unique across the fleet. Rate-limit namespaces are per account, so the web Worker's are `<slot>001` through `<slot>005` (slot 1: `1001` to `1005`) |
+| `domain` | `<id>.commerceworker.com` | The web app's custom domain |
+| `catalogDomain` | `catalog.<domain>` | The public catalog API's custom domain, served by `commerceworker-catalog-edge` (a host name; anything else is refused). Rendered into its `routes`, and into the deploy's `CATALOG_DOMAIN`, which the smoke test requests |
+| `suffix` | `-<id>` | Added to every resource name. `commerceworker` uses `""`, so its resources keep the base names |
+| `environment` | `deploy-<id>` | The GitHub environment holding the deployment's secrets. `commerceworker` uses `production` |
+| `d1Id` | none | The D1 database's id, written by `scripts/provision.sh` |
+| `catalogKvId` | none | The id (32 hex characters; anything else is refused) of the catalog's KV namespace of listing cards, written by `scripts/provision.sh` (`fleet.ts set-catalog-kv`). Like `d1Id` (which the catalog's config also binds as its `DB`), required to render the catalog's config or to deploy |
+| `jurisdiction` | none | `eu` or `fedramp`: where D1 and R2 (the docs and the catalog's buckets) keep data, set when they are created, and where the engine's Durable Objects (`OrderAgent`, `AssistantAgent`, `A2AAgent`) and the catalog's (`CatalogShard`, `CatalogMeta`, `CatalogFeeds`, `ListingIndexer`, `SearchShard`, `CatalogPublisher`) are created. Rendered into the engine's and the catalog's `DATA_JURISDICTION`; `renderEngine` and `renderCatalog` omit it when unset, leaving the base `""`. KV has no jurisdictions. Fixed for a deployment's life: see [Data residency](data-model.md#data-residency) |
+| `limits` | none | Requests a minute per caller, replacing the base budgets it names: `api` (`/api/v1`, 600), `agents` (each of `/mcp` and `/a2a`, 300), `webhooks` (each integration, 1,200). For example `"limits": { "webhooks": 6000 }` for a customer whose ERP sends in bursts |
+| `auditRetentionDays` | `400` | Whole days audit events are kept before the daily sweep archives them to the R2 bucket and deletes them; at least 90 (refused below). Rendered into the engine's `AUDIT_RETENTION_DAYS` |
+| `personalDataRetentionDays` | none (kept) | Whole days after an order finishes that the daily sweep erases its buyer's personal data; at least 30 (refused below). Rendered into the engine's `PERSONAL_DATA_RETENTION_DAYS`; see [Retention](data-model.md#personal-data-on-finished-orders) |
+| `auditArchiveDays` | none (kept) | Whole days (at least 1; refused below) the R2 archive keeps audit events. `provision.sh` replaces the bucket's lifecycle rule `audit-archive` (prefix `audit/`) with that expiry on every run, and removes it when unset. It also locks `audit/` for the same number of days, or indefinitely when unset ([Bucket locks](#bucket-locks)) |
+| `catalogBackupDays` | `90` | Whole days (at least 31, so a backup outlives Durable Objects' 30 days of point-in-time recovery; refused below or fractional) the catalog's daily backups are kept. `provision.sh` replaces the catalog bucket's lifecycle rule `backups` (prefix `backups/`) with that expiry, and its lock rule `catalog-backups` with the same age, on every run ([Catalog backups](#catalog-backups), [Bucket locks](#bucket-locks)) |
+| `logRetentionDays` | `400`, or `personalDataRetentionDays` when set | Whole days (at least 30; refused below or fractional, and refused above `personalDataRetentionDays` when that is set) the logs bucket `commerceworker-logs<suffix>` keeps the Workers' trace events Logpush writes there. `provision.sh` replaces the bucket's lifecycle rule `logs` (prefix `workers/`) with that expiry on every run ([Logs](#logs)) |
+| `aiPersonalData` | `redact` | `redact` or `send` (anything else is refused). `send` lets the workflow AI nodes and the assistant's `assess_order` see buyers' contact details, names and addresses; see [Personal data](data-model.md#personal-data). Rendered into the engine's `AI_PERSONAL_DATA` |
+| `payments` | `mock` | `mock` or `stripe` (anything else is refused; a demo can't be `stripe`). `stripe` takes payments through Stripe with the environment's `STRIPE_SECRET_KEY`, and a deploy without that secret stops before it migrates anything. Rendered into the engine's `PAYMENTS_MODE` |
+| `stripePublishableKey` | none | The Stripe publishable key (`pk_test_…` or `pk_live_…`) of the same account and mode as `STRIPE_SECRET_KEY`; only with `payments` `stripe`, and a deploy whose secret key is in the other mode stops. Agentic checkout gives it to platforms to tokenize cards with. Rendered into the engine's `STRIPE_PUBLISHABLE_KEY` |
+| `assistantDailyTokens` | `1000000` | Whole number of model tokens each person's assistant conversations may use per UTC day; `0` is no limit (negative or fractional is refused). Rendered into the engine's `ASSISTANT_DAILY_TOKENS` |
+| `aiGatewayLogs` | `false` | `true` or `false` (a boolean). Whether the deployment's AI Gateway keeps request logs (model, tokens, cost, duration and metadata, until they're deleted). They never hold the prompts or responses: every call sends `cf-aig-collect-log-payload: false`. Reviewers' verdicts on AI gates are sent as feedback on these entries ([Architecture](architecture.md)), so with logs off there is nothing to evaluate models against. Rendered into the engine's `AI_GATEWAY_LOGS`, which every model call sends as the gateway's `collectLog`; `provision.sh` also sets it as the default of a gateway it creates |
+| `sso` | none | `{ "issuer": "https://…", "clientId": "…", "trustEmail"?: true }`: the customer's OpenID Connect identity provider and this deployment's client id; the issuer must be an https URL and the client id non-empty (refused otherwise). `trustEmail` (for Entra ID, which leaves out `email_verified`) lets a token without the claim match people by email. Rendered into the web Worker's `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_TRUST_EMAIL`; the client secret is the environment's `OIDC_CLIENT_SECRET`. See [Single sign-on](#single-sign-on) |
+| `turnstileSiteKey` | none | The public site key (`0x…`; Cloudflare's `1x`–`3x` test keys, which pass or fail whoever solves them, only on a `demo`; anything else is refused) of the deployment's Turnstile widget. Rendered into the web Worker's `TURNSTILE_SITE_KEY` (always, empty without one), which puts a Turnstile challenge on password sign-in and `/setup`. A deploy stops before it migrates anything when the environment lacks `TURNSTILE_SECRET_KEY`. See [Turnstile](#turnstile) |
+| `plugins` | none | `{ "<plugin id>": { "alias": "/<segment>/", "d1Id": "…", "personalData": "send", "capabilities": ["orders:start"], "runtime": "sandboxed", "secrets": ["API_KEY"] } }`: the plugins (`plugins/<id>/`) this deployment installs. `runtime` is `worker` (the default) or `sandboxed`. A `worker` plugin is its own Worker `commerceworker-plugin-<id><suffix>` and D1 database of the same name, bound to the engine and web Workers as `PLUGIN_<ID>`; `d1Id` is written by `scripts/provision.sh` (`fleet.ts set-plugin-d1`) and required to deploy. A `sandboxed` plugin has no Worker, binding or database: CI publishes its bundle and the engine loads it (Worker Loader), and a `d1Id` on one is refused. `personalData` is optional and can only be `"send"`: it grants the plugin buyer details, which its manifest can ask for but not give itself; it is rendered into the engine's `PLUGIN_GRANTS`. `alias` is another path the plugin's pages answer at, besides `/plugins/<id>/` (commerceworker.com gives punchout `/punchout/`): one lowercase segment, not one of the app's own top-level paths (`RESERVED_PATH_SEGMENTS` in `scripts/fleet.ts`, which `fleet.test.ts` checks against `apps/web/app/routes.ts` and `apps/web/workers/app.ts`) and not another plugin's; it is rendered into the web Worker's `PLUGIN_ALIASES` (see [Aliases](plugins.md#aliases)). `capabilities` grants what the plugin may ask the core to do through its `COMMERCEWORKER` binding (`carts:external`, `orders:start`, `orders:cancel`, each at most once; see [The host API](plugins.md#the-host-api)): a plugin whose manifest asks for one not listed is refused; it is rendered into `PLUGIN_GRANTS` too, and gives a `worker` plugin its `COMMERCEWORKER` service binding. `secrets` lists the plugin's secret names (upper case, not `PLUGIN_KEY`, `PLUGIN_KEY_PREVIOUS`, `DB`, `SECRETS` or `STORAGE`) and is needed only with `secretsStore`, because Secrets Store bindings are per secret. Any other key, an unknown `runtime`, ids that aren't plugin ids or are the engine's own variable names (`bundles`, `secrets`, `grants`, `key`, `storage`, `dev-bundles`, `publishers`), the `example` and `fixture-carrier` fixtures, and ids without `plugins/<id>/wrangler.jsonc` are refused. A `worker` plugin's `wrangler.jsonc` may hold only vars and one D1 binding `DB`, or rendering refuses it. See [Plugins](plugins.md) |
+| `secretsStore` | none | `{ "storeId": "<32 hex characters>" }` (anything else is refused): the Cloudflare Secrets Store of a deployment on its own Cloudflare account, where its plugins' secrets live as `PLUGIN_<ID>_<NAME>` instead of in the GitHub environment. Leave it out on a shared account (one store and 100 secrets an account). Rendered as `secrets_store_secrets` bindings for each plugin's listed `secrets`. See [Plugin secrets](#plugin-secrets) |
+| `pluginInstalls` | none (off) | `{ "publishers"?: { "<name>": "<Ed25519 public key>" }, "assistant"?: true }`, with at least one: who may sign a sandboxed plugin an admin installs at runtime from the Plugins page, and whether the assistant may draft business-rule plugins for an admin to approve (rendered as the engine's `ASSISTANT_PLUGINS`; see [Plugins](plugins.md#assistant-drafted-plugins)). No publisher may be named `assistant`. A name is lowercase letters, digits and hyphens; a key is the raw 32 bytes in base64url (43 characters, from `pnpm plugin:pack keygen`). Rendered into the engine's `PLUGIN_PUBLISHERS`. Without it, runtime installs are off. See [Plugin publishers](#plugin-publishers) |
+| `hold` | `false` | CI skips it: it stays on the version it runs now |
+| `docs` | `false` | Deploy the docs site after it. Only `commerceworker` sets it |
+
+With the suffix, deployment `acme` gets these resource names:
+
+| Resource | Name |
+|---|---|
+| Web Worker | `commerceworker-web-acme`, at `acme.commerceworker.com` |
+| Engine Worker | `commerceworker-engine-acme` (the web Worker's `ENGINE` binding points at it) |
+| Catalog Worker | `commerceworker-catalog-acme` |
+| Catalog edge Worker | `commerceworker-catalog-edge-acme`, at `catalog.acme.commerceworker.com` |
+| Workflows | `commerceworker-order-acme`, `commerceworker-replenish-acme`, `commerceworker-catalog-feed-acme`, `commerceworker-catalog-backup-acme`, `commerceworker-catalog-restore-acme` (Workflow names are unique per account) |
+| Plugin Worker and D1 | `commerceworker-plugin-<id>-acme` for each installed plugin (the Worker and its database share the name) |
+| D1 | `commerceworker-acme` (bound by the engine, web and catalog Workers; the catalog writes variant names and prices into `products`) |
+| R2 | `commerceworker-docs-acme`, `commerceworker-catalog-acme` (the catalog's published documents, feed files and backups), `commerceworker-logs-acme` (the Workers' logs, from Logpush) |
+| Logpush | job `commerceworker-workers-acme` (`workers_trace_events`, filtered to the deployment's Workers) and the R2 API token it writes with, `commerceworker-logpush-acme` ([Logs](#logs)) |
+| Queues | `commerceworker-catalog-feed-parts-acme` and its dead-letter queue `commerceworker-catalog-feed-parts-dlq-acme`; the purge queue `commerceworker-catalog-purge-acme` and its dead-letter queue `commerceworker-catalog-purge-dlq-acme`; the listing-changes queue `commerceworker-catalog-changes-acme` and its dead-letter queue `commerceworker-catalog-changes-dlq-acme` (queue names are unique per account) |
+| Analytics Engine | dataset `commerceworker_catalog_edge_acme` (dashes in the suffix become underscores) |
+| Catalog KV | `commerceworker-catalog-cards-acme` (the catalog's `CARDS` namespace, id in `catalogKvId`) |
+| AI Gateway | `commerceworker-acme` (`AI_GATEWAY_ID`) |
+| Turnstile widget | `commerceworker-web-acme`, managed, for `acme.commerceworker.com` (site key in `turnstileSiteKey`) |
+| Vectorize | `commerceworker-products-acme` (the engine's `PRODUCT_VECTORS`; none for a demo) |
+| OAuth KV | created on the first deploy, bound to that web Worker |
+
+`node scripts/fleet.ts render <id>` writes `apps/catalog/wrangler.<id>.json`,
+`apps/catalog-edge/wrangler.<id>.json`, `apps/engine/wrangler.<id>.json` and `apps/web/wrangler.<id>.json`, and `plugins/<plugin>/wrangler.<id>.json` for each installed plugin: each app's `wrangler.jsonc` with the deployment's names, ids, domain
+and namespaces filled in. They sit next to `wrangler.jsonc` so relative paths (`main`,
+`migrations_dir`) still resolve, and they are gitignored. The web build reads its rendered config
+when `COMMERCEWORKER_WRANGLER_CONFIG` names it (`apps/web/vite.config.ts`). Rendering `commerceworker` gives
+back the base files unchanged, and `pnpm test:fleet` checks that.
+
+## Adding a customer
+
+1. Create `deployments/<id>.jsonc` with `id`, `ring` (usually `canary` first), the next free
+   `slot` and, for EU data, `"jurisdiction": "eu"`. Set it now: D1, R2 and the Durable Objects take
+   it at creation, so adding or changing it after the first order strands that order's live state
+   (see [Data residency](data-model.md#data-residency)).
+2. Run `./scripts/provision.sh <id>`, logged in to `wrangler` and `gh`. It creates the D1
+   database, the R2 bucket and the catalog's R2 bucket (in the jurisdiction; the Durable Objects get theirs from each Worker's `DATA_JURISDICTION`, rendered at deploy), the catalog's KV namespace (KV has none; its id is written as `catalogKvId`), the AI Gateway (with the `commerceworker` gateway's settings:
+   120 requests a minute, no cache, authentication on, request logs only when `aiGatewayLogs` is `true`), and the GitHub environment. For a gateway that already exists, it compares the gateway's default log setting with `aiGatewayLogs` and prints a warning if they differ; it doesn't change the gateway. The engine sends the setting on every call either way, so the default matters only for calls made outside it; match it in the dashboard (**AI** > **AI Gateway** > the gateway > **Settings**), where logs kept so far are deleted too.
+   It creates the product index, Vectorize `commerceworker-products<suffix>` (768 dimensions, cosine, fixed at creation), unless the deployment is a demo; a deploy fails while the engine's binding names an index that doesn't exist. The engine's hourly cron fills it, up to 3,000 SKUs a run, so a large catalog's first backfill takes several hours. An admin can start a run now, after a big import say, with **Update product index** under Inventory on the Commerce page (`EngineRpc.reindexProducts`); it is the same run, so it also takes at most 3,000. A run holds the lease in `product_index_lease` for up to 15 minutes, so one that overlaps the cron's (or a second click) answers that the index is already being updated and does nothing; a run that dies leaves the lease to lapse.
+   For each plugin in the file's `plugins` it creates the D1 database `commerceworker-plugin-<plugin><suffix>` and writes its id as `plugins.<plugin>.d1Id` (see [Plugins](plugins.md#installing)).
+   It creates the catalog's two feed queues, the two purge queues and the two changes queues (a deploy fails while a consumer's queue doesn't exist; one that exists is kept) and sets every one of them to keep messages 14 days (`--message-retention-period-secs 1209600`, the most Queues allows), existing ones too. It replaces two lifecycle rules on the catalog bucket: `feeds`, which expires `feeds/` (uploaded feed files and their parts) after 30 days, and `dlq`, which expires `dlq/` ([Dead letters](#dead-letters)) after 30 days; and two for
+   [catalog backups](#catalog-backups): `backups`, which expires `backups/` after
+   `catalogBackupDays`, and `restores`, which expires `restores/` after 30 days; and `health`, which expires `health/`
+   after a day, the deploy smoke test's [write check](deploy.md#the-write-check) objects whose
+   delete never ran (the docs bucket gets the same `health` rule). It sets the catalog
+   bucket's lock rule `catalog-backups` on `backups/` for `catalogBackupDays` days
+   ([Bucket locks](#bucket-locks)).
+   It creates the logs bucket `commerceworker-logs<suffix>` (in the jurisdiction), replaces its lifecycle rule `logs` with a `logRetentionDays` expiry, and creates or updates the deployment's Logpush job ([Logs](#logs)); the job needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and without them it says it skipped it.
+   It also sets the R2 lifecycle rule that expires the audit archive after `auditArchiveDays`, or removes it when that is unset, and the docs bucket's lock rules ([Bucket locks](#bucket-locks)); re-run it after changing the number.
+   It sets the environment's `PRINCIPAL_KEY`, `DATA_KEY` and `PASSWORD_PEPPER` (`openssl rand -hex 32`, never written to disk) when it lacks them, for a deployment that already runs too, since a deploy fails without the first two. It never replaces a `DATA_KEY` or `PASSWORD_PEPPER` the web Worker already holds: when the environment has lost one, it stops and asks for the deployment's own value, since a new one would leave every secret sealed under the old key, or every password hashed with the old pepper, unreadable. It writes `d1Id` into the registry file and sets the environment's `SETUP_TOKEN`, the one-time setup code. New values are generated and saved in `.secrets/<id>/` (gitignored; the code is `.secrets/<id>/setup-code`); a secret
+   the environment already has is left alone, and once the web Worker exists it sets none, since a
+   generated one would replace the Worker's own on the next deploy. Re-running it is safe.
+   With the API token and account id it also finds or creates the deployment's Turnstile widget
+   and copies its secret into the environment; see [Turnstile](#turnstile).
+3. If `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` aren't repository secrets, add them to
+   the environment. Add `SHOPIFY_WEBHOOK_SECRET`, `INTAKE_ALLOWLIST`, `SHIPPING_CARRIER_AUTH`,
+   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` or `OIDC_CLIENT_SECRET` ([single sign-on](#single-sign-on)) there if the customer uses them (Stripe also
+   needs `"payments": "stripe"` in the registry file, and invoices through Stripe need
+   the [Stripe webhook](deploy.md#stripe-webhook)). To gate this customer's deploys, add a required reviewer to the
+   environment.
+4. Commit the registry file and merge. CI deploys the customer in its ring, and the custom domain
+   creates its DNS record in the `commerceworker.com` zone.
+5. Send the customer's first admin `https://<domain>/setup` and the code from
+   `.secrets/<id>/setup-code`. They enter it with their email and a password of their own, which
+   creates their admin account and signs them in; they add their team from there. The code works
+   once. Until then the workspace refuses every request but `/setup`.
+
+**Deployments that predate feeds.** Provisioning only runs when you run it, and CI never does. A deployment provisioned before the catalog's feed import needs the queues and the `feeds/` rule too, and one that predates the public catalog API needs the two purge queues before the deploy that carries `catalog-edge`, and one that predates listing indexes needs the two changes queues before the deploy that carries them: run `./scripts/provision.sh <id>` again, before the deploy that carries the feed code (re-running is safe and sets no secrets once the web Worker exists). The script keeps a queue that already exists (`queues info`) and stops if one can neither be found nor created, since a deploy fails without its consumer's queue; it replaces the `feeds` lifecycle rule on each run. Keyword search needs no new resource (its Durable Objects come with the deploy and the `CATALOG` service binding resolves to the deployment's own catalog), but it fills only from changes published after it deploys: run `reindex` once for products already published. Segmented listing indexes are the same: `catalog-edge` reads only the per-segment blobs (`idx/f1/<channel>/<category>/<segment>.bin`), which exist only once listing changes reach each segment's indexer, so after the deploy that carries segmented listings, run `reindex` once per deployment (`POST /api/v1/catalog/reindex` on the web app, an `admin` call; it republishes every product, which forces every listing to rebuild). Until it has run, category listings are empty (`404`) or hold only the products changed since the deploy. The old single-blob indexes are left in R2 unread; deleting the channel sweeps them. The `commerceworker` deployment's queues and `feeds` rule were created through the Cloudflare API rather than by `provision.sh` (on 2026-10-23), and so were its purge queues, `commerceworker-catalog-purge` and `commerceworker-catalog-purge-dlq` (also on 2026-10-23), and its changes queues, `commerceworker-catalog-changes` and `commerceworker-catalog-changes-dlq` (also on 2026-10-23); re-running the script for it now only sets the queues' 14-day retention, the `dlq` lifecycle rule and the docs bucket's locks.
+
+**Deployments that predate the write check.** The `health` lifecycle rules on the docs and catalog buckets come only from `provision.sh`: re-run `./scripts/provision.sh <id>` for each existing deployment, `commerceworker` included, to add them. The write check works without them; they only expire an R2 probe object whose delete never ran.
+
+A deployment without `d1Id`, `catalogKvId` or a plugin's `d1Id` stops the whole CI plan, so provision a customer before merging their
+file, or merge it with `"hold": true`.
+
+Email intake still needs Email Routing rules per deployment (see
+[Email intake](deploy.md#email-intake)), pointing at that deployment's engine Worker.
+
+## Rings
+
+On a push to `main`, after the checks pass, CI's `plan` job runs `node scripts/fleet.ts matrix` and
+deploys ring by ring: `staging`, then `internal`, then `canary`, then `general`. A ring starts only
+when the one before it finished without a failure; an empty ring is skipped. Inside a ring every
+deployment is its own job (`general` runs four at a time), and one deployment failing doesn't stop
+the others in its ring, but it does stop later rings.
+
+Each deployment's job, `.github/workflows/deploy.yml`, runs in that deployment's environment:
+
+1. Render its configs and collect its secrets from the environment. With plugins installed, the **Collect plugin secrets** step also writes each Worker plugin's secrets file and, for sandboxed plugins on a shared account, the engine's `PLUGIN_SECRETS`. Then **Check plugin secrets** builds each plugin's bundle, reads its manifest and fails the deploy, before anything changes, if a required (not `optional`) secret isn't set: in the environment, or on a `secretsStore` deployment listed in the registry and present in the store (names only).
+2. Record a D1 Time Travel bookmark (in the run summary) and apply migrations to its D1.
+3. Deploy its catalog, then its catalog-edge, then each installed plugin (its D1 migrations, then its Worker with its own `--secrets-file`: `PLUGIN_KEY` derived from `PRINCIPAL_KEY` for that plugin alone, and the environment's `PLUGIN_<ID>_*` secrets under their own names, unless the deployment has a `secretsStore`; the engine and web Worker bind to it), then **Publish sandboxed plugins** (each sandboxed plugin's bundle goes to the deployment's `DOCS` bucket as `plugins/<id>/<sha>.json` and the shas are pinned in the engine config's `PLUGIN_BUNDLES`), then its engine, then build and deploy its web app; the engine and web app
+   each with `--secrets-file` (the catalog and catalog-edge have no secrets). That adds the
+   environment's secrets to the Worker and never removes one, so a secret set by hand survives.
+4. Smoke-test `https://<domain>/health`, `/health/deep` and `/login`, then `https://<catalogDomain>/health`, then the write check (`node scripts/fleet.ts write-check <id>`, `POST /health/write` signed from `PRINCIPAL_KEY`): every store the Workers write to takes a write, gives it back and loses it again, and a failure names the store ([Deploy](deploy.md#the-write-check)). Like each read, it tries for five minutes (10 seconds an attempt) before it fails and rolls the deploy back; the step itself stops at 28 minutes, inside the job's 45, so a hang fails the step and the rollback still runs.
+5. If anything fails after the catalog deployed, roll back each Worker that deployed: the engine, then the web app, the plugins, catalog-edge and the catalog. A Worker on its first deploy has no earlier version and is left as it is. If the engine can't be rolled back (a Durable Object migration since its last version prevents it, for one), the step fails with an error and nothing else is rolled back, so the web app stays on the version that matches the engine; fix forward. Any other Worker that fails to roll back is an error too, after the rest have gone back ([CI](deploy.md#ci)). Rolling the engine back restores its previous `PLUGIN_BUNDLES` pins; the bundles stay in `DOCS` (nothing removes them), so the old version finds the ones it pins. D1 isn't rolled back (see [Restoring D1](deploy.md#restoring-d1)).
+
+To gate a ring, add a required reviewer to its deployments' environments: the `canary` jobs then
+wait for approval after `internal` succeeds.
+
+## Plugins
+
+A plugin is installed by listing it under `plugins` in a deployment's file (see the registry above
+and [Plugins](plugins.md)). To install one: add it, run `./scripts/provision.sh <id>` (it creates the
+plugin's D1 database), and merge. To remove one from a deployment: run
+`COMMERCEWORKER_API_TOKEN=ol_… pnpm plugin:check <id> <plugin>` with an admin's API token, which fails
+while a published flow or a running order uses the plugin's nodes; take it out of `plugins` and merge
+so CI deploys without it; then delete its Worker `commerceworker-plugin-<plugin><suffix>` and its D1
+database. Delete `plugins/<plugin>/` once no deployment lists it.
+
+A plugin whose manifest asks for `personalData: "send"` is refused until its registry entry says
+`"personalData": "send"`; merge that to grant it, and remove it to withdraw it (the plugin is refused
+at once on the next deploy, even from its last good manifest). A plugin's keys are derived from
+`PRINCIPAL_KEY` (`PLUGIN_KEY`) and `PRINCIPAL_KEY_PREVIOUS` (`PLUGIN_KEY_PREVIOUS`), so rotating the
+principal key rotates them too, and each plugin's secrets are written per plugin
+(`fleet.ts secrets plugin <out> <plugin>`). The old `PLUGIN_KEY_PREVIOUS` is not removed from the
+plugin's Worker when it stops being written: run `wrangler secret delete PLUGIN_KEY_PREVIOUS`
+against `commerceworker-plugin-<plugin><suffix>` after the rotation.
+
+A sandboxed plugin is installed the same way with `"runtime": "sandboxed"`: there is nothing to
+provision (`provision.sh` skips it) and no Worker or database to delete on removal; take it out of
+`plugins` and merge, and the engine stops loading it. Its pinned bundles stay in the `DOCS` bucket
+as `plugins/<plugin>/<sha>.json`; delete them by hand if you want them gone. Its storage (the engine's
+`PluginStorage` object for that id) stays too, so reinstalling finds its data. Worker Loader, which
+runs sandboxed plugins, is in open beta and needs Workers Paid; the engine's `LOADER` binding is
+declared in every deployment and unused until one is installed. Cloudflare enforces the per-call CPU
+and subrequest limits; local workerd does not.
+
+### Plugin secrets
+
+A plugin's secrets are named `PLUGIN_<ID>_<NAME>` (`API_KEY` of `shipstation` is
+`PLUGIN_SHIPSTATION_API_KEY`) and live where the deployment's Cloudflare account puts them
+([Plugins](plugins.md#secrets)).
+
+**Shared account** (no `secretsStore`): set `PLUGIN_<ID>_<NAME>` in the deployment's GitHub
+environment (`deploy-<id>`), e.g. `gh secret set PLUGIN_SHIPSTATION_API_KEY --env deploy-acme`, and
+deploy. A Worker plugin gets it as `<NAME>` in its secrets file; a sandboxed plugin's go to the
+engine as `PLUGIN_SECRETS`. To rotate, change the value and redeploy (merge, or re-run the
+deployment's job). `--secrets-file` never removes a secret, so one you stop setting stays on the
+Worker: delete it with `wrangler secret delete <NAME>` against the plugin's Worker (or, for a
+sandboxed plugin, rotate it at its issuer; `PLUGIN_SECRETS` is rewritten whole on each deploy).
+
+**Own account** (`secretsStore` in the registry): put the secret in the account's Secrets Store
+under the same `PLUGIN_<ID>_<NAME>` name, with the Workers scope, and list its `<NAME>` under
+`plugins.<id>.secrets`:
+
+```sh
+wrangler secrets-store secret create <store id> --name PLUGIN_SHIPSTATION_API_KEY --scopes workers --remote
+```
+
+or use the dashboard (Secrets Store). Rotate it in the store (`wrangler secrets-store secret update`,
+or the dashboard): the plugin reads the new value on its next call, with no deploy. To revoke,
+delete or rotate it in the store. `provision.sh` checks the store exists (create it with
+`wrangler secrets-store store create <name> --remote`; one store an account) and reminds you to add
+each plugin's secrets.
+
+The deployment's CI token (`CLOUDFLARE_API_TOKEN`) needs **Account Secrets Store Edit** for any
+deployment with a `secretsStore`: **Check plugin secrets** lists the store's secret names with it
+(Read is enough for that) and deploying a Worker that binds a store needs Edit. Without it the
+check stops the deploy with `CLOUDFLARE_API_TOKEN needs Account Secrets Store Edit`. A deploy also
+stops, naming the missing `PLUGIN_<ID>_<NAME>`, when a required secret isn't set. A required
+secret removed afterwards fails the plugin's manifest, so deep health names it.
+
+Moving a deployment onto its own account's Secrets Store: a Worker plugin's old plain secrets stay
+on its Worker (`--secrets-file` never removes one), and a Secrets Store binding of the same name
+then fails its deploy. Delete each first (`wrangler secret delete <NAME> --name
+commerceworker-plugin-<id><suffix>`), then merge the registry change. Two deployments must never share
+a `secretsStore`: its names (`PLUGIN_<ID>_<NAME>`) aren't per deployment.
+
+### Plugin publishers
+
+Runtime installs ([Plugins](plugins.md#installing-at-runtime)) are off until the registry lists who
+may publish them. To trust a publisher, they run `pnpm plugin:pack keygen <name> <name>.pem`, keep the
+PEM and send the public key it prints; add it in a reviewed registry PR:
+`"pluginInstalls": { "publishers": { "<name>": "<public key>" } }`. `loadDeployments` refuses a name
+that isn't lowercase letters, digits and hyphens, or a key that isn't 43 base64url characters.
+Merging deploys the engine with `PLUGIN_PUBLISHERS`.
+
+To rotate a key, list the new one under a second name (`acme-2026`) next to the old, have the
+publisher sign with it, then remove the old name. An upgrade must come from the publisher that
+signed the installed version, so a publisher that changes name has its plugin uninstalled and
+installed again. Removing a publisher stops new uploads from it and the approving, rolling back to
+or turning on of any of its versions; one already running keeps running.
+A leaked publisher key: remove it from the registry and merge, then review, and if need be turn
+off, each plugin it signed (the Plugins page names the publisher).
+
+## Alerting
+
+Failures reach a person through Cloudflare Notifications, which are set on the account, not per
+Worker. Every app Worker turns on Workers Issues (`observability.issues.enabled` in its
+`wrangler.jsonc`): uncaught exceptions, failed invocations, `5xx` responses and logs written with
+`console.error` become issues, so an error-level log line (a dead letter's `dlq_message`, a failed
+retention sweep, a model call that fell back to the heuristic) alerts without a rule of its own. The account holds these notification policies,
+all sent to the account's email:
+
+| Policy | Alert type | Fires on |
+|---|---|---|
+| CommerceWorker: Worker issues | `workers_observability_real_time_issue` | A new or recurring issue on any Worker with Issues on |
+| CommerceWorker: HTTP DDoS | `dos_attack_l7` | An HTTP DDoS attack mitigated on one of the account's zones |
+| CommerceWorker: Universal SSL | `universal_ssl_event_type` | Universal certificate validation, issuance, renewal and expiry |
+| CommerceWorker: Advanced certificates | `dedicated_ssl_certificate_event_type` | Advanced certificate validation, issuance, renewal and expiry |
+
+They were created through the API (2026-10-25); nothing in the repo provisions them. On a shared
+account one set covers every deployment there. A deployment on its own Cloudflare account needs
+the same four policies created on that account (dashboard **Notifications**, or the API's
+`/alerting/v3/policies`), sent to whoever is on call for it. Add a webhook or PagerDuty destination
+to a policy when email isn't enough. Log-match alert rules (Workers Observability alerts on a
+query) can only be made in the dashboard; prefer an error-level log, which Issues already catches.
+
+## Logs
+
+Workers Logs keeps 7 days. Every app Worker (web, engine, catalog, catalog-edge) and every
+plugin Worker also sets `logpush: true` ([Configuration](configuration.md#runtime-limits-and-observability)),
+and each deployment has one Workers Logpush job, `commerceworker-workers<suffix>`, that writes their
+trace events to the deployment's own bucket, `commerceworker-logs<suffix>` (in its jurisdiction), under
+`workers/<yyyymmdd>/` as gzipped NDJSON, one record per invocation. They are kept
+`logRetentionDays` days (default 400, or `personalDataRetentionDays` when that is set), then the
+bucket's lifecycle rule `logs` deletes them. `provision.sh` makes the bucket, the rule and the job;
+CI does nothing here, so deploys never depend on it. Without the deployment's own job, `logpush`
+doesn't keep the logs anywhere of ours, but it isn't inert: on a shared account any other
+`workers_trace_events` job whose filter lets these Workers through (one with no filter at all, say)
+collects them. `provision.sh` refuses to go on while such a job exists (`foreignJobsReaching` in
+`scripts/fleet.ts`), but it only looks when it runs: after making a Logpush job on a shared account
+for anything else, filter it to its own Workers' `ScriptName`, and re-run `provision.sh` for each
+deployment there to check.
+
+**What a record holds.** The job's fields are `LOG_FIELDS` in `scripts/fleet.ts`:
+`EventTimestampMs`, `EventType` (`fetch`, `queue`, `scheduled`, `alarm`, `worker_rpc`, …),
+`Outcome`, `ScriptName`, `Entrypoint` (the Durable Object or Workflow class), `ScriptVersion` (to
+match a deploy), `Exceptions` (with stacks), `Logs` (every `console` line: the `audit_event`
+lines, dead letters, retention sweeps and the rest) and `CPUTimeMs`/`WallTimeMs`. Logpush cuts
+`Logs` and `Exceptions` together at 16,384 characters an invocation; past that a record says
+`<<<Logpush: … truncated>>>`. The audit log itself is in D1 and its R2 archive, so a truncated
+line loses nothing of record.
+
+**What it leaves out, and why.** The `Event` field is not pushed. It is what started the
+invocation: for a request its URL, method, headers and `cf` object. Cloudflare redacts headers by
+name (`cookie`, `set-cookie`, and any name containing `auth`, `key`, `secret`, `token` or `jwt`)
+and long ID-like strings in the URL, but the headers still carry the client's IP
+(`cf-connecting-ip`), user agent and any credential header with another name, and
+`observability.redact_query_string` is documented for Workers Logs and traces, not for Logpush.
+Leaving `Event` out keeps query strings, `Authorization`, cookies and client addresses out of the
+bucket entirely; what it costs is the request line and response status of each invocation, and a
+queue's or cron's own details. The app's own lines are kept, so what the code logs is what the
+bucket holds: `audit_event` lines carry the actor (an email), target and IP of each audited
+action, as the audit log does, and error text can quote whatever the failing code held. Erasure
+never reaches the bucket: the retention sweep's erasure of personal data doesn't touch it,
+and expiry after `logRetentionDays` is the only way a record leaves. That is why
+`logRetentionDays` defaults to `personalDataRetentionDays` when a deployment sets it, and may not
+be longer. To get the request line back, attach a Logpush
+transformer to the job that selects only the method, path and status from `Event`, and test it
+against a sample record first: the job then can't also have its filter (a transformer takes the
+`WHERE` instead).
+
+**One job per deployment, filtered.** A `workers_trace_events` job takes every Worker on the
+account that sets `logpush`, so each job's filter names its own deployment's Workers
+(`ScriptName in [...]`; `logpushJob` in `scripts/fleet.ts`, which refuses a filter past Logpush's
+1,000 bytes). `pnpm test:fleet` checks no two deployments' jobs share a Worker, a job or a bucket.
+Cloudflare documents a limit of 4 Logpush jobs per zone and publishes no account figure for
+account datasets such as `workers_trace_events`. If the same 4 applies to an account, a shared
+account holds four deployments' jobs (today `commerceworker` and `demo` would take two). When
+`provision.sh` can't create one, it stops and says so: then ask Cloudflare to raise the limit, or
+put the customer on their own account, which any deployment is built to allow. One job for the
+whole account is not an option: it would put every deployment's logs behind one credential and
+in one place.
+
+**The credential.** Logpush writes to R2 as an S3 client. `provision.sh` makes the key itself: an
+account-owned API token, `commerceworker-logpush<suffix>`, whose only permission is Workers R2 Storage
+Bucket Item Write on the logs bucket (`logpushToken` in `scripts/fleet.ts`: one policy, one
+resource naming the bucket and its jurisdiction, and the permission group found by its exact
+name); the access key id is the token's id and the secret the SHA-256 of its value. A re-run that
+needs a key rolls the existing token only after checking it still holds exactly that policy
+(`tokenMatches`), and stops otherwise. The value exists only in the script's shell and in the job's destination
+(Cloudflare keeps it there); it is never printed or written to disk, the script turns off
+`set -x` while it runs, and any API error it echoes has `access-key-id` and `secret-access-key`
+values replaced with `REDACTED`. A deployment in a
+jurisdiction is reached through its S3 endpoint (`<account>.<jurisdiction>.r2.cloudflarestorage.com`)
+instead of `r2://`. Creating the job or the token needs `CLOUDFLARE_API_TOKEN` with Logs Write
+and Account API Tokens Write; re-runs only update the job (filter, fields) and need Logs Write.
+That token is a person's, made in the dashboard (**Manage Account** > **Account API Tokens**), not
+CI's: token-making is not something the deploy should be able to do. To replace the key (a
+suspected leak, or a job whose last push failed for its credentials), run
+`ROTATE_LOGPUSH_KEY=1 ./scripts/provision.sh <id>`: it rolls the token's value and gives the job
+the new one. The bucket has no lock rule: Logpush's own writes are the only ones the token
+allows, and how its destination check writes has not been confirmed against a lock. So the
+bucket is not tamper-evident: anyone who can write it (that token, or an account admin) could
+change or remove a log file unseen. For evidence, use the audit log: its hash chain in D1 and its
+locked R2 archive ([Bucket locks](#bucket-locks)) are; the logs bucket is for investigation.
+
+**Reading them.** Download a day and search it:
+
+```bash
+wrangler r2 object get commerceworker-logs<suffix>/workers/20261027/<file> --file part.gz --remote
+gunzip -c part.gz | jq -c 'select(.Outcome != "ok") | {EventTimestampMs, ScriptName, Exceptions}'
+gunzip -c part.gz | grep -F audit_event | jq -c '{EventTimestampMs, ScriptName, Logs}'
+```
+
+(Add `--jurisdiction` for a deployment in one. Wrangler can't list a bucket; list a day's files
+in the dashboard, **R2** > the bucket, or with any S3 client and an R2 read token.) The job's state, its last push and last error, is in
+the account's **Logpush** page in the dashboard. Cost: Workers Logpush is 10 million
+pushed records a month included on the account, then $0.05 a million, and R2 storage of the
+gzipped files.
+
+## Holding and checking deployments
+
+- **Hold a customer** on what they run now (a change freeze, an incident) with `"hold": true` in
+  their file. Remove it to catch them up on the next deploy; migrations apply in order, so they
+  catch up in one deploy.
+- **Fleet status:** `node scripts/fleet.ts status` calls each deployment's `/health/deep` and
+  prints its ring, domain and health.
+
+## Dead letters
+
+A message that a catalog queue gives up on (feed parts after 5 deliveries, listing changes and
+purges after 11; each retry backs off, up to 5 or 15 minutes) goes to that queue's dead-letter
+queue, `commerceworker-catalog-<feed-parts|changes|purge>-dlq<suffix>`. The catalog Worker consumes
+all three: it writes each message to the catalog bucket at
+`dlq/<queue>/<yyyy-mm-dd>/<message id>.json` (`queue`, `id`, `timestamp`, `attempts` and the
+original `body`), logs one line, and acknowledges it. The line is logged at error level
+(`console.error`), and Workers Observability counts error logs in the Worker's Issues: alert on new
+Issues for `commerceworker-catalog<suffix>`, since the API can't create an alert that matches a log
+line. To find them in the logs, query the catalog Worker's events for `"type":"dlq_message"`:
+
+```json
+{"type":"dlq_message","queue":"commerceworker-catalog-changes-dlq-acme","id":"…","attempts":1}
+```
+
+`attempts` is the delivery count on the dead-letter queue, not the original one. Objects under
+`dlq/` expire after 30 days (the lifecycle rule `dlq`), and every queue keeps undelivered messages
+14 days, so a consumer that is down over a weekend loses nothing.
+
+**Inspect.** In the dashboard, **R2** > `commerceworker-catalog<suffix>` > **Objects**, filter by the
+prefix `dlq/<queue>/`; or fetch one with
+`wrangler r2 object get commerceworker-catalog<suffix>/dlq/<queue>/<date>/<id>.json --remote --pipe`
+(add `--jurisdiction eu` for an EU deployment). Look at the catalog Worker's logs around the
+message's `timestamp` for why its consumer failed, and fix that first: a replay into a consumer that
+still fails comes back to the dead-letter queue.
+
+**Replay.** Replaying is sending the object's `body` back to the original queue (the dead-letter
+queue's name without `-dlq`). Find the queue's id with `wrangler queues info <queue>`, then send the
+body through the Queues API (`POST /accounts/<account>/queues/<queue id>/messages` with
+`{"body": <body>, "content_type": "json"}`, a token with Queues edit), or send it from the queue's
+page in the dashboard (**Queues** > the queue). What each needs:
+
+- **Listing changes** (`commerceworker-catalog-changes`) are idempotent by `at`: replay the body as it
+  is. For many, a `reindex` (`POST /api/v1/catalog/reindex`, `admin`) republishes every product and
+  rebuilds every listing instead.
+- **Feed parts** (`commerceworker-catalog-feed-parts`) point at `feeds/<feed>/parts/…`, which expire
+  after 30 days; replay one only while that object exists. Its shard batch id is the part id, so a
+  replay never applies a row twice. Usually it is simpler to import the feed again.
+- **Purges** (`commerceworker-catalog-purge`) are rarely worth replaying: documents refresh on their own
+  within `max-age`. Replay one only for a takedown or price correction that must leave the cache
+  now.
+
+Delete a dead letter's object once it is handled, or leave it to expire.
+
+## Catalog backups
+
+The catalog's source of truth is the SQLite storage of its Durable Objects: `CatalogMeta` (types,
+channels, categories) and the 64 `CatalogShard`s (products, alias claims, and the product editor's
+feed rows, overrides, staged edits, drafts, history, refused rows, gap index and board). Durable
+Objects keep 30 days of point-in-time recovery; the backup Workflow keeps a copy past that, and is
+the catalog's export.
+
+**What and when.** `commerceworker-catalog-backup<suffix>` runs daily at 02:45 UTC (its `schedules`). It
+copies every table of record of `meta` and `shard-0` … `shard-63`, one step per object, into the
+catalog bucket (`apps/catalog/src/backup.ts`):
+
+| Key | Holds |
+|---|---|
+| `backups/<yyyy-mm-dd>/<object>/<table>-<n>.ndjson` | Up to 1,000 rows (about 8 MB) of one table, a JSON object a line, keyed by column name |
+| `backups/<yyyy-mm-dd>/<object>/bookmark.json` | The object's point-in-time-recovery bookmark when its copy started |
+| `backups/<yyyy-mm-dd>/manifest.json` | Written last: `format`, `date`, `finishedAt`, `docFormat`, `shards`, and per object its `bookmark` and per table `rows`, `chunks` and `columns`. A day without one is a backup that hasn't finished |
+
+Not copied: a shard's `outbox`, `applied`, `published` and `gap_rebuild` (transient, or a record of
+what is in R2 now, which a restore keeps), and the objects that hold nothing of record:
+`ListingIndexer` and `SearchShard` (rebuilt by the republish a restore ends with),
+`CatalogPublisher` (stores nothing) and `CatalogFeeds` (the history of past imports, whose files
+expire after 30 days anyway). Rows are read a page at a time while writes go on, so a backup isn't
+one instant across pages; its bookmarks are exact points. A second run on a day that has a
+manifest copies nothing; a run that failed resumes where its chunks stop (each records the last
+row it holds), and every write skips a key that exists, since the lock refuses an overwrite.
+
+**Retention.** Backups expire after `catalogBackupDays` (default 90; the lifecycle rule `backups`)
+and are locked for as long (`catalog-backups`, [Bucket locks](#bucket-locks)), so nothing deletes
+or overwrites one before then.
+
+**Check the latest.** In the dashboard, **Workflows** > `commerceworker-catalog-backup<suffix>` lists
+each day's instance. Or read a day's manifest (add `--jurisdiction eu` for an EU deployment):
+
+```bash
+wrangler r2 object get commerceworker-catalog<suffix>/backups/<yyyy-mm-dd>/manifest.json --remote --pipe \
+  | jq '.finishedAt, ([.objects[].tables.products.rows] | add)'
+```
+
+To take one now (an export before removing a customer), run `wrangler workflows trigger
+commerceworker-catalog-backup<suffix>`; it is named by the UTC date it starts on, so on a day that
+already has one it copies nothing.
+
+### Restoring the catalog
+
+Restores run as the operator-only Workflow `commerceworker-catalog-restore<suffix>`
+(`apps/catalog/src/restore.ts`): nothing routes to it, and it starts only from `wrangler workflows
+trigger` with the deployment's own Workflow name (`commerceworker-catalog-restore` for commerceworker,
+`commerceworker-catalog-restore-acme` for acme). Pause feeds and product edits while it runs: a write
+that lands mid-restore may be lost.
+
+Every mode ends the same way: every channel still published somewhere (in the shards' records
+or R2's documents) that the restored config lacks is taken down (as deleting a channel does), the
+category trees republished, the config revision moved past every one served before, and every
+product, and every key published before, republished in full, so catalog-edge, listings, search
+and the order prices in D1 follow the restored catalog and nothing it removed stays published.
+Watch it with `wrangler workflows instances describe commerceworker-catalog-restore<suffix> <instance
+id>`. Its output is `{ mode, undo, rev, republished, channelsRemoved }`; `undo` maps each object to
+its bookmark from before the restore, also kept at `restores/<instance id>/before.json` (expired
+after 30 days). Keep it.
+
+**If a restore fails**, its error says so and names that instance: what it changed stays changed.
+Run the same restore again with `"merge": ["<failed instance id>"]` added to finish it (list several
+earliest first); the new run takes the failed one's `before`, so its `undo` is still the catalog
+from before either, and joins the `published` copies the failed one made. Or restore the `undo`
+bookmarks in its `before.json` to take it back:
+
+```bash
+wrangler r2 object get commerceworker-catalog<suffix>/restores/<instance id>/before.json --remote --pipe | jq .undo
+```
+
+**To a time in the last 30 days** (point-in-time recovery; milliseconds or ISO 8601):
+
+```bash
+wrangler workflows trigger commerceworker-catalog-restore<suffix> --params '{"at": "2026-10-27T09:30:00Z"}'
+```
+
+Every object's bookmark for that time is found first, so a time out of reach changes nothing. Then
+each object in turn copies its `published` table to `restores/<instance id>/` and sets its rewind
+in one call, with nothing able to publish in between, and restarts on the restored storage; the
+step checks that it did restart before going on. The copy is joined back, so the republish takes
+down what the rewound products no longer publish.
+
+**Undo a restore** by restoring the bookmarks in its output's `undo` (any of `meta` and
+`shard-<n>`):
+
+```bash
+wrangler workflows trigger commerceworker-catalog-restore<suffix> --params '{"bookmarks": {"meta": "…", "shard-0": "…"}}'
+```
+
+**From a backup** (any day still kept, older than 30 days included):
+
+```bash
+wrangler workflows trigger commerceworker-catalog-restore<suffix> --params '{"backup": "2026-10-20"}'
+```
+
+It first checks the whole backup without changing anything: the manifest (its format and shard
+count), every table in it with columns the tables still have, and every chunk there with the rows
+the manifest counts. A backup that fails that is refused, naming what is wrong. Then it replaces
+each object's tables with the backup's rows, one step per object (a retried step clears and loads
+again); nothing publishes until every object is loaded. Shards keep their `published` table, so
+the republish takes down what the backup doesn't have, and their product id counter never goes
+back. Its `undo` bookmarks rewind the objects to just before the load, while that is within 30
+days.
+
+## Bucket locks
+
+`provision.sh` sets two R2 bucket lock rules on the deployment's docs bucket
+(`commerceworker-docs<suffix>`, in its jurisdiction) and one on its catalog bucket
+(`commerceworker-catalog<suffix>`), so nothing (a person, a script, a compromised token) can delete what
+audits, rollbacks and restores rely on:
+
+| Bucket | Rule | Prefix | Retention |
+|---|---|---|---|
+| docs | `audit-archive` | `audit/` | `auditArchiveDays` days from each object's creation, the same as the lifecycle rule of that name, so the lifecycle rule deletes an archive only once its lock has lapsed; indefinitely when `auditArchiveDays` is unset (and then there is no lifecycle rule) |
+| docs | `plugin-bundles` | `plugins/` | Indefinitely: a pinned sandboxed-plugin bundle is what a rollback loads again |
+| catalog | `catalog-backups` | `backups/` | `catalogBackupDays` days, the same as the lifecycle rule `backups` ([Catalog backups](#catalog-backups)) |
+
+It writes them with `wrangler r2 bucket lock set`, which replaces the bucket's whole lock
+configuration in one call: a re-run changes the audit retention without a moment unlocked, and a
+lock rule added to this bucket by hand is dropped (add it to the script instead). Nothing in the
+engine deletes under either prefix: erasure deletes `orders/<id>/` and inbound mail, never the
+audit archive. Nothing overwrites under them either, since a locked object can't be written again:
+the sweep and the deploy name each object by what it holds (an archive by its first event and
+count, a bundle by its sha) and skip one that is already there; the catalog's backup Workflow
+looks before every write the same way. Shortening `auditArchiveDays` or `catalogBackupDays`
+shortens its rules on the next run. Each bucket's `lock set` replaces that bucket's whole
+configuration, so a rule added by hand is dropped. List the rules with
+`wrangler r2 bucket lock list commerceworker-docs<suffix>` (or `commerceworker-catalog<suffix>`).
+
+## The bench deployment
+
+`bench` (`deployments/bench.jsonc`, at `bench.commerceworker.com`) is a throwaway deployment for
+catalog benchmarks and scale tests ([Catalog benchmark](testing.md#catalog-benchmark)), so they
+never write to `commerceworker`'s catalog or its bill. It holds no customer data, takes mocked payments
+and installs no plugins. To bring it up:
+
+1. Run `./scripts/provision.sh bench`. It writes `d1Id` and `catalogKvId` into the file.
+2. Commit the ids and remove `"hold": true` in the same change, then merge. CI deploys it in the
+   `internal` ring.
+3. Open `https://bench.commerceworker.com/setup` with the code from `.secrets/bench/setup-code`, then
+   create an operator token for `COMMERCEWORKER_API_TOKEN`.
+
+Its idle cost is close to nothing (every resource is billed by use). A run's cost is in its Durable
+Object rows written: at the shape the benchmark generates, plan on roughly 200 rows a product,
+counting the import and the delete.
+
+## The demo
+
+`demo.commerceworker.com` is a public demo, the `demo` deployment, with `"demo": true` in its
+registry file. Compared with a customer's deployment:
+
+- **Demo data.** Each deploy loads `packages/db/seed/0001_demo.sql` after the migrations (the
+  customers, catalog, stores, sellers and rates local development uses), so the dashboard's
+  scenarios are there.
+- **One-click sign-in.** `DEMO_MODE` is `"true"`, so the sign-in page offers **Explore the demo**,
+  which signs a visitor in as the shared operator `demo@commerceworker.com` (created on first use, with
+  no password). People with their own account on the demo sign in below it as usual.
+- **Guardrails.** Visitors can start and cancel orders, decide approvals, run scenarios and edit and
+  publish flows. They can't change the Team or Account pages (people, roles, tokens, two-factor,
+  sessions, settings), and integrations, webhook subscriptions and connecting apps (`/mcp`, `/a2a`)
+  are closed, so the demo can't be pointed at anything outside it.
+- **No spend, fast time.** Models are mocked (`AI_MODE=mock`, no AI Gateway) and waits run 1440×
+  faster (`TIME_SCALE`), as in local development.
+- **Failing scenarios.** `SIMULATE_FAILURES` is `"true"`, so the scenarios that fail on purpose do.
+  A customer's deployment leaves it off and drops `meta.simulate` from every order.
+- **Nightly reset.** `.github/workflows/demo-reset.yml` runs at 04:00 UTC (and from the Actions
+  tab): it stops the orders still running, applies `packages/db/reset/demo.sql` (everything
+  visitors made, the audit log (`demo.sql` drops the `audit_events_keep_90_days` trigger around the delete and recreates it) and the demo visitor's sessions; people, settings, integrations,
+  `cus_internal`, `USD` and the price sources stay) and loads the demo data again. Durable Object
+  state of old orders stays behind, unreachable once their rows are gone.
+
+To bring it up: `./scripts/provision.sh demo`, then set `"hold": false` in `deployments/demo.jsonc`
+and merge. The demo's own setup code (`.secrets/demo/setup-code`) is for you, not visitors: it creates an admin account for managing the demo.
+
+## Single sign-on
+
+A customer signs in through its own OpenID Connect provider (Okta, Entra ID, Google Workspace, …):
+
+1. At the provider, register a web application (authorization code flow) with the redirect URI
+   `https://<domain>/login/sso/callback`. Scopes `openid email profile`; PKCE is used. Note the
+   issuer (as its `/.well-known/openid-configuration` names it), the client id and the client secret.
+2. Add `"sso": { "issuer": "https://…", "clientId": "…" }` to the registry file, and set
+   `OIDC_CLIENT_SECRET` in the deployment's GitHub environment.
+3. Merge. The next deploy renders `OIDC_ISSUER` and `OIDC_CLIENT_ID` into the web Worker and sets the
+   secret. With all three set the sign-in page shows **Sign in with single sign-on**.
+4. Tell the customer's admins. On the Team page they choose who may join and from which email
+   domains, and can turn on **Single sign-on only** once they have signed in that way themselves.
+
+Removing `sso` from the registry (the Worker then has no issuer) turns the button off. A saved
+**Single sign-on only** then has no effect (`ssoOnlyInEffect` in `settings.server.ts` needs a
+configured provider), so passwords and passkeys work again; people single sign-on added have no
+password and need an admin to reset one for them.
+A person disabled at the provider keeps their session until it ends; an admin disabling them on the
+Team page ends it now, or the provider can do it through SCIM (below).
+
+## Turnstile
+
+Password sign-in and `/setup` can ask for a [Turnstile](https://developers.cloudflare.com/turnstile/)
+challenge, so bots can't stuff passwords or race a new deployment's first admin. It is per
+deployment and off until the registry has a site key. Passkeys, single sign-on and the two-factor
+step aren't gated: the first two can't be stuffed, and the two-factor page is reached only through
+a password sign-in that passed the challenge. How the check works is under `TURNSTILE_SITE_KEY` in
+[Configuration](configuration.md#web-variables).
+
+1. Run `./scripts/provision.sh <id>` with `CLOUDFLARE_API_TOKEN` (with **Turnstile Sites Write**)
+   and `CLOUDFLARE_ACCOUNT_ID` set. It reads every page of the account's widgets. When the registry
+   already has `turnstileSiteKey` it uses that widget, and stops if the account has none with that
+   key; otherwise it finds the widget named like the web Worker (`commerceworker-web<suffix>`, warning
+   when more than one has that name), or creates it: managed mode, the deployment's domain only. It
+   warns when the widget it found has any domains but exactly the deployment's. Named per
+   deployment, it works the same on a shared or a dedicated account. When the environment has no
+   `TURNSTILE_SECRET_KEY`, it reads the widget's secret from the API and sets it there through
+   `gh secret set`, without printing it or writing it to disk. It prints the site key.
+2. Put that key in the registry file as `"turnstileSiteKey": "0x…"` and merge. The deploy renders
+   `TURNSTILE_SITE_KEY` and sets the secret; a deploy without the secret stops before migrating.
+
+Without the API token, create the widget in the dashboard (**Turnstile** > **Add widget**, managed,
+the deployment's domain, named `commerceworker-web<suffix>`), set its secret as `TURNSTILE_SECRET_KEY` in
+the GitHub environment, then add the site key to the registry.
+
+A widget works on its domains' subdomains too, so `commerceworker.com`'s also runs on
+`demo.commerceworker.com`; the check accepts a token only for the host the form was posted to, so one
+deployment's tokens never sign in at another. To turn it off, remove `turnstileSiteKey` and merge;
+the Worker keeps the secret unused. To rotate the secret, rotate it in the dashboard, set the new
+value in the environment and redeploy: tokens fail with `invalid-input-secret` (logged as
+`turnstile_refused`) in between. The web Worker logs `turnstile_misconfigured` when it has a site
+key but no secret, and refuses every attempt.
+
+### Provisioning (SCIM)
+
+For a customer whose provider pushes people and groups (Okta, Entra ID), set single sign-on up first:
+people SCIM creates are viewers with no password, so they can only sign in through it (linked by
+email on their first sign-in). Then ask the customer's admin to open **SCIM provisioning** on the
+Team page, make a token (`cmw_scim_…`, shown once; only its SHA-256 is stored) and paste the
+**Endpoint** (`https://<domain>/scim/v2`) and token into the provider's provisioning settings. No
+registry entry, secret or deploy is involved. The admin maps pushed groups to roles on the same
+page. Deactivating at the provider ends the person's sessions, connected apps and the API tokens
+they made. Without a token every `/scim/v2` request is a `401`; demo deployments lock the path.
+
+## Rotating the principal key
+
+`PRINCIPAL_KEY` signs the principal header the web Worker forwards to the engine, and each signature
+lasts 60 seconds, so a rotation needs no downtime when it runs in two deploys:
+
+1. In the deployment's GitHub environment, set `PRINCIPAL_KEY_PREVIOUS` to the current key and
+   `PRINCIPAL_KEY` to a new one (`openssl rand -hex 32`). Deploy. The engine deploys first and
+   accepts both; the web Worker then signs with the new one.
+2. Remove `PRINCIPAL_KEY_PREVIOUS` from the environment and deploy again.
+
+Removing a secret from the environment does not remove it from the Worker: `fleet.ts secrets` writes
+only the ones set and `--secrets-file` never deletes, so also run
+`wrangler secret delete PRINCIPAL_KEY_PREVIOUS` against the deployment's engine Worker
+(`commerceworker-engine-<id>`), or the old key stays accepted. Each installed plugin's `PLUGIN_KEY` is derived from it, so the same two deploys rotate those ([Plugins](#plugins)).
+
+## Rotating the data key
+
+`DATA_KEY` encrypts the secrets a deployment stores: two-factor secrets, integration and webhook
+subscription secrets, the secrets admins enter for plugins installed at runtime, and the credentials
+of A2A push configs. A stored value names the key it was
+sealed under, so both keys can be read during a rotation and nothing needs to be re-entered:
+
+1. In the deployment's GitHub environment, set `DATA_KEY_PREVIOUS` to the current key and
+   `DATA_KEY` to a new one (`openssl rand -hex 32`). Deploy. New writes use the new key; values
+   under the old one are still read.
+2. Wait for the next daily retention sweep (03:30 UTC) or longer, and check its log shows
+   `secrets.unreadable` of 0. The sweep (`resealSecrets`) moves every value under
+   `DATA_KEY_PREVIOUS` onto `DATA_KEY`, writing conditionally so a concurrent rotation isn't undone;
+   `secrets.resealed` counts what it moved.
+3. Remove `DATA_KEY_PREVIOUS` from the environment, deploy again, and also run
+   `wrangler secret delete DATA_KEY_PREVIOUS` against both the deployment's web and engine Workers
+   (`commerceworker-web-<id>`, `commerceworker-engine-<id>`): `--secrets-file` never deletes, so the old key
+   would stay readable.
+
+A2A push configs live in each `A2AAgent`'s SQLite and are resealed when loaded, not by the sweep.
+A config on an idle task still under the old key is dropped once that key is gone (logged); the
+caller registers its URL again.
+
+Never lose `DATA_KEY`: values sealed under a key the deployment no longer has can't be recovered.
+Two-factor must be reset for those people, and integration, webhook and plugin secrets rotated. Values stored
+before encryption existed have no prefix, are read as they are, and are encrypted by the next sweep.
+
+## Recovering admin access
+
+When no admin can sign in (everyone forgot their password, or the admins are disabled), issue a new
+setup code:
+
+```bash
+./scripts/setup-code.sh <id>
+```
+
+Logged in to `wrangler` and `gh`. It writes a new code to `.secrets/<id>/setup-code` (never
+printed), sets it as `SETUP_TOKEN` on the deployment's GitHub environment, so the next deploy keeps
+it, and on the web Worker with `wrangler secret put`, so it works now. Send the person recovering
+`https://<domain>/setup` and the code. They create a new admin account with an email not already on
+the team, which is audited as `team.recovery_admin` (a wrong code as `team.setup_refused`), and
+they can then reset the others. If the workspace was **Single sign-on only**, redeeming the code
+turns that off (audited as `team.sso_settings` with `via: "setup code"`), so the new admin can sign
+in with their password even when the identity provider is the problem. The code works once; the last active admin can never be demoted or
+disabled, so recovery is only needed when the admins can't sign in.
+
+Break-glass: recommend that each customer keeps a second admin account with two-factor sign-in on,
+its credentials and recovery codes stored offline. It can be disabled any time and enabled when
+needed. The setup code is the last resort.
+
+## Removing a customer
+
+A deployment holds only that customer's data, so removing it is the erasure:
+
+1. Export what the contract requires first (a D1 export with
+   `wrangler d1 export commerceworker-<id> --remote --output <file>`, and the R2 bucket's documents, including the audit archive under `audit/`: events past `auditRetentionDays` live only there, as NDJSON with their hashes). The catalog's products live in its Durable Objects; their export is a [catalog backup](#catalog-backups), `backups/<date>/` in `commerceworker-catalog-<id>` (NDJSON per table, with `manifest.json`; trigger one first for the latest state); its published documents there are a rendered copy.
+   D1 can't export a database that has a virtual table (Cloudflare's D1 import and export docs,
+   "Known limitations"), and `products_search` (migration 0058, the products' keyword index) is
+   one. Drop it and its triggers first, in one `wrangler d1 execute commerceworker-<id> --remote
+   --command`: `DROP TRIGGER products_search_insert; DROP TRIGGER products_search_update; DROP
+   TRIGGER products_search_delete; DROP TABLE products_search;` (the triggers too, or every write
+   to `products` fails on the missing table). Nothing else depends on it: until it's back, a
+   cart's product search errors and nothing else changes. If the database is kept, recreate it
+   afterwards with `wrangler d1 execute commerceworker-<id> --remote --file
+   packages/db/migrations/0058_products_search.sql`, which creates the table and triggers again
+   and rebuilds the index from `products` (`d1_migrations` still lists 0058, so
+   `db:migrate:remote` won't run it). The same `rebuild` repairs an index in doubt at any time:
+   `INSERT INTO products_search(products_search) VALUES('rebuild')`.
+2. Delete `deployments/<id>.jsonc` and merge, so CI stops deploying it.
+3. Delete the Workers (`commerceworker-web-<id>`, `commerceworker-engine-<id>`, `commerceworker-catalog-<id>`, `commerceworker-catalog-edge-<id>` and `commerceworker-plugin-<plugin>-<id>` for each plugin, which removes their Durable
+   Objects and Workflow instances), the D1 database, the R2 buckets (`commerceworker-docs-<id>` and `commerceworker-catalog-<id>`; empty them first, and before emptying `commerceworker-docs-<id>` remove its [bucket locks](#bucket-locks), `wrangler r2 bucket lock remove commerceworker-docs-<id> --name audit-archive` and `--name plugin-bundles`, and before emptying `commerceworker-catalog-<id>` its `--name catalog-backups` (with `--jurisdiction` as provisioned), since a locked object can't be deleted and so neither can the bucket), the catalog's KV namespace, the two feed queues, the two purge queues and the two changes queues, each plugin's D1 database (`commerceworker-plugin-<plugin>-<id>`), the AI
+   Gateway and its logs, the OAuth KV namespace, the GitHub environment and `.secrets/<id>/`. Delete the Logpush job `commerceworker-workers-<id>` and its token `commerceworker-logpush-<id>` (the account's **Logpush** page in the dashboard, and **Manage Account** > **Account API Tokens**), and empty and delete `commerceworker-logs-<id>` once the contract no longer needs its logs; until then the bucket keeps them for `logRetentionDays` on its own.

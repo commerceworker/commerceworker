@@ -1,0 +1,83 @@
+---
+title: Getting started
+description: Sign in to your workspace, run a scenario, watch an order move through its flow, and start an order over the API.
+---
+
+CommerceWorker runs at [commerceworker.com](https://app.commerceworker.com). Each person in a workspace signs in with
+their own email and password and has a role: a **viewer** reads, an **approver** also decides
+approvals, and an **operator** also starts and cancels orders and edits and publishes flows, and an **admin**
+also manages the team, API tokens, webhooks and integrations. See [Team and roles](/guides/team-and-roles/).
+
+## Sign in
+
+An admin adds you on the **Team** page and sends you a temporary password. Sign in with your
+email and that password, then choose a password of your own. If your workspace requires
+[two-factor sign-in](/guides/team-and-roles/#two-factor-sign-in) for your role (operators and admins, unless an admin chooses otherwise), you set it up next. You can also add a [passkey](/guides/team-and-roles/#passkeys) on your Account page and sign in with it later. If your organization has connected an identity provider, use **Sign in with single sign-on** instead; see [Single sign-on](/guides/team-and-roles/#single-sign-on).
+
+## Run a scenario
+
+In workspaces with the demo data loaded, the dashboard lists one-click scenarios, each a real order on a [built-in flow](/guides/templates/):
+a guest checkout, a B2B purchase order read from an email, an order over its credit limit, an
+out-of-stock order that rolls back, a purchase request, a stock review, two subscriptions (one with a
+failing card), a marketplace order with two sellers, buy online and pick up in store, a
+ship-from-store order with an e-book, a shipment split between the warehouse and a store, a till
+sale with a gift card, a retail order that is returned and one priced in euros. **Demo scenarios**,
+linked from that panel and from **New order**, lists them by order type with the failure each one
+simulates, and **Edit first** opens one in the New order form (without its simulated failure).
+
+Without the demo data the panel is hidden; start an order from **New order** instead. Either way (operators only), the order page opens. The flow graph colours each node as it runs,
+waits and finishes, and the timeline records every step. The overview keeps itself current while it's open. Its top line counts the orders open now and
+those that ended in the last 24 hours, by outcome. Below **Needs a decision**, **Where orders are
+waiting** lays each flow's open waits along its steps, with how many wait at each, how many are
+overdue (past the step's own timeout, so the step should have moved on), for how long and on whom
+(a person, the outside world, a timer). Only overdue waits are marked; a long wait still within its
+step's timeout is on time, and a timer is never overdue. **Ended badly this week** lists the steps
+where orders failed or rolled back, how many orders at each, with the latest reason. Every figure opens the matching orders.
+
+The **Performance** page shows, in USD, how the business did over the last 7, 30 or 90 days:
+revenue, orders ended and money collected and refunded day by day, each with the figures it breaks
+into (completed orders and the average per order; completed, declined or cancelled, and failed or
+rolled back; the amount refunded and the refund rate), then completion by model (as counts until a
+model has five ended orders) and the slowest steps, waits included, with how many runs each has.
+
+Some orders stop at an approval or wait for an event. Decide approvals from the order page or the
+**Approvals** inbox; deliver events (for example `payment.received`) from the order page, the
+[REST API](/reference/rest-api/) or a [signed webhook](/guides/approvals-and-events/).
+
+## Start an order over the API
+
+Other systems call the [REST API](/reference/rest-api/) with an API token. An admin creates one
+on the **Team** page with a name, a role and an expiry; it is shown once.
+
+```bash
+curl -s https://app.commerceworker.com/api/v1/orders \
+  -H 'authorization: Bearer cmw_live_…' \
+  -H 'content-type: application/json' \
+  -H 'Idempotency-Key: demo-1' \
+  -d '{
+    "flowId": "tpl-storefront-order",
+    "input": {
+      "model": "b2c",
+      "channel": "web",
+      "customerId": "cus_ada",
+      "lines": [{ "sku": "MON-27", "qty": 1 }]
+    }
+  }'
+# → 201 { "orderId": "ord_…" }   (a repeat with the same key: 200, same orderId)
+```
+
+Then read its live state with `GET /api/v1/orders/:id`, or subscribe to
+[outbound webhooks](/guides/outbound-webhooks/) to hear when it is paid, shipped or finished.
+
+## Connect other systems
+
+- [Inbound orders](/guides/inbound-orders/): a storefront, marketplace or till posts signed orders.
+- [Channel adapters](/guides/channel-adapters/): Shopify order webhooks and EDI X12 850 purchase orders.
+- [Email intake](/guides/email-intake/): customers email orders and purchase orders.
+- [MCP server](/reference/mcp/) and [A2A endpoint](/reference/a2a/): AI clients and other agents.
+- [Agentic checkout (UCP)](/reference/ucp/): let AI shopping platforms build a cart, pay and place orders.
+
+## Next
+
+- [Concepts](/start/concepts/): flows, versions, orders, waits and rollback.
+- [Building flows](/guides/building-flows/): the editor and the rules a flow must follow.

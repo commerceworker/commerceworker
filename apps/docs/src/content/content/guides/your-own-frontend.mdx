@@ -1,0 +1,128 @@
+---
+title: Build your own frontend
+description: The three things any frontend needs to show CommerceWorker content — read it, render its rich text, refresh on publish — in any framework.
+---
+
+CommerceWorker serves content, not pages, so your site can be built with anything: Next.js, Astro,
+Remix, SvelteKit, an edge worker, or plain HTML generated at build time. A frontend needs three things,
+each a few lines with one package. To skip building one, start from the
+[ready-made frontend](#or-start-from-the-ready-made-frontend).
+
+```sh
+npm install @commerceworker/sdk
+```
+
+## 1. Read content
+
+Create a Content Delivery API key (**Settings → API keys**, scope `delivery:read`), keep it on the
+server, and read published entries:
+
+```ts
+import { createDeliveryClient } from '@commerceworker/sdk';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CDA_TOKEN!,
+});
+
+// The page for a URL: find the entry by its slug.
+const { items } = await client
+  .query()
+  .contentType('page')
+  .where('slug', 'about')
+  .locale('en-US')
+  .include(2)
+  .limit(1)
+  .fetch();
+const page = items[0]; // undefined → render your 404
+```
+
+`include` embeds linked entries and assets, so one request returns a page with its sections,
+images and references. Delivery responses are cached at the edge and carry an `ETag`. See
+[reading content](/content/guides/reading-content/) for filters, ordering, locales and pagination.
+
+## 2. Render rich text
+
+Rich text arrives as a document tree, never as HTML, so each channel renders it for itself.
+`toHtml` does it safely: all text is escaped and only http, https, mailto, tel and relative links
+are emitted.
+
+```ts
+import { toHtml } from '@commerceworker/sdk/rich-text';
+
+const html = toHtml(page.fields.body, {
+  // Links to other entries: map an entry to its URL on your site.
+  entryHref: (target) => `/${target.fields?.slug}`,
+  // Entries embedded in the text (a call to action, a product): your components.
+  renderEntry: (target) => renderMyBlock(target),
+});
+```
+
+Embedded images come out sized and lazy, with the delivered `srcset`. Override how any node
+renders with `nodes: { paragraph: (node, next) => … }`. For React or Vue, render the same tree
+with your own components, or use `toHtml` for the body. `toMarkdown`, `toPlainText` and `excerpt`
+cover feeds, agents, search and meta descriptions.
+
+## 3. Refresh on publish
+
+If your site caches pages (a CDN, static generation, incremental rebuilds), add a
+[webhook](/content/guides/webhooks/) for `entry.published`, `entry.unpublished` and `asset.*`, and
+verify each delivery before acting on it:
+
+```ts
+import { verifyWebhook } from '@commerceworker/sdk/webhooks';
+
+export async function POST(request: Request) {
+  const event = await verifyWebhook(request, process.env.COMMERCEWORKER_WEBHOOK_SECRET!);
+  if (!event) return new Response('Invalid signature', { status: 401 });
+  // event.type, event.entryId / event.assetId: purge or rebuild what used it.
+  return new Response('ok');
+}
+```
+
+A site that renders on every request and doesn't cache needs no webhook.
+
+## That's all you need
+
+Everything else is optional and works the same in any stack:
+
+| When you want                          | Use                                                                  |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| Drafts on your site                    | A Preview key and `preview: true` ([SDKs](/content/guides/sdks/))            |
+| Responsive images and art direction    | `imageProps` ([delivering assets](/content/guides/delivering-assets/))       |
+| Content redirects, slug changes too    | `@commerceworker/sdk/redirects` ([redirects](/content/guides/redirects/)) |
+| Header and footer navigation           | `client.menu(handle)` ([navigation menus](/content/guides/menus/))           |
+| Typed entry fields                     | `commerceworker types` ([SDKs](/content/guides/sdks/#typed-content))          |
+| Live updates without polling           | The live stream ([reading content](/content/guides/reading-content/))        |
+
+## Or start from the ready-made frontend
+
+`@commerceworker/frontend` is a complete site that runs on edge workers, built on the same SDK. A
+site is a `package.json` and a `wrangler.jsonc` whose `main` is
+`node_modules/@commerceworker/frontend/src/entry.ts`. It renders pages from the Delivery API,
+serves them from the edge cache and purges them on publish. It also handles preview, redirects
+and URL patterns from your content types, and serves sitemaps, `robots.txt`, `llms.txt` and a
+Markdown version of every page. It ships the common blocks (hero, cards, columns, FAQ, call to
+action, media, shared sections) with their styles.
+
+```sh
+npm install @commerceworker/frontend
+npx commerceworker-site seed --dry-run   # the content model and starter pages, in your space
+```
+
+| You change                 | With                                                                 |
+| -------------------------- | -------------------------------------------------------------------- |
+| The look                   | `public/styles/site.css`, which overrides the CSS tokens             |
+| A block, or a new one      | `npx commerceworker-site new-block <name>`                            |
+| URLs                       | Each content type's URL pattern, or `defineSite({ routes })`         |
+
+[commerceworker.site](https://commerceworker.site) runs on it, and its
+[integration page](https://commerceworker.site/integrate) walks through setup.
+
+## Next steps
+
+- [Reading content](/content/guides/reading-content/) for filters, locales, search and live updates.
+- [SDKs](/content/guides/sdks/) for the typed clients and the React and Vue bindings.
+- [Webhooks](/content/guides/webhooks/) to rebuild or purge your site on publish.

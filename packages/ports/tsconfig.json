@@ -1,0 +1,9 @@
+{
+  "extends": "@commerceworker/typescript-config/base.json",
+  "compilerOptions": {
+    // Web-platform types (TextEncoder, URL, crypto) for the domain it imports, and no Cloudflare
+    // types: a binding or Workers type in a port signature fails to compile.
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src/**/*"]
+}

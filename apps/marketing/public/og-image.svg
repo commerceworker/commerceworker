@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="CommerceWorker: commerce that runs as code">
+  <!-- Ledger's light palette resolved to sRGB: social scrapers render this flat, without CSS.
+       paper #ffffff · ink #0a0a0a · muted #696969 · rule #e5e5e5 -->
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="0" y="626" width="1200" height="4" fill="#e5e5e5"/>
+  <g transform="translate(96 120) scale(3)" fill="none" stroke="#0a0a0a" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 12a8 8 0 1 1-3.1-6.3"/>
+    <path d="M17.5 2.5v4h-4"/>
+    <rect x="9" y="9" width="6" height="6" rx="1" fill="#0a0a0a" stroke="none"/>
+  </g>
+  <text x="96" y="330" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="88" font-weight="650" letter-spacing="-2.6" fill="#0a0a0a">Commerce that runs as code.</text>
+  <text x="96" y="410" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="34" fill="#696969">API-first, agent-first commerce on Cloudflare.</text>
+  <text x="96" y="540" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30" font-weight="600" fill="#0a0a0a">CommerceWorker</text>
+</svg>

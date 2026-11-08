@@ -1,0 +1,175 @@
+{
+  "name": "@commerceworker/sdk",
+  "version": "0.2.0",
+  "description": "The CommerceWorker SDK: read and render content in any framework, verify webhooks, manage spaces, generate types, and the `commerceworker` command. One package, import only what you use.",
+  "keywords": [
+    "commerceworker",
+    "cms",
+    "headless",
+    "sdk",
+    "rich-text",
+    "cloudflare"
+  ],
+  "homepage": "https://docs.commerceworker.com/content/guides/sdks/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/commerceworker/commerceworker",
+    "directory": "packages/sdk/sdk"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./inline-edit": {
+      "types": "./src/inline-edit.ts",
+      "default": "./src/inline-edit.ts"
+    },
+    "./redirects": {
+      "types": "./src/redirects.ts",
+      "default": "./src/redirects.ts"
+    },
+    "./webhooks": {
+      "types": "./src/webhooks.ts",
+      "default": "./src/webhooks.ts"
+    },
+    "./rich-text": {
+      "types": "./src/rich-text.ts",
+      "default": "./src/rich-text.ts"
+    },
+    "./edge": {
+      "types": "./src/edge.ts",
+      "default": "./src/edge.ts"
+    },
+    "./management": {
+      "types": "./src/management.ts",
+      "default": "./src/management.ts"
+    },
+    "./react": {
+      "types": "./src/react.ts",
+      "default": "./src/react.ts"
+    },
+    "./vue": {
+      "types": "./src/vue.ts",
+      "default": "./src/vue.ts"
+    },
+    "./react-native": {
+      "types": "./src/react-native.ts",
+      "default": "./src/react-native.ts"
+    },
+    "./codegen": {
+      "types": "./src/codegen.ts",
+      "default": "./src/codegen.ts"
+    }
+  },
+  "bin": {
+    "commerceworker": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup && node scripts/types.ts",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19",
+    "vue": "^3.3"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@commerceworker/cli": "workspace:*",
+    "@commerceworker/sdk-codegen": "workspace:*",
+    "@commerceworker/sdk-core": "workspace:*",
+    "@commerceworker/sdk-edge": "workspace:*",
+    "@commerceworker/sdk-management": "workspace:*",
+    "@commerceworker/sdk-react-native": "workspace:*",
+    "@commerceworker/sdk-rich-text": "workspace:*",
+    "@commerceworker/sdk-vue": "workspace:*",
+    "@commerceworker/sdk-web": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "react": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./inline-edit": {
+        "types": "./dist/inline-edit.d.ts",
+        "import": "./dist/inline-edit.js",
+        "require": "./dist/inline-edit.cjs"
+      },
+      "./redirects": {
+        "types": "./dist/redirects.d.ts",
+        "import": "./dist/redirects.js",
+        "require": "./dist/redirects.cjs"
+      },
+      "./webhooks": {
+        "types": "./dist/webhooks.d.ts",
+        "import": "./dist/webhooks.js",
+        "require": "./dist/webhooks.cjs"
+      },
+      "./rich-text": {
+        "types": "./dist/rich-text.d.ts",
+        "import": "./dist/rich-text.js",
+        "require": "./dist/rich-text.cjs"
+      },
+      "./edge": {
+        "types": "./dist/edge.d.ts",
+        "import": "./dist/edge.js",
+        "require": "./dist/edge.cjs"
+      },
+      "./management": {
+        "types": "./dist/management.d.ts",
+        "import": "./dist/management.js",
+        "require": "./dist/management.cjs"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "import": "./dist/react.js",
+        "require": "./dist/react.cjs"
+      },
+      "./vue": {
+        "types": "./dist/vue.d.ts",
+        "import": "./dist/vue.js",
+        "require": "./dist/vue.cjs"
+      },
+      "./react-native": {
+        "types": "./dist/react-native.d.ts",
+        "import": "./dist/react-native.js",
+        "require": "./dist/react-native.cjs"
+      },
+      "./codegen": {
+        "types": "./dist/codegen.d.ts",
+        "import": "./dist/codegen.js",
+        "require": "./dist/codegen.cjs"
+      }
+    },
+    "bin": {
+      "commerceworker": "./dist/bin.js"
+    }
+  }
+}

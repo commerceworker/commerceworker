@@ -1,0 +1,23 @@
+{
+  "name": "@commerceworker/guardrails",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Guardrail policies for AI input and output: PII, prompt-injection and regex checks with block, warn and log actions, and their schemas.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@commerceworker/typescript-config": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

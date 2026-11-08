@@ -1,0 +1,136 @@
+---
+title: Command-line tool
+description: "Work with a space from the terminal: keep the content model in a file, move entries and assets, and script it all with JSON output."
+---
+
+`commerceworker` works with a workspace from a terminal, a CI job or a coding agent. It is built on
+the [Management SDK](/content/guides/sdks/#writing-content), so it can do what your token can and nothing
+more. It comes with the SDK package, `@commerceworker/sdk`, and needs Node 24 or later.
+
+```sh
+npm install -D @commerceworker/sdk
+npx commerceworker --help
+```
+
+## Sign in
+
+```sh
+commerceworker login --url https://api.your-workspace.commerceworker.com
+```
+
+`login` uses the device flow: it prints a code and an address on the admin. Open it, sign in if
+you aren't, check the code, pick the space and approve. The CLI then acts with your role in that
+space. Like any [connected app](/content/guides/mcp/#connect-with-oauth), it is capped at what you hold
+and never receives `space:admin` or `content:manage`, and its token is short-lived and refreshed
+as you use it. Revoke it under **Settings → Access → Connected apps**, or with `commerceworker
+logout`.
+
+Changing the content model needs `content:manage`, so for `model apply` sign in with a
+[personal access token](/content/guides/api-keys/#personal-access-tokens) or a Management key instead:
+
+```sh
+commerceworker login --url https://api.your-workspace.commerceworker.com --token "$TOKEN"
+```
+
+Tokens are kept in `credentials.json` in your user config directory (`~/.config/commerceworker`,
+or `%APPDATA%\commerceworker` on Windows), readable only by you. Name a profile with `--profile`
+to keep several workspaces or spaces; `--space` and `--environment` (`-e`) override the
+profile's for one command.
+
+In CI, skip the file: set `COMMERCEWORKER_TOKEN` and `COMMERCEWORKER_URL` (and
+`COMMERCEWORKER_SPACE` if the token reaches more than one space).
+
+## Commands
+
+| Command                              | Does                                                                   | Needs               |
+| ------------------------------------ | ---------------------------------------------------------------------- | ------------------- |
+| `login`, `logout`                    | Sign in with a device code (or `--token`); revoke and forget           |                     |
+| `whoami`                             | The token's space, environment, kind and scopes                        | any                 |
+| `spaces`                             | The spaces the token can reach                                         | any                 |
+| `model export [--out file]`          | The content types, as JSON or TypeScript                               | `preview:read`      |
+| `model apply <file>`                 | Diff a model file against the space, then apply it                     | `content:manage`    |
+| `entries list`                       | Entries as they are now, drafts included (`--content-type`, `--limit`, `--skip`, `--order`, `--query`, `--locale`) | `preview:read` |
+| `entries get <id>`                   | One entry and its draft fields                                         | `preview:read`      |
+| `entries create`                     | A draft (`--content-type`, `--fields`)                                 | `content:write`     |
+| `entries update <id>`                | A new draft version; merges `--fields` into the draft by field and locale (`--replace` sends them as the whole draft) | `content:write` |
+| `entries publish <id…>`              | Publish one entry (`--expected-version` holds it), or up to 1,000      | `content:publish`   |
+| `assets upload <file>`               | Upload a file of any size (`--title`, `--folder`, `--publish`)         | `content:write`     |
+| `import <file>`                      | Import a CSV, JSON or WordPress export as drafts                       | `content:write`     |
+| `types [--out file]`                 | TypeScript types for the model, as described in [typed content](/content/guides/sdks/#typed-content) | `preview:read` |
+| `doctor`                             | Check sign-in, reachability, the API version and access to the space   |                     |
+
+`--fields` takes JSON keyed by field, then locale (`{"title":{"en-US":"Hello"}}`), or `@file` to
+read it from a file. `commerceworker <command> --help` lists every option.
+
+## Output for scripts and agents
+
+Every command takes `--json`: the result is one JSON document on stdout, and nothing else is
+written there. Messages, progress and errors go to stderr; with `--json`, an error is
+`{ "error": { "code", "message", "status"?, "details"? } }`, where `status` and `details` are the
+API's when it refused.
+
+| Exit code | Means                                                                |
+| --------- | -------------------------------------------------------------------- |
+| `0`       | Done                                                                 |
+| `1`       | The API refused, the network failed, or a check failed               |
+| `2`       | A bad command line, or a confirmation was needed and nothing could ask |
+| `3`       | Not signed in, or the token was refused                              |
+| `4`       | `model apply` found a destructive change and `--allow-destructive` wasn't passed |
+
+The CLI only asks a question when both stdin and stdout are a terminal. Elsewhere, a command that
+writes after a plan (`model apply`, `import`) needs `--yes`, and fails with exit code 2 without it.
+
+## The content model as code
+
+```sh
+commerceworker model export --out content-model.ts
+commerceworker model apply content-model.ts --dry-run
+commerceworker model apply content-model.ts --yes -e staging
+```
+
+A model file is JSON (`{ "contentTypes": [...] }` or an array) or a TypeScript module whose
+default export is the array of content types; in it, `localized` and `required` default to false
+and `position` to the field's place in the list. `model apply` compares it with the space and
+prints a plan, type by type and field by field:
+
+```
+~ article
+    ! article.body: remove RichText field (its values are lost)
+    ~ article.title: required, validations changed
+    + article.summary: add Text field
+
+3 change(s), 1 destructive (!).
+```
+
+Adding types, fields and block types, and changing names, validations, `required` and defaults
+are safe. Removing a field or block type at any depth, and changing a field's type, link type,
+localization or item type, are destructive: `model apply` refuses them unless you pass
+`--allow-destructive`. Even then the API refuses to remove a field or block type an entry still
+holds (see [Changing a model](/content/guides/content-modeling/#changing-a-model)). Types that are in the
+space but not in the file are left alone. Each type that changes is published as it is saved;
+`--no-publish` leaves it a draft.
+
+## Import a file
+
+```sh
+commerceworker import posts.xml --content-type article --dry-run
+commerceworker import posts.xml --content-type article \
+  --map title=title --map body=content --map legacyId=id --identity legacyId --yes
+```
+
+The format comes from the extension (`.csv`, `.json`, `.xml` or `.wxr` for a WordPress export),
+or `--source`. `--map field=source` maps a field of the content type to a source field; with no
+mapping, the analysis lists every source field under `unmappedSourceFields`. `--identity` names
+the field that holds each record's source id, so running the import again updates or skips what
+it created instead of duplicating it; `--conflicts` picks `skip` (the default), `update` or `fail`.
+`--option name=value` passes a source option, such as `postType=page` for a WordPress export.
+
+Every import is analyzed first and stops if the mapping blocks it. One run takes up to 10,000
+records and one request's worth of file; `--job` runs it as a background job instead. Entries
+arrive as drafts. See [Import content](/content/guides/editing-and-publishing/#import-content).
+
+## Next steps
+
+- [Agent skills](/content/guides/agent-skills/) teach a coding agent to use the CLI and the SDKs.
+- [SDKs](/content/guides/sdks/) for the same operations from code.
+- [API keys and access](/content/guides/api-keys/) for the token each command needs.

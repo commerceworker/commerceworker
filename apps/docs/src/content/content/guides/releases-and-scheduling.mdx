@@ -1,0 +1,103 @@
+---
+title: Releases and scheduling
+description: Publish many entries as one unit, schedule a publish or unpublish for later, and run AI agents on a schedule.
+---
+
+You will group entries into a release that goes live together, schedule a publish for a set time,
+and set up agents that process new content on a cadence.
+
+## Before you start
+
+- Creating a release and adding entries to it needs `content:write`.
+- Publishing a release, and scheduling anything, needs `content:publish`, because a scheduled
+  publish is a publish that happens later.
+- Agent schedules are read with `preview:read` and changed with `content:publish`.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Publish entries together in a release
+
+A **release** is a named set of entries that should change together: a product launch, a
+campaign, a rebrand. Each item says whether the release will **publish** or **unpublish** it.
+Releases hold entries only; publish assets on their own (see [Media and assets](/content/guides/media/)).
+Publishing the release applies every item in one step, so readers never see half of a launch.
+
+1. **Create it.** In the admin, open **Releases** and press **New release**, then give it a title
+   (`POST …/releases`).
+2. **Add entries.** Open the release, pick an entry under **Add entry** and press **Add**
+   (`POST …/releases/{id}/items` with `{ "entityId": …, "action": "publish" }`; `action` defaults
+   to publish).
+3. **Publish it.** Press **Publish now…** and confirm (`POST …/releases/{id}/published`), or
+   schedule it as below.
+
+The MCP tools are `releases_create`, `releases_add_entry`, `releases_get`, `releases_list` and
+`releases_publish`.
+
+A release that would publish an entry a [gated workflow](/content/guides/workflows/#gate-publishing)
+covers is refused whole with `409 publish_gated`, naming every such entry, and nothing in it
+ships. Adding the entry is allowed; the check runs when the release publishes. Remove the entry,
+or ship the release from a run of the workflow (its `content.publish_release` node).
+
+Publishing a release emits one `entry.published` event per entry, plus a `release.published`
+event that names them all, which is the one to subscribe to if a deploy hook should run once per
+launch.
+
+## Schedule a publish
+
+Schedule an entry or a release to publish or unpublish at a time. In the admin, a release has an
+**Or schedule for** field and a **Schedule** button, and the **Scheduled** tab on **Releases**
+lists and cancels pending actions. For an entry, or from a script:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/scheduled-actions" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{
+    "action": "publish",
+    "entityType": "Entry",
+    "entityId": "'"$ENTRY_ID"'",
+    "scheduledFor": "2026-12-01T09:00:00Z"
+  }'
+```
+
+`entityType` is `Entry` or `Release` (the lowercase forms are accepted too); a release can be
+scheduled to publish but not to unpublish. Your role must grant the action on the entry's type, or
+on every member's type for a release, and it is checked when the action is created: withdrawing the
+permission later doesn't cancel it, so cancel the action to stop it.
+The MCP tool is `schedule_action`. Scheduled actions are listed under `GET …/scheduled-actions` and
+cancelled with `DELETE …/scheduled-actions/{id}` until they run.
+
+A scheduled publish of an entry or release a [gated workflow](/content/guides/workflows/#gate-publishing)
+covers is refused when you create it (`409 publish_gated`). If gating is switched on afterwards,
+the action fails when it comes due, and its `error` says which workflow gates it.
+
+A scheduled publish validates the entry when it runs, not when it was scheduled, so a draft that
+has since gone invalid fails rather than going live.
+
+## Agent schedules
+
+An **agent schedule** runs one of the AI agents (`enrich`, `moderate`, `curate` or `repurpose`) on
+a cadence over the entries published since its last run: for example, enrich new articles every
+night, or moderate everything hourly. There is no admin screen for agent schedules; create them
+with the API or MCP.
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/agent-schedules" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "workflow": "enrich", "cron": "0 2 * * *", "contentTypeApiId": "article", "autoApply": false }'
+```
+
+A schedule has a five-field cron expression in UTC, an optional content type, and whether its
+results apply directly (`autoApply`) or wait for review. Change it with
+`PATCH …/agent-schedules/{id}` (`cron`, `enabled`, `autoApply`), list with `GET …/agent-schedules`
+and remove with `DELETE …/agent-schedules/{id}`. The MCP tools are `agent_schedule_create`,
+`agent_schedule_list`, `agent_schedule_update` and `agent_schedule_delete`.
+
+The first run only records where to start; it doesn't reprocess everything already published.
+Each run is capped in entries and tokens, and a run that stops early picks up where it left off.
+See [AI features](/content/guides/ai/#agents) for what each agent does.
+
+## Next steps
+
+- [Editing and publishing](/content/guides/editing-and-publishing/): publish one entry, or many with a bulk job.
+- [Workflows](/content/guides/workflows/): put a review in front of a publish.
+- [Webhooks](/content/guides/webhooks/): react to `release.published`.

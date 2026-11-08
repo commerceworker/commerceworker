@@ -1,0 +1,4 @@
+# Vite fingerprints everything under /_static/ (build.assetsDir), so a file there never changes:
+# cache it for a year. Not /assets/: that is the admin's asset library.
+/_static/*
+  Cache-Control: public, max-age=31536000, immutable

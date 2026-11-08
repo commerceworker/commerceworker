@@ -1,0 +1,176 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commerceworker-engine",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // Outbound fetches (webhooks, A2A push notifications) go to URLs callers give us: public
+  // addresses only.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Reachable only through the web app's service binding: no workers.dev URL, no routes.
+  "workers_dev": false,
+  "preview_urls": false,
+  // Every request is logged and traced (sampling 1 = all of them); lower the rate once traffic
+  // makes the volume or cost matter.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "issues": { "enabled": true },
+    "traces": { "enabled": true }
+  },
+  // A runaway invocation stops at 10 s of CPU (the default is 30 s). Workflow steps, agents and
+  // the assistant peak around 100 ms; model calls wait on I/O, which doesn't count.
+  "limits": { "cpu_ms": 10000 },
+  // Runs near D1 rather than near the web app that calls it: a Workflow step, a connector or a
+  // request to an agent makes several D1 round trips. Keep it only if D1 latency in
+  // Observability drops; the service binding hop is the cost.
+  "placement": { "mode": "smart" },
+  "upload_source_maps": true,
+  // Trace events also go to Workers Logpush: the deployment's job (scripts/provision.sh) keeps
+  // them in its logs bucket past Workers Logs' 7 days. See docs/operations.md, "Logs".
+  "logpush": true,
+  "durable_objects": {
+    "bindings": [
+      { "name": "ORDER_AGENT", "class_name": "OrderAgent" },
+      // The workspace assistant: one per person, holding their conversation.
+      { "name": "ASSISTANT_AGENT", "class_name": "AssistantAgent" },
+      // A2A tasks: one per caller (an API token, or a person through an OAuth grant).
+      { "name": "A2A_AGENT", "class_name": "A2AAgent" },
+      // A cart several people build together: lines, quote, presence and chat (src/cart/agent.ts).
+      { "name": "CART_AGENT", "class_name": "CartAgent" },
+      // A sandboxed plugin's own SQLite database, one per plugin id (src/plugin-host.ts).
+      { "name": "PLUGIN_STORAGE", "class_name": "PluginStorage" },
+      // The deploy smoke test's write check: one object, empty between checks (src/health.ts).
+      { "name": "HEALTH_PROBE", "class_name": "HealthProbe" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OrderAgent"] },
+    { "tag": "v2", "new_sqlite_classes": ["AssistantAgent"] },
+    { "tag": "v3", "new_sqlite_classes": ["A2AAgent"] },
+    { "tag": "v4", "new_sqlite_classes": ["PluginStorage"] },
+    { "tag": "v5", "new_sqlite_classes": ["CartAgent"] },
+    { "tag": "v6", "new_sqlite_classes": ["HealthProbe"] }
+  ],
+  // Loads sandboxed plugins as Dynamic Workers (Worker Loader, open beta; Workers Paid). Unused
+  // until a deployment installs a plugin with runtime "sandboxed".
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "workflows": [
+    {
+      // Interprets a pinned flow version for one order. One instance per order "generation".
+      "name": "commerceworker-order",
+      "binding": "ORDER_LOOP",
+      "class_name": "OrderLoop",
+      "limits": { "steps": 10000 },
+      // Finished instances are kept a week, failed ones a month (the most Workflows keeps): long
+      // enough to look into a failure. Order history itself lives in D1 and the OrderAgent.
+      "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
+    },
+    {
+      // Daily stock review: starts a reorder for SKUs at or below their reorder point.
+      "name": "commerceworker-replenish",
+      "binding": "REPLENISH",
+      "class_name": "Replenish",
+      "schedules": ["0 6 * * *"],
+      "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
+    }
+  ],
+  // Resource ids are provisioned by `wrangler deploy` on first deploy.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
+  // The product catalog, for the assistant's product content drafts (docs/product-editor.md). The
+  // catalog deploys before the engine. The engine's tests stub it (vitest.config.ts).
+  "services": [
+    { "binding": "CATALOG", "service": "commerceworker-catalog", "entrypoint": "CatalogApi" }
+  ],
+  // The product index: an embedding of each SKU's name (@cf/baai/bge-base-en-v1.5, 768 dimensions,
+  // cosine), which ai.extract queries to find the catalog entries a document means
+  // (src/product-index.ts). Optional in code: without it, extraction ranks by words alone.
+  // scripts/provision.sh creates it; a demo (mock AI) has none.
+  "vectorize": [{ "binding": "PRODUCT_VECTORS", "index_name": "commerceworker-products" }],
+  // "30 3 * * *": the daily retention sweep (src/retention.ts): expired sessions, old webhook
+  // deliveries, node timings and the intake log, and archiving old audit events to R2.
+  // "15 * * * *": hourly, the product index catches up with `products` (src/product-index.ts).
+  "triggers": { "crons": ["30 3 * * *", "15 * * * *"] },
+  "ai": { "binding": "AI" },
+  "vars": {
+    // Text model for every structured AI call (JSON mode).
+    "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    // Model for the workspace assistant: needs multi-turn tool calling.
+    "ASSISTANT_MODEL": "@cf/moonshotai/kimi-k2.6",
+    // Multimodal decision model for Assess (probabilities per option); Clef's request body is fixed.
+    "ASSESS_MODEL": "@cf/cloudflare/clef",
+    // AI Gateway for every model call: logs, analytics and a rate limit (120 a minute, sliding).
+    // Empty calls Workers AI directly; local dev does, so it never shares production's limit.
+    "AI_GATEWAY_ID": "commerceworker",
+    // commerceworker's registry turns logs on; the fleet tests require its rendering to match this file.
+    "AI_GATEWAY_LOGS": "true",
+    // "live" calls Workers AI; "mock" uses deterministic heuristics (tests, offline dev).
+    "AI_MODE": "live",
+    // Divides every wait and timeout. "1" is real time; local dev overrides it to "1440" (a day
+    // becomes a minute) in apps/web/vite.config.ts.
+    "TIME_SCALE": "1",
+    // "true" honours `meta.simulate` (forced stockouts, declines, failed charges, invoice
+    // mismatches) from any caller; anything else drops it when an order starts. On in local dev
+    // (apps/web/vite.config.ts), the engine tests and demo deployments (scripts/fleet.ts).
+    "SIMULATE_FAILURES": "",
+    // Email intake: mailbox local part → flow id. Empty = orders@/po@ → B2B, purchasing@ → requests.
+    "INTAKE_MAILBOXES": "",
+    // "false" accepts mail without a passing DMARC/DKIM/SPF result (never in production).
+    "INTAKE_REQUIRE_AUTH": "true",
+    // "false" turns off the acknowledgement reply.
+    "INTAKE_REPLY": "true",
+    // "mock" records payments in D1 only (meta.simulate drives declines); "stripe" authorizes,
+    // captures, charges, voids and refunds through Stripe and needs STRIPE_SECRET_KEY. The
+    // registry's payments sets it per deployment.
+    "PAYMENTS_MODE": "mock",
+    // Stripe publishable key (pk_…) a UCP platform tokenizes the buyer's card with; with
+    // PAYMENTS_MODE "stripe", agentic checkout offers the Stripe payment handler only when it is set.
+    // The registry's stripePublishableKey sets it per deployment.
+    "STRIPE_PUBLISHABLE_KEY": "",
+    // "redact" keeps buyers' names, emails, phone numbers and addresses out of what workflow AI
+    // nodes send a model (core's redact.ts); "send" includes them. The registry's aiPersonalData
+    // sets it per deployment.
+    "AI_PERSONAL_DATA": "redact",
+    // The app's origin and the hosts the deployment serves (comma-separated): an external cart's
+    // start link is on APP_ORIGIN, and its return never posts to one of OWN_HOSTS.
+    // scripts/fleet.ts sets both per deployment; local dev overrides them in apps/web/vite.config.ts.
+    "APP_ORIGIN": "https://app.commerceworker.com",
+    "OWN_HOSTS": "app.commerceworker.com,catalog.commerceworker.com",
+    // Days audit events are kept before the daily sweep archives them to R2 and deletes them.
+    // At least 90; the registry's auditRetentionDays sets it per deployment.
+    "AUDIT_RETENTION_DAYS": "400",
+    // Days after an order finishes that the daily sweep erases its buyer's personal data (the
+    // commercial record stays). Empty keeps it; at least 30. The registry's
+    // personalDataRetentionDays sets it per deployment.
+    "PERSONAL_DATA_RETENTION_DAYS": "",
+    // What the deployment grants its plugins beyond the defaults (buyer details, capabilities), as
+    // JSON by plugin id. scripts/fleet.ts renders it from the registry's plugins; this is
+    // app.commerceworker.com's (deployments/commerceworker.jsonc). It matters only for an installed plugin.
+    "PLUGIN_GRANTS": "{\"punchout\":{\"capabilities\":[\"carts:external\",\"orders:start\",\"orders:cancel\"]}}",
+    // Where Durable Objects (orders, assistants, A2A tasks) live: "eu" or "fedramp", from the
+    // registry's jurisdiction, like D1 and R2. Empty: anywhere. Set before the first order only.
+    "DATA_JURISDICTION": "",
+    // Model tokens each person's assistant conversations (in the app and A2A chat) may use per UTC
+    // day; "0" is no limit. The registry's assistantDailyTokens sets it per deployment.
+    "ASSISTANT_DAILY_TOKENS": "1000000",
+    // "on": the assistant may draft business-rule plugins for an admin to approve (logic only,
+    // sandboxed). The registry's pluginInstalls.assistant sets it; this is app.commerceworker.com's.
+    "ASSISTANT_PLUGINS": "on"
+  }
+  // Secrets: INTAKE_ALLOWLIST — extra senders allowed to start orders by email, comma-separated
+  // addresses or @domains (customers' own addresses are always allowed).
+  // SHIPPING_CARRIER_AUTH — JSON object of live shipping carrier id → Authorization header value,
+  // e.g. {"acme":"Bearer …"}, for the liveCarriers of a commerce.shipping_rate node.
+  // STRIPE_SECRET_KEY — Stripe secret or restricted key, required when PAYMENTS_MODE is "stripe".
+  // UCP_SIGNING_KEY — private P-256 JWK with a kid that signs UCP order webhooks; its public half
+  // is published at /.well-known/ucp. Without it, agentic checkout sends no order events.
+}

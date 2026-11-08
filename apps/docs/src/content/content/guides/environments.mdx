@@ -1,0 +1,173 @@
+---
+title: Environments
+description: Create, clone, compare, merge, alias, export, import and delete environments, the branches of a space.
+---
+
+An environment is a branch of a space: its own content model, entries, assets, releases and
+workflows. You will use them to try a change on a copy of live content, merge it back, and switch
+what a site reads without changing the site.
+
+## Before you start
+
+- Creating, aliasing and deleting environments needs `space:admin`.
+- Cloning, merging, exporting and importing need `content:manage`.
+- Listing environments and aliases, and comparing, need `preview:read`.
+
+Routes below are on the Management API (`$API`); `{space}`, `{env}` and `{alias}` are ids. Every
+Management, Delivery and Preview path takes an environment id or an alias in the `{env}` slot.
+
+## Create an environment
+
+In the admin, open the environment switcher in the header (it shows the current environment's id),
+choose **New environment…**, give it an id and an optional name. Switching to it scopes the whole
+admin to that environment.
+
+```sh
+curl -s "$API/spaces/$SPACE/environments" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "id": "staging", "name": "Staging" }'
+```
+
+A new environment is **empty**: no content types, entries or assets. List environments with
+`GET /spaces/{space}/environments`. There is no MCP tool to create one; clone into an existing
+empty environment instead.
+
+## Clone another environment
+
+Cloning copies an environment's content model, entries, taxonomy, workflows and asset metadata
+into another environment, which can be in another space. The target must already exist and have no
+content types, so create it first, then clone into it:
+
+```sh
+curl -s -X POST "$API/spaces/$SPACE/environments/main/clone" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "targetEnvironmentId": "staging" }'
+```
+
+Add `targetSpaceId` to clone into another space, and `"publish": false` to leave everything as
+drafts (otherwise what was published in the source is published again). The answer is `202` with
+`{ job, createJobId, publishJobId }`: three background jobs that belong to the **target**. `job`
+exports and checks the source (a refused snapshot fails it, and its report names the problems),
+`createJobId` writes the content, and `publishJobId` republishes it. Follow them at
+`GET …/environments/staging/bulk/jobs/{id}`. The MCP tool is `environment_clone` (with a
+`dryRun` option); follow its jobs with `bulk_job_status`.
+
+Snapshots and clones carry asset metadata, not the files themselves, and never carry API keys,
+OAuth clients or webhook secrets. What processing found about each file (its status, a duplicate
+warning, unsaved AI suggestions) stays behind: the copied assets are processed again in the new
+environment, so its search finds them. Only each asset's current file comes across; its earlier
+versions stay in the source's history. A published asset whose rights no longer allow publishing
+(it expired, or is under embargo) arrives as a draft and is named in the report.
+
+## Compare and merge
+
+Compare two environments in a space, then copy selected changes from the source to the target. In
+the admin, open **Settings → Environments** and use **Compare & merge**: pick a **Source** and a
+**Target**, press **Compare**, tick the content types and entries to copy and press **Merge**.
+
+```sh
+curl -s "$API/spaces/$SPACE/compare?source=staging&target=main" \
+  -H "Authorization: Bearer $CMA"
+
+curl -s "$API/spaces/$SPACE/merge" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "source": "staging", "target": "main", "contentTypes": ["article"], "entries": ["…"] }'
+```
+
+The comparison lists each content type and entry as `added`, `changed`, `removed` or `unchanged`,
+framed as what merging would do. A merge only adds and overwrites: it never deletes target content,
+so `removed` items stay where they are. Entries keep their ids and are validated against the
+target's content type, so include a type in the merge before the entries that use it. Unique
+values (and a singleton's one entry) hold as they do for edits: before anything is written, a
+merge whose entries would take a value another entry holds, or the same value twice, is refused
+with `409`, naming each entry and its holder; entries swapping values between them merge fine. An
+entry that is in the target's trash gets the new version and stays in the trash. The
+response lists `mergedContentTypes` and `mergedEntries`. The MCP tools are `environments_compare`
+and `environments_merge`. A role limited per content type sees only the types it can read in a
+comparison, and merging entries needs `read` and `write` on every type with no field rules.
+
+## Promote changes to the live environment
+
+A **promotion** is a merge that goes live and checks first. It copies what's published in the
+source and publishes it in the target, copies drafts as drafts, and pins the versions it copies
+when you ask, so later edits in the source don't sneak in.
+
+```sh
+curl -s "$API/spaces/$SPACE/promotions" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "source": "staging", "target": "main" }'
+```
+
+Without `contentTypes` or `entries`, it promotes everything that differs. A promotion applies at
+once unless something calls for a second pair of eyes: the target is `main` or has an alias
+pointing at it, a content type would lose a field or a block type or change a field's type (the
+reasons name any entries in the target that still hold what it removes), or the AI risk check
+suggests a review. Then it waits as `awaiting_approval`, with the reasons, until someone else
+approves (`POST …/promotions/:id/approve`) or rejects it. Deciding takes a person (in the admin, or
+with their own token), not an API key or an assistant acting for you. An entry a workflow
+**gates publishing** for in the target arrives as a draft, and that workflow publishes it. If a content type changes in
+the source while a promotion waits, approving it fails, so request a new one. A draft content type that a merge or promotion
+copies over a live one changes nothing the target serves until it is published there. Copied into a
+target without that type, it arrives as a type never published: GraphQL serves it at once, and the
+routes, sitemap and menus leave it out until it is published. A webhook on
+`promotion.awaiting_approval` can tell your reviewers. The MCP tools are `promotion_request`,
+`promotion_list`, `promotion_get`, `promotion_approve` and `promotion_reject`.
+
+## Point an alias at the live environment
+
+An **alias** is a stable name for an environment. Read from `production` in your site, and switch
+which environment that is by repointing the alias; the change is one atomic write.
+
+```sh
+curl -s -X PUT "$API/spaces/$SPACE/environment-aliases/production" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "targetEnvironmentId": "staging" }'
+```
+
+`PUT` creates the alias or repoints it. An alias can't share a name with an environment.
+`GET …/environment-aliases` lists them and `DELETE …/environment-aliases/{alias}` removes one
+without touching the environment. Delivery caches refresh when an alias is repointed. In the admin,
+**Settings → Environments → Aliases** has the **Alias** and **Target environment** fields and a
+**Save alias** button, and a select on each row repoints it. The MCP tools are
+`environment_aliases_list`, `environment_alias_set` and `environment_alias_delete`.
+
+Repointing an alias never moves a [webhook](/content/guides/webhooks/): one created under an alias is
+space-wide, and a webhook can't be scoped to an alias, only to an environment's own id.
+
+## Export and import a snapshot
+
+A snapshot is portable JSON of an environment: content model, entries, taxonomy, workflows,
+redirects, menus and asset metadata. Use it for backups, or to seed an environment elsewhere.
+
+- `GET …/environments/{env}/export` returns the snapshot (`environment_export`).
+- `POST …/environments/{env}/import` replays one into an empty environment (`environment_import`).
+  Add `?dryRun=true` to get a report without writing (`200`). Without it, everything is checked
+  first, the model is written, and entries and assets run as a background job (`202` with
+  `{ report, job, publishJobId }`, followed at `…/bulk/jobs/{id}`). `?publish=false` skips
+  republishing. An imported asset may only point at files in the space you import into; one that
+  names another space's file is pointed at its own, empty, location instead. To copy content
+  between spaces with its files, clone instead.
+
+## Delete an environment
+
+Deleting removes the environment's content model, entries, versions, assets, releases, workflows,
+files and the [webhooks](/content/guides/webhooks/) scoped to it (space-wide webhooks stay); its audit
+history stays. It is irreversible, so you repeat the id in `confirm`:
+
+```sh
+curl -s -X DELETE "$API/spaces/$SPACE/environments/staging?confirm=staging" \
+  -H "Authorization: Bearer $PAT"
+```
+
+`main` can't be deleted, and neither can an environment an alias points at (`409`: repoint or
+remove the alias first). Only a person (signed in, or through their own personal access token or OAuth
+connection) or the deployment admin token can do it, not an API key, even one with `space:admin`. The environment stops resolving at once; search documents,
+vectors and the delivery cache are cleaned up shortly after. The MCP tool is `environment_delete`.
+The admin has no delete button; use the API or MCP.
+
+## Next steps
+
+- [Content modeling](/content/guides/content-modeling/): change the model on a clone before it reaches `main`.
+- [Reading content](/content/guides/reading-content/): read through an alias.
+- [API keys and access](/content/guides/api-keys/): the `space:admin` and `content:manage` keys these routes need.
+- [Concepts](/content/start/concepts/#spaces-and-environments): where environments sit.

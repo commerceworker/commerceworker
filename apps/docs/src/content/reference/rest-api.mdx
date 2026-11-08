@@ -1,0 +1,412 @@
+---
+title: REST API
+description: The /api/v1 routes for flows, orders, carts, events, approvals and webhook subscriptions, with request and response shapes.
+---
+
+import Values from '../../components/Values.astro';
+
+The REST API is served at `https://app.commerceworker.com/api/v1`. Its OpenAPI 3.1 document is public at
+`GET /api/v1/openapi.json` (cacheable for five minutes), and the [OpenAPI explorer](/api/) renders
+it. Its request bodies are generated from the schemas the routes validate with, so they match what
+the server accepts. Response bodies are described here.
+
+## Authentication
+
+Send `Authorization: Bearer cmw_live_…`, an API token from the Team page (a signed-in dashboard
+session cookie also works). Each route needs
+a role: reads need `viewer`, approval decisions `approver`, and everything else that changes state
+(starting, cancelling, events, carts) `operator`, and managing webhook subscriptions and integrations, data subject requests and reading audit events `admin`; a token or person without it gets
+`403`. See [Team and roles](/guides/team-and-roles/). Five routes are exceptions: `GET /api/v1/openapi.json` is public, `POST /api/v1/webhooks/events` and `POST /api/v1/webhooks/orders` are
+authenticated by an HMAC signature instead (see [signed events](#signed-events) and [signed orders](#signed-orders)) with an [integration's](#integrations) key, and so is `POST /api/v1/channels/shopify/orders` (see [Channel adapters](#channel-adapters)); `POST /api/v1/webhooks/stripe` is verified with Stripe's own `Stripe-Signature` (see [Stripe events](/guides/approvals-and-events/#stripe-events)).
+
+Errors are JSON: `{ "error": "…" }`, plus `issues` (one entry per invalid field, with its `path`
+and `message`) on a `400` for an invalid body.
+`401` means a missing, wrong, revoked or expired token (an expired token's `error` says when it expired), `403` a role that can't use the route (or, with a session cookie, a person whose role must use two-factor sign-in and hasn't set it up, or a cookie request from another origin), `429` a caller over its requests a minute (below; see `Retry-After`), `404` an unknown route, order or cart, and `413` a request body over its cap (1 MiB; 5 MiB for EDI and 8 MiB for catalog product writes; a catalog feed has no cap of its own), and `500` an unexpected error, which answers `{ "error": "Internal error" }` without its details.
+
+### Rate limits
+
+Each caller has a budget of requests a minute: an API token, or a signed-in person, gets 600 on
+`/api/v1`. Over it, the request is refused with `429 { "error": "Too many requests; try again in 60 seconds." }`
+and `Retry-After: 60`; wait that long and retry. The count is kept at each Cloudflare location
+the requests arrive at, so it stops a runaway client rather than metering an exact number. A
+deployment can have different budgets; ask your CommerceWorker contact if an integration needs more.
+
+## Routes
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| `GET` | `/api/v1/flows` | | `{ flows }` |
+| `POST` | `/api/v1/orders` | `{ flowId, version?, input, vars? }` | `201 { orderId }`, or `200 { orderId, replayed: true }` |
+| `GET` | `/api/v1/orders?model=&channel=&status=&q=&limit=&cursor=` | | `{ orders, nextCursor }` |
+| `GET` | `/api/v1/orders/:id` | | The order's live state |
+| `POST` | `/api/v1/orders/:id/events` | `{ event, payload? }` | `{ delivered, nodeId? }` |
+| `POST` | `/api/v1/orders/:id/approvals/:nodeId` | `{ decision, note? }` | `{ ok: true }`, `403 { error }` if the caller started the order and the workspace separates [approvals](/guides/team-and-roles/#approvals) |
+| `POST` | `/api/v1/orders/:id/cancel` | `{ reason? }` | `{ ok: true }` |
+| `GET` | `/api/v1/carts?status=&limit=` | | `{ carts }` |
+| `POST` | `/api/v1/carts` | `{ title, flowId, customerId? }` | `201 { cart }`, or `422 { error }` |
+| `GET` | `/api/v1/carts/:id` | | `{ cart }` |
+| `POST` | `/api/v1/carts/:id/ops` | One cart op, such as `{ op: "add", sku, qty }` | `{ cart }`, or `409 { error }` |
+| `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
+| `POST` | `/api/v1/carts/:id/cancel` | | `{ cart }`, or `409 { error }` |
+| `GET` | `/api/v1/audit-events?type=&before=&after=&limit=` | | `{ events }` (admin) |
+| `GET` | `/api/v1/audit-events/verify?after=` | | `{ ok, checked, last, next }` or `{ ok: false, brokenAt, reason }` (admin) |
+| `POST` | `/api/v1/data-subjects/export` | `{ email }` | A JSON file: `{ email, customers, orders, messages, inboundEmails, documents, carts, taxCertificates, addresses, truncated, teamMember }` (admin) |
+| `POST` | `/api/v1/data-subjects/erase` | `{ email }` | `{ ok, done, orders, customers, documents, messages, inboundEmails, carts, taxCertificates, addresses, teamMember }`, or `409 { reason: "active_orders", orders, error }` (admin) |
+| `GET` | `/api/v1/integrations` | | `{ integrations }` (admin) |
+| `POST` | `/api/v1/integrations` | `{ name, events?, startOrders?, flows?, channel? }` | `201 { integration, secret }` (admin) |
+| `POST` | `/api/v1/integrations/:id/rotate` | | `{ integration, secret }` (admin) |
+| `DELETE` | `/api/v1/integrations/:id` | | `{ ok: true }` (admin) |
+| `GET` | `/api/v1/ucp` | | `{ settings, platforms }` (admin) |
+| `POST` | `/api/v1/ucp/settings` | `{ checkoutFlowId, links?, orderUrl? }` | `{ settings }`, or `422 { error }` when the flow cannot take checkouts (admin) |
+| `POST` | `/api/v1/ucp/platforms` | `{ name, profileUrl }` | `201 { platform, key }`; the key is shown once (admin) |
+| `DELETE` | `/api/v1/ucp/platforms/:id` | | `{ ok: true }`, or `404` (admin) |
+| `GET` | `/api/v1/plugins` | | `{ plugins }`: for each plugin, `id`, `runtime` (`worker`, running on its own, or `sandboxed`, run inside CommerceWorker with only the outside hosts its manifest lists), `source` (`deployment`, set up with the workspace, or `installed`, uploaded by an admin), `name`, `version`, `nodes` (node types), `events`, `provides` (the built-in node surfaces it can do the work of: `shipping.rates`, `shipping.labels`, `tax`, `address`), `healthy` (whether it answered just now) and, when it didn't, `error`. A plugin whose manifest was refused has `name` and `version` `null` and no `nodes`; one that is not answering keeps the last manifest it gave (admin) |
+| `POST` | `/api/v1/plugins` | the `.cwplugin` file, as its publisher signed it (at most 5 MiB) | `201` with `{ id, sha, version, publisher, status: "pending", manifest, secrets: [{ name, set }] }`: what it asks for, to review. It doesn't run until an admin approves it on the Plugins page, which asks them to confirm who they are; there is no approve call. `400` with the reason when the publisher isn't trusted, the signature or contents don't check out, or runtime installs are off; `413` when too large (admin) |
+| `POST` | `/api/v1/plugins/:id/disable` | | `{ id, status: "disabled" }`: turns off a plugin installed from a file; its steps stop at once and flows that use it can't be published (admin) |
+| `GET` | `/api/v1/plugins/:id/usage` | | `{ flows, orders, labels }`: the published flows that use the plugin's nodes or name it as a provider, the running orders on them, and the shipping labels it could not void yet (retried daily); all are empty when it can be removed (admin) |
+| `GET` | `/api/v1/webhook-subscriptions` | | `{ subscriptions }` |
+| `POST` | `/api/v1/webhook-subscriptions` | `{ url, events? }` | `201 { subscription, secret }` |
+| `POST` | `/api/v1/webhook-subscriptions/:id/rotate` | | `{ subscription, secret }` (admin) |
+| `DELETE` | `/api/v1/webhook-subscriptions/:id` | | `{ ok: true }` |
+| `GET` | `/api/v1/webhook-subscriptions/:id/deliveries` | | `{ deliveries }` |
+| `POST` | `/api/v1/webhooks/events` | `{ orderId, event, payload? }` | `200 { delivered: true, nodeId }`, `404` or `409` |
+| `POST` | `/api/v1/webhooks/orders` | `{ model, channel, externalId, lines, … }` | `201 { orderId, flowId }`, or `200` on a replay |
+| `POST` | `/api/v1/webhooks/stripe` | A Stripe event | `200 { outcome }`, `409` when the order isn't waiting yet |
+| `POST` | `/api/v1/channels/shopify/orders` | A Shopify `orders/create` payload | `201 { orderId, flowId }`, `200` on a replay or `{ ignored: true, topic }` |
+| `POST` | `/api/v1/channels/edi/850` | Raw X12 (`application/edi-x12` or `text/plain`) | `200 { sender, results }` (operator) |
+
+## Flows
+
+`GET /api/v1/flows` lists every flow, most recently updated first, with `id`, `name`,
+`description`, `model`, `channels`, `publishedVersion` (null until the first publish),
+`hasUnpublishedChanges` (the draft differs from the published version), `updatedAt` and `nodeCount`.
+Archived drafts are left out. Flows are edited and published in the dashboard's editor; the API starts orders on them.
+
+## Start an order
+
+```http
+POST /api/v1/orders
+Idempotency-Key: po-NW-7781
+
+{
+  "flowId": "tpl-b2b-order",
+  "input": {
+    "model": "b2b",
+    "channel": "api",
+    "customerId": "cus_northwind",
+    "currency": "USD",
+    "lines": [{ "sku": "WID-100", "qty": 50 }],
+    "meta": {}
+  }
+}
+```
+
+- `flowId` names a flow with a published version. `version` (a positive integer) pins one; it defaults to the latest.
+- `input.model` is required: one of <Values of="order-models" />. `input.channel` is one of
+  <Values of="order-channels" /> and defaults to `api`. See [Commerce models](/guides/commerce-models/).
+- `input.title` (up to 140 characters) and `input.customerId` are optional. `input.externalId` (up to 200) is the order's id in its channel; `input.contact` is `{ email, name?, phone? }` for a
+  buyer without a customer account; `input.fulfillment` is `{ method, locationId? }`;
+  `input.shippingOption` (up to 80) is the id of the shipping option the buyer chose (see
+  [Shipping rates](/guides/fulfillment/#shipping-rates)).
+- `input.payment` is `{ provider, intentId?, paymentMethodId?, stripeCustomerId?, reference? }`:
+  `provider` is `stripe` or `external`, and the ids are a Stripe PaymentIntent (`pi_…`), payment
+  method (`pm_…`) and customer (`cus_…`). It tells the payment nodes what to authorize or charge;
+  see [Payments](/guides/payments/#how-an-order-says-it-is-paid).
+- `input.currency` defaults to `USD` and must have an exchange rate in the workspace; another
+  code returns `400`. See [Currency](/reference/expressions/#currency).
+- `input.lines` are `{ sku, name?, qty, unitPrice?, sellerId?, locationId? }` (`locationId` pins the store a line ships from; route fulfillment normally sets it). Pricing nodes fill in prices, in the order's
+  currency.
+- `input.documentText` (up to 50,000 characters) is an inbound email or PO for the
+  [Extract order](/reference/nodes/#ai.extract) node; it is stored with the order's documents
+  before the run starts.
+- `input.meta` is free-form and is the run context's `input`. Some keys mean something to nodes:
+  `shipTo` (the `no_po_box` policy rule) and `simulate` (forces a failure path in the built-in
+  commerce steps, only in workspaces that allow simulated failures and dropped elsewhere; see
+  [Simulating failures](/guides/templates/#simulating-failures)).
+- `vars` seeds the run's variables.
+
+**Idempotency.** With an `Idempotency-Key` header (at most 255 characters, and not starting `cart:`, `ucp:`, `plugin:`, `order:`, `email:`, `a2a:` or `replenish:`, which CommerceWorker keeps for orders it starts itself; otherwise `400`), a repeat of the key
+returns `200` and the order the first request created, even when two requests race. If the first
+request failed after recording the order, the repeat finishes starting it. The key is bound to a
+SHA-256 fingerprint of the body (flow, version, input and vars, ignoring property order): a repeat
+with a different body returns `422` and starts nothing.
+
+## List orders
+
+`GET /api/v1/orders` returns a page of orders, newest first (by `created_at`, then `id`). `limit` is 1 to 200 (default 50); `nextCursor` is an opaque string to pass back as `cursor` for the next page, and is `null` on the last page. A `cursor` the API did not issue is `400`. Filter with
+`model`, `channel`, `status` (one of <Values of="order-statuses" />) and `q`, which matches the order id (a
+leading `#`, as the app writes an order's reference, is ignored), title, customer id or name, contact email
+or external id. Each row has `id`, `model`, `channel`, `externalId`, `contactEmail`, `status`, `title`, `flowId`, `flowVersion`, `instanceId`,
+`generation`, `customerId`, `currency`, `total`, `waitingOn` (the open waits' titles),
+`waitingAt` (the labels of the steps holding them), `waitingSince`, `waitingDue` (when the soonest open
+wait times out, its step's deadline; `null` for a timer, which has none), `waitingFor` (what each wait is on:
+`person:<role>`, `event:<name>` or `timer`, joined with ` · `), `stoppedAt` and `reason` (for an order
+that failed, rolled back, was declined or cancelled: where it stopped and why), `createdAt` and
+`updatedAt` (epoch milliseconds).
+
+## Read an order
+
+`GET /api/v1/orders/:id` returns the order's live state, the same state the order page renders:
+
+| Field | Meaning |
+|---|---|
+| `orderId`, `status`, `reason` | Identity, status, and the reason when cancelled or failed |
+| `order` | The order with computed `subtotal`, `shipping`, `tax` and `total` (`subtotal + shipping + tax`), and once taxed `taxRate` and `taxShipping` |
+| `flow` | The pinned flow version, including its graph |
+| `nodes` | Per node: `status`, `runs`, `summary`, `output`, `error`, `branches`, `startedAt`, `endedAt` |
+| `edges` | Per edge: `pending`, `active` or `inactive` |
+| `waits` | Open waits: `nodeId`, `kind` (`approval` or `event`), `title`, `event`, `assignee`, `amount`, `deadline`, `since` |
+| `vars` | Run variables |
+| `timeline` | Entries with `at`, `kind`, `message`, `nodeId`, `data` |
+| `instanceId`, `generation` | The id of the run driving the order, and its generation (it goes up by one on each [continue as new](/guides/building-flows/#how-a-run-moves-through-the-graph)) |
+| `rollback` | `{ outcome, error }` once a rollback has run |
+| `updatedAt` | When the state last changed (epoch milliseconds) |
+
+Node statuses are <Values of="node-statuses" />.
+
+## Deliver an event
+
+```http
+POST /api/v1/orders/ord_…/events
+
+{ "event": "payment.received", "payload": { "amount": 3106.78 } }
+```
+
+The event goes to the node waiting for it, and its payload lands in `vars` under the event name
+with every run of non-alphanumerics replaced by `_` (`payment.received` → `vars.payment_received`).
+The response is `{ delivered: true, nodeId }`, or `{ delivered: false }` when no node is waiting for
+that event yet. An unknown order is `404`. See [Approvals and events](/guides/approvals-and-events/).
+
+## Decide an approval
+
+```http
+POST /api/v1/orders/ord_…/approvals/approval
+
+{ "decision": "approved", "note": "Paid down last week" }
+```
+
+`decision` is `approved` or `rejected`. A person or an API token always decides as themselves; the record names the caller. The decision takes effect at once,
+with no confirm card. An unknown order is `404`, and a node that
+isn't waiting for an approval (already decided, or never reached) is `409`. So is an order that is
+recorded but has no live run to resume (one imported as a record, say), with
+`{ error: "The order has no live run, so its approvals can’t be decided" }`.
+
+## Cancel
+
+`POST /api/v1/orders/:id/cancel` stops the order's run, releases reserved stock, voids
+payment authorizations, cancels shipments and staged pickups, restocks shipped stock, voids unpaid Stripe invoices, reverses on-account invoice charges, revokes issued digital codes, cancels seller orders, reverses scheduled payouts and sends `order.cancelled`. `reason` defaults to
+`Cancelled via API`. Cancelling an order that has already finished changes nothing and returns
+`409` `{ error: "The order has already finished" }`; an unknown order is `404`.
+
+## Carts
+
+A [cart](/guides/carts/) is a list of lines your team builds before it becomes an order, priced
+by its flow after every change. These routes reach the carts opened on the Carts page (or here);
+a cart a customer opened from their own purchasing system is not found. Reads need `viewer`;
+opening, changing, submitting and cancelling need `operator`. Each change is made as the caller,
+exactly as if they made it on the cart's page, and anyone with the cart open sees it at once.
+
+- `POST /api/v1/carts` takes `title` (1 to 120 characters), `flowId` (a published flow with a
+  [Price lines](/reference/nodes/#commerce.price) step, which prices the cart and runs its order)
+  and an optional `customerId`, whose contract prices the cart then uses. The caller is recorded as
+  who opened it. A flow that isn't published or doesn't price orders, or an unknown customer, is
+  `422` with the reason.
+- `GET /api/v1/carts` lists carts, most recently changed first, with `id`, `title`, `status` (one
+  of <Values of="cart-statuses" />), `flowId`, `customerId`, `orderId` (once submitted),
+  `createdBy`, `createdAt` and `updatedAt`. Filter with `status`; `limit` is 1 to 200 (default
+  50).
+- `GET /api/v1/carts/:id` returns `{ cart }`: `id`, `title`, `status`, `flowId`, `customerId`,
+  `lines` (`{ id, sku, qty, title?, unitPrice? }`; the quote sets the title and price), `promoCodes`,
+  `shipTo` (`{ name?, line1?, line2?, city?, region?, postalCode?, country? }`, or `null`),
+  `shippingOption` (the option chosen, or `null` to let the flow pick),
+  `quote` (`currency`, `lines`, `subtotal`, `shipping`, `tax`, `total`, `ships`, `shippingOptions`
+  (`{ id, title, carrier, amount, minDays, maxDays }`, what the flow offers for the ship-to) and
+  `shippingOption` (the one it charged), or `null` until priced),
+  `quoteCurrent` (whether the quote prices the cart as it is now), `issues` (what pricing found:
+  `{ kind, code, content }`), `notReady` (why it can't be submitted yet, or `null`), `orderId`,
+  `createdBy`, `createdAt`, `updatedAt` and `version`, with the version also as the response's
+  `ETag` (`"7"`). The cart's chat and files stay on its page.
+
+`POST /api/v1/carts/:id/ops` applies one change and answers with the cart priced again:
+
+```http
+POST /api/v1/carts/cart_…/ops
+
+{ "op": "add", "sku": "WID-100", "qty": 10 }
+```
+
+| `op` | Fields | Does |
+|---|---|---|
+| `add` | `sku`, `qty` (1 to 10,000) | Adds a line, or adds to the line with that SKU |
+| `set_qty` | `lineId`, `qty` (0 to 10,000) | Sets a line's quantity; 0 removes it |
+| `set_qtys` | `lines`: 1 to 100 `{ lineId, qty }` (`qty` 0 to 10,000), each line once | Sets several lines' quantities as one change, priced once; 0 removes a line. Refused, changing nothing, if any of the lines is gone |
+| `remove` | `lineIds` | Removes lines |
+| `clear` | | Removes every line |
+| `promo_add`, `promo_remove` | `code` | Adds or removes a promotion code (up to five) |
+| `lock`, `unlock` | | Stops or allows changes to lines and codes |
+| `rename` | `title` | Renames the cart |
+| `set_ship_to` | `address` (`line1`, `city`, `postalCode` and `country` make it complete; `name`, `line2` and `region` are optional), or `null` | Sets where it ships; `null` clears the address and the option |
+| `set_shipping_option` | `option` (an `id` from `quote.shippingOptions`), or `null` | Chooses how it ships; `null` lets the flow pick |
+
+Lines, codes, the ship-to and the option change only while the cart is open. An option the
+current quote doesn't offer is refused, as is any option when it offers none; one chosen before
+the cart was priced, or that a new address no longer offers, stays on the cart as an error issue
+until another is chosen. When the flow's shipping step picks the cheapest or fastest whatever was
+chosen, the quote's `shippingOption` is the one charged and a `shipping_option` warning says so. A change the cart refuses (it is locked or
+has ended, the line is gone, the code is already applied, a line would pass 10,000 or the cart
+100 lines, an address with nothing in it) is `409` with the reason; a body that isn't an op is `400`.
+
+`POST /api/v1/carts/:id/submit` starts the cart's order on its flow, at its quoted lines and
+customer, ship-to (`meta.shipTo`) and shipping option (`shippingOption`, the one its quote
+charged), started by the caller, and answers `201 { orderId, cartId }`. It needs lines, a
+current quote with no errors and, when the quote ships and offers shipping options, a complete
+`shipTo` (see `notReady`); otherwise, or once the cart has ended, it is `409`.
+A cart is submitted once: a repeat is `409` and starts nothing. To submit only the cart you read,
+send its version, as `{ "version": 7 }` or the header `If-Match: "7"`: if anyone changed the cart
+since, the submit is `412` and starts nothing, so read it again. Both are optional; naming two
+different versions is `400`. The order is priced again by its flow when it runs, like any order,
+so its total can differ from the cart's quote if prices changed in between. The order is then read and acted
+on through the order routes. `POST /api/v1/carts/:id/cancel` ends a cart that hasn't ended
+(`409` otherwise).
+
+## Integrations
+
+An integration is one external system's signing key and what it may do. Create one per system, so
+a leaked key is revoked on its own and a payment provider can't start orders. All four routes
+need the `admin` role.
+
+- `POST /api/v1/integrations` takes `name` (1 to 100 characters) and the scope:
+  `events` (event names it may deliver to `/api/v1/webhooks/events`, or `["*"]`; default none),
+  `startOrders` (may post to `/api/v1/webhooks/orders`; default `false`), `flows` (flow ids an
+  order body may name in `flowId`, or `["*"]`; default none) and `channel` (only orders on this
+  channel, both those it starts and those it sends events to; default `null`, any). It returns
+  `201 { integration, secret }`. The `secret` (`whsec_…`) is shown once; `integration.id` goes in
+  the signature as `k=`.
+- `GET /api/v1/integrations` lists integrations, newest first, without secrets. Each has `id`, `name`,
+  the scope, `createdAt`, `createdBy`, `lastUsedAt`, `revokedAt` and `previousExpiresAt`.
+- `POST /api/v1/integrations/:id/rotate` returns a new `secret`. The old secret keeps working for
+  24 hours (`previousExpiresAt` shows when it stops), so the sender can switch without downtime.
+  Rotating again replaces the overlap. `404` for an unknown or revoked integration.
+- `DELETE /api/v1/integrations/:id` revokes it at once, including any secret still in its overlap.
+  Requests signed with it get `401`. `404` if it doesn't exist or is already revoked.
+
+Creating, rotating and revoking are recorded in the [audit log](/guides/team-and-roles/#audit-log).
+
+## Signed events
+
+External systems resume orders without a token by signing the raw request body with their
+[integration's](#integrations) secret:
+
+```http
+POST /api/v1/webhooks/events
+X-CommerceWorker-Signature: t=<unix seconds>,k=<integration id>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>
+
+{ "orderId": "ord_…", "event": "payment.received", "payload": { "amount": 3106.78 } }
+```
+
+[Inbound orders](/guides/inbound-orders/#signing) shows how to build the header in a shell and in
+JavaScript. Signatures more than five minutes from now are rejected. A delivered event's signature
+is recorded, so the same signed request sent again inside that window is not delivered twice. A `409` is not
+recorded and may be retried.
+
+The order routes bound their bodies the same way: `POST /api/v1/orders/{id}/events` takes `event`
+(1 to 100 characters) and an optional `payload` of at most 32 KiB of JSON,
+`POST …/approvals/{nodeId}` takes `decision` and `note` (at most
+2000), and `POST …/cancel` takes `reason` (at most 500). Anything else is a `400` with `issues`.
+The order page enforces the same bounds.
+
+| Status | Meaning |
+|---|---|
+| `200` | Delivered: `{ delivered: true, nodeId }` |
+| `404` | No such order |
+| `409` | No node is waiting for that event yet: `{ delivered: false }`. Retry later |
+| `200` | A replay: `{ delivered: true, duplicate: true }`, delivering nothing |
+| `400` | Body is not `{ orderId, event, payload? }` (`event` is 1 to 100 characters, `payload` at most 32 KiB of JSON) |
+| `413` | Body over its cap (1 MiB; 8 MiB for catalog product writes) |
+| `401` | Missing, malformed, stale or wrong signature; no `k=`; an unknown or revoked integration |
+| `403` | The integration may not deliver that event, or is bound to a channel other than the order's |
+
+A channel-bound integration gets `404` for an order that doesn't exist, so it can't probe other channels' ids.
+
+## Signed orders
+
+`POST /api/v1/webhooks/orders` starts an order from a storefront, marketplace, POS or other
+channel, signed the same way as events. The body is `input` plus a required `channel` and
+`externalId` and optional `flowId`, `source`, `shipTo` and `vars`; it needs at least one line or `documentText`. The flow is `flowId`, else the
+workspace's order routes (set by your administrator), else the model's default. `channel` and `externalId` are the idempotency key.
+Statuses: `201 { orderId, flowId }` started, `200 { orderId, replayed: true }` replay, `400` invalid body or unsupported currency, `401` bad
+signature or unknown or revoked integration, `403` the integration may not start orders, is bound to another channel, or may not choose that `flowId`, `409` flow not published, `422` same order with different contents. See [Inbound orders](/guides/inbound-orders/).
+
+## Channel adapters
+
+`POST /api/v1/channels/shopify/orders` takes a Shopify `orders/create` webhook, verified by the
+`X-Shopify-Hmac-Sha256` header (base64 HMAC-SHA256 of the raw body with your Shopify app's
+client secret, which your administrator adds to the workspace) rather than a token. Statuses: `201 { orderId, flowId }` started, `200 { orderId, replayed: true }`
+replay, `200 { ignored: true, topic }` for any other `X-Shopify-Topic`, `400` not JSON, unmappable
+(a line item without a SKU) or invalid, or an unsupported currency, `401` bad signature, `403` a store not
+connected to the workspace, `409` flow not published, `422` same order with different contents, `503` the
+workspace hasn't enabled Shopify.
+
+`POST /api/v1/channels/edi/850` takes a raw X12 interchange and needs the `operator` role. The
+sender (`ISA06`) must be in the workspace's EDI partner list. It answers `200 { sender, results }` with one
+`{ control, poNumber?, status, orderId?, flowId?, replayed?, error? }` per transaction; `400` is
+not valid X12, `403` an unlisted sender or a caller below `operator`. Both start orders once per
+`order:<channel>:<externalId>`. See [Channel adapters](/guides/channel-adapters/).
+
+## Audit events
+
+`GET /api/v1/audit-events` returns the audit log (sign-ins, team and token changes, and what was done to orders, approvals, flows and webhooks), newest first, for feeding a log
+system; it needs the `admin` role. `type` filters to `auth`, `team`, `token`, `api`, `oauth`, `integration`, `order`, `approval`, `flow`, `webhook`, `stock`, `catalog` or `personal_data`; `limit` is
+1 to 500 (default 100); `before` (milliseconds since the epoch) pages back: pass the oldest `at`
+you have. `after` (a `seq`) switches to export order: only hashed events after that `seq`, oldest first, so the last `seq` you received is the next cursor (`0` starts at the beginning); `before` and `after` aren't meant together. Each event has `id`, `at`, `action`, `actor`, `actorId`, `actorKind`, `target`, `detail`
+(an object or `null`), `ip` and, for hashed events, `seq`, `prevHash` and `hash` (all `null` on events from before the chain). See [Audit log](/guides/team-and-roles/#audit-log) for the actions. Business events carry `via` in `detail` (`app`, `api`, `webhook`, `assistant`, `mcp` or `a2a`).
+
+`GET /api/v1/audit-events/verify` (admin) recomputes each event's hash and checks that it follows the one before, up to 2,000 events a call. It starts at the oldest event still in the log, or just after `after`. It returns `{ ok: true, checked, last, next }`, where `last` is the final event checked (`seq` and `hash`) and `next` is present when there is more: pass it as `after` to continue. A failure is `{ ok: false, brokenAt, reason }`, the `seq` of the first event that fails and why. Events are kept 400 days unless your contract sets another period (at least 90), then archived.
+
+## Data subject requests
+
+Both calls need the `admin` role and take the person's email in the body (never the URL); the address is matched case-insensitively. A person is the customer accounts with that email, the orders with it as the guest contact and the orders started by an email from that sender. The audit log records each call as `personal_data.exported` or `personal_data.erased`, with the target `subject:` and a hash of the address. Walkthrough: [Privacy requests](/guides/team-and-roles/#privacy-requests).
+
+`POST /api/v1/data-subjects/export` with `{ "email": "…" }` answers with a JSON attachment (`personal-data.json`, `cache-control: no-store`): `customers` (without the saved Stripe payment method), `orders` (up to 500, each with `contact`, `lines` and `meta`), `messages`, `inboundEmails`, `documents` (a list of `key`, `kind`, `contentType` and `createdAt`), `carts` (carts opened for them from their purchasing system, with their messages and the files they added), `taxCertificates` (their accounts' tax exemption certificates, without the files), `addresses` (the places their accounts' orders shipped to, as the customer page lists them), `truncated` (more orders than the export holds) and `teamMember` (the address also belongs to a person on the team, who is not exported).
+
+`POST /api/v1/data-subjects/erase` erases the person and keeps lines, amounts, payments, shipments and the ledgers. It works through 100 orders a call: while the answer has `done: false`, send the same request again. Their carts from a purchasing system are canceled if still open and lose their messages and files. Their accounts' tax exemption certificates are deleted with their files, and so are the addresses their orders shipped to. The answer counts what it changed (`orders`, `customers`, `documents`, `messages`, `inboundEmails`, `carts`, `taxCertificates`, `addresses`) and repeats `teamMember`; team members are not erased, so remove them on the Team page. It is refused with `409` and `{ reason: "active_orders", orders }` while any of the person's orders has not finished. A body without a valid `email` is `400`.
+
+## Webhook subscriptions
+
+See [Outbound webhooks](/guides/outbound-webhooks/) for the events, payloads and signatures.
+
+- `POST /api/v1/webhook-subscriptions` takes `url` (https, or plain http for `localhost`,
+  `127.0.0.1` and `[::1]`) and `events`: any of <Values of="outbound-events" />, or `["*"]`
+  (the default). It returns the subscription and its `secret`, once.
+- `GET` lists subscriptions without their secrets; `previousExpiresAt` is set while a rotation lasts.
+- `POST /api/v1/webhook-subscriptions/:id/rotate` returns a new `secret`, once. For 24 hours deliveries carry a `v1=` signature for the new secret and one for the old, so the receiver can switch without downtime. `404` for an unknown subscription.
+- `DELETE /api/v1/webhook-subscriptions/:id` deletes one (`404` if it doesn't exist).
+- `GET /api/v1/webhook-subscriptions/:id/deliveries` returns the latest 50 deliveries, newest first: `id`, `event`,
+  `orderId`, `payload`, `status` (`pending`, `delivered` or `failed`), `attempts`, `responseStatus`,
+  `lastError`, `createdAt` and `deliveredAt`.
+
+## Product catalog
+
+`/api/v1/catalog/*` writes and reads the product catalog: products, product types, channels, categories,
+feeds and `reindex`. Reads need `viewer`, writes `operator`, and `reindex` and deleting a channel (`DELETE /api/v1/catalog/channels/:code`) `admin`. Types and categories are deleted with `DELETE /api/v1/catalog/types/:code` and `POST /api/v1/catalog/categories/delete`; a refused delete answers `404` when the code is unknown and `409` when products or child categories still use it. The routes and
+schemas are in the [OpenAPI explorer](/api/); the model, the feed formats and what shoppers read are
+in [Product catalog](/guides/product-catalog/).
+
+## Other endpoints
+
+These aren't part of `/api/v1`.
+
+- `GET /health` answers `{ ok: true, service: "commerceworker-web" }`, with no authentication.
+- `GET /health/deep` also checks the database, document storage and the engine (and through it each installed plugin), with no
+  authentication. It answers `{ ok, service, checks }`, where each check is `"ok"` or `"fail"`, and
+  `503` when any check fails.
+- `/mcp`, `/a2a`, `/oauth/*` (except the `/oauth/authorize` consent page) and `/.well-known/oauth-*`
+  are the [MCP server](/reference/mcp/), the [A2A endpoint](/reference/a2a/) and their OAuth
+  endpoints.
+- `GET /.well-known/agent-card.json` is the A2A Agent Card, public and cached for five minutes.
+- `/ucp/*` and `GET /.well-known/ucp` are [agentic checkout](/reference/ucp/): the business profile is public and cached for five minutes (`404` while the feature is off); the rest takes a registered platform's `cmw_ucp_` key, not an API token.
+- `/agents/order-agent/:id` and `/agents/assistant-agent/:name` are the dashboard's live sockets
+  for a signed-in person. They are not a public API; the assistant route always reaches the
+  caller's own assistant.
+- `GET /docs/orders/…` serves an order's stored documents (invoices, POs, inbound documents) to a
+  signed-in person.

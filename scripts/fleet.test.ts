@@ -1,0 +1,1215 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { parse } from 'jsonc-parser';
+import {
+  foreignJobsReaching,
+  healthCheckKey,
+  keysProblem,
+  LOG_FIELDS,
+  loadDeployments,
+  logpushJob,
+  logpushToken,
+  matrix,
+  missingPluginSecrets,
+  names,
+  pluginBinding,
+  pluginKey,
+  pluginOwnSecrets,
+  postWriteCheck,
+  RESERVED_PATH_SEGMENTS,
+  renderCatalog,
+  renderCatalogEdge,
+  renderEngine,
+  renderPlugin,
+  renderWeb,
+  sandboxedPlugins,
+  secretsProblem,
+  shellVars,
+  signHealthCheck,
+  toDeployment,
+  tokenMatches,
+  WRITE_CHECK_ATTEMPT_MS,
+  WRITE_CHECK_DEADLINE_MS,
+  workerPlugins,
+} from './fleet.ts';
+
+const base = (app: string) =>
+  parse(readFileSync(join(import.meta.dirname, '..', 'apps', app, 'wrangler.jsonc'), 'utf8'));
+
+const acme = toDeployment({
+  id: 'acme',
+  ring: 'canary',
+  slot: 2,
+  d1Id: 'd1-acme',
+  catalogKvId: 'a'.repeat(32),
+  jurisdiction: 'eu',
+});
+
+test('a customer gets its own domain, names and environment by default', () => {
+  assert.equal(acme.domain, 'acme.commerceworker.com');
+  assert.equal(acme.suffix, '-acme');
+  assert.equal(acme.environment, 'deploy-acme');
+});
+
+test('the engine config carries the deployment everywhere a name is account-wide', () => {
+  const c = renderEngine(base('engine'), acme);
+  assert.equal(c.name, 'commerceworker-engine-acme');
+  assert.deepEqual(
+    c.workflows.map((w: { name: string }) => w.name),
+    ['commerceworker-order-acme', 'commerceworker-replenish-acme'],
+  );
+  assert.equal(c.d1_databases[0].database_name, 'commerceworker-acme');
+  assert.equal(c.d1_databases[0].database_id, 'd1-acme');
+  assert.deepEqual(c.r2_buckets[0], {
+    binding: 'DOCS',
+    bucket_name: 'commerceworker-docs-acme',
+    jurisdiction: 'eu',
+  });
+  assert.equal(c.vars.AI_GATEWAY_ID, 'commerceworker-acme');
+  assert.equal(c.vars.AI_GATEWAY_LOGS, 'false');
+  assert.equal(
+    renderEngine(base('engine'), { ...acme, aiGatewayLogs: true }).vars.AI_GATEWAY_LOGS,
+    'true',
+  );
+  assert.deepEqual(c.vectorize, [
+    { binding: 'PRODUCT_VECTORS', index_name: 'commerceworker-products-acme' },
+  ]);
+  assert.deepEqual(c.services[0], {
+    binding: 'CATALOG',
+    service: 'commerceworker-catalog-acme',
+    entrypoint: 'CatalogApi',
+  });
+  assert.equal(c.workers_dev, false);
+});
+
+test('the catalog config has its own name, bucket, card namespace and jurisdiction', () => {
+  const c = renderCatalog(base('catalog'), acme);
+  assert.equal(c.name, 'commerceworker-catalog-acme');
+  assert.deepEqual(c.r2_buckets[0], {
+    binding: 'PUBLISHED',
+    bucket_name: 'commerceworker-catalog-acme',
+    jurisdiction: 'eu',
+  });
+  assert.deepEqual(c.kv_namespaces[0], { binding: 'CARDS', id: 'a'.repeat(32) });
+  assert.deepEqual(
+    c.workflows.map((w: { name: string }) => w.name),
+    [
+      'commerceworker-catalog-feed-acme',
+      'commerceworker-catalog-backup-acme',
+      'commerceworker-catalog-restore-acme',
+    ],
+  );
+  // The backup keeps its daily schedule under its suffixed name.
+  assert.deepEqual(c.workflows[1].schedules, ['45 2 * * *']);
+  assert.equal(c.queues.producers[0].queue, 'commerceworker-catalog-feed-parts-acme');
+  assert.equal(c.queues.consumers[0].queue, 'commerceworker-catalog-feed-parts-acme');
+  assert.equal(
+    c.queues.consumers[0].dead_letter_queue,
+    'commerceworker-catalog-feed-parts-dlq-acme',
+  );
+  assert.deepEqual(
+    c.queues.consumers.map((q: { queue: string }) => q.queue),
+    [
+      'commerceworker-catalog-feed-parts-acme',
+      'commerceworker-catalog-changes-acme',
+      'commerceworker-catalog-feed-parts-dlq-acme',
+      'commerceworker-catalog-changes-dlq-acme',
+      'commerceworker-catalog-purge-dlq-acme',
+    ],
+  );
+  assert.ok(
+    c.queues.producers.some(
+      (p: { queue: string }) => p.queue === 'commerceworker-catalog-changes-acme',
+    ),
+  );
+  assert.equal(c.vars.DATA_JURISDICTION, 'eu');
+  assert.equal(c.workers_dev, false);
+  // It writes variant names and prices into the deployment's own D1.
+  assert.deepEqual(c.d1_databases, [
+    { binding: 'DB', database_name: 'commerceworker-acme', database_id: 'd1-acme' },
+  ]);
+});
+
+test("catalog-edge serves catalog.<domain> from the deployment's bucket, cards and purge queue", () => {
+  const c = renderCatalogEdge(base('catalog-edge'), acme);
+  assert.equal(acme.catalogDomain, 'catalog.acme.commerceworker.com');
+  assert.equal(c.name, 'commerceworker-catalog-edge-acme');
+  assert.deepEqual(c.routes, [{ pattern: 'catalog.acme.commerceworker.com', custom_domain: true }]);
+  assert.deepEqual(c.r2_buckets[0], {
+    binding: 'PUBLISHED',
+    bucket_name: 'commerceworker-catalog-acme',
+    jurisdiction: 'eu',
+  });
+  assert.deepEqual(c.kv_namespaces[0], { binding: 'CARDS', id: 'a'.repeat(32) });
+  assert.equal(c.queues.consumers[0].queue, 'commerceworker-catalog-purge-acme');
+  assert.equal(c.queues.consumers[0].dead_letter_queue, 'commerceworker-catalog-purge-dlq-acme');
+  assert.equal(c.queues.consumers[0].max_concurrency, 1);
+  assert.equal(c.analytics_engine_datasets[0].dataset, 'commerceworker_catalog_edge_acme');
+  // Search goes to this deployment's own catalog.
+  assert.deepEqual(c.services, [
+    { binding: 'CATALOG', service: 'commerceworker-catalog-acme', entrypoint: 'SearchApi' },
+  ]);
+  // The catalog sends to the same purge queue.
+  const producers = renderCatalog(base('catalog'), acme).queues.producers;
+  assert.ok(
+    producers.some((p: { queue: string }) => p.queue === 'commerceworker-catalog-purge-acme'),
+  );
+  assert.equal(
+    toDeployment({ id: 'beta', ring: 'canary', slot: 5, catalogDomain: 'products.b.example' })
+      .catalogDomain,
+    'products.b.example',
+  );
+  assert.throws(
+    () => toDeployment({ id: 'beta', ring: 'canary', slot: 5, catalogDomain: 'x' }),
+    /catalogDomain/,
+  );
+});
+
+test("the catalog consumes every dead-letter queue, its own and catalog-edge's, by the deployment's names", () => {
+  type Consumer = { queue: string; dead_letter_queue?: string; retry_delay?: number };
+  const catalog: Consumer[] = renderCatalog(base('catalog'), acme).queues.consumers;
+  const edge: Consumer[] = renderCatalogEdge(base('catalog-edge'), acme).queues.consumers;
+  const dlqs = [...catalog, ...edge].flatMap((c) => c.dead_letter_queue ?? []);
+  const n = names(acme);
+  assert.deepEqual(
+    dlqs.sort(),
+    [n.catalogChangesDlq, n.catalogFeedPartsDlq, n.catalogPurgeDlq].sort(),
+  );
+  const consumed = new Set(catalog.map((c) => c.queue));
+  for (const q of dlqs) assert.ok(consumed.has(q), `${q} has no consumer`);
+  // A dead-letter queue's consumer has no dead-letter queue of its own.
+  for (const c of catalog.filter((c) => dlqs.includes(c.queue)))
+    assert.equal(c.dead_letter_queue, undefined);
+  // Every consumer delays a retry after a thrown invocation instead of redelivering at once.
+  for (const c of [...catalog, ...edge])
+    assert.ok((c.retry_delay ?? 0) > 0, `${c.queue} retry_delay`);
+});
+
+test('the web config binds its own engine, domain and rate-limit namespaces', () => {
+  const c = renderWeb(base('web'), acme);
+  assert.equal(c.name, 'commerceworker-web-acme');
+  assert.deepEqual(c.routes, [{ pattern: 'acme.commerceworker.com', custom_domain: true }]);
+  assert.equal(c.services[0].service, 'commerceworker-engine-acme');
+  assert.equal(c.services[1].service, 'commerceworker-catalog-acme');
+  assert.deepEqual(
+    c.ratelimits.map((r: { namespace_id: string }) => r.namespace_id),
+    ['2001', '2002', '2003', '2004', '2005'],
+  );
+  assert.equal(c.d1_databases[0].migrations_dir, '../../packages/db/migrations');
+});
+
+test("a customer's limits replace the base budgets they name", () => {
+  const big = toDeployment({ ...acme, limits: { webhooks: 6000 } });
+  const limit = (c: {
+    ratelimits: { name: string; simple: { limit: number; period: number } }[];
+  }) => Object.fromEntries(c.ratelimits.map((r) => [r.name, r.simple]));
+  const c = limit(renderWeb(base('web'), big));
+  assert.deepEqual(c.WEBHOOK_LIMIT, { limit: 6000, period: 60 });
+  assert.deepEqual(c.API_LIMIT, limit(base('web')).API_LIMIT);
+  assert.throws(() => toDeployment({ ...acme, limits: { mcp: 10 } }), /limits.mcp/);
+  assert.throws(() => toDeployment({ ...acme, limits: { api: 0 } }), /positive/);
+});
+
+test("app.commerceworker.com's own deployment renders the base configs unchanged", () => {
+  const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
+  assert.deepEqual(renderCatalog(base('catalog'), d), base('catalog'));
+  assert.deepEqual(renderCatalogEdge(base('catalog-edge'), d), base('catalog-edge'));
+  assert.deepEqual(renderEngine(base('engine'), d), base('engine'));
+  assert.deepEqual(renderWeb(base('web'), d), base('web'));
+  // Its punchout cancels the POs a buyer calls off: the grant ships in the same engine deploy as
+  // the check, and the pinned bundle whose manifest asks for it.
+  assert.deepEqual(JSON.parse(base('engine').vars.PLUGIN_GRANTS).punchout.capabilities, [
+    'carts:external',
+    'orders:start',
+    'orders:cancel',
+  ]);
+});
+
+// A deployment's Durable Objects take their classes and migrations from the base config alone:
+// scripts/do-migrations.test.ts guards those, and a render that touched them would skip the guard.
+test('rendering never changes Durable Object bindings or migrations', () => {
+  const demo = toDeployment({ ...acme, id: 'acme-demo', demo: true });
+  for (const d of [...loadDeployments().filter((x) => x.d1Id && x.catalogKvId), acme, demo]) {
+    for (const [app, render] of [
+      ['engine', renderEngine],
+      ['catalog', renderCatalog],
+    ] as const) {
+      const c = render(base(app), d);
+      assert.deepEqual(c.migrations, base(app).migrations, `${d.id}: ${app} migrations`);
+      assert.deepEqual(c.durable_objects, base(app).durable_objects, `${d.id}: ${app} bindings`);
+    }
+    for (const [app, render] of [
+      ['web', renderWeb],
+      ['catalog-edge', renderCatalogEdge],
+    ] as const) {
+      const c = render(base(app), d);
+      assert.equal(c.migrations, undefined, `${d.id}: ${app} migrations`);
+      assert.equal(c.durable_objects, undefined, `${d.id}: ${app} bindings`);
+    }
+  }
+});
+
+test('bad entries are refused', () => {
+  assert.throws(() => toDeployment({ id: 'Acme', ring: 'canary', slot: 2, d1Id: 'x' }), /id must/);
+  assert.throws(() => toDeployment({ id: 'acme', ring: 'beta', slot: 2, d1Id: 'x' }), /ring/);
+  assert.throws(() => toDeployment({ id: 'api', ring: 'general', slot: 2 }), /reserved/);
+  // CommerceWorker's own staging deployment may use the name, with its domain set.
+  assert.equal(
+    toDeployment({ id: 'staging', ring: 'staging', slot: 3, domain: 'staging.commerceworker.com' })
+      .id,
+    'staging',
+  );
+  assert.throws(
+    () => renderEngine(base('engine'), toDeployment({ id: 'acme', ring: 'canary', slot: 2 })),
+    /provision/,
+  );
+  assert.throws(
+    () =>
+      toDeployment({ id: 'acme', ring: 'canary', slot: 2, catalogKvId: 'commerceworker-cards' }),
+    /catalogKvId/,
+  );
+  assert.throws(
+    () =>
+      renderCatalog(
+        base('catalog'),
+        toDeployment({ id: 'acme', ring: 'canary', slot: 2, d1Id: 'x' }),
+      ),
+    /catalogKvId: run scripts\/provision.sh acme/,
+  );
+});
+
+test('an unprovisioned deployment blocks the matrix unless it is held', () => {
+  const fresh = toDeployment({ id: 'new', ring: 'general', slot: 4 });
+  assert.throws(() => matrix([acme, fresh]), /not provisioned/);
+  // D1 alone isn't enough: the catalog needs its card namespace too.
+  assert.throws(() => matrix([acme, { ...fresh, d1Id: 'x' }]), /not provisioned/);
+  assert.deepEqual(matrix([acme, { ...fresh, hold: true }]).general, []);
+});
+
+test('the matrix groups by ring and leaves held deployments out', () => {
+  const held = toDeployment({ id: 'beta', ring: 'canary', slot: 3, d1Id: 'x', hold: true });
+  const m = matrix([acme, held]);
+  assert.deepEqual(
+    m.canary.map((d) => d.id),
+    ['acme'],
+  );
+  assert.deepEqual(m.general, []);
+});
+
+test('a demo mocks models, speeds up time and turns on demo sign-in', () => {
+  const demo = toDeployment({
+    id: 'demo',
+    ring: 'internal',
+    slot: 5,
+    d1Id: 'd',
+    domain: 'demo.commerceworker.com',
+    demo: true,
+  });
+  const engine = renderEngine(base('engine'), demo);
+  assert.equal(engine.vars.AI_MODE, 'mock');
+  assert.equal(engine.vars.AI_GATEWAY_ID, '');
+  assert.equal(engine.vars.TIME_SCALE, '1440');
+  assert.equal(engine.vars.SIMULATE_FAILURES, 'true');
+  // No model calls, so no product index to provision or bind.
+  assert.equal(engine.vectorize, undefined);
+  assert.equal(renderEngine(base('engine'), acme).vars.SIMULATE_FAILURES, '');
+  assert.equal(renderWeb(base('web'), demo).vars.DEMO_MODE, 'true');
+  assert.equal(renderWeb(base('web'), acme).vars.DEMO_MODE, '');
+});
+
+test("a customer's auditRetentionDays sets the engine's retention, at least 90 days", () => {
+  const long = toDeployment({ ...acme, auditRetentionDays: 2555 });
+  assert.equal(renderEngine(base('engine'), long).vars.AUDIT_RETENTION_DAYS, '2555');
+  assert.equal(renderEngine(base('engine'), toDeployment(acme)).vars.AUDIT_RETENTION_DAYS, '400');
+  assert.throws(() => toDeployment({ ...acme, auditRetentionDays: 30 }), /at least 90/);
+  assert.throws(() => toDeployment({ ...acme, auditRetentionDays: '400' }), /auditRetentionDays/);
+});
+
+test('workflow AI nodes see personal data only where the registry says send', () => {
+  assert.equal(renderEngine(base('engine'), toDeployment(acme)).vars.AI_PERSONAL_DATA, 'redact');
+  const send = toDeployment({ ...acme, aiPersonalData: 'send' });
+  assert.equal(renderEngine(base('engine'), send).vars.AI_PERSONAL_DATA, 'send');
+  assert.throws(() => toDeployment({ ...acme, aiPersonalData: 'all' }), /aiPersonalData/);
+  assert.equal(toDeployment(acme).aiGatewayLogs, false);
+  assert.equal(toDeployment({ ...acme, aiGatewayLogs: true }).aiGatewayLogs, true);
+});
+
+test("a customer's personalDataRetentionDays sets the sweep's, at least 30 days", () => {
+  // `acme` already carries the default logRetentionDays (400), longer than this: leave it out.
+  const short = toDeployment({
+    ...acme,
+    personalDataRetentionDays: 365,
+    logRetentionDays: undefined,
+  });
+  assert.equal(renderEngine(base('engine'), short).vars.PERSONAL_DATA_RETENTION_DAYS, '365');
+  assert.equal(
+    renderEngine(base('engine'), toDeployment(acme)).vars.PERSONAL_DATA_RETENTION_DAYS,
+    '',
+  );
+  assert.throws(() => toDeployment({ ...acme, personalDataRetentionDays: 7 }), /at least 30/);
+  assert.throws(() => toDeployment({ ...acme, auditArchiveDays: 0 }), /auditArchiveDays/);
+});
+
+test('catalogBackupDays sets how long provision.sh keeps and locks catalog backups, at least 31', () => {
+  assert.equal(toDeployment(acme).catalogBackupDays, 90);
+  assert.equal(shellVars(toDeployment(acme)).CATALOG_BACKUP_DAYS, '90');
+  const year = toDeployment({ ...acme, catalogBackupDays: 365 });
+  assert.equal(shellVars(year).CATALOG_BACKUP_DAYS, '365');
+  assert.equal(toDeployment({ ...acme, catalogBackupDays: 31 }).catalogBackupDays, 31);
+  // Shorter than Durable Objects' 30 days of point-in-time recovery adds nothing.
+  assert.throws(() => toDeployment({ ...acme, catalogBackupDays: 30 }), /at least 31/);
+  assert.throws(() => toDeployment({ ...acme, catalogBackupDays: 45.5 }), /catalogBackupDays/);
+  assert.throws(() => toDeployment({ ...acme, catalogBackupDays: '90' }), /catalogBackupDays/);
+});
+
+test("an EU customer's Durable Objects are in the EU, like their D1 and R2", () => {
+  const eu = toDeployment({ ...acme, jurisdiction: 'eu' });
+  const c = renderEngine(base('engine'), eu);
+  assert.equal(c.vars.DATA_JURISDICTION, 'eu');
+  assert.equal(c.r2_buckets[0].jurisdiction, 'eu');
+  const anywhere = toDeployment({ ...acme, jurisdiction: undefined });
+  assert.equal(renderEngine(base('engine'), anywhere).vars.DATA_JURISDICTION, '');
+});
+
+test("a customer's sso sets the web Worker's identity provider", () => {
+  const sso = toDeployment({
+    ...acme,
+    sso: { issuer: 'https://acme.okta.com', clientId: '0oa123' },
+  });
+  const c = renderWeb(base('web'), sso);
+  assert.equal(c.vars.OIDC_ISSUER, 'https://acme.okta.com');
+  assert.equal(c.vars.OIDC_CLIENT_ID, '0oa123');
+  assert.equal(renderWeb(base('web'), acme).vars.OIDC_ISSUER, '');
+  assert.throws(
+    () => toDeployment({ ...acme, sso: { issuer: 'http://acme.okta.com', clientId: 'x' } }),
+    /https issuer/,
+  );
+  assert.throws(
+    () => toDeployment({ ...acme, sso: { issuer: 'https://acme.okta.com' } }),
+    /clientId/,
+  );
+  // An email without email_verified is trusted only when the registry says so (Entra ID).
+  assert.equal(c.vars.OIDC_TRUST_EMAIL, '');
+  const entra = toDeployment({
+    ...acme,
+    sso: { issuer: 'https://login.microsoftonline.com/t/v2.0', clientId: 'app', trustEmail: true },
+  });
+  assert.equal(renderWeb(base('web'), entra).vars.OIDC_TRUST_EMAIL, 'true');
+  assert.throws(
+    () =>
+      toDeployment({
+        ...acme,
+        sso: { issuer: 'https://acme.okta.com', clientId: 'x', trustEmail: 'yes' },
+      }),
+    /trustEmail/,
+  );
+});
+
+test("a customer's assistantDailyTokens sets the assistant's budget", () => {
+  const big = toDeployment({ ...acme, assistantDailyTokens: 0 });
+  assert.equal(renderEngine(base('engine'), big).vars.ASSISTANT_DAILY_TOKENS, '0');
+  assert.equal(renderEngine(base('engine'), acme).vars.ASSISTANT_DAILY_TOKENS, '1000000');
+  assert.throws(() => toDeployment({ ...acme, assistantDailyTokens: -1 }), /assistantDailyTokens/);
+});
+
+test('payments are mocked unless the registry says stripe, with its publishable key', () => {
+  const mocked = renderEngine(base('engine'), acme);
+  assert.equal(mocked.vars.PAYMENTS_MODE, 'mock');
+  assert.equal(mocked.vars.STRIPE_PUBLISHABLE_KEY, '');
+  const live = toDeployment({
+    ...acme,
+    payments: 'stripe',
+    stripePublishableKey: 'pk_live_abc123',
+  });
+  const engine = renderEngine(base('engine'), live);
+  assert.equal(engine.vars.PAYMENTS_MODE, 'stripe');
+  assert.equal(engine.vars.STRIPE_PUBLISHABLE_KEY, 'pk_live_abc123');
+  assert.throws(() => toDeployment({ ...acme, payments: 'paypal' }), /payments must/);
+  assert.throws(
+    () => toDeployment({ ...acme, payments: 'stripe', stripePublishableKey: 'sk_live_abc' }),
+    /publishable key/,
+  );
+  assert.throws(
+    () => toDeployment({ ...acme, stripePublishableKey: 'pk_test_abc' }),
+    /needs payments/,
+  );
+  assert.throws(
+    () => toDeployment({ id: 'demo', ring: 'internal', slot: 5, demo: true, payments: 'stripe' }),
+    /demo/,
+  );
+});
+
+test('a Stripe deployment needs STRIPE_SECRET_KEY in the same mode as its publishable key', () => {
+  assert.equal(secretsProblem(acme, {}, 'engine'), null);
+  const stripe = toDeployment({ ...acme, payments: 'stripe', stripePublishableKey: 'pk_test_abc' });
+  assert.match(secretsProblem(stripe, {}, 'engine') ?? '', /STRIPE_SECRET_KEY/);
+  assert.match(
+    secretsProblem(stripe, { STRIPE_SECRET_KEY: 'sk_live_x' }, 'engine') ?? '',
+    /both test or both live/,
+  );
+  assert.equal(secretsProblem(stripe, { STRIPE_SECRET_KEY: 'rk_test_x' }, 'engine'), null);
+  // The web Worker doesn't take payments.
+  assert.equal(secretsProblem(stripe, {}, 'web'), null);
+});
+
+test("a customer's turnstileSiteKey turns on the web Worker's Turnstile check", () => {
+  const key = '0x4AAAAAAABkMYinukE8nzY';
+  const guarded = toDeployment({ ...acme, turnstileSiteKey: key });
+  assert.equal(renderWeb(base('web'), guarded).vars.TURNSTILE_SITE_KEY, key);
+  // Always rendered, so a deployment without one never keeps another's.
+  assert.equal(renderWeb(base('web'), acme).vars.TURNSTILE_SITE_KEY, '');
+  assert.equal(shellVars(guarded).TURNSTILE_SITE_KEY, key);
+  assert.equal(shellVars(acme).TURNSTILE_SITE_KEY, '');
+  for (const bad of ['', 'pk_live_abc', '0x4AAA AAAA', '0x1', 42, '0x4AAAAAAABkMYinukE8nzY;'])
+    assert.throws(() => toDeployment({ ...acme, turnstileSiteKey: bad }), /turnstileSiteKey/);
+});
+
+test("Cloudflare's Turnstile test keys are refused in production and on customers", () => {
+  const test = '1x00000000000000000000AA';
+  const production = {
+    id: 'commerceworker',
+    ring: 'internal',
+    slot: 1,
+    domain: 'commerceworker.com',
+    suffix: '',
+    environment: 'production',
+  };
+  for (const k of [test, '2x00000000000000000000AB', '3x00000000000000000000FF']) {
+    assert.throws(() => toDeployment({ ...production, turnstileSiteKey: k }), /test key/);
+    assert.throws(() => toDeployment({ ...acme, turnstileSiteKey: k }), /test key/);
+  }
+  assert.equal(
+    toDeployment({ ...production, turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY' }).turnstileSiteKey,
+    '0x4AAAAAAABkMYinukE8nzY',
+  );
+});
+
+test('a demo may use a Turnstile test key', () => {
+  const demo = {
+    id: 'demo',
+    ring: 'internal',
+    slot: 5,
+    domain: 'demo.commerceworker.com',
+    demo: true,
+  };
+  const d = toDeployment({ ...demo, turnstileSiteKey: '1x00000000000000000000AA' });
+  assert.equal(d.turnstileSiteKey, '1x00000000000000000000AA');
+  assert.equal(
+    renderWeb(base('web'), { ...d, d1Id: 'd1-demo' }).vars.TURNSTILE_SITE_KEY,
+    '1x00000000000000000000AA',
+  );
+  assert.throws(
+    () => toDeployment({ ...demo, turnstileSiteKey: '4x00000000000000000000AA' }),
+    /turnstileSiteKey/,
+  );
+});
+
+test('a deployment with a Turnstile site key needs its secret to deploy', () => {
+  const guarded = toDeployment({ ...acme, turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY' });
+  assert.match(
+    secretsProblem(guarded, {}, 'web') ?? '',
+    /TURNSTILE_SECRET_KEY to the deploy-acme GitHub environment/,
+  );
+  assert.equal(secretsProblem(guarded, { TURNSTILE_SECRET_KEY: '0x4AAAAAAAsecret' }, 'web'), null);
+  // Only the web Worker checks tokens.
+  assert.equal(secretsProblem(guarded, {}, 'engine'), null);
+  assert.equal(secretsProblem(acme, {}, 'web'), null);
+});
+
+const withLedger = toDeployment({
+  id: 'acme',
+  ring: 'canary',
+  slot: 2,
+  d1Id: 'd1-acme',
+  catalogKvId: 'a'.repeat(32),
+  plugins: { ledger: { d1Id: 'd1-ledger' } },
+});
+
+test('no plugins changes nothing in the engine and web configs', () => {
+  const none = toDeployment({ id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1-acme' });
+  assert.deepEqual(none.plugins, {});
+  const bindings = (c: { services: { binding: string }[] }) => c.services.map((s) => s.binding);
+  assert.deepEqual(bindings(renderEngine(base('engine'), none)), bindings(base('engine')));
+  assert.deepEqual(bindings(renderWeb(base('web'), none)), bindings(base('web')));
+});
+
+test('a plugin is bound to the engine and the web Worker by its own Worker name', () => {
+  const binding = { binding: 'PLUGIN_LEDGER', service: 'commerceworker-plugin-ledger-acme' };
+  assert.deepEqual(renderEngine(base('engine'), withLedger).services.at(-1), binding);
+  assert.deepEqual(renderWeb(base('web'), withLedger).services.at(-1), binding);
+});
+
+test('a plugin config gets its own name and database', () => {
+  const pluginBase = { name: 'commerceworker-plugin-ledger', d1_databases: [{ binding: 'DB' }] };
+  const c = renderPlugin(pluginBase, withLedger, 'ledger');
+  assert.equal(c.name, 'commerceworker-plugin-ledger-acme');
+  assert.deepEqual(c.d1_databases[0], {
+    binding: 'DB',
+    database_name: 'commerceworker-plugin-ledger-acme',
+    database_id: 'd1-ledger',
+  });
+  assert.throws(
+    () => renderPlugin(pluginBase, { ...withLedger, plugins: { ledger: {} } }, 'ledger'),
+    /no d1Id/,
+  );
+});
+
+test('plugins are checked: ids, fixtures and provisioning', () => {
+  const raw = { id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1', catalogKvId: 'a'.repeat(32) };
+  assert.throws(() => toDeployment({ ...raw, plugins: ['ledger'] }), /plugins must be an object/);
+  assert.throws(() => toDeployment({ ...raw, plugins: { Bad_Id: {} } }), /not a plugin id/);
+  assert.throws(() => toDeployment({ ...raw, plugins: { example: {} } }), /test fixture/);
+  assert.throws(
+    () => matrix([toDeployment({ ...raw, plugins: { ledger: {} } })]),
+    /not provisioned/,
+  );
+  assert.equal(pluginBinding('qbd-sync'), 'PLUGIN_QBD_SYNC');
+});
+
+test('a plugin may declare only its database and vars, and gets one D1 binding', () => {
+  const base = { name: 'commerceworker-plugin-ledger', main: 'src/index.ts', vars: { A: '1' } };
+  for (const key of [
+    'services',
+    'durable_objects',
+    'r2_buckets',
+    'kv_namespaces',
+    'queues',
+    'routes',
+  ])
+    assert.throws(
+      () => renderPlugin({ ...base, [key]: [] }, withLedger, 'ledger'),
+      new RegExp(`may not declare ${key}`),
+    );
+  assert.throws(
+    () =>
+      renderPlugin(
+        { ...base, d1_databases: [{ binding: 'DB' }, { binding: 'OTHER' }] },
+        withLedger,
+        'ledger',
+      ),
+    /one D1 binding, named DB/,
+  );
+  assert.throws(
+    () => renderPlugin({ ...base, d1_databases: [{ binding: 'CORE' }] }, withLedger, 'ledger'),
+    /named DB/,
+  );
+  assert.deepEqual(renderPlugin(base, withLedger, 'ledger').vars, { A: '1' });
+});
+
+test('a plugin gets only its own PLUGIN_<ID>_* secrets, under their own names', () => {
+  const source = {
+    PRINCIPAL_KEY: 'p',
+    STRIPE_SECRET_KEY: 'sk',
+    PLUGIN_SHIPSTATION_API_KEY: 'k1',
+    PLUGIN_SHIPSTATION_API_SECRET: 's1',
+    PLUGIN_SHIPSTATION_UNSET: '',
+    PLUGIN_LEDGER_API_KEY: 'k2',
+  };
+  assert.deepEqual(pluginOwnSecrets('shipstation', source), { API_KEY: 'k1', API_SECRET: 's1' });
+  assert.deepEqual(pluginOwnSecrets('qbd-sync', { PLUGIN_QBD_SYNC_TOKEN: 't' }), { TOKEN: 't' });
+  assert.throws(
+    () => pluginOwnSecrets('ledger', { PLUGIN_LEDGER_PLUGIN_KEY: 'x' }),
+    /can't be a secret name/,
+  );
+  const raw = { id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1', catalogKvId: 'a'.repeat(32) };
+  assert.throws(
+    () => toDeployment({ ...raw, plugins: { ship: {}, 'ship-rates': {} } }),
+    /can't both be installed/,
+  );
+});
+
+test("a plugin's key is derived from the principal key, as core derives it", () => {
+  // The same vector as packages/core/tests/plugins.test.ts.
+  assert.equal(
+    pluginKey('test-principal-key', 'example'),
+    'bfc9294662be00d5e8ec7e7a857bee5a04f3bb77e41fb5155f6813b6171ec44b',
+  );
+  assert.notEqual(
+    pluginKey('test-principal-key', 'ledger'),
+    pluginKey('test-principal-key', 'example'),
+  );
+});
+
+test("the smoke test's write check is signed as core derives and checks it", () => {
+  // The same vectors as packages/core/tests/roles.test.ts.
+  assert.equal(
+    healthCheckKey('test-principal-key'),
+    '18d9a956eaa3d6d22a3d7ecb24841ac3681037cbdac7c959ec4769600bac71bf',
+  );
+  assert.equal(
+    signHealthCheck('test-principal-key', 0),
+    'h1.eyJwYXRoIjoiL2hlYWx0aC93cml0ZSIsImV4cCI6NjAwMDB9.rbJ6ESveYOBQJ3QeIU0aTX9A8yT7goUa44TzGYYf_p8',
+  );
+  // Its own key: never the principal key, nor any plugin's.
+  assert.notEqual(healthCheckKey('test-principal-key'), 'test-principal-key');
+  assert.notEqual(healthCheckKey('test-principal-key'), pluginKey('test-principal-key', 'health'));
+});
+
+/** A local server answering each request with `answer(n)` (`null`: never answers), and its URL. */
+async function server(answer: (n: number) => { status: number; body: string } | null) {
+  let n = 0;
+  const headers: (string | undefined)[] = [];
+  const s = createServer((req, res) => {
+    headers.push(req.headers['x-commerceworker-health-check'] as string | undefined);
+    const a = answer(++n);
+    if (a) res.writeHead(a.status).end(a.body);
+  });
+  await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', resolve));
+  const { port } = s.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/health/write`,
+    headers,
+    close: () => {
+      s.closeAllConnections();
+      s.close();
+    },
+  };
+}
+
+test('the write check retries until the report is ok, signing each attempt', async () => {
+  const s = await server((n) =>
+    n < 3 ? { status: 503, body: '{"ok":false}' } : { status: 200, body: '{"ok":true}' },
+  );
+  const lines: string[] = [];
+  try {
+    const report = await postWriteCheck(s.url, 'test-principal-key', {
+      deadlineMs: 5_000,
+      delayMs: 10,
+      log: (l) => lines.push(l),
+    });
+    assert.equal(report, '{"ok":true}');
+    assert.equal(s.headers.length, 3);
+    assert.ok(s.headers.every((h) => h?.startsWith('h1.')));
+    // The log says which attempt failed and how, never the header.
+    assert.deepEqual(lines, [
+      'write check attempt 1 failed: 503 {"ok":false}',
+      'write check attempt 2 failed: 503 {"ok":false}',
+    ]);
+  } finally {
+    s.close();
+  }
+});
+
+test('the write check gives up at its deadline, even when the deployment never answers', async () => {
+  const s = await server(() => null);
+  const started = Date.now();
+  try {
+    await assert.rejects(
+      postWriteCheck(s.url, 'test-principal-key', {
+        deadlineMs: 600,
+        attemptMs: 250,
+        delayMs: 100,
+        log: () => {},
+      }),
+      /write check failed/,
+    );
+    // Within the deadline and a little slack: no attempt or wait outlives it.
+    assert.ok(Date.now() - started < 900, `took ${Date.now() - started} ms`);
+    assert.ok(s.headers.length >= 2);
+  } finally {
+    s.close();
+  }
+  // The defaults keep it to the smoke test's five minutes, an attempt to ten seconds.
+  assert.equal(WRITE_CHECK_DEADLINE_MS, 300_000);
+  assert.equal(WRITE_CHECK_ATTEMPT_MS, 10_000);
+});
+
+test('buyer details are granted to a plugin only by its registry entry', () => {
+  const raw = { id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1', catalogKvId: 'a'.repeat(32) };
+  const granted = toDeployment({
+    ...raw,
+    plugins: { ledger: { d1Id: 'x', personalData: 'send' }, qbd: { d1Id: 'y' } },
+  });
+  assert.equal(
+    renderEngine(base('engine'), granted).vars.PLUGIN_GRANTS,
+    '{"ledger":{"personalData":"send"}}',
+  );
+  assert.equal(renderEngine(base('engine'), withLedger).vars.PLUGIN_GRANTS, '');
+  assert.throws(
+    () => toDeployment({ ...raw, plugins: { ledger: { personalData: 'yes' } } }),
+    /can only be "send"/,
+  );
+  assert.throws(
+    () => toDeployment({ ...raw, plugins: { ledger: { events: ['*'] } } }),
+    /unknown keys: events/,
+  );
+});
+
+test('capabilities are granted by the registry, and bind the host API as the plugin itself', () => {
+  const raw = { id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1', catalogKvId: 'a'.repeat(32) };
+  const d = toDeployment({
+    ...raw,
+    plugins: {
+      punchout: { d1Id: 'x', capabilities: ['carts:external', 'orders:start', 'orders:cancel'] },
+      qbd: { d1Id: 'y' },
+    },
+  });
+  assert.equal(
+    renderEngine(base('engine'), d).vars.PLUGIN_GRANTS,
+    '{"punchout":{"capabilities":["carts:external","orders:start","orders:cancel"]}}',
+  );
+  // Cancelling is its own grant: starting orders doesn't bring it.
+  assert.equal(
+    renderEngine(
+      base('engine'),
+      toDeployment({
+        ...raw,
+        plugins: { punchout: { d1Id: 'x', capabilities: ['orders:start'] } },
+      }),
+    ).vars.PLUGIN_GRANTS,
+    '{"punchout":{"capabilities":["orders:start"]}}',
+  );
+  const pluginBase = { name: 'x', main: 'src/index.ts', d1_databases: [{ binding: 'DB' }] };
+  assert.deepEqual(renderPlugin(pluginBase, d, 'punchout').services, [
+    {
+      binding: 'COMMERCEWORKER',
+      service: renderEngine(base('engine'), d).name,
+      entrypoint: 'PluginHost',
+      props: { id: 'punchout' },
+    },
+  ]);
+  const vars = renderEngine(base('engine'), d).vars;
+  assert.equal(vars.APP_ORIGIN, 'https://acme.commerceworker.com');
+  assert.equal(vars.OWN_HOSTS, 'acme.commerceworker.com,catalog.acme.commerceworker.com');
+  // No capability, no host binding.
+  assert.equal(renderPlugin(pluginBase, d, 'qbd').services, undefined);
+  assert.throws(
+    () => toDeployment({ ...raw, plugins: { punchout: { capabilities: ['orders:delete'] } } }),
+    /capabilities must list/,
+  );
+  assert.throws(
+    () =>
+      toDeployment({
+        ...raw,
+        plugins: { punchout: { capabilities: ['orders:start', 'orders:start'] } },
+      }),
+    /at most once/,
+  );
+});
+
+const raw = { id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1', catalogKvId: 'a'.repeat(32) };
+const STORE = '0123456789abcdef0123456789abcdef';
+
+test('a sandboxed plugin has no Worker, binding or database of its own', () => {
+  const d = toDeployment({
+    ...raw,
+    plugins: { ledger: { d1Id: 'd1-ledger' }, carrier: { runtime: 'sandboxed' } },
+  });
+  assert.deepEqual(workerPlugins(d), ['ledger']);
+  assert.deepEqual(sandboxedPlugins(d), ['carrier']);
+  const bindings = (c: { services?: { binding: string }[] }) =>
+    (c.services ?? []).map((s) => s.binding).filter((b) => b.startsWith('PLUGIN_'));
+  assert.deepEqual(bindings(renderEngine(base('engine'), d)), ['PLUGIN_LEDGER']);
+  assert.deepEqual(bindings(renderWeb(base('web'), d)), ['PLUGIN_LEDGER']);
+  assert.throws(() => renderPlugin({}, d, 'carrier'), /sandboxed: no Worker/);
+  // Needs no d1Id to deploy.
+  assert.doesNotThrow(() => matrix([d]));
+  assert.throws(
+    () => toDeployment({ ...raw, plugins: { carrier: { runtime: 'sandboxed', d1Id: 'x' } } }),
+    /sandboxed: it has no D1 database/,
+  );
+  assert.throws(() => toDeployment({ ...raw, plugins: { carrier: { runtime: 'vm' } } }), /runtime/);
+});
+
+test('plugin ids are refused when reserved or with a double dash', () => {
+  for (const id of ['bundles', 'secrets', 'grants', 'key', 'publishers'])
+    assert.throws(() => toDeployment({ ...raw, plugins: { [id]: {} } }), /reserved/);
+  assert.throws(() => toDeployment({ ...raw, plugins: { 'a--b': {} } }), /not a plugin id/);
+  assert.throws(() => toDeployment({ ...raw, plugins: { 'ab-': {} } }), /not a plugin id/);
+});
+
+test('on its own account, plugin secrets are bound from the Secrets Store', () => {
+  const d = toDeployment({
+    ...raw,
+    secretsStore: { storeId: STORE },
+    plugins: {
+      ledger: { d1Id: 'd1-ledger', secrets: ['API_KEY'] },
+      carrier: { runtime: 'sandboxed', secrets: ['API_KEY', 'HOOK'] },
+    },
+  });
+  assert.deepEqual(renderEngine(base('engine'), d).secrets_store_secrets, [
+    {
+      binding: 'PLUGIN_SECRET_CARRIER__API_KEY',
+      store_id: STORE,
+      secret_name: 'PLUGIN_CARRIER_API_KEY',
+    },
+    { binding: 'PLUGIN_SECRET_CARRIER__HOOK', store_id: STORE, secret_name: 'PLUGIN_CARRIER_HOOK' },
+  ]);
+  const plugin = renderPlugin({ name: 'x', d1_databases: [{ binding: 'DB' }] }, d, 'ledger');
+  assert.deepEqual(plugin.secrets_store_secrets, [
+    { binding: 'API_KEY', store_id: STORE, secret_name: 'PLUGIN_LEDGER_API_KEY' },
+  ]);
+  assert.throws(() => toDeployment({ ...raw, secretsStore: { storeId: 'nope' } }), /secretsStore/);
+  assert.throws(
+    () => toDeployment({ ...raw, plugins: { carrier: { secrets: ['lower'] } } }),
+    /secret names/,
+  );
+});
+
+test('a shared account binds no Secrets Store', () => {
+  const d = toDeployment({ ...raw, plugins: { carrier: { runtime: 'sandboxed' } } });
+  assert.equal(renderEngine(base('engine'), d).secrets_store_secrets, undefined);
+});
+
+test('the deploy finds a plugin’s missing secrets, by name only', () => {
+  const shared = toDeployment({ ...raw, plugins: { carrier: { runtime: 'sandboxed' } } });
+  assert.deepEqual(
+    missingPluginSecrets(shared, 'carrier', ['API_KEY', 'HOOK'], {
+      env: { PLUGIN_CARRIER_API_KEY: 'k', PLUGIN_CARRIER_HOOK: '' },
+    }),
+    ['HOOK'],
+  );
+  const own = toDeployment({
+    ...raw,
+    secretsStore: { storeId: STORE },
+    plugins: { carrier: { runtime: 'sandboxed', secrets: ['API_KEY'] } },
+  });
+  assert.deepEqual(
+    missingPluginSecrets(own, 'carrier', ['API_KEY', 'HOOK'], {
+      stored: ['PLUGIN_CARRIER_API_KEY', 'PLUGIN_CARRIER_HOOK'],
+    }),
+    // HOOK is in the store but not listed in the registry, so nothing binds it.
+    ['HOOK'],
+  );
+  assert.deepEqual(missingPluginSecrets(own, 'carrier', ['API_KEY'], { stored: [] }), ['API_KEY']);
+});
+
+test('runtime installs are off unless the registry lists publishers', () => {
+  const key = 'gzGcgrEQxp3cOiLXbe8UXlTefRdy8Xrf_p9OxPz7dNI';
+  const on = toDeployment({ ...raw, pluginInstalls: { publishers: { acme: key } } });
+  assert.equal(renderEngine(base('engine'), on).vars.PLUGIN_PUBLISHERS, `{"acme":"${key}"}`);
+  assert.equal(renderEngine(base('engine'), toDeployment(raw)).vars.PLUGIN_PUBLISHERS, undefined);
+  // Not the base config's (app.commerceworker.com's) "on": only a registry that asks for it.
+  assert.equal(base('engine').vars.ASSISTANT_PLUGINS, 'on');
+  assert.equal(renderEngine(base('engine'), on).vars.ASSISTANT_PLUGINS, undefined);
+  assert.equal(renderEngine(base('engine'), toDeployment(raw)).vars.ASSISTANT_PLUGINS, undefined);
+  const drafts = toDeployment({ ...raw, pluginInstalls: { assistant: true } });
+  assert.equal(renderEngine(base('engine'), drafts).vars.ASSISTANT_PLUGINS, 'on');
+  assert.equal(renderEngine(base('engine'), drafts).vars.PLUGIN_PUBLISHERS, undefined);
+  for (const bad of [
+    {},
+    { publishers: {} },
+    { publishers: { Acme: key } },
+    { publishers: { acme: 'short' } },
+    { publishers: { assistant: key } },
+    { publishers: { acme: key }, extra: true },
+    { assistant: 'yes' },
+  ])
+    assert.throws(() => toDeployment({ ...raw, pluginInstalls: bad }), /pluginInstalls/);
+});
+
+test('the publisher tool signs what core verifies', async () => {
+  const { keygen, signBundle, signingMessage } = await import('./plugin-pack.ts');
+  const { publicKey, privatePem } = keygen();
+  const file = signBundle(
+    { body: '{}', sha: 'a'.repeat(64), manifest: { id: 'carrier', version: '2' } },
+    'acme',
+    privatePem,
+  );
+  const key = await crypto.subtle.importKey(
+    'raw',
+    Buffer.from(publicKey, 'base64url'),
+    { name: 'Ed25519' },
+    false,
+    ['verify'],
+  );
+  const ok = await crypto.subtle.verify(
+    { name: 'Ed25519' },
+    key,
+    Buffer.from(file.signature, 'base64url'),
+    new TextEncoder().encode(signingMessage('carrier', '2', 'a'.repeat(64))),
+  );
+  assert.equal(ok, true);
+  assert.equal(signingMessage('a', 'b', 'c'), 'commerceworker-plugin:1:a:b:c');
+});
+
+test('a plugin alias is one free path segment, rendered into the web Worker', () => {
+  const raw = { id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1', catalogKvId: 'a'.repeat(32) };
+  const d = toDeployment({
+    ...raw,
+    plugins: { punchout: { alias: '/punchout/', runtime: 'sandboxed' } },
+  });
+  assert.equal(renderWeb(base('web'), d).vars.PLUGIN_ALIASES, '{"/punchout/":"punchout"}');
+  // None: empty, so the base config's never carries over.
+  const none = toDeployment({ ...raw, plugins: { punchout: { runtime: 'sandboxed' } } });
+  assert.equal(renderWeb(base('web'), none).vars.PLUGIN_ALIASES, '');
+  const refused = (alias: unknown, more = {}) =>
+    assert.throws(() =>
+      toDeployment({ ...raw, plugins: { punchout: { alias, runtime: 'sandboxed' }, ...more } }),
+    );
+  for (const alias of ['punchout', '/Punchout/', '/a/', '/punch/out/', '/punchout', 7, '/../'])
+    refused(alias);
+  for (const reserved of ['/orders/', '/api/', '/plugins/', '/carts/', '/login/'])
+    refused(reserved);
+  assert.throws(
+    () =>
+      toDeployment({
+        ...raw,
+        plugins: {
+          punchout: { alias: '/buy/', runtime: 'sandboxed' },
+          ledger: { alias: '/buy/', runtime: 'sandboxed' },
+        },
+      }),
+    /also/,
+  );
+});
+
+test('the reserved path segments cover every top-level path the web app serves', () => {
+  const routes = readFileSync(new URL('../apps/web/app/routes.ts', import.meta.url), 'utf8');
+  const worker = readFileSync(new URL('../apps/web/workers/app.ts', import.meta.url), 'utf8');
+  const segments = new Set<string>();
+  for (const m of routes.matchAll(/route\('([a-z0-9-]+)/g)) segments.add(m[1]!);
+  for (const m of worker.matchAll(/'\/([a-z0-9-]+)[/']/g)) segments.add(m[1]!);
+  for (const s of ['ucp', 'scim', 'mcp', 'a2a', 'oauth']) segments.add(s); // via *_PATH constants
+  const missing = [...segments].filter((s) => !RESERVED_PATH_SEGMENTS.has(s));
+  assert.deepEqual(missing, []);
+});
+
+test('the deploy refuses a shared key too short to sign with', () => {
+  const key = 'a'.repeat(64);
+  assert.equal(keysProblem({ PRINCIPAL_KEY: key, DATA_KEY: key }), null);
+  // The password pepper too, when it's set.
+  assert.equal(keysProblem({ PRINCIPAL_KEY: key, DATA_KEY: key, PASSWORD_PEPPER: key }), null);
+  assert.match(
+    keysProblem({ PRINCIPAL_KEY: key, DATA_KEY: key, PASSWORD_PEPPER: 'short' }) ?? '',
+    /^PASSWORD_PEPPER must be at least 32 characters/,
+  );
+  assert.match(
+    keysProblem({ PRINCIPAL_KEY: 'short', DATA_KEY: key, DATA_KEY_PREVIOUS: 'x'.repeat(31) }) ?? '',
+    /^PRINCIPAL_KEY, DATA_KEY_PREVIOUS must be at least 32 characters/,
+  );
+});
+
+test('logRetentionDays sets how long the logs bucket keeps pushed logs, at least 30', () => {
+  assert.equal(toDeployment(acme).logRetentionDays, 400);
+  assert.equal(shellVars(toDeployment(acme)).LOG_RETENTION_DAYS, '400');
+  assert.equal(shellVars(toDeployment(acme)).LOGS_R2, 'commerceworker-logs-acme');
+  const month = toDeployment({ ...acme, logRetentionDays: 30 });
+  assert.equal(shellVars(month).LOG_RETENTION_DAYS, '30');
+  // Workers Logs already keeps 7 days; a week or two more is not worth a bucket.
+  assert.throws(() => toDeployment({ ...acme, logRetentionDays: 7 }), /at least 30/);
+  assert.throws(() => toDeployment({ ...acme, logRetentionDays: 90.5 }), /logRetentionDays/);
+  assert.throws(() => toDeployment({ ...acme, logRetentionDays: '400' }), /logRetentionDays/);
+});
+
+test("every Worker of a deployment sends its trace events to Logpush, plugins' too", () => {
+  const demo = toDeployment({ ...acme, id: 'acme-demo', demo: true });
+  for (const d of [...loadDeployments().filter((x) => x.d1Id && x.catalogKvId), acme, demo]) {
+    for (const [app, render] of [
+      ['engine', renderEngine],
+      ['web', renderWeb],
+      ['catalog', renderCatalog],
+      ['catalog-edge', renderCatalogEdge],
+    ] as const)
+      assert.equal(render(base(app), d).logpush, true, `${d.id}: ${app}`);
+  }
+  const pluginBase = { name: 'commerceworker-plugin-ledger', d1_databases: [{ binding: 'DB' }] };
+  assert.equal(renderPlugin(pluginBase, withLedger, 'ledger').logpush, true);
+  // The deployment decides, not the plugin.
+  assert.throws(
+    () => renderPlugin({ ...pluginBase, logpush: false }, withLedger, 'ledger'),
+    /may not declare logpush/,
+  );
+});
+
+test("a deployment's Logpush job takes only its own Workers, without the request", () => {
+  const d = toDeployment({
+    ...acme,
+    plugins: { ledger: { d1Id: 'd1-ledger' }, carrier: { runtime: 'sandboxed' } },
+  });
+  const job = logpushJob(d);
+  assert.equal(job.name, 'commerceworker-workers-acme');
+  assert.equal(job.bucket, 'commerceworker-logs-acme');
+  // A sandboxed plugin runs in the engine: no Worker of its own to name.
+  assert.deepEqual(job.scripts, [
+    'commerceworker-web-acme',
+    'commerceworker-engine-acme',
+    'commerceworker-catalog-acme',
+    'commerceworker-catalog-edge-acme',
+    'commerceworker-plugin-ledger-acme',
+  ]);
+  assert.deepEqual(JSON.parse(job.filter), {
+    where: { key: 'ScriptName', operator: 'in', value: job.scripts },
+  });
+  assert.deepEqual(job.output_options.field_names, LOG_FIELDS);
+  assert.ok(LOG_FIELDS.includes('Logs') && LOG_FIELDS.includes('Exceptions'));
+  // The request's URL, headers and client details stay out of the bucket.
+  assert.ok(!LOG_FIELDS.includes('Event'));
+  // On a shared account each job is filtered to its own deployment's Workers, so none takes
+  // another's, and no two deployments share a job or a bucket.
+  const all = [...loadDeployments(), d];
+  const seen = new Map<string, string>();
+  for (const x of all)
+    for (const s of logpushJob(x).scripts) {
+      assert.equal(seen.get(s), undefined, `${s} is in ${seen.get(s)}'s job and ${x.id}'s`);
+      seen.set(s, x.id);
+    }
+  assert.equal(new Set(all.map((x) => logpushJob(x).name)).size, all.length);
+  assert.equal(new Set(all.map((x) => logpushJob(x).bucket)).size, all.length);
+});
+
+test("a Logpush filter past Logpush's 1,000 bytes is refused before provisioning", () => {
+  const plugins = Object.fromEntries(
+    Array.from({ length: 30 }, (_, i) => [`plugin-number-${i}`, { d1Id: `d1-${i}` }]),
+  );
+  assert.throws(() => logpushJob(toDeployment({ ...acme, plugins })), /Logpush filter/);
+});
+
+test('provision.sh parses', () => {
+  execFileSync('bash', ['-n', join(import.meta.dirname, 'provision.sh')]);
+});
+
+test('logs never outlast the personal data the sweep erases', () => {
+  // With personalDataRetentionDays, logRetentionDays defaults to it rather than 400.
+  const unset = { ...acme, logRetentionDays: undefined };
+  assert.equal(toDeployment({ ...unset, personalDataRetentionDays: 90 }).logRetentionDays, 90);
+  assert.equal(
+    toDeployment({ ...acme, personalDataRetentionDays: 90, logRetentionDays: 60 }).logRetentionDays,
+    60,
+  );
+  assert.throws(
+    () => toDeployment({ ...acme, personalDataRetentionDays: 90, logRetentionDays: 400 }),
+    /can't be longer than personalDataRetentionDays/,
+  );
+  assert.equal(toDeployment({ ...acme, logRetentionDays: 800 }).logRetentionDays, 800);
+});
+
+test("provisioning finds any other Logpush job that would take the deployment's logs", () => {
+  const d = toDeployment(acme);
+  const where = (w: unknown) => JSON.stringify({ where: w });
+  const jobs = [
+    // Its own job, by name.
+    { id: 1, name: 'commerceworker-workers-acme', filter: logpushJob(d).filter },
+    // Another project's job, filtered to its own Workers.
+    { id: 2, name: 'blog', filter: where({ key: 'ScriptName', operator: 'in', value: ['blog'] }) },
+    // Another deployment's job.
+    { id: 3, name: 'commerceworker-workers', filter: logpushJob(loadDeployments()[0]!).filter },
+    // One that keeps out every commerceworker Worker.
+    {
+      id: 4,
+      name: 'not-ours',
+      filter: where({ key: 'ScriptName', operator: '!startsWith', value: 'commerceworker-' }),
+    },
+    // No filter at all: every Worker that sets logpush.
+    { id: 5, name: 'everything', filter: '' },
+    { id: 6, name: 'null filter', filter: null },
+    // Names one of ours.
+    {
+      id: 7,
+      name: 'snoop',
+      filter: where({ key: 'ScriptName', operator: 'eq', value: 'commerceworker-engine-acme' }),
+    },
+    // Filters on something else only: still every Worker.
+    {
+      id: 8,
+      name: 'errors',
+      filter: where({ key: 'Outcome', operator: 'eq', value: 'exception' }),
+    },
+    // An `or` with a branch that lets ours in.
+    {
+      id: 9,
+      name: 'mixed',
+      filter: where({
+        or: [
+          { key: 'ScriptName', operator: 'eq', value: 'blog' },
+          { key: 'ScriptName', operator: 'startsWith', value: 'commerceworker-web' },
+        ],
+      }),
+    },
+    // An `and` that keeps them out.
+    {
+      id: 10,
+      name: 'blog errors',
+      filter: where({
+        and: [
+          { key: 'ScriptName', operator: 'eq', value: 'blog' },
+          { key: 'Outcome', operator: 'eq', value: 'exception' },
+        ],
+      }),
+    },
+    // A filter that doesn't parse is taken as none.
+    { id: 11, name: 'garbled', filter: '{where' },
+  ];
+  assert.deepEqual(
+    foreignJobsReaching(jobs, d).map((j) => j.id),
+    [5, 6, 7, 8, 9, 11],
+  );
+  assert.deepEqual(foreignJobsReaching(jobs.slice(0, 4), d), []);
+});
+
+test("Logpush's R2 token writes objects in the logs bucket and nothing else", () => {
+  const account = 'f'.repeat(32);
+  const groups = [
+    { id: 'g-read', name: 'Workers R2 Storage Bucket Item Read' },
+    { id: 'g-write', name: 'Workers R2 Storage Bucket Item Write' },
+    { id: 'g-admin', name: 'Workers R2 Storage Write' },
+  ];
+  const plain = toDeployment({ ...acme, jurisdiction: undefined });
+  const t = logpushToken(plain, account, groups);
+  assert.deepEqual(t, {
+    name: 'commerceworker-logpush-acme',
+    policies: [
+      {
+        effect: 'allow',
+        resources: {
+          [`com.cloudflare.edge.r2.bucket.${account}_default_commerceworker-logs-acme`]: '*',
+        },
+        permission_groups: [{ id: 'g-write' }],
+      },
+    ],
+  });
+  // An EU bucket's resource names its jurisdiction.
+  assert.deepEqual(Object.keys(logpushToken(acme, account, groups).policies[0]!.resources), [
+    `com.cloudflare.edge.r2.bucket.${account}_eu_commerceworker-logs-acme`,
+  ]);
+  // The group is taken by its exact name, and only when there is exactly one.
+  assert.throws(() => logpushToken(acme, account, groups.slice(0, 1)), /found 0/);
+  assert.throws(
+    () => logpushToken(acme, account, [...groups, { id: 'g-2', name: groups[1]!.name }]),
+    /found 2/,
+  );
+  assert.throws(() => logpushToken(acme, 'not-an-account', groups), /account id/);
+
+  // An existing token is rolled only when it holds exactly that policy.
+  const details = (policies: unknown[], name = t.name) => ({ name, policies });
+  const named = (p: (typeof t.policies)[0]) => ({
+    id: 'policy-1',
+    ...p,
+    permission_groups: p.permission_groups.map((g) => ({ ...g, name: groups[1]!.name })),
+  });
+  assert.equal(tokenMatches(details([named(t.policies[0]!)]), t), true);
+  assert.equal(tokenMatches(details([named(t.policies[0]!)], 'other'), t), false);
+  assert.equal(tokenMatches(details([]), t), false);
+  assert.equal(tokenMatches(details([named(t.policies[0]!), named(t.policies[0]!)]), t), false);
+  assert.equal(
+    tokenMatches(details([{ ...named(t.policies[0]!), resources: { '*': '*' } }]), t),
+    false,
+  );
+  assert.equal(
+    tokenMatches(
+      details([
+        {
+          ...named(t.policies[0]!),
+          resources: { ...t.policies[0]!.resources, 'com.cloudflare.edge.r2.bucket.x': '*' },
+        },
+      ]),
+      t,
+    ),
+    false,
+  );
+  assert.equal(
+    tokenMatches(
+      details([
+        { ...named(t.policies[0]!), permission_groups: [{ id: 'g-write' }, { id: 'g-admin' }] },
+      ]),
+      t,
+    ),
+    false,
+  );
+  assert.equal(tokenMatches(details([{ ...named(t.policies[0]!), effect: 'deny' }]), t), false);
+});

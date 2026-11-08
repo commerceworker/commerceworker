@@ -1,0 +1,388 @@
+/**
+ * A plugin's page drawn by the app: the plugin answered with a view (`PluginView`) and the web
+ * Worker checked it and handed it here in the load context (app/lib/plugin-view.ts), so the page
+ * has the app's shell, components and theme while the plugin only sent data. Links and forms are
+ * ordinary document requests to the plugin's own pages; nothing here talks to a plugin.
+ */
+
+import {
+  type CheckedPluginView,
+  type PluginViewBlock,
+  type PluginViewCell,
+  type PluginViewForm,
+  pluginViewHref,
+} from '@commerceworker/core';
+import { Alert, AlertDescription, AlertTitle } from '@commerceworker/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@commerceworker/ui/alert-dialog';
+import { Button } from '@commerceworker/ui/button';
+import { Card } from '@commerceworker/ui/card';
+import { Field, FieldDescription, FieldLabel } from '@commerceworker/ui/field';
+import { Input } from '@commerceworker/ui/input';
+import { cn } from '@commerceworker/ui/lib/utils';
+import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
+import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
+import { Textarea } from '@commerceworker/ui/textarea';
+import { useId, useRef, useState } from 'react';
+import { data, useLoaderData } from 'react-router';
+import { Body, Empty, PageHeader, Section } from '~/components/page';
+import { requireUser } from '~/lib/auth.server';
+import { pluginPageContext } from '~/lib/plugin-view';
+import type { Route } from './+types/plugin-page';
+
+export const meta = ({ loaderData: d }: Route.MetaArgs) => [
+  { title: `${d?.view?.title ?? 'Plugin'} · CommerceWorker` },
+];
+
+export async function loader({ request, context, params }: Route.LoaderArgs) {
+  await requireUser(request);
+  const page = context.get(pluginPageContext);
+  // Only the Worker renders this route, with the plugin's view; any other way here is a miss.
+  if (!page || page.pluginId !== params.pluginId) throw data('Not found', { status: 404 });
+  // The plugin's own status, if it is an error; anything else (a 204 or 304 can't carry a page) is a 200.
+  const status = page.error ? 502 : page.status >= 400 && page.status <= 599 ? page.status : 200;
+  return data({ ...page, base: `/plugins/${page.pluginId}/` }, { status });
+}
+
+/** The view arrived with the request that rendered it; there is nothing to fetch again. */
+export const shouldRevalidate = () => false;
+
+const TONE: Record<string, string> = {
+  default: '',
+  muted: 'text-muted-foreground',
+  ok: 'text-ok',
+  warning: 'text-wait',
+  bad: 'text-bad',
+};
+
+/** An alert's tone, as the app's Alert draws it: `info` is a plain note. */
+const ALERT: Record<
+  Extract<PluginViewBlock, { type: 'alert' }>['tone'],
+  'default' | 'success' | 'warning' | 'destructive'
+> = {
+  info: 'default',
+  success: 'success',
+  warning: 'warning',
+  error: 'destructive',
+};
+
+export default function PluginPage() {
+  const { view, error, base, pluginId } = useLoaderData<typeof loader>();
+  if (!view)
+    return (
+      <>
+        <PageHeader title="This page can't be shown" />
+        <Body>
+          <Alert variant="destructive">
+            <AlertTitle>
+              The {pluginId} plugin answered with a page CommerceWorker can't draw
+            </AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </Body>
+      </>
+    );
+  return <View view={view} base={base} />;
+}
+
+function View({ view, base }: { view: CheckedPluginView; base: string }) {
+  const href = (t: string) => pluginViewHref(base, t) ?? base;
+  return (
+    <>
+      <PageHeader
+        title={view.title}
+        subtitle={view.description}
+        actions={view.actions?.map((a) => (
+          <Button key={a.href} asChild variant="outline" size="sm">
+            <a href={href(a.href)}>{a.label}</a>
+          </Button>
+        ))}
+      />
+      <Body className="grid gap-4">
+        {view.blocks.map((b, i) =>
+          b.type === 'section' ? (
+            <Section key={`${b.title}-${i}`} title={b.title} description={b.description}>
+              <div className="grid gap-4">
+                {b.blocks.map((x, j) => (
+                  <Block key={`${x.type}-${j}`} block={x} base={base} />
+                ))}
+              </div>
+            </Section>
+          ) : (
+            <Block key={`${b.type}-${i}`} block={b} base={base} />
+          ),
+        )}
+      </Body>
+    </>
+  );
+}
+
+type Leaf = Exclude<PluginViewBlock, { type: 'section' }>;
+
+function Block({ block: b, base }: { block: Leaf; base: string }) {
+  const href = (t: string) => pluginViewHref(base, t) ?? base;
+  switch (b.type) {
+    case 'text':
+      return <p className={cn('max-w-measure text-sm', TONE[b.tone])}>{b.text}</p>;
+    case 'alert':
+      return (
+        <Alert variant={ALERT[b.tone]}>
+          {b.title ? <AlertTitle>{b.title}</AlertTitle> : null}
+          <AlertDescription>{b.text}</AlertDescription>
+        </Alert>
+      );
+    case 'stats':
+      return (
+        // Figures as small cards: the label, then the value large (as the Overview's figures).
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {b.items.map((s) => (
+            <Card key={s.label} size="sm" className="min-w-0 gap-1 px-(--card-spacing)">
+              <dt className="text-muted-foreground text-xs">{s.label}</dt>
+              <dd className="break-words font-semibold text-2xl tabular-nums tracking-title">
+                {s.value}
+              </dd>
+              {s.hint ? <dd className="text-muted-foreground text-xs">{s.hint}</dd> : null}
+            </Card>
+          ))}
+        </dl>
+      );
+    case 'table':
+      return b.rows.length ? (
+        <Card className="relative gap-0 overflow-clip py-0">
+          {/* A plugin's columns stack under their labels on a phone, as the core's tables do. */}
+          <Table stack="cards" scroll>
+            <TableHead>
+              <Tr>
+                {b.columns.map((c) => (
+                  <Th key={c.key} numeric={c.align === 'right'}>
+                    {c.label}
+                  </Th>
+                ))}
+                {b.rows.some((r) => r.actions?.length) ? (
+                  <Th className="w-0">
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                ) : null}
+              </Tr>
+            </TableHead>
+            <TableBody>
+              {b.rows.map((r, i) => (
+                <Tr key={i}>
+                  {b.columns.map((c, ci) => (
+                    <Td
+                      key={c.key}
+                      numeric={c.align === 'right'}
+                      label={ci ? c.label : undefined}
+                      className="align-top"
+                    >
+                      <Cell cell={r.cells[c.key]} href={href} />
+                    </Td>
+                  ))}
+                  {r.actions?.length ? (
+                    <Td className="py-1 text-right max-md:basis-full">
+                      <div className="flex gap-1 md:justify-end">
+                        {r.actions.map((a) => (
+                          <FormBlock key={`${a.action}-${a.submit}`} form={a} href={href} inline />
+                        ))}
+                      </div>
+                    </Td>
+                  ) : null}
+                </Tr>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      ) : (
+        <Card className="py-0">
+          <Empty>{b.empty ?? 'Nothing here yet.'}</Empty>
+        </Card>
+      );
+    case 'form':
+      return <FormBlock form={b} href={href} />;
+    case 'code':
+      return (
+        <div className="grid gap-1.5">
+          {b.label ? <span className="font-medium text-sm">{b.label}</span> : null}
+          <pre className="overflow-x-auto rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm">
+            {b.text}
+          </pre>
+        </div>
+      );
+    case 'list':
+      return (
+        <ul className="grid list-disc gap-1 pl-5 text-sm">
+          {b.items.map((it, i) =>
+            typeof it === 'string' ? (
+              <li key={i}>{it}</li>
+            ) : (
+              <li key={it.href}>
+                <a href={href(it.href)} className="text-link hover:underline">
+                  {it.label}
+                </a>
+              </li>
+            ),
+          )}
+        </ul>
+      );
+  }
+}
+
+function Cell({ cell, href }: { cell: PluginViewCell | undefined; href: (t: string) => string }) {
+  if (cell === undefined) return null;
+  if (typeof cell !== 'object') return <>{cell}</>;
+  const body = (
+    <span className={cn(cell.mono && 'font-mono text-xs', TONE[cell.tone ?? 'default'])}>
+      {cell.text}
+    </span>
+  );
+  return cell.href ? (
+    <a href={href(cell.href)} className="text-link hover:underline">
+      {body}
+    </a>
+  ) : (
+    body
+  );
+}
+
+/** An ordinary form post to the plugin's page; the reply is the next page, drawn the same way. */
+function FormBlock({
+  form,
+  href,
+  inline = false,
+}: {
+  form: PluginViewForm;
+  href: (t: string) => string;
+  inline?: boolean;
+}) {
+  const id = useId();
+  const visible = form.fields.filter((f) => f.kind !== 'hidden');
+  const ref = useRef<HTMLFormElement>(null);
+  // Set once the person confirms, so the resubmit goes through.
+  const confirmed = useRef(false);
+  const [asking, setAsking] = useState(false);
+  const tone = form.tone === 'danger' ? 'destructive' : 'default';
+  return (
+    <form
+      ref={ref}
+      method="post"
+      action={href(form.action)}
+      className={
+        inline
+          ? 'inline'
+          : 'grid max-w-xl gap-4 card p-(--card-spacing) [--card-spacing:--spacing(5)]'
+      }
+      onSubmit={(e) => {
+        if (!form.confirm || confirmed.current) return;
+        e.preventDefault();
+        setAsking(true);
+      }}
+    >
+      {form.confirm ? (
+        <AlertDialog open={asking} onOpenChange={setAsking}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{form.submit}?</AlertDialogTitle>
+              <AlertDialogDescription>{form.confirm}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Go back</AlertDialogCancel>
+              <AlertDialogAction
+                variant={tone}
+                onClick={() => {
+                  confirmed.current = true;
+                  ref.current?.requestSubmit();
+                }}
+              >
+                {form.submit}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+      {form.fields
+        .filter((f) => f.kind === 'hidden')
+        .map((f) => (
+          <input key={f.name} type="hidden" name={f.name} value={String(f.value ?? '')} />
+        ))}
+      {visible.map((f) => {
+        const fid = `${id}-${f.name}`;
+        const value = f.value === undefined ? undefined : String(f.value);
+        return (
+          <Field
+            key={f.name}
+            orientation={f.kind === 'checkbox' ? 'horizontal' : 'vertical'}
+            className={cn('gap-1.5', f.kind === 'checkbox' && 'flex-wrap gap-x-2')}
+          >
+            {f.kind === 'checkbox' ? (
+              <input
+                id={fid}
+                type="checkbox"
+                name={f.name}
+                value="on"
+                defaultChecked={f.value === true || f.value === 'on'}
+              />
+            ) : null}
+            <FieldLabel htmlFor={fid} className={f.kind === 'checkbox' ? 'font-normal' : undefined}>
+              {f.label}
+            </FieldLabel>
+            {f.kind === 'textarea' ? (
+              <Textarea
+                id={fid}
+                name={f.name}
+                defaultValue={value}
+                required={f.required}
+                placeholder={f.placeholder}
+              />
+            ) : f.kind === 'select' ? (
+              <NativeSelect
+                id={fid}
+                name={f.name}
+                defaultValue={value}
+                required={f.required}
+                className="h-8"
+              >
+                {(f.options ?? []).map((o) => (
+                  <NativeSelectOption key={o.value} value={o.value}>
+                    {o.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            ) : f.kind === 'checkbox' ? null : (
+              <Input
+                id={fid}
+                name={f.name}
+                type={f.kind}
+                defaultValue={value}
+                required={f.required}
+                placeholder={f.placeholder}
+                // A password manager shouldn't offer this app's sign-in on a plugin's form.
+                autoComplete={f.kind === 'password' ? 'new-password' : 'off'}
+                className="h-8"
+              />
+            )}
+            {f.hint ? (
+              <FieldDescription className="text-xs basis-full">{f.hint}</FieldDescription>
+            ) : null}
+          </Field>
+        );
+      })}
+      <div>
+        <Button
+          type="submit"
+          size="sm"
+          variant={tone === 'destructive' ? tone : inline ? 'ghost' : 'default'}
+        >
+          {form.submit}
+        </Button>
+      </div>
+    </form>
+  );
+}

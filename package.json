@@ -1,0 +1,52 @@
+{
+  "name": "commerceworker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CommerceWorker \u2014 an agent loop for the commerce order lifecycle, built on Cloudflare Workers, Workflows and Durable Objects. Turborepo + Biome.",
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "biome format --write .",
+    "check-types": "turbo run check-types",
+    "web:dev": "pnpm --filter @commerceworker/web dev",
+    "engine:dev": "pnpm --filter @commerceworker/engine dev",
+    "docs:dev": "pnpm --filter @commerceworker/docs dev",
+    "docs:build": "pnpm --filter @commerceworker/docs build",
+    "docs:deploy": "pnpm --filter @commerceworker/docs run deploy",
+    "db:migrate:local": "pnpm --filter @commerceworker/web db:migrate:local",
+    "db:seed:local": "pnpm --filter @commerceworker/web db:seed:local",
+    "db:seed:volume": "pnpm --filter @commerceworker/web db:seed:volume --",
+    "db:seed:catalog": "pnpm --filter @commerceworker/web db:seed:catalog --",
+    "db:seed:records": "pnpm --filter @commerceworker/web db:seed:records --",
+    "db:seed:live": "pnpm --filter @commerceworker/web db:seed:live --",
+    "db:seed:all": "pnpm --filter @commerceworker/web db:seed:all --",
+    "deploy": "pnpm --filter @commerceworker/catalog run deploy && pnpm --filter @commerceworker/catalog-edge run deploy && pnpm --filter @commerceworker/engine run deploy && pnpm --filter @commerceworker/web run deploy",
+    "test:fleet": "node --test scripts/*.test.ts",
+    "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
+    "plugin:pack": "node scripts/plugin-pack.ts",
+    "plugin:check": "node scripts/plugin-check.ts",
+    "punchout:smoke": "node scripts/punchout-smoke.ts",
+    "catalog:bench": "node scripts/catalog-bench.ts",
+    "fleet": "node scripts/fleet.ts",
+    "generate": "turbo run generate",
+    "studio:dev": "turbo run generate && pnpm studio:db:migrate:local && pnpm --filter @commerceworker/studio dev",
+    "studio:db:migrate:local": "pnpm --filter @commerceworker/studio exec wrangler d1 migrations apply DB --local",
+    "studio:dev:reset": "rm -rf apps/studio/.wrangler/state && pnpm studio:db:migrate:local",
+    "sync:theme": "pnpm --filter @commerceworker/design sync:theme"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/node": "catalog:",
+    "jsonc-parser": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "packageManager": "pnpm@10.34.5"
+}

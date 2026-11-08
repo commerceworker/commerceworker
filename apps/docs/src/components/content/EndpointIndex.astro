@@ -1,0 +1,81 @@
+---
+/*
+ * Every REST operation, grouped as the API's own OpenAPI document groups them (x-tagGroups, then
+ * tags). The document is generated from the API's mounted routes before each build
+ * (scripts/openapi.ts), so this list is the routes at this commit. Bodies and responses are in the
+ * explorer at /api/.
+ */
+import spec from '../../generated/content-openapi.json';
+
+interface Operation {
+  summary?: string;
+  description?: string;
+  tags?: string[];
+}
+interface Spec {
+  paths: Record<string, Record<string, Operation>>;
+  tags?: { name: string; description?: string }[];
+  'x-tagGroups'?: { name: string; tags: string[] }[];
+}
+
+const doc = spec as unknown as Spec;
+const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
+
+const byTag = new Map<string, { method: string; path: string; summary: string }[]>();
+for (const [path, ops] of Object.entries(doc.paths)) {
+  for (const method of METHODS) {
+    const op = ops[method];
+    if (!op) continue;
+    const tag = op.tags?.[0] ?? 'Other';
+    const upper = method.toUpperCase();
+    // Undescribed routes carry a placeholder summary ("GET /path"); show nothing rather than echo.
+    const summary = op.summary && op.summary !== `${upper} ${path}` ? op.summary : '';
+    const list = byTag.get(tag) ?? [];
+    list.push({ method: upper, path, summary });
+    byTag.set(tag, list);
+  }
+}
+for (const list of byTag.values()) list.sort((a, b) => a.path.localeCompare(b.path));
+
+const tagInfo = new Map((doc.tags ?? []).map((t) => [t.name, t.description ?? '']));
+const groups = doc['x-tagGroups'] ?? [{ name: 'Endpoints', tags: [...byTag.keys()] }];
+const sections = groups.map((g) => ({
+  name: g.name,
+  tags: g.tags
+    .filter((t) => byTag.has(t))
+    .map((t) => ({ name: t, description: tagInfo.get(t) ?? '', ops: byTag.get(t) ?? [] })),
+}));
+const total = [...byTag.values()].reduce((n, l) => n + l.length, 0);
+---
+
+<p class="cw-index-count">{total} operations.</p>
+{
+  sections.map((s) => (
+    <div class="cw-endpoint-group">
+      <p class="cw-fact-label">{s.name}</p>
+      {s.tags.map((t) => (
+        <details>
+          <summary>
+            {t.name} <span class="cw-muted">({t.ops.length})</span>
+          </summary>
+          {t.description && <p>{t.description}</p>}
+          <table class="cw-endpoints">
+            <tbody>
+              {t.ops.map((o) => (
+                <tr>
+                  <td class="cw-method" data-method={o.method}>
+                    {o.method}
+                  </td>
+                  <td>
+                    <code>{o.path}</code>
+                  </td>
+                  <td>{o.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ))}
+    </div>
+  ))
+}

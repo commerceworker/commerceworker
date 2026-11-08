@@ -1,0 +1,44 @@
+---
+/*
+ * The web app's theme menu, as a select: Light (the default), Dark, Match system. Starlight's own
+ * picker re-applies the OS scheme on load when nothing is stored, which would undo the light
+ * default; this one only acts on a change. See ThemeProvider.astro.
+ */
+import Select from '@astrojs/starlight/components/Select.astro';
+---
+
+<starlight-theme-select>
+  <Select
+    icon="sun"
+    label="Theme"
+    options={[
+      { label: 'Light', selected: true, value: 'light' },
+      { label: 'Dark', selected: false, value: 'dark' },
+      { label: 'Match system', selected: false, value: 'auto' },
+    ]}
+    width="8.25em"
+  />
+</starlight-theme-select>
+
+<script is:inline>
+  StarlightThemeProvider.updatePickers();
+</script>
+
+<script>
+  class StarlightThemeSelect extends HTMLElement {
+    constructor() {
+      super();
+      this.querySelector('select')?.addEventListener('change', (e) => {
+        if (!(e.currentTarget instanceof HTMLSelectElement)) return;
+        const v = e.currentTarget.value;
+        const choice = v === 'dark' || v === 'auto' ? v : 'light';
+        try {
+          localStorage.setItem('starlight-theme', choice);
+        } catch {}
+        StarlightThemeProvider.apply(choice);
+        StarlightThemeProvider.updatePickers(choice);
+      });
+    }
+  }
+  customElements.define('starlight-theme-select', StarlightThemeSelect);
+</script>

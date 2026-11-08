@@ -1,0 +1,51 @@
+---
+title: From uploaded asset to a file served at media.{domain}
+---
+flowchart LR
+    accTitle: From uploaded asset to a file served at media.{domain}
+    accDescr: The api worker's createAsset mints a short-lived signed PUT URL, and the uploaded bytes land in the object storage media bucket ①. The bucket's object-create notification, and the api's own upload event as a second trigger, reach the engine through the commerceworker-asset-events queue, which starts exactly one AssetIngestWorkflow run per file version ②. The run reads the bytes back from object storage to hash them, probes dimensions and builds a placeholder with the image transforms binding, asks edge inference through the AI gateway for alt text, tags, extracted text and embeddings, indexes the asset in its SearchShard objects and vector index namespace, and records each step in the database ③. Publishing the asset commits its published snapshot and an asset.published outbox row to the database ④, and when the engine consumes that event, syncAssetGate writes the media gate entry in the key-value store; the engine is the only writer of the gate ⑤. A reader requests a published file URL on the media host ⑥. The uncached media gateway checks the URL's token before anything else, negotiates AVIF or WebP from Accept for a variant, and forwards a canonical URL to the cached Media entrypoint ⑦; it also serves Preview's short-lived signed draft reads straight from object storage, uncached ⑧. On a cache miss the Media entrypoint reads the gate, falling back to a database replica, and serves the original from object storage or a variant from edge image transforms, cached as immutable ⑨.
+
+    Api[api worker: createAsset and signed PUT]:::primary
+    R2[(Object storage MEDIA_BUCKET)]:::store
+    D1[(Database, primary and replicas)]:::store
+    Search[(SearchShardDO and vector asset indexes)]:::store
+    AI([Edge inference via the AI gateway]):::external
+    Images([Image transforms binding]):::external
+    Reader([Browser or app reading media]):::external
+
+    subgraph EngineW["engine worker: the only writer of the gate"]
+        Ingest[[AssetIngestWorkflow, one run per file version]]:::focal
+        Sync[syncAssetGate on asset events]:::primary
+    end
+
+    KV[(KV_CACHE media gate)]:::focal
+
+    subgraph MediaW["media worker at media.&lt;domain&gt;"]
+        MGw[media gateway, uncached]:::primary
+        MEnt[Media entrypoint, edge cache]:::primary
+    end
+
+    Api -->|"① stores bytes from signed PUT"| R2
+    R2 -.->|"② notifies object-create via asset-events"| Ingest
+    Api -.->|also enqueues upload event| Ingest
+    Ingest -->|"③ reads bytes to hash"| R2
+    Ingest -->|probes size, builds placeholder| Images
+    Ingest -->|requests alt text, tags, text, embeddings| AI
+    Ingest -->|indexes asset text and vectors| Search
+    Ingest -->|records ingest status| D1
+    Api -->|"④ commits snapshot and outbox row on publish"| D1
+    D1 -.->|relays asset.published| Sync
+    Sync ==>|"⑤ writes or removes gate entry"| KV
+
+    Reader -->|"⑥ GETs /space/env/asset/vN/token/variant/file"| MGw
+    MGw ==>|"⑦ checks token, negotiates format"| MEnt
+    MGw -->|"⑧ serves signed draft reads"| R2
+    MEnt ==>|"⑨ reads gate on miss"| KV
+    MEnt -.->|falls back on gate miss| D1
+    MEnt -->|reads original| R2
+    MEnt -->|transforms variants| Images
+
+    classDef focal    stroke-width:2px,font-weight:bold
+    classDef primary  stroke-width:1px
+    classDef external stroke-width:1px,stroke-dasharray:4 3
+    classDef store    stroke-width:1px

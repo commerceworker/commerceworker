@@ -1,0 +1,57 @@
+{
+  "name": "@commerceworker/http",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The HTTP surface as a library: Hono routes for Management, Preview and Delivery, auth and rate limiting, OpenAPI, OAuth/OIDC/setup, the MCP server and skills, media and live routes. The api and delivery Workers compose it; neither owns it.",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "generate": "node scripts/generate-skills.ts",
+    "generate:skills": "node scripts/generate-skills.ts",
+    "postinstall": "node scripts/generate-skills.ts"
+  },
+  "dependencies": {
+    "@cloudflare/ai-chat": "catalog:",
+    "@commerceworker/adapters": "workspace:*",
+    "@commerceworker/agent-runtime": "workspace:*",
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/docs-index": "workspace:*",
+    "@commerceworker/domain": "workspace:*",
+    "@commerceworker/graphql-gen": "workspace:*",
+    "@commerceworker/platform": "workspace:*",
+    "@commerceworker/ports": "workspace:*",
+    "@commerceworker/redaction": "workspace:*",
+    "@commerceworker/sdk-codegen": "workspace:*",
+    "@commerceworker/security": "workspace:*",
+    "@commerceworker/seed": "workspace:*",
+    "@commerceworker/telemetry": "workspace:*",
+    "@commerceworker/test-kit": "workspace:*",
+    "@hono/standard-validator": "catalog:",
+    "@modelcontextprotocol/server": "catalog:",
+    "@scalar/hono-api-reference": "catalog:",
+    "agents": "catalog:",
+    "ai": "catalog:",
+    "graphql": "catalog:",
+    "hono": "catalog:",
+    "hono-openapi": "catalog:",
+    "zod": "catalog:",
+    "zod-openapi": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/cli": "workspace:*",
+    "@commerceworker/sdk-core": "workspace:*",
+    "@commerceworker/sdk-management": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@modelcontextprotocol/client": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,18 @@
+---
+title: Workflow templates
+description: The built-in workflows a new one can start from, with every node and edge.
+---
+
+import WorkflowTemplates from '../../../components/content/WorkflowTemplates.astro';
+
+Each template is an ordinary workflow: start from one, change any node, and publish it as your own.
+This page is generated from the templates themselves when the docs are built. Each template's
+anchor is its id, and each node links to its entry in the [node catalog](/content/reference/nodes/).
+
+No template gates publishing. **Editorial review** and **Moderate then publish** start from
+`trigger.publish_requested`, which doesn't start runs yet, so no run of them could publish a
+gated entry. To make a workflow the only route to publishing the entries it covers, start it from
+**Submit for review** (`trigger.manual`) with a **Publish** node and turn on **Gate publishing**;
+see [Gate publishing](/content/guides/workflows/#gate-publishing).
+
+<WorkflowTemplates />

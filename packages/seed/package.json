@@ -1,0 +1,31 @@
+{
+  "name": "@commerceworker/seed",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/domain": "workspace:*",
+    "@commerceworker/ports": "workspace:*",
+    "@commerceworker/telemetry": "workspace:*"
+  },
+  "devDependencies": {
+    "@commerceworker/test-kit": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

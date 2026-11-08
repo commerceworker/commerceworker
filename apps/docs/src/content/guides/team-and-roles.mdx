@@ -1,0 +1,464 @@
+---
+title: Team and roles
+description: Who can sign in, what viewers, approvers, operators and admins may do, setting up the first admin, recovering admin access, two-factor sign-in, single sign-on, who may approve their own orders, API tokens and the audit log.
+---
+
+Each person signs in with their own email and password, or through your organization's identity provider ([single sign-on](#single-sign-on)), and has one role. API tokens carry a role
+too. The roles are ordered, so each one can do everything the roles before it can:
+
+| Role | Can |
+|---|---|
+| `viewer` | See orders, flows, approvals and the Commerce page; use the [assistant](/guides/assistant/) to read |
+| `approver` | Also approve and reject approvals, including through the assistant |
+| `operator` | Also start, cancel and restart orders, deliver events, create, edit and publish flows, run the stock review, add, verify and revoke customers' [tax exemption certificates](/guides/fulfillment/#tax-exemption), write the [product catalog](/guides/product-catalog/) (deleting a channel needs `admin`), and have the assistant do those and draft flow changes |
+| `admin` | Also manage the team and API tokens, webhook subscriptions and integration keys, republish the catalog, update the product index (**Update product index** under Inventory on the Commerce page), read the audit log, and install and manage plugins at **Plugins** (in the sidebar's Workspace group) ([Installing a plugin](/guides/installing-plugins/)) |
+
+Every request checks the role on the server; the dashboard also hides controls a role can't use.
+
+## The first admin
+
+A new workspace has nobody on it, and until it does, every page and API route except the setup page
+refuses requests: a browser is sent to `/setup`, anything else gets `503` with "This workspace is
+not set up yet." Whoever runs your workspace sends you the link to `/setup` and a **setup code**.
+Enter the code, your email, an optional name and a password of your own (10 or more characters).
+That creates an admin account, signs you in and takes you to the Team page, where you add everyone
+else. Operators and admins must use [two-factor sign-in](#requiring-it) unless an admin chooses otherwise,
+so you are asked to set it up on your Account page right away.
+
+The code works once. If creating the account fails (for example because the email isn't valid) the
+code still works. A wrong code is refused, counted per address (10 wrong codes in 15 minutes, then
+`429` and a wait) and recorded in the [audit log](#audit-log).
+
+A workspace can also ask for a security check (Cloudflare Turnstile) on the setup page and on the
+sign-in page's password form, to keep bots from guessing codes and passwords. Most people see it
+pass on its own; sometimes it asks you to tick a box. **Sign in** and **Create admin account** wait
+until it has passed, and after a refused attempt it runs again. Signing in with a passkey or single
+sign-on, and the two-factor code, don't ask for it.
+
+## Recovering admin access
+
+If no admin can sign in, ask whoever runs your workspace for a new setup code. It opens `/setup`
+once more, and the person who uses it creates a new admin account (with an email not already on the
+team), recorded as `team.recovery_admin`. From there they can reset anyone else's password.
+
+To avoid needing that, keep a second admin account with [two-factor sign-in](#two-factor-sign-in)
+turned on, and store its credentials and recovery codes offline. Disable it when you don't want it
+to be able to sign in; you can enable it again later. The setup code is the last resort.
+
+If your workspace is [single sign-on only](#single-sign-on) and the identity provider is down or
+misconfigured, redeeming a setup code also turns **Single sign-on only** off, so the new admin signs
+in with their password. It is recorded as `team.sso_settings` with the setup code as the cause.
+
+## The Team page
+
+Admins manage people and tokens at `/team`:
+
+Changes that hand out access, or lower the bar for it, ask you to confirm it's you first (a
+**step-up**): a current code from your authenticator app if you use two-factor sign-in, else your
+password, else signing in again with single sign-on within the last ten minutes. They are making an
+API token or the SCIM token, adding an admin or making someone one (directly, or by having an
+identity provider group give Admin), enabling someone above Viewer, resetting someone's password or
+two-factor sign-in, and saving the single sign-on or two-factor settings. Disabling and demoting
+people, revoking tokens and the approvals setting don't ask: they take access away rather than
+hand it out. A wrong answer is refused,
+counted against the same limit as other step-ups and audited as `auth.step_up_failed`. A step-up
+on an assistant card counts for ten minutes on that session: other cards in that time confirm
+without asking again. Changing a role, the approvals setting and the assistant setting (whether
+[exact requests](/guides/assistant/#exact-requests-without-the-chat-model) run without the chat
+model) go through the assistant's cards,
+and only a signed-in admin can make them, never an API token.
+
+- **Add person** (beside **People**): email, optional name and role. The page shows a generated 20-character
+  [temporary password](#temporary-passwords) once, with a **Copy** button; send it to them
+  privately.
+- **Role:** pick a new one and **Save** appears beside it. Saving asks on the
+  [assistant](/guides/assistant/#edits-from-a-page)'s confirm card, which asks for the step-up
+  there when you make someone an admin. You can't lower your own role. Lowering
+  someone's role revokes the API tokens they made with a role above their new one; their [connected apps](#connected-apps) follow
+  the new role on their own.
+- **Actions** (the **⋯** button at the end of a person's row) holds the rest, each confirmed under
+  the row before it happens:
+  - **Reset password:** after you confirm, gives the person a new temporary password, signs them
+    out everywhere, disconnects their [connected apps](#connected-apps) and removes their
+    [passkeys](#passkeys), since whoever had the old password could have set those up.
+  - **Disable / Enable:** after you confirm, a disabled person can't sign in, their sessions end, their
+    connected apps are disconnected and the API tokens they made are revoked. Enabling them again
+    brings none of these back. You can't disable yourself.
+  - **Reset two-factor:** for someone who has lost their phone and their recovery codes. After you
+    confirm, it turns
+    their [two-factor sign-in](#two-factor-sign-in) off, so they sign in with their password alone and
+    can set it up again. It also removes their [passkeys](#passkeys), in case the lost device holds
+    one, and ends their sessions and connected apps, which that device may still be signed in to. It
+    applies even if they had passkeys but no authenticator app. You can't reset your own.
+- The last active admin can't be demoted or disabled, so someone can always manage the team.
+- **Single sign-on:** when your identity provider is connected, a section for who may join and
+  whether it is the only way in; see [Single sign-on](#single-sign-on).
+
+Passwords must be 10 to 256 characters, not a common password and not contain the email address or its part before the `@` (when that is 4 or more characters).
+They are stored only as salted PBKDF2-SHA256 hashes, mixed with a secret your deployment keeps apart from its database, so a copy of the database alone doesn't reveal them.
+
+A session is a `__Host-cmw_session` cookie holding a random token, of which only a hash is stored.
+It ends 30 days after sign-in, or after 7 days without use (12 hours for an admin), whichever comes first. Pages and what you do on the
+order page's live connection count as use, recorded at most every 5 minutes; the connection's own
+checks in the background and the assistant panel's refresh of what's waiting don't, so a page left
+open still lets the session end. Signing out deletes the
+session.
+
+### Temporary passwords
+
+A password an admin sets (a new person's, or a reset) is temporary. Signing in with it works,
+but until the person chooses their own on the **Account** page, every other page sends them there,
+and the REST API, MCP, A2A, the order page's live connection and order documents answer `403`.
+Choosing a new password ends it, and the Team page marks people still on one with
+"temporary password". A temporary password stops working 7 days after it was set; an admin resets
+it again if it went unused.
+
+### Your sessions
+
+The **Account** page lists where you're signed in: each session's browser and system, address,
+sign-in time and last activity, with this browser marked. **Sign out** ends one other session;
+**Sign out everywhere else** ends all but this one. Changing your password also signs you out
+everywhere else and disconnects your [connected apps](#connected-apps), in case the old password
+leaked; connect them again afterwards. An admin's **Reset password**, **Reset two-factor** or
+**Disable** on the Team page ends all of a person's sessions.
+
+### Two-factor sign-in
+
+On the **Account** page, **Set up two-factor sign-in** shows a QR code and the same key as text.
+Scan it with an authenticator app (1Password, Google Authenticator, Authy and others), then enter
+the code the app shows and your password to turn it on. From then on, after a correct password,
+sign-in goes to `/login/two-factor` and asks for the app's current 6-digit code. You have 10
+minutes to enter it.
+
+Turning it on shows 10 recovery codes once, like `k7mqp-3xw9d`, with **Copy** and **Download**;
+**I've saved them** moves on. Each code signs you in once instead of an app code, for a lost or
+broken phone (on the sign-in step, **Use a recovery code**); the Account page shows how many are
+left and warns at three. **New recovery codes** replaces them all, and **Turn off** removes
+two-factor sign-in after a confirmation; each asks for your password. If you have no phone and no
+codes left, an admin can **Reset two-factor** on the Team page.
+
+Codes are time-based one-time passwords (RFC 6238: HMAC-SHA1, 30-second steps, 6 digits). The code
+for the step before or after the current one is accepted too, in case the phone's clock is a little
+off, and each step's code works once. Recovery codes are stored as hashes and deleted when used.
+API tokens don't use two-factor sign-in.
+
+### Passkeys
+
+Once your password is your own, the **Account** page has a **Passkeys** section listing each
+passkey's name, whether it is synced (backed up across your devices) or on this device only, when it
+was added and when it was last used. **Add a passkey** takes an optional name (up to 60 characters)
+and your current password, then your browser or device asks you to confirm. Each authenticator can
+be registered once. **Remove** also asks for your password. Passkeys are not available on the shared
+demo, whose Account page is read-only.
+
+On the sign-in page, **Sign in with a passkey** (shown when the browser supports WebAuthn) opens the
+browser's passkey prompt. A verified passkey, with the device's user verification (a fingerprint,
+face or PIN), signs you in fully: no password and no two-factor code. It keeps the page you were
+heading to. Each deployment's passkeys are its own: a passkey is bound to the host you are on.
+CommerceWorker stores only the passkey's public key.
+
+The challenge behind each attempt works once and expires after 5 minutes. A failure (an expired
+challenge, an unknown passkey, a disabled person, or an answer that doesn't verify, including a
+signature counter that goes backwards) counts against the address's sign-in limit and is audited as
+`auth.sign_in_failed`.
+
+A passkey does not count toward the [two-factor requirement](#requiring-it), which only an
+authenticator app meets, so password sign-in stays protected for everyone the requirement covers.
+
+#### Requiring it
+
+Admins choose who must use two-factor sign-in under **Two-factor sign-in** on the Team page:
+nobody, admins, operators and admins (the default until an admin chooses), approvers, operators and admins, or everyone. The section counts the people
+covered who haven't set it up. Until they do, those people can only use their Account page: every
+other page sends them there, and the REST API, the order page's live connection and order documents
+answer `403`. They can't turn it off while it is required, but can make new recovery codes. Changing
+the setting takes effect within 30 seconds. With the default, an operator or admin without it can only use their Account page until they set it up. The shared demo visitor is exempt, and API tokens aren't affected. If you raise the requirement to your own role, set up your own
+two-factor sign-in first, or you'll be sent to your Account page to do it.
+
+### Failed sign-ins
+
+Failed sign-ins are counted in 15-minute windows, and an attempt over a limit is refused with
+`429` and a wait before any password or code is checked, even when it is right:
+
+| Counted per | Failures allowed | Stops |
+|---|---|---|
+| Email and address together | 5 | Guessing one person's password from one place |
+| Address | 30 | One place trying many accounts |
+| Email | 50 | Many places trying one account. It doesn't hold back a place the person has signed in from before, so nobody can lock them out by failing at their address |
+| Person, at the code step | 5 | Guessing two-factor codes after a correct password |
+| Address, at the setup page | 10 | Guessing the setup code (`429`) |
+| Person, on the Account page | 5 | Guessing the current password from a signed-in browser left open: changing the password, turning off two-factor sign-in, new recovery codes (`429`) |
+
+Failed passkey sign-ins count against the address. A successful sign-in clears its email-and-address count. A sign-in with no email counts against
+`(no email)`. API tokens aren't throttled: they are long random values, so a busy address can't lock
+out working integrations. The address is the client's IP as Cloudflare sees it.
+
+## Single sign-on
+
+People can sign in through your organization's OpenID Connect identity provider (Okta, Microsoft
+Entra ID, Google Workspace and others). Ask whoever runs your CommerceWorker deployment to connect it;
+they need your provider's issuer URL and a client id and secret from it. Until it is connected, none
+of this appears.
+
+Once it is, the sign-in page has **Sign in with single sign-on**. It sends you to the provider; when
+you come back you are signed in, with the same session as a password gives you, and taken to the
+page you were heading to. The first time, CommerceWorker matches you to the person with the same email
+(only if the provider says the address is verified; a provider that leaves out the claim, such as
+Entra ID, counts only when whoever runs your deployment says its addresses can be trusted) and links your provider identity to them, so later sign-ins match the
+identity itself. If that person signs in here with a password, you enter it once (and your
+two-factor code, if you use one) before the identity is linked, even when the workspace is single
+sign-on only: the provider vouching for an email doesn't hand over an account that has a password.
+An email already linked to a different identity is refused. Disabled people are refused. If the attempt can't finish, the sign-in page says so with one of three messages: it didn't
+finish (try again, then tell an admin), you aren't on the team, or your account is disabled. The
+audit log has the reason.
+
+Under **Single sign-on** on the Team page, admins choose:
+
+- **Someone not on the team:** **Is refused** (the default) or **Joins as** a role, at most
+  Operator: nobody new joins as an admin. With a role,
+  anyone the provider signs in whose email domain is listed is added with that role on their first
+  sign-in, with no password.
+- **From these email domains:** the domains allowed to join, separated by commas or spaces. A role
+  needs at least one.
+- **Single sign-on only:** turns off passwords and passkeys. Sign in with single sign-on yourself
+  once first; the page refuses otherwise. Password and passkey sign-in are then refused, nobody is
+  sent to set up an authenticator app or change a temporary password, and the sign-in page shows
+  only the single sign-on button. Your provider handles two-factor sign-in.
+
+People who have no password (the ones single sign-on added) are never asked for the app's
+[two-factor sign-in](#two-factor-sign-in). On the **Account** page, they, and everyone while
+single sign-on only is on, see a **Sign-in** note in place of the password, two-factor and passkey
+sections.
+
+Disabling someone at the provider doesn't end a session they already have; it ends when it would
+have anyway. **Disable** on the Team page ends it now, and
+[SCIM provisioning](#provisioning-with-scim) can do it for you as the provider changes.
+
+Changes are audited as `team.sso_settings`; links as `auth.sso_linked`; people added by sign-in as
+`team.user_added`, shown "by single sign-on"; and each sign-in as `auth.sign_in`, shown "with single
+sign-on". A failed one is `auth.sign_in_failed` with the reason and `method: sso`.
+
+## Provisioning with SCIM
+
+Your identity provider (Okta, Microsoft Entra ID and others) can add people, update them and turn
+them off here by itself, over SCIM 2.0. Under **SCIM provisioning** on the Team page, admins find
+the **Endpoint** (your address followed by `/scim/v2`) and make the token to give the provider.
+
+- **The token.** **Make a token** shows a value starting `cmw_scim_` once; copy it into the
+  provider's provisioning settings as a bearer token. Only a hash is kept, so a lost token can't be
+  shown again: **Replace token** makes a new one and the old one stops working at once, and
+  **Revoke** stops provisioning until you make another. A token works for a year after it was
+  made; replace it before then. With no token, or an expired one, every request is refused
+  (`401`). Requests are limited in rate, like the rest of the API.
+- **What the provider can do.** Create, list, look up, update and delete people (**Users**) and
+  groups (**Groups**), by the standard SCIM operations (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`).
+  Lists are paged (`startIndex` from 1, `count` up to 200) and can be filtered with `eq` on
+  `userName`, `externalId`, `displayName` or `id`, the way providers look for a match. Both Okta's
+  and Entra ID's phrasing of a change is understood.
+- **People.** `userName` is the email. Someone added this way is a **Viewer** with no password, so
+  they [sign in with single sign-on](#single-sign-on): connect it first. The first time they do,
+  they are matched to their provisioned entry by email. An email already on the team is refused
+  with a `409` (`uniqueness`). Changes to a name, email or the provider's id for them are kept,
+  except a new email for someone who hasn't linked single sign-on yet and either signs in with a
+  password or has a role their provisioned groups don't give them: that is refused with a `400`
+  (`mutability`) until they have signed in with single sign-on once, since the first single sign-on
+  matches people by email.
+- **Deactivating.** Setting `active` to `false`, or deleting the person at the provider, disables
+  them here and ends their access at once: their sessions, the [connected apps](#connected-apps)
+  they authorised and the [API tokens](#api-tokens) they made are all revoked. A delete also takes
+  them out of their groups and keeps them on the Team page as disabled. Activating them again
+  turns the person back on; their sessions and tokens stay ended.
+- **The last admin.** The last active admin can't be deactivated this way: the provider gets a
+  `409`. Make someone else an admin first.
+- **Groups to roles.** Groups the provider pushes appear under **Groups from your identity
+  provider**, each with a choice of **Gives no role** or **Gives** a role. Someone in groups that
+  give roles has the highest of those roles; someone whose groups give none has Viewer. A person's
+  role is re-worked when a mapped group gains or loses a member, when a mapped group is deleted
+  and when an admin saves the mapping. A group with no role changes nobody's role, so roles you
+  set by hand for people outside mapped groups stay. When a group change lowers someone's role,
+  the API tokens they made with a higher role are revoked, as on the Team page. The last active admin is never demoted by
+  this; the audit log notes that it was kept.
+
+Everything SCIM does is audited as it is done by SCIM provisioning (`team.user_added`,
+`team.user_updated`, `team.user_disabled` with how many sessions, apps and tokens it ended,
+`team.user_enabled` and `team.role_changed`). Making and revoking the token are `scim.token_created`
+and `scim.token_revoked`; changing the mapping is `team.scim_roles`. Role changes that follow a
+mapping change are recorded as the admin who saved it.
+
+## Approvals
+
+Under **Approvals** on the Team page, **Who started an order** is **May approve it** (the default) or
+**Can't approve it**. With the second, the person or API token that started an order can't approve
+or reject its approvals, so a second person always decides. The order records who started it when it
+is started from **New order**, a dashboard demo scenario, a flow editor test run, a restart,
+`POST /api/v1/orders` or an A2A `place_order`. Orders from inbound channel webhooks, Shopify, EDI,
+email intake and the stock review have no starter, and anyone with the `approver` role may decide
+them. The starter is never taken from a request body.
+
+The rule holds wherever a decision is made: the order page, the approvals inbox, the REST API, the
+[assistant](/guides/assistant/), MCP and A2A. A refused decision says "You started this order, so
+someone else must decide its approvals." Turning it on applies to decisions made from then on,
+including on orders already waiting.
+
+The same setting keeps whoever added a customer's [tax exemption certificate](/guides/fulfillment/#tax-exemption)
+from verifying it: with **Can't approve it**, someone else must press **Verify**.
+
+## API tokens
+
+Systems that call the [REST API](/reference/rest-api/) use a token:
+
+```bash
+curl https://app.commerceworker.com/api/v1/orders -H "Authorization: Bearer cmw_live_…"
+```
+
+Create one on the Team page with **Create token** (beside **API tokens**), giving a name (what will use it), a role (`viewer` is preselected) and how long it lasts: 30 days,
+90 days (the default) or 1 year. Every token expires. The token is shown once and stored only as a hash; the
+list shows its first 12 characters, who created it, when it was last used and when it expires,
+highlighting tokens that expire within 14 days. Revoke it there. An expired token gets `401` with
+`This API token expired on <date>…`; create a new one and switch the integration over before the
+old one runs out. Tokens made before expiry existed still never expire until revoked. A token's role limits it like a person's: an `approver` token can
+decide approvals but not start orders. Approval decisions made with a token are recorded as
+`token:<name>`.
+
+## Connected apps
+
+MCP clients such as Claude connect at `/mcp`, and A2A agents at `/a2a`; each asks you to approve it on a consent page, where
+you sign in (two-factor included) and choose a role. Granting more than **Viewer** asks for a
+[step-up](#the-team-page) first, since the app keeps access for weeks. An app acts for the person who connected it. You can grant your own role or a lower one, never a higher one, and never `admin`, so an app is at most an `operator` and can't use the admin-only `draft_plugin` tool. **Account** lists **Connected apps**, each with whether it is an AI client
+(MCP) or an agent (A2A), the address its access goes to, its role and when it connected;
+**Disconnect** ends it after a confirmation. Every request from a connected app re-reads you: if you are
+disabled it stops working, and its role is the lower of what you granted and what you have now. What
+it does is recorded as `<email> via MCP` or `<email> via A2A`. A grant is for one endpoint, so
+an app that uses both is connected twice. See [MCP server](/reference/mcp/) and
+[A2A endpoint](/reference/a2a/).
+
+## Audit log
+
+Admins see security and business events at **Audit log** (in the sidebar's Workspace group, and linked from the Team page, `/audit`), newest first,
+filtered by kind, and through [`GET /api/v1/audit-events`](/reference/rest-api/#audit-events).
+Each event records when, who acted, what they acted on, details and the address. The page names
+an API token by its name ("ERP sync (API token)"), and links an order, cart, customer or flow it
+acted on to its page:
+
+| Kind | Actions |
+|---|---|
+| Sign-in | `auth.sign_in`, `auth.sign_in_failed` (with the email tried and why: unknown email, wrong password, disabled, no password set, no email, or password sign-in refused because the workspace is single sign-on only), `auth.sign_in_throttled`, `auth.sign_out`, `auth.password_changed` (and how many connected apps it disconnected), `auth.session_ended` (device and address), `auth.other_sessions_ended` (how many), `auth.two_factor_enabled`, `auth.two_factor_disabled`, `auth.two_factor_failed` (wrong code or wrong recovery code), `auth.two_factor_throttled`, `auth.recovery_codes_replaced`, `auth.recovery_code_used` (how many are left), `auth.sso_linked` (an existing person's first single sign-on; `confirmed: password` when they gave their password first), `auth.reauthenticated` (signed in again with single sign-on to confirm a sensitive change), `auth.step_up_failed` (a sensitive change refused because the step-up didn't pass, with which change and why). `auth.passkey_added` and `auth.passkey_removed` (with the passkey's name). A two-factor `auth.sign_in` records whether it used the app or a recovery code; a passkey `auth.sign_in` is shown "with a passkey" |
+| Team | `team.first_admin`, `team.recovery_admin` (a new admin from a new setup code), `team.setup_refused` (a wrong setup code), `team.user_added`, `team.user_updated` (a new name or email), `team.role_changed` (from and to, and how many tokens a demotion revoked), `team.password_reset` (how many sessions, apps and passkeys it ended), `team.user_disabled` (how many sessions, apps and tokens it ended, whether SCIM or an admin disabled them), `team.user_enabled`, `team.two_factor_reset` (also notes when passkeys were removed, and how many sessions and apps ended), `team.two_factor_requirement` (from and to), `team.approval_separation` (from and to: `on` or `off`), `team.sso_settings` (from and to), `team.scim_roles` (from and to, which groups give which role) |
+| SCIM provisioning | `scim.token_created` (notes when it replaced an old one), `scim.token_revoked` |
+| API tokens | `token.created` (role, prefix and `expiresAt`), `token.revoked` |
+| Integrations | `integration.created`, `integration.rotated`, `integration.revoked` (the target is the integration's name; the detail has its `id`) |
+| Agentic checkout | `ucp.settings` (the checkout flow, from and to), `ucp.platform_added` (the target is the platform's name; the detail has its `id` and profile URL), `ucp.platform_revoked` |
+| Connected apps | `oauth.app_connected` (role and client id), `oauth.app_disconnected`, `oauth.refresh_reused` (an app revoked because an old refresh token was presented again) |
+| API access | `api.token_expired`, at most hourly per token, when an expired token is used |
+| Orders | `order.started` (the flow, and the version, test run, scenario, restarted-from order, channel and external id where they apply), `order.cancelled` (the reason), `order.event_delivered` (the event and the node that was waiting) |
+| Approvals | `approval.decided` (the node, the decision and the note) |
+| Carts | `cart.created` (the target is the cart; the detail has its flow), `cart.changed` (one per change, with its `op`), `cart.canceled`. Submitting a cart is the `order.started` of its order, with the `cartId` |
+| Flows | `flow.saved` (a draft saved on purpose: **Save** or ⌘S, a new flow, or a duplicate with the flow it came `from`; not an autosave), `flow.published` (name and version), `flow.archived` and `flow.restored` (a never-published draft set aside or brought back) |
+| Webhooks | `webhook.subscribed` (the subscription's id and events), `webhook.rotated`, `webhook.unsubscribed` |
+| Stock review | `stock.review_run` (the Workflow instance) |
+| Tax certificates | `tax_certificate.added`, `tax_certificate.verified`, `tax_certificate.revoked` (the target is the customer id; the detail has the certificate id) |
+| Catalog | `catalog.products_written` (counts of created, updated, unchanged and rejected products, and `urgent`), `catalog.products_deleted`, `catalog.type_saved` (the target is the type's code; the detail has its version), `catalog.channel_saved`, `catalog.categories_saved`, `catalog.type_deleted`, `catalog.channel_deleted`, `catalog.categories_deleted`, `catalog.feed_started` (the target is the feed id), `catalog.feed_cancelled` (the target is the feed id), `catalog.reindexed`, `catalog.edits_staged` (how many edits to how many products, how many were accepted drafts and how many were refused), `catalog.edits_discarded`, `catalog.edits_published` (counts of published, failed and unchanged products, the first 50 published keys and the request id), `catalog.drafts_saved`, `catalog.drafts_discarded`, `catalog.gaps_rebuilt` (how many products were read), `catalog.products_indexed` (an admin updated the product index: how many products were added or renamed and removed, and whether more were waiting; or that it was skipped because another update was running or the workspace has none) |
+| Plugins | `plugin.uploaded` (version and publisher), `plugin.drafted` (the assistant drafted a version; the detail has how many cases pass), `plugin.draft_refused` (a draft the assistant couldn't use, with the reason), `plugin.cases_run` (a draft's cases were run), `plugin.approved` (also notes when buyer details were granted), `plugin.secret_set` (the secret's name, never its value), `plugin.disabled`, `plugin.enabled`, `plugin.rolled_back`, `plugin.uninstalled`, `plugin.refused` (the reason). See [Installing a plugin](/guides/installing-plugins/) |
+| Personal data | `personal_data.exported`, `personal_data.erased` (the counts; the target is `subject:` and a hash of the person's address, so the log doesn't keep it) |
+
+### Business events
+
+The business actions have the target they act on: the order id, the cart id, the flow id, or the
+webhook subscription. Each detail has `via`, how it came in, shown as "via the app", "via the REST API",
+"via a signed webhook", "via the assistant", "via MCP" or "via A2A". Assistant, MCP and A2A events
+also record the `tool`. The actor is the person or API token; for a signed
+[inbound webhook](/guides/inbound-orders/) it is the integration (kind `integration`, named
+`integration:<name>`), and for a Shopify order the channel (kind `channel`, `shopify:<shop>`).
+
+Recorded: starting orders (New order, demo scenarios, test runs, restarts, `POST /api/v1/orders`,
+each purchase order started from an EDI 850, signed webhooks, Shopify, and the assistant's and
+A2A's place order, and carts submitted through the REST API, the assistant, MCP or A2A), opening
+and changing carts through the same four and cancelling them through the REST API, cancelling orders,
+delivering events, deciding approvals, saving and publishing flows,
+creating and deleting webhook subscriptions, and running the stock review. Read-only assistant and
+MCP tools are not. Neither are replays (a repeated idempotency key or webhook) nor things that
+didn't happen, such as an event nothing was waiting for. Orders from [email intake](/guides/email-intake/)
+and the scheduled stock review belong to no one and are not recorded.
+
+Each published flow version also keeps who published it, as the audit trail names them; versions
+published before this was recorded, and built-in templates, have none.
+
+A person signing in only hears that the email and password didn't match; the reason is for
+admins. Passwords and tokens are never recorded. Writing an event
+never blocks the action it records. An approval's decider is also recorded on the approval itself (below).
+
+### Keeping and checking the log
+
+The log is append-only: an event can't be edited or deleted. Events are kept 400 days unless your
+contract sets another period (never under 90 days), then archived before they leave the log. The archive is kept unless your contract sets a period after which archived events expire.
+
+Each event is chained to the one before it with a hash, so a changed, removed or reordered event is
+detectable. Events from before the chain was introduced have no hash. Admins check the chain with
+[`GET /api/v1/audit-events/verify`](/reference/rest-api/#audit-events), up to 2,000 events a call.
+
+To export the log or feed a log system, page forward with `after`, the `seq` of the last event
+you received: events come back oldest first, and only hashed events are included.
+
+## Privacy requests
+
+An admin answers a request about one person, by the email address they are known by, with two API calls. The address goes in the body, never the URL. A person is every customer account with that email (case does not matter), every order that has it as the guest contact, and every order started by an [email](/guides/email-intake/) from that sender.
+
+[`POST /api/v1/data-subjects/export`](/reference/rest-api/#data-subject-requests) returns a JSON file with their customer accounts (without the saved Stripe payment method), up to 500 orders with contact details, lines and metadata, the messages sent to their orders or their address, their intake log entries, a list of the documents on their orders, and the addresses their accounts' orders shipped to. `truncated` is true when there were more orders; `teamMember` is true when the address also belongs to someone on your team.
+
+[`POST /api/v1/data-subjects/erase`](/reference/rest-api/#data-subject-requests) removes who they are and keeps the commercial record:
+
+- **Refused while an order runs.** If any of their orders has not finished, the answer is `409` with `reason: "active_orders"` and the order ids. Cancel those orders or let them finish, then ask again.
+- **Orders, 100 a call.** When `done` is `false`, call again. Each order loses its contact, inbound document and personal `meta`; their email, names, phone and ship-to name are replaced with `[erased]` in the title, line names, step outputs and summaries and the timeline, and other emails and phone numbers are masked. Stored documents, the order's webhook delivery records, the messages sent for it and its intake log entry (sender and subject) are erased too. Lines, amounts, payments, shipments and the ledgers stay, and an erased order is skipped next time.
+- **Then the rest.** With no orders left, intake emails from that sender that never became an order, and messages to that address, are erased, the addresses kept for their customer accounts are deleted, and each customer account becomes "Erased customer" with a placeholder email and no Stripe ids.
+
+Personal data can also leave on its own. A workspace can be set up so that the personal data on finished orders is removed after an agreed period (never under 30 days), in the same way and with the same result as an erasure request, except that only the order's own contact is removed and customer accounts are untouched. A customer's addresses not shipped to within that period are deleted too. Ask your CommerceWorker contact to set it up.
+
+Team members are not touched: when `teamMember` is `true`, remove the person on the [Team page](#the-team-page). The Stripe customer is not deleted at Stripe. The audit log keeps its events under its own retention; both calls are recorded as `personal_data.*` under **Personal data**, naming the person by a hash.
+
+## How secrets are stored
+
+The secrets CommerceWorker keeps for you are encrypted at rest: authenticator-app secrets, the signing secrets of integrations and webhook subscriptions, and the credentials a caller registers for A2A push notifications. Each is encrypted under a key held outside the database, so a copy of the database alone doesn't reveal them. Passwords are stored only as salted hashes, and API tokens only as hashes.
+
+## Where your data is kept
+
+A workspace can be set up so that its data stays in a region. For an EU workspace, the database, the stored documents and the live state of each order are kept in the EU, and so is each person's assistant conversation. Your CommerceWorker contact sets this up before your first order; it can't be changed afterwards without losing the state of existing orders.
+
+It does not cover everything. These are not controlled by the workspace's region setting:
+
+- AI processing: the models that run the [AI steps](/guides/ai/) and the assistant, and the gateway logs of those calls (see [What the AI steps see](/guides/ai/#what-the-ai-steps-see)).
+- Logs of the application's activity.
+- Workflow run history, the record of each step's result as an order runs.
+
+The application's code runs at the Cloudflare location nearest each request.
+
+## Who decided
+
+An approval's `by` is the person who decided: their email for a signed-in person, `token:<name>`
+for an API token. Through the [assistant](/guides/assistant/), MCP or A2A it is `<email> via assistant`, `<email> via MCP` or `<email> via A2A`. On the order page's live connection, the name comes from the
+signed-in session, never from what the page sends.
+
+Changes reach pages that are already open. Each action on the order page's live connection checks
+the person's session again, so a lower role applies to the next action, and signing out, a
+password reset, being disabled or the session going idle ends it.
+
+## Cross-site requests
+
+A browser request that changes something (any method but `GET`, `HEAD` and `OPTIONS`), or opens the
+order page's live connection, is refused unless its `Origin` is the app's own; without `Origin`,
+its `Sec-Fetch-Site` must be `same-origin` or `none`. This holds for other `*.commerceworker.com`
+subdomains too. The answer is `403 { "error": "Cross-site request refused" }`. REST API calls
+(`/api/v1/…`) with a bearer token are exempt, since a token is all they're signed in by, and so
+are clients that send neither header. Elsewhere a bearer header changes nothing.
+
+Signing out is a `POST` too, so no link or image on another site can sign you out. Opening
+`/logout` asks first.
+
+## Response headers
+
+Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, a `Permissions-Policy` that disables
+camera, microphone, geolocation and payment, and `Strict-Transport-Security: max-age=31536000;
+includeSubDomains`. HTML pages also get a `Content-Security-Policy` with a fresh nonce per
+response: scripts run only from the app's own origin or with that nonce, styles and fonts load only
+from the app's own origin (its fonts are served by CommerceWorker itself), `frame-ancestors 'none'`,
+`form-action 'self'`, `connect-src 'self'`. CommerceWorker can't be embedded in another site's frame.

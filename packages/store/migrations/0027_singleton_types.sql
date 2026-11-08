@@ -1,0 +1,12 @@
+-- 0027_singleton_types: a content type that holds at most one entry. Mirrors `content_types` in
+-- packages/store/src/schema.ts.
+--
+-- Numbered 0027, past 0024–0026, which other branches in flight take; migrations apply by name, so
+-- the gap is harmless.
+--
+-- A column with a default of 0: every existing type stays an ordinary one and nothing is
+-- backfilled. The code already deployed names its columns in every select and leaves this one out
+-- of its upsert, so it neither reads nor clears the flag: on a rollback a singleton type behaves
+-- as an ordinary type (more entries can be created), and keeps its flag for when this code returns.
+-- The one-entry rule itself is a unique claim in `entry_unique_values`, which needs no new column.
+ALTER TABLE `content_types` ADD `singleton` integer DEFAULT 0 NOT NULL;

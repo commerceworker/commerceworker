@@ -1,0 +1,102 @@
+---
+/*
+ * Permission scopes and the defaults each key kind gets, rendered from SCOPES and scopesForKind
+ * in @commerceworker/domain: the values the API and the MCP server authorize against.
+ */
+import { SCOPES, scopesForKind } from '@commerceworker/domain';
+
+interface Props {
+  /** `scopes`: every scope and what it allows; `kinds`: the defaults per key kind. */
+  show: 'scopes' | 'kinds';
+}
+
+const { show } = Astro.props;
+
+// What each scope allows, in a reader's words. Keyed by the scope string, so a scope added to the
+// domain without a line here fails the build instead of rendering blank.
+const GRANTS: Record<string, string> = {
+  'content:write':
+    'Create and edit draft entries and assets, comment, create tasks, and run AI drafting on entries.',
+  'content:publish':
+    'Publish and unpublish entries, assets, content types and releases; schedule publishing; permanently delete trashed entries.',
+  'content:manage':
+    'Define and change content types, workflows, taxonomy, functions, app extensions and AI actions.',
+  'preview:read': 'Read draft and current entries, content types, releases and workflows.',
+  'delivery:read': 'Read published entries and assets, including GraphQL and the live stream.',
+  'search:read':
+    'Search published content (hybrid, semantic and lexical) and find related entries.',
+  'space:admin':
+    'Manage the team, API keys, roles, environments and aliases, webhooks, the audit log and agent runs.',
+  'workflow:approve': 'Decide workflow approvals that ask for it (the default).',
+};
+
+const scopes = Object.values(SCOPES);
+const missing = scopes.filter((s) => !GRANTS[s]);
+if (missing.length) throw new Error(`Scopes.astro has no description for ${missing.join(', ')}`);
+
+const KINDS = [
+  { kind: 'cma', name: 'Management (CMA)', use: 'Authoring, publishing and administration' },
+  { kind: 'cpa', name: 'Preview (CPA)', use: 'Draft content for previews and staging sites' },
+  { kind: 'cda', name: 'Delivery (CDA)', use: 'Published content for production sites and apps' },
+] as const;
+const kinds = KINDS.map((k) => ({ ...k, scopes: scopesForKind(k.kind) }));
+const rows = scopes.map((s) => ({ scope: s, grants: GRANTS[s] }));
+---
+
+{
+  show === 'scopes' && (
+<table>
+  <thead>
+    <tr>
+      <th>Scope</th>
+      <th>Allows</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      rows.map((r) => (
+        <tr>
+          <td>
+            <code>{r.scope}</code>
+          </td>
+          <td>{r.grants}</td>
+        </tr>
+      ))
+    }
+  </tbody>
+</table>
+  )
+}
+{
+  show === 'kinds' && (
+<table>
+  <thead>
+    <tr>
+      <th>Kind</th>
+      <th>For</th>
+      <th>Scopes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      kinds.map((k) => (
+        <tr>
+          <td>
+            <code>{k.kind}</code> {k.name}
+          </td>
+          <td>{k.use}</td>
+          <td>
+            {k.scopes.map((s, i) => (
+              <>
+                {i > 0 && ', '}
+                <code>{s}</code>
+              </>
+            ))}
+          </td>
+        </tr>
+      ))
+    }
+  </tbody>
+</table>
+  )
+}

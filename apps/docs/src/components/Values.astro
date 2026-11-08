@@ -1,0 +1,76 @@
+---
+/*
+ * A list of values straight from @commerceworker/core, so prose never restates an enum by hand.
+ * Renders inline code separated by commas, or a bulleted list with `list`.
+ */
+import {
+  CART_STATUSES,
+  FULFILLMENT_METHODS,
+  NODE_STATUSES,
+  ORDER_CHANNELS,
+  ORDER_MODELS,
+  ORDER_STATUSES,
+  OUTBOUND_EVENTS,
+  POLICY_RULES,
+  TERMINAL_ORDER_STATUSES,
+} from '@commerceworker/core';
+import {
+  ATTRIBUTE_KINDS,
+  BOARD_COLUMNS,
+  EDITABLE_FIELDS,
+  FEED_FORMATS,
+  FEED_STATES,
+  GAP_KINDS,
+  NUMERIC_KINDS,
+  PRODUCT_STATUSES,
+  TERM_KINDS,
+} from '@commerceworker/core/product';
+
+const SOURCES = {
+  'node-statuses': NODE_STATUSES,
+  'order-statuses': ORDER_STATUSES,
+  'cart-statuses': CART_STATUSES,
+  'terminal-order-statuses': TERMINAL_ORDER_STATUSES,
+  'order-models': ORDER_MODELS,
+  'order-channels': ORDER_CHANNELS,
+  'fulfillment-methods': FULFILLMENT_METHODS,
+  'outbound-events': OUTBOUND_EVENTS,
+  'policy-rules': POLICY_RULES,
+  'product-statuses': PRODUCT_STATUSES,
+  'attribute-kinds': ATTRIBUTE_KINDS,
+  'term-kinds': TERM_KINDS,
+  'numeric-kinds': NUMERIC_KINDS,
+  'feed-formats': FEED_FORMATS,
+  'feed-states': FEED_STATES,
+  'board-columns': BOARD_COLUMNS,
+  'gap-kinds': GAP_KINDS,
+  'editable-fields': EDITABLE_FIELDS,
+} as const;
+
+interface Props {
+  of: keyof typeof SOURCES;
+  list?: boolean;
+}
+
+const { of, list = false } = Astro.props;
+const values: readonly string[] = SOURCES[of];
+---
+
+{
+  list ? (
+    <ul>
+      {values.map((v) => (
+        <li>
+          <code>{v}</code>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    values.map((v, i) => (
+      <>
+        {i > 0 && ', '}
+        <code>{v}</code>
+      </>
+    ))
+  )
+}

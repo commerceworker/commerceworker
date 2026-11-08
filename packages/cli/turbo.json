@@ -1,0 +1,16 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // test/skills.test.ts checks the repo's skills/ against the CLI, the SDK sources and the docs
+    // site's pages: without these inputs an edited skill would hit the cache and skip the check.
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/skills/**",
+        "$TURBO_ROOT$/apps/docs/src/content/content/**",
+        "$TURBO_ROOT$/packages/sdk/*/src/**"
+      ]
+    }
+  }
+}

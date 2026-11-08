@@ -1,0 +1,187 @@
+---
+title: Functions, plugins and extensions
+description: Pick between functions, plugins and app extensions, then register, approve and manage each in Settings or over the API.
+---
+
+Three mechanisms extend a space, and they differ in where they run and whether they can change the
+outcome.
+
+| | Runs | Can change a write | Where |
+| --- | --- | --- | --- |
+| **Function** | Your server, after an event | No | Settings → Functions |
+| **Plugin** | CommerceWorker's sandbox, inside a write | Yes: rewrite, validate or refuse | Settings → Plugins |
+| **App extension** | Your page, in the editor | Edits a field value in the browser | Settings → App extensions |
+
+Pick a [webhook](/content/guides/webhooks/) or a function to react to something that already happened. A
+function is the lighter form: a URL and an event pattern, with no signature, headers or delivery
+log. Pick a plugin to validate, normalize or veto content before it is saved. Pick an app
+extension to give editors a custom input or a sidebar panel.
+
+## Before you start
+
+Registering a function or app extension needs `content:manage`; listing them needs `preview:read`.
+Everything about plugins needs `space:admin`. See [API keys and access](/content/guides/api-keys/) and the
+[scopes reference](/content/reference/scopes/). In the admin these screens are under **Settings**, in the
+**Automation** group (Functions) and the **Extensions** group (App extensions, Plugins).
+
+Functions and app extensions belong to one environment; plugins belong to the space.
+
+## Create a function
+
+In **Settings → Functions**, or over the API:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/functions" \
+  -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{
+    "name": "reindex-search",
+    "eventPattern": "entry.*",
+    "url": "https://example.com/on-event"
+  }'
+```
+
+- **`eventPattern`** is matched against the event type: `*` (or empty) for every event, a trailing
+  `*` for a prefix (`entry.*`), otherwise an exact type such as `entry.published`.
+- **`url`** must be an absolute public `http` or `https` address. Loopback, link-local and private
+  addresses, `localhost`, `.local` and `.internal` names are refused with a 422.
+- **`active`** defaults to `true`; `active: false` registers it without calling it.
+
+Each matching event is POSTed to the URL as JSON, with the event type in an
+`x-commerceworker-event` header. List with `GET …/functions` and remove with
+`DELETE …/functions/:id` (204). There is no update route: delete and register again to change one.
+The MCP tools are `functions_list`, `function_create` and `function_delete`.
+
+### Function failure behaviour
+
+Functions run after the write has committed, so a failing one never affects it. Every active
+function whose pattern matches is called independently. A call times out after 10 seconds, a
+redirect is not followed, and a non-2xx response, a timeout or a network error is logged and
+dropped: there is no retry and no per-function delivery history. Make the endpoint idempotent and
+fast, and hand long work to your own queue.
+
+## Install a plugin
+
+A plugin is one ES module plus a manifest declaring its `id`, `version`, the `capabilities` it
+requests, the `hooks` it handles and any `allowedHosts` for outbound reads. It runs in an isolated
+sandbox with no network of its own.
+
+In **Settings → Plugins**, **Install** takes either the manifest (`.json`) and bundle (`.js`), or a
+package URL (`https`) that you **Fetch** first so the screen can show what the package asks for
+before you approve anything. Nothing runs until you do both of these:
+
+1. **Approve capabilities.** You can grant fewer than the manifest requests, never more, and never
+   a capability whose scope you don't hold yourself.
+2. **Enable.** A plugin always installs **disabled** (**Install disabled**).
+
+Capabilities are `content:read`, `content:write`, `content:publish`, `assets:read`,
+`assets:write`, `taxonomy:read`, `taxonomy:write`, `search:read`, `ai:generate`,
+`network:request` and `kv:storage`. A plugin acts with exactly the scopes its approved capabilities
+imply, so the usual permissions, content-type grants and field validation apply to it. Calling
+something it wasn't granted fails with `capability_denied` and is written to the audit log.
+
+`assets:write`, `search:read` and `ai:generate` can be approved but are not provided yet: calling
+them is refused.
+
+### Hooks
+
+| Hook | Fires | Can rewrite | Can refuse |
+| --- | --- | --- | --- |
+| `entry:beforeSave` | Before validation | Yes | Yes |
+| `entry:beforePublish` | Inside the publish | No | Yes |
+| `entry:beforeTrash` | Before the entry leaves the published read model | No | Yes |
+| `entry:beforePurge` | Before a hard delete | No | Yes |
+| `asset:beforeCreate` | Before an upload URL is issued | Yes | Yes |
+
+Plugins on one hook run in order, each seeing the previous one's changes; the first refusal wins.
+A plugin that throws, times out (2 seconds by default) or fails its checksum check is skipped and
+the write goes ahead, so a broken plugin never makes a space read-only.
+
+```js
+export class Plugin {
+  async onEntryBeforeSave(entry, caps) {
+    if (entry.fields?.title?.['en-US']?.length > 120) {
+      return { veto: { reason: 'Title is too long for the card layout' } };
+    }
+  }
+}
+```
+
+Return nothing to pass the entry through, `{ payload }` to replace it (only where the hook can
+rewrite), or `{ veto: { reason } }` to refuse. Validating an entry without saving it runs only
+plugins that hold no capabilities; the others are listed in `skippedHooks`.
+
+## Manage plugins
+
+Each installed plugin in the list shows whether it is **Running** or **Disabled**, the hooks it
+runs on and its access. The row's actions:
+
+- **Enable** or **Disable**, which never changes the grant.
+- **Access** reviews and changes the approved capabilities. A grant that grows disables the plugin
+  until you enable it again; narrowing leaves it running. **Needs review** marks a plugin
+  installed before capability manifests, which must be approved before it can be enabled.
+- **Settings** opens a form for the settings the manifest declares. Secret values are sealed and
+  show only as set or not set; a save is refused with a 409 if someone changed the settings since
+  you opened them.
+- **Upgrade…** takes a new manifest and bundle. A version asking for a capability the installed one
+  never did needs fresh approval and lands disabled, and the installed version keeps running on
+  its old grant meanwhile.
+- **Uninstall** removes the plugin, its settings and its stored keys.
+
+Over the API (all `space:admin`, under `/spaces/:space/plugins`): `GET`, `POST` (install) and
+`PUT …/:id` (upgrade); `POST …/from-url/inspect`, `POST …/from-url` and `PUT …/:id/from-url` for
+packages; `POST …/:id/capabilities`, `POST …/:id/enabled`, `GET` and `PATCH …/:id/settings`; and
+`DELETE …/:id`. Package URLs must be `https`, are fetched without following redirects, and are
+refused unless the bundle's SHA-256 matches the checksum the package declares. Pass the checksum
+returned by `inspect` as `expectedChecksum` on install so a release swapped in between is refused.
+Bytes are re-verified every time the plugin loads.
+
+The [MCP server](/content/guides/mcp/) has `plugins_list`, `plugin_set_enabled`,
+`plugin_approve_capabilities`, `plugin_get_settings` and `plugin_set_settings`. It has no install or
+upgrade tool, and `plugin_approve_capabilities` can confirm or narrow a grant but never widen it:
+giving code more authority stays a human decision in the admin.
+
+## Add an app extension
+
+An app extension is a page you host, shown in a sandboxed iframe in the entry editor. In
+**Settings → App extensions** choose **Install**, or:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/app-extensions" \
+  -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{
+    "name": "color-picker",
+    "target": "field-editor",
+    "entryUrl": "https://example.com/extension",
+    "fieldTypes": ["Symbol"]
+  }'
+```
+
+- **`target`** is `sidebar` (a widget on the entry editor) or `field-editor` (replaces the built-in
+  input).
+- **`fieldTypes`** limits a field editor to those field types; leave it out to offer it for every
+  type. It applies to top-level fields and is ignored for a sidebar widget.
+- **`entryUrl`** must be an `http` or `https` URL, which the browser loads, so use `https`.
+- **`active: false`** keeps it registered but switched off.
+
+The list and delete routes mirror functions' (`GET …/app-extensions`, `DELETE …/app-extensions/:id`),
+and the MCP tools are `app_extensions_list`, `app_extension_create` and `app_extension_delete`.
+
+The iframe is sandboxed with `allow-scripts allow-forms` and no same-origin access, so the page
+can't reach the admin's cookies or DOM. It talks to the editor through `postMessage`:
+
+| Message | Direction | Carries |
+| --- | --- | --- |
+| `commerceworker-extension:ready` | page → admin | Sent when the page has loaded, to ask for context |
+| `commerceworker-extension:init` | admin → page | `context`: target, space, environment, entry, content type; for a field editor, the field and its current `value`, and `readOnly` |
+| `commerceworker-extension:setValue` | page → admin | `value`: the new field value (ignored while `readOnly`) |
+| `commerceworker-extension:resize` | page → admin | `height` in pixels (minimum 40) |
+
+The admin sends `init` again whenever the context changes, such as an edit elsewhere or a locale
+switch.
+
+## Next steps
+
+- [Webhooks](/content/guides/webhooks/) for signed, retried, logged event delivery.
+- [MCP](/content/guides/mcp/) for the plugin tools and the agent-side scopes.
+- [API keys and access](/content/guides/api-keys/) for the `content:manage` and `space:admin` keys these routes need.
+- [Scopes](/content/reference/scopes/) for what each scope grants.

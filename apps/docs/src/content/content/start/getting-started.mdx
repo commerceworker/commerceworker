@@ -1,0 +1,176 @@
+---
+title: Getting started
+description: Model a content type, write and publish an entry, then read it back over the Delivery API.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+You will model a content type, write and publish an entry, create a delivery key and read the
+published entry back. Each step shows the admin and the API; use whichever you prefer.
+
+## Before you start
+
+You need an account on the workspace and a role in the space that can do the whole loop: minting
+an API key needs `space:admin`, modeling a type needs `content:manage`, and publishing needs
+`content:publish` (the Administrator role has all of them; see [Team and roles](/content/guides/team-and-roles/)).
+
+The examples use shell variables. Set the first three to your workspace's values; steps 1, 3 and 5
+set the rest:
+
+```sh
+export API=https://api.your-workspace.commerceworker.com   # the Management and Preview API
+export CDN=https://cdn.your-workspace.commerceworker.com   # the public Delivery API
+export SPACE=your-space                                   # the space id, shown in the admin's header
+```
+
+A workspace (one CommerceWorker deployment) has three addresses: the admin at its own domain, the
+API at `api.` and the cached public Delivery API at `cdn.`.
+
+Every Management route lives under `/spaces/$SPACE/environments/main/…`; `main` is the
+environment every space starts with. See [Concepts](/content/start/concepts/#spaces-and-environments).
+
+## Your first space
+
+A new workspace has no spaces. Setup's second step creates the first one with Coworker: say what
+the space will hold, and it proposes a name, a space id, a default locale and a starter on a card.
+Nothing is created until you confirm the card; decline it and say what to change. **Fill in a form
+instead** opens the same choices as a form, and **Skip for now** goes straight to the admin, which
+offers the same thing until a space exists (the page's **Create a space**, or Coworker).
+
+In the form, give the space a name (the space id follows the name, and appears in every API path),
+a default locale, and choose what it starts with:
+
+- **Start with sample content** (recommended): a content model that covers every field type
+  (articles, authors, categories, pages, products, events, recipes, landing pages), a few dozen
+  entries in each state (draft, changed and published), tags and two concept schemes, sample
+  images and documents, and one open release. It is ordinary content: edit or delete any of it.
+- **Empty space**: no content types and no entries, to model your own from scratch.
+- **Enterprise demo (Aldermoor)**, on demo workspaces only: a fictional global professional-services
+  firm in 13 locales, with its content model, teams, workflows and releases. It is too big to
+  install while you wait, so the space opens at once and the dialog follows the install step by
+  step; closing it doesn't stop it. If a step fails, the dialog says which, and creating the space
+  again with the same id and starter finishes the install without adding anything twice.
+
+The admin switches to the new space when it's created; after Coworker creates it, Coworker stays
+open with a question or two to try there. Later spaces come from the space menu in
+the header (**New space…**), with the same choice. Creating a space takes a workspace admin;
+someone who signs in before being added to a space is asked to have an admin add them.
+
+Over the API, `POST /spaces` does the same. It takes a credential that spans the workspace (its
+admin token, held by whoever runs the workspace), never a space's own keys. `starter` is
+`"sample"` or `"empty"` (the default), or `"enterprise"` where `GET /starters` lists it; that one
+answers with `installing.install`, followed at `GET /spaces/:space/environments/main/starter-installs/:install`:
+
+```sh
+curl -s "$API/spaces" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{ "spaceId": "marketing", "name": "Marketing", "defaultLocale": "en-US", "starter": "sample" }'
+```
+
+A space id is up to 64 letters, digits, `.`, `_` or `-`, starting with a letter or digit. A few
+ids are reserved for data the workspace keeps next to your files (`versions`, `imports`, `plugins`,
+`dlq` and `zips`, in any case), and creating a space with one is refused with `422`.
+
+MCP clients holding the workspace's MCP token have the same operation as the `space_create` tool,
+and `spaces_list` to see what exists.
+
+The steps below build an `article` type from scratch, so follow them in an **empty** space. In a
+space with the sample content, `article` already exists: skip to step 3, or use another apiId in
+step 2.
+
+## The loop
+
+<Steps>
+
+1. **Get a Management key.** In the admin, open **Settings → API keys**, choose **CMA —
+   Management (full author/publish)** and press **Create key**. The token is shown once; copy it
+   into `$CMA`. Check it works:
+
+   ```sh
+   export CMA=cwk_cma_...
+   curl -s "$API/auth/me" -H "Authorization: Bearer $CMA"
+   ```
+
+   The response names the space the key belongs to and its scopes. See
+   [API keys and access](/content/guides/api-keys/).
+
+2. **Model a content type.** In the admin, open **Content → New content type** and add a `title`
+   (Symbol, required) and a `body` (Text). Or over the API:
+
+   ```sh
+   curl -s "$API/spaces/$SPACE/environments/main/content-types" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{
+       "apiId": "article",
+       "name": "Article",
+       "displayField": "title",
+       "fields": [
+         { "apiId": "title", "name": "Title", "type": "Symbol", "required": true, "localized": false, "position": 0 },
+         { "apiId": "body",  "name": "Body",  "type": "Text",   "required": false, "localized": false, "position": 1 }
+       ]
+     }'
+
+   curl -s -X POST "$API/spaces/$SPACE/environments/main/content-types/article/published" \
+     -H "Authorization: Bearer $CMA"
+   ```
+
+   You can write and publish entries of a draft type too, but it only appears in Delivery's routes,
+   sitemap and menus once its definition is published. See
+   [Content modeling](/content/guides/content-modeling/).
+
+3. **Write an entry.** In the admin, open **Content → Article → New entry**. Over the API, field values
+   are keyed by field, then by locale (`en-US` here; use your space's default locale):
+
+   ```sh
+   curl -s "$API/spaces/$SPACE/environments/main/entries" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{
+       "contentTypeApiId": "article",
+       "fields": {
+         "title": { "en-US": "Hello, world" },
+         "body":  { "en-US": "Our first published entry." }
+       }
+     }' | tee entry.json
+   export ENTRY_ID=$(jq -r .entry.id entry.json)
+   ```
+
+   The response is `{ "entry": { "id": … }, "fields": … }`: the new entry, in
+   <span class="cw-badge" data-state="draft">Draft</span>. The second line keeps its id in
+   `$ENTRY_ID` for the next step.
+
+4. **Publish it.** Click **Publish** in the entry editor, or:
+
+   ```sh
+   curl -s -X POST "$API/spaces/$SPACE/environments/main/entries/$ENTRY_ID/published" \
+     -H "Authorization: Bearer $CMA"
+   ```
+
+   The entry is now <span class="cw-badge" data-state="published">Published</span>, and every
+   webhook subscribed to `entry.published` is notified.
+
+5. **Read it as your site would.** Create a **CDA — Delivery (read published)** key in
+   **Settings → API keys**, or over the API with your Management key. A Delivery key can read
+   published content and nothing else, so it is the one to ship in a site or app. The token is
+   shown once:
+
+   ```sh
+   export CDA=$(curl -s "$API/spaces/$SPACE/api-keys" \
+     -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+     -d '{ "kind": "cda", "name": "my site" }' | jq -r .token)
+
+   curl -s "$CDN/delivery/$SPACE/main/entries?content_type=article&locale=en-US" \
+     -H "Authorization: Bearer $CDA"
+   ```
+
+   With `locale=` set, each field comes back as a plain value rather than keyed by locale. See
+   [Reading content](/content/guides/reading-content/).
+
+</Steps>
+
+## Next steps
+
+- [Concepts](/content/start/concepts/): the vocabulary the rest of these docs use.
+- [Content modeling](/content/guides/content-modeling/) to design types, and [Field types](/content/reference/field-types/)
+  for every type, validation and reference.
+- [SDKs](/content/guides/sdks/): typed clients for the Delivery and Management APIs.
+- [Workflows](/content/guides/workflows/): put a review between "save" and "publish".

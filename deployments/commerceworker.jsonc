@@ -1,0 +1,34 @@
+// CommerceWorker's own deployment at app.commerceworker.com. Its resources keep the base names (suffix ""),
+// which are the values in apps/*/wrangler.jsonc. See docs/operations.md for every field.
+{
+  "id": "commerceworker",
+  "ring": "internal",
+  "slot": 1,
+  "domain": "app.commerceworker.com",
+  // The public catalog API keeps the short host; customers get catalog.<id>.commerceworker.com.
+  "catalogDomain": "catalog.commerceworker.com",
+  "suffix": "",
+  "environment": "production",
+  "d1Id": "00000000-0000-0000-0000-000000000000",
+  "catalogKvId": "00000000000000000000000000000000",
+  "docs": true,
+  // Punchout from customers' procurement systems (plugins/punchout, docs/plugins.md#the-host-api):
+  // sandboxed, so nothing to provision. It opens carts for their buyers, and starts and cancels
+  // their POs.
+  "plugins": {
+    // Its procurement URLs read https://app.commerceworker.com/punchout/cxml/setup, not /plugins/punchout/.
+    "punchout": {
+      "alias": "/punchout/",
+      "runtime": "sandboxed",
+      "capabilities": ["carts:external", "orders:start", "orders:cancel"]
+    }
+  },
+  // Admins may ask the assistant to draft business-rule plugins (docs/plugins.md, "Assistant-drafted
+  // plugins"): logic only, run sandboxed, and live only once an admin approves one with a step-up
+  // and every case passes. No publishers yet, so no signed uploads.
+  "pluginInstalls": { "assistant": true },
+  // AI Gateway request logs: one entry per model call with model, tokens, cost and metadata, never
+  // the prompt or answer (every call sends cf-aig-collect-log-payload: false). Reviewers' verdicts
+  // on AI gates are recorded on these entries as feedback, for evaluating models and prompts.
+  "aiGatewayLogs": true
+}

@@ -1,0 +1,34 @@
+{
+  "name": "@commerceworker/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CommerceWorker logic with no bindings: flow schema, node catalog, the DAG planner the Workflow interpreter drives, expressions, templates and the engine RPC contract.",
+  "sideEffects": [
+    "./src/logic.ts"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./roles": "./src/roles.ts",
+    "./product": "./src/product/index.ts",
+    "./product/paths": "./src/product/paths.ts",
+    "./product/listing": "./src/product/listing-index.ts",
+    "./product/search": "./src/product/search.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "json-logic-js": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cfworker/json-schema": "catalog:",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/json-logic-js": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

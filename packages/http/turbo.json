@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // Only the skills and their generator feed the embed; any other edit here must not rerun it.
+    "generate": {
+      "inputs": ["scripts/generate-skills.ts", "skills/**"],
+      "outputs": ["src/mcp/skills.generated.ts"]
+    },
+    // test/api/cli.test.ts applies the example model in the repo's skills/ as written.
+    "test": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**"]
+    }
+  }
+}

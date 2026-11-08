@@ -1,0 +1,62 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commerceworker-catalog-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // The public catalog API. A deployment's host is catalog.<its domain> (the registry renders it).
+  "routes": [{ "pattern": "catalog.commerceworker.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Logs from a 5% sample of requests: the edge serves every shopper read, and per-request detail
+  // is in Analytics Engine.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.05,
+    "redact_query_string": true,
+    "issues": { "enabled": true }
+  },
+  "upload_source_maps": true,
+  // Trace events also go to Workers Logpush: the deployment's job (scripts/provision.sh) keeps
+  // them in its logs bucket past Workers Logs' 7 days. See docs/operations.md, "Logs".
+  "logpush": true,
+  // Workers Caching: tiered, collapses concurrent misses, revalidates in the background. Kept across
+  // deploys (paths carry the document format), so a deploy doesn't start from a cold cache.
+  "cache": { "enabled": true, "cross_version_cache": true },
+  "exports": {
+    // The gateway normalizes every request; caching in front of it would skip that.
+    "default": { "type": "worker", "cache": { "enabled": false } },
+    // What the gateway forwards to: cached by URL.
+    "Delivery": { "type": "worker", "cache": { "enabled": true } }
+  },
+  // What the catalog Worker publishes: documents, alias pointers and category trees.
+  "r2_buckets": [{ "binding": "PUBLISHED", "bucket_name": "commerceworker-catalog" }],
+  // Keyword search runs on the catalog's search shards.
+  "services": [
+    { "binding": "CATALOG", "service": "commerceworker-catalog", "entrypoint": "SearchApi" }
+  ],
+  // Listing cards and key → uid entries.
+  "kv_namespaces": [{ "binding": "CARDS", "id": "00000000000000000000000000000000" }],
+  "queues": {
+    "consumers": [
+      {
+        // Cache tags of urgent changes, up to 100 a message. One batch at a time; the consumer
+        // makes one purge call (100 tags) every 12 seconds, since purges are rationed (5 a
+        // minute). After 40 calls the rest goes back to the queue; none is dropped for its age.
+        "queue": "commerceworker-catalog-purge",
+        "max_batch_size": 100,
+        "max_batch_timeout": 12,
+        "max_concurrency": 1,
+        "max_retries": 10,
+        // The delay when an invocation throws; the consumer sets its own otherwise (index.ts).
+        "retry_delay": 30,
+        // Consumed by the catalog, which keeps dead letters in R2: this Worker only reads it.
+        "dead_letter_queue": "commerceworker-catalog-purge-dlq"
+      }
+    ]
+  },
+  // Requests by route, channel, status and cache result, with latency.
+  "analytics_engine_datasets": [
+    { "binding": "ANALYTICS", "dataset": "commerceworker_catalog_edge" }
+  ]
+}

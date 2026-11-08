@@ -1,0 +1,25 @@
+{
+  "name": "@commerceworker/plugin-fixture-carrier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A test-only carrier built with @commerceworker/plugin-sdk that provides every provider surface (shipping rates and labels, tax, address checks) behind the built-in nodes. Its own tests run the contract suite; the engine's tests bind it. Never deployed.",
+  "scripts": {
+    "types": "wrangler types",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

@@ -1,0 +1,52 @@
+---
+title: From Publish to a fresh Delivery API read
+---
+sequenceDiagram
+    accTitle: From Publish to a fresh Delivery API read
+    accDescr: An editor publishes an entry from the admin. The web gateway forwards the request to the api over the API service binding with a signed x-cw-principal ①. The api authorizes it and commits one database batch holding the entry, its published read model and an entry.published outbox row ②, then answers with an x-cw-bookmark. After the response body finishes, the api relays the outbox onto the commerceworker-events queue in waitUntil ③; if that nudge is lost, the engine's once-a-minute cron sweep relays the row instead. The engine consumes the event in ordered lanes, runs webhooks, search and vector indexing and live fan-out, and sends one coalesced purge message for the space and environment to commerceworker-purge ④. The delivery worker drains that queue and purges the tag from the cached Delivery entrypoint, at most one purge call every 12 seconds ⑤. The next Delivery API read is authenticated by the gateway, misses the cache, is read from a database replica, and is cached again with a strong ETag and the environment's cache-tag ⑥.
+
+    actor Editor as Editor in the admin
+    participant Web as web gateway
+    participant Api as api worker
+    participant D1P as Primary database
+    participant EvQ as commerceworker-events
+    participant Engine as engine worker
+    participant PurgeQ as commerceworker-purge
+    participant DGw as delivery gateway
+    participant DEnt as Delivery entrypoint
+    participant D1R as Read replica
+    actor Reader as Delivery API consumer
+
+    Editor->>Web: POST …/entries/:id/published
+    Web->>Api: ① forwards over API binding, signed x-cw-principal
+    Note over Api: verifies signature, method, path, age under 60 s,<br/>then requireScope content:publish
+
+    rect rgba(128, 128, 128, 0.16)
+        Api->>D1P: ② commits one batch: entry, published read model, outbox row
+        D1P-->>Api: committed, new bookmark
+    end
+    Api-->>Web: 200 with x-cw-bookmark
+    Web-->>Editor: 200, entry published
+
+    alt waitUntil nudge after the body finishes
+        Api->>D1P: ③ claims pending outbox rows
+        Api->>EvQ: enqueues entry.published, marks row relayed
+    else nudge lost to a crash or eviction
+        Engine->>D1P: cron sweep each minute claims the row
+        Engine->>EvQ: enqueues entry.published
+    end
+
+    EvQ->>Engine: delivers a batch of up to 25 events
+    Note over Engine: consumeEvent in 6 lanes: webhooks, search shards,<br/>vectors, live fan-out, functions
+    Engine->>PurgeQ: ④ sends one purge tag per space:environment
+
+    PurgeQ->>DGw: delivers up to 100 tags
+    DGw->>DEnt: ⑤ purges the tags, one call each 12 s
+
+    Reader->>DGw: GET /delivery/…/entries/:id with CDA key
+    Note over DGw: principal from the key-value cache, reduced to a visibility profile
+    DGw->>DEnt: forwards canonical URL for that profile
+    DEnt->>D1R: ⑥ reads on cache miss, first-unconstrained session
+    D1R-->>DEnt: published entry
+    DEnt-->>DGw: 200, strong ETag, cache-tag, stored in the edge cache
+    DGw-->>Reader: 200 with the published entry

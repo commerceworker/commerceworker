@@ -1,0 +1,11 @@
+-- 0035_content_type_preview: where the admin previews a content type's entries on the customer's
+-- frontend, a URL template (`ContentType.preview.urlTemplate`). Mirrors
+-- `contentTypes.previewUrlTemplate` in packages/store/src/schema.ts.
+--
+-- A nullable column, as 0032's is, so the code already deployed never reads or writes it: its
+-- upsert names only the columns it knows, and a save from it leaves this as it was. Nothing is
+-- backfilled: no type has a template yet. Plain text rather than JSON, so a replica behind this
+-- migration reads the column's name as a string the store can recognize, not JSON it can't parse.
+-- Read by Management and MCP, never by Delivery: the published definition (0030) is built from
+-- named columns, and this is not one of them.
+ALTER TABLE `content_types` ADD `preview_url_template` text;

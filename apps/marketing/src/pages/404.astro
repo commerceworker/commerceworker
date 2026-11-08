@@ -1,0 +1,14 @@
+---
+import { copy } from '../i18n';
+import Base from '../layouts/Base.astro';
+
+const t = copy('en').notFound;
+---
+
+<Base locale="en" path="/404/" title={t.metaTitle} description={t.body} translated={false}>
+  <section class="page-head wrap">
+    <h1>{t.title}</h1>
+    <p class="lead">{t.body}</p>
+    <div class="actions"><a class="button" href="/">{t.home}</a></div>
+  </section>
+</Base>

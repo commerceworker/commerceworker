@@ -1,0 +1,128 @@
+---
+title: Team and roles
+description: Invite people to the workspace, give each a role in every space they work in, and recover admin access when nobody can sign in.
+---
+
+Access has two layers. A person first needs an **account** on the workspace, which is how they
+sign in to the admin. Then, in each space they work in, they have a **space role**, as does every API
+key your integrations use. Every space starts with five built-in roles. They are ordered, so each one can do everything the roles before it can:
+
+| Role | Can |
+| --- | --- |
+| **Viewer** | Read drafts and published content, workflows and approvals; search |
+| **Approver** | Also approve and reject [workflow approvals](/content/guides/approvals/) |
+| **Editor** | Also write and publish content, start and cancel workflow runs, and deliver workflow events |
+| **Manager** | Also change how content is structured: content types, workflows, taxonomy, functions and AI actions |
+| **Administrator** | Also manage the team, API keys, roles, webhooks, environments, plugins and the audit log |
+
+Each role is a set of [permission scopes](/content/reference/scopes/). The built-in ones are ordinary
+[roles](/content/guides/api-keys/#roles): you can edit them (their name, scopes and per-content-type
+grants), and **Clone** one under **Settings → Roles** to start a custom role from it. A built-in
+role can't be deleted.
+
+Approver's one extra scope is `workflow:approve`, which every role from Approver up holds. An
+approval step lets anyone holding it decide unless the step asks for something else
+(`content:publish`, say, for a legal sign-off).
+
+## Accounts and sign-in
+
+Admins manage the workspace's accounts at **People and sign-in** (`/team`). An account is a
+**Member**, who signs in and works within the space roles they're given, or an **Admin**, who also
+manages accounts, single sign-on, SCIM provisioning and the audit log, and administers every space.
+
+- **People.** Add someone with their email, a name and an account role. They get a temporary
+  password, shown once, to send them privately with the sign-in page; they choose their own the
+  first time they sign in.
+- **Invitations.** **Invite a person** with their email, an account role and, optionally, a role
+  in a space. You get a link, shown once, to send them; when the workspace sends email they get
+  their own link by email too. The link works once, for 7 days. Opening it, they create their
+  account with a password (and can add a passkey after) or continue with single sign-on, and join
+  with exactly what you chose. If their email already has an account, they sign in and accept it
+  there. Pending invitations are listed on the page: **Resend** sends a new link (the old one stops
+  working) and **Revoke** ends one. Inviting someone as an Admin, or sending a new link for an Admin's
+  invitation, asks you to confirm who you are first, and you can only give roles you hold yourself.
+- **Sign-in methods.** A password, a passkey, or your organization's **single sign-on** (OpenID
+  Connect) when the workspace has an identity provider configured. Two-factor sign-in with an
+  authenticator app can be required.
+- **Forgotten passwords.** When the workspace sends email, **Forgot your password?** on the
+  sign-in page emails a code (and a link carrying it) to the address you enter. The code works once,
+  for 15 minutes; asking again replaces it, and a few wrong tries end it. Type the code in the
+  browser you asked from, or open the link anywhere; the link's page shows the address it resets
+  (like `b***@example.com`), so check it's yours. The page answers the same
+  whether or not the address has an account, so nobody can use it to find out who does. Choosing
+  the new password signs you out everywhere; you then sign in with it, and with your two-factor code
+  if you use one: a reset never skips two-factor sign-in, and leaves your passkeys, personal access tokens and
+  connected apps as they are (the email confirming the change says so).
+  Accounts that sign in only through single sign-on, and every account while the workspace requires
+  single sign-on, get no code: reset the password with your identity provider. Without email, an
+  Admin resets it on **People and sign-in**.
+- **SCIM provisioning.** Your identity provider can add, update and turn off people through the
+  SCIM endpoint (`/scim/v2`) with a token made on this page. Turning someone off signs them out
+  everywhere and disconnects their apps and the API tokens they made.
+- **Ending access.** Disabling someone, resetting their password, or resetting their two-factor
+  sign-in does the same: their sessions end, the MCP connections they approved and the personal
+  access tokens they made stop working in every space, and a password or two-factor reset also
+  removes their passkeys. Your space's own API keys are not a person's and keep working.
+
+Over the API, invitations live at `/deployment/invites` (workspace Admins and the admin token
+only): `GET` lists them, `GET /deployment/invites/{id}` reads one, `POST` creates one and returns
+its link once, and `POST /deployment/invites/{id}/resend` and `/revoke` act on one. Inviting
+someone as an Admin is only for an Admin signed in to the admin, never the admin token. The MCP
+server has `invites_list`, `invite_get`, `invite_create`, `invite_resend` and `invite_revoke`. A link that no longer works
+(used, revoked, expired or resent) always gets the same answer, so it says nothing about why.
+
+## Space access
+
+Administrators of a space manage who works in it at **Settings → Access → Space access**:
+
+- **People in this space.** Add someone by email with a space role; their email links their
+  account to the space. Change a role from the list, which asks you to confirm in place. **Turn
+  off** refuses their access to the space until you turn it back on; **Remove** takes them off it.
+  A workspace Admin who isn't on a space's team still administers it.
+- **API keys.** Every long-lived key with the role it acts with. Change a key's role the same way;
+  mint and revoke keys under **Settings → API keys**.
+
+Over the API, all of these need `space:admin` and live under `/spaces/{space}`:
+
+| Route | Does |
+| --- | --- |
+| `GET /team` | People and keys with their roles, and `adminCount` |
+| `GET /role-presets` | The five built-in roles as seeded in the space |
+| `POST /members` | Add a person |
+| `PATCH /members/{id}` | Change their role, name or access (turn off or on) |
+| `DELETE /members/{id}` | Remove them from the space (204) |
+| `PUT /api-keys/{id}/role` | Change a key's role; `null` unbinds it |
+| `POST /roles/{id}/clone` | Copy a role into a new custom role |
+| `PUT /access-settings` | Require single sign-on (`ssoOnly`) |
+
+A role can be named by id or by preset (`viewer`, `approver`, `editor`, `manager`, `admin`). Custom
+roles are created and edited at `/spaces/{space}/roles`; see [Roles](/content/guides/api-keys/#roles). The
+MCP server has `role_presets_list`, `team_list` and `role_preset_assign`.
+
+## The last administrator
+
+A space that has an administrator always keeps one. The last one can't be demoted, turned off,
+removed or revoked, and the Administrator role can't lose `space:admin` while it is all that makes
+anyone an administrator: the page says so where you'd make the change, and the API answers **409**
+`last_admin`. Make someone else an administrator first.
+
+## Setting up a new workspace
+
+A new workspace has no accounts, and until it does, every admin page except `/setup` sends a
+browser there. The workspace's administrator sends you
+the link to `/setup` and a one-time **setup code**. Enter the code, your email, a name and a
+password: that creates your Admin account and signs you in on **People and sign-in**, where you add
+everyone else.
+
+The code works once. A wrong code is refused, throttled per address, and recorded in the audit log.
+
+## Recovering admin access
+
+If no admin can sign in, ask the workspace's administrator for a new setup code. It opens `/setup` once more, now titled **Recover admin access**, and
+whoever uses it gets a new Admin account, recorded in the audit log as `team.recovery_admin`.
+
+## Next steps
+
+- [API keys and access](/content/guides/api-keys/) for the keys your integrations use, and custom roles.
+- [Approvals and reviews](/content/guides/approvals/) for what the Approver role decides.
+- [Environments](/content/guides/environments/) to try changes on a copy of live content.

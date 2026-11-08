@@ -1,0 +1,29 @@
+{
+  "name": "@commerceworker/i18n",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Locale resolution, resource merging and i18next setup for the storefront, marketing site and admins; English and Spanish resources.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "i18next": "catalog:",
+    "i18next-browser-languagedetector": "catalog:",
+    "react-i18next": "catalog:"
+  },
+  "devDependencies": {
+    "@commerceworker/typescript-config": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "jsdom": "catalog:"
+  }
+}

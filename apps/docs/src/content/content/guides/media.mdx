@@ -1,0 +1,346 @@
+---
+title: Media and assets
+description: Upload images, video and files, publish them, add alt text and a focal point, see where an asset is used, and serve resized images.
+---
+
+An asset is a file in a space: an image, a PDF, a video. You will upload one, describe it, publish
+it so delivery serves it, and reference it from entries. Assets belong to an environment, like
+entries.
+
+## Before you start
+
+- Uploading, editing metadata and generating alt text or tags needs `content:write`.
+- Publishing and unpublishing an asset needs `content:publish`.
+- Listing assets, reading usage and resolving transforms needs `preview:read`.
+
+`…` in the routes below stands for `/spaces/{space}/environments/{env}`.
+
+## Upload a file
+
+In the admin, open **Assets** and press **Upload** (or drop files on the library); with a folder
+open, the files go into it. Images and other files are uploaded and published in one go. A video is uploaded to the video host and stays a draft until it finishes
+processing (see [Upload a video](#upload-a-video)).
+
+Over the API, an upload is three calls, because the bytes go straight to storage rather than
+through the API:
+
+```sh
+# 1. Create the asset. The response has the asset and a short-lived signed upload.
+curl -s "$API/spaces/$SPACE/environments/main/assets" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "fileName": "hero.jpg", "contentType": "image/jpeg", "title": { "en-US": "Hero" } }'
+
+# 2. PUT the file to upload.url, sending upload.headers.
+curl -s -X PUT "$UPLOAD_URL" -H "content-type: image/jpeg" --data-binary @hero.jpg
+
+# 3. Publish it, so delivery serves it.
+curl -s -X POST "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/published" \
+  -H "Authorization: Bearer $CMA"
+```
+
+Send every header in `upload.headers` with the `PUT`. An upload URL stores its file once: a second `PUT` through it, even within its 15 minutes, is a `412` and changes nothing (a retry of an upload that never arrived still stores). A new asset is a draft until you publish
+it, and `DELETE …/assets/{id}/published` unpublishes it. Title and description are localized maps
+set at creation, and an optional `folderId` files the asset in a folder. Over MCP the same steps
+are `asset_create` (the signed upload), `asset_publish` and `asset_unpublish`, with `asset_get` to
+read one asset and `asset_upload_start` for a large file (below); it can also list, file, archive
+and delete assets, replace their files, edit metadata and rights, and create videos.
+
+### Upload a large file
+
+One signed upload takes a file of up to 100 MiB. Past that, upload in parts, up to the
+workspace's limit (5 GiB unless its administrator changed it):
+
+1. `POST …/assets/uploads` with `fileName`, `contentType`, the file's exact `size` in bytes and the
+   optional `title`, `description` and `folderId`. The response (`201`) has the draft `asset` and
+   `upload: { uploadId, partSize, partCount }`. Parts are 8 MiB, larger for a very large file so the
+   count stays within 10,000; every part but the last is exactly `partSize` bytes. A `size` past the
+   limit is a `422`.
+2. `POST …/assets/{id}/uploads/{uploadId}/parts` with `{ "partNumbers": [1, 2, 3] }` (up to 100 at
+   a time) returns a signed `PUT` URL per part. Each URL is good for that upload, that part number
+   and that exact length only. `PUT` each part, keep the `ETag` response header, and sign a part
+   again to retry it.
+3. `POST …/assets/{id}/uploads/{uploadId}/complete` with `{ "parts": [{ "partNumber": 1, "etag": "…" }, …] }`,
+   naming parts 1 to `partCount` once each. Processing then starts as it does after any upload.
+
+`DELETE …/assets/{id}/uploads/{uploadId}` gives up: the parts are discarded and the empty draft is
+deleted. An upload nobody finishes is aborted automatically after a day. The MCP tools are
+`asset_upload_start`, `asset_upload_parts`, `asset_upload_complete` and `asset_upload_abort`, and
+the Management SDK's `assets.upload(...)` does all of it for any size, retrying each part and
+reporting progress ([SDKs](/content/guides/sdks/#writing-content)). All four calls need `content:write`.
+
+## Upload a video
+
+Video is hosted by an edge streaming service, not stored as a file, and plays as adaptive streaming
+with a poster frame. If the deployment has no video host, the API answers `501` and the admin
+stores the video as a plain file.
+
+1. `POST …/assets/videos` with `fileName`, `contentType`, optional `title`, `description` and
+   `maxDurationSeconds`. The response has `upload.uploadUrl` and `upload.fileField`.
+2. `POST` the file as multipart form data to `upload.uploadUrl`, in the field `upload.fileField`.
+3. Poll `POST …/assets/{id}/video/refresh` (the admin's **Refresh status** button) until
+   `file.video.status` is `ready`; the other statuses are `pending`, `processing` and `error`.
+4. Publish the asset, so the delivered copy carries the playback URLs (`hlsUrl`, `dashUrl`,
+   `thumbnailUrl`).
+
+The MCP tools are `asset_video_create` and `asset_video_refresh`.
+
+## Add alt text, a focal point and tags
+
+Click an asset in **Assets** to open its details. The metadata is:
+
+| Field         | What it is                                                                 |
+| ------------- | -------------------------------------------------------------------------- |
+| `altText`     | Alt text per locale, for accessibility                                     |
+| `focalPoint`  | `{ "x": 0.4, "y": 0.3 }`, each from 0 to 1; crops are anchored to it       |
+| `tags`        | Tag ids from the space's taxonomy                                          |
+| `fields`      | Free-form custom values                                                    |
+
+In the admin, set **Alt text** for the current locale, click the image to place the **Focal
+point** (or focus the image, press Enter, and move the point with the arrow keys; Shift moves it
+further), choose **Tags**, and press **Save metadata**. Over the API:
+
+```sh
+curl -s -X PATCH "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/metadata" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "altText": { "en-US": "A hand holding a coffee cup" }, "focalPoint": { "x": 0.5, "y": 0.4 } }'
+```
+
+Only the keys you send change. Editing metadata changes the draft; publish the asset again to
+carry it into delivery. The MCP tool is `asset_set_metadata`.
+
+### Generate alt text and tags with AI
+
+For images, **Generate alt text** beside **Alt text** and **Suggest tags** beside **Tags** return
+suggestions you review before saving (`POST …/assets/{id}/alt-text` and `…/auto-tag`; the MCP
+tools are `asset_generate_alt_text` and `asset_auto_tag`). Both work from the file name, title and
+description (and a `context` hint for alt text), not from the image itself, so give the asset a
+meaningful title first. Suggest tags matches your existing tags and lists new tag ideas to add in
+**Taxonomy**. A model answer that isn't the shape asked for suggests no tags, and gives no alt text
+(`422`). See [AI features](/content/guides/ai/).
+
+## What happens after an upload
+
+Every uploaded file is processed in the background, usually within seconds:
+
+- its bytes are fingerprinted, and an asset whose file is identical to an older one in the same
+  environment shows **Possible duplicate**, linking to the original (a warning; nothing is
+  blocked);
+- an image's width and height are read from the file, and a JPEG, PNG, WebP, AVIF or GIF of up to
+  20 MiB gets a **placeholder** (a blurred ThumbHash and a dominant colour; see
+  [Delivering assets](/content/guides/delivering-assets/#placeholders)). If one can't be made the asset
+  simply has none, and processing carries on;
+- an image with no alt text gets one, and one with no tags gets tags chosen from your existing
+  tags, both marked **AI suggestion** until someone changes that value. Values you set are never
+  replaced, and when the space's AI budget is spent this part is skipped;
+- the text of a PDF, office document or audio recording is read (documents up to 20 MiB, audio up
+  to 10 MiB, counted against the AI budget), so search finds the file by what it says;
+- the asset becomes searchable.
+
+While this runs the asset shows **Processing**. If it fails, the asset shows the error and a
+**Retry**; over the API that is `POST …/assets/{id}/reingest` (the MCP tool is `asset_reingest`;
+it does nothing while the asset is still processing). Assets uploaded before processing existed,
+or copied in by an environment import or clone (which starts this itself), can be sent through it
+in bulk: `POST …/assets/reindex` (`{ "all": true }` for every asset), or `assets_reindex`; while
+one is running, asking again returns that one. Management reads
+show the state as `ingestStatus` (`pending`, `processing`, `ready`, `error`), with `ingestError`,
+`contentHash`, `duplicateOf` and `aiSuggestions`.
+
+An upload link lives 15 minutes. When a file never arrives (the tab closed mid-upload), the empty
+draft is cleaned up a day later: removed when nothing links to it, and kept with the error "The
+upload never completed" when an entry already does. A file that did arrive but was never noticed
+is picked up by the bulk reprocess above.
+
+## Search the library
+
+Type in the search box on **Assets** to search file names, titles, captions, alt text, tag names
+and the text read from documents, by words and by meaning. Chips under the box narrow the results
+by kind, tag and folder and show how many match each. Over the API:
+
+```sh
+curl -s "$API/spaces/$SPACE/environments/main/assets/search?q=coffee&kind=image" \
+  -H "Authorization: Bearer $CMA"
+```
+
+The response is `{ items, total, facets }`, best match first; `limit` is at most 100, and
+`status=archived` or `status=all` includes archived assets. The MCP tool is `assets_search`.
+
+## Organize the library
+
+**Folders** nest up to 16 deep, and a name is unique among its siblings. Create one in the folder
+tree with **New folder**, or with `POST …/asset-folders` (`{ name, parentId? }`); rename or move one
+with `PATCH …/asset-folders/{id}`, its subfolders along with it. A folder is deleted only when it is
+empty. The MCP tools are `asset_folders_list`, `asset_folders_create`, `asset_folders_update` and
+`asset_folders_delete`.
+
+**Filter and sort** the list with `GET …/assets?kind=image&folder={id}&tag={id}&sort=size&order=desc`:
+`kind` (`image`, `video`, `audio`, `document`, `other`), `mime` (`image/*` works), `tag`, `folder`
+(an id, or `root`), `status`, `sort` (`updatedAt`, `createdAt`, `size`) and `order`. Results come a
+page at a time; pass the response's `nextCursor` as `cursor` for the next one.
+
+**Move** up to 500 assets at once: select them and choose **Move to folder**, or
+`POST …/assets/move` with `{ "ids": [...], "folderId": "..." }` (`null` for the root; MCP
+`assets_move`).
+
+**Archive** what you no longer use: an archived asset is hidden from the list (filter on
+`status=archived` to see it) and leaves delivery if it was published. **Restore** brings it back
+as a draft. Select several to archive them together. The routes are `POST …/assets/{id}/archive`
+(`content:publish`) and `…/restore` (`content:write`); the MCP tools are `asset_archive` and
+`asset_restore`.
+
+**Delete** removes an archived asset and its files for good (`DELETE …/assets/{id}`,
+`content:publish`; MCP `asset_delete`). Archive it first, which restoring undoes: anything else is
+refused with `400 invalid_state`. It is refused with `409 asset_in_use` while any entry links to it,
+drafts and trashed entries included, and the answer names those entries, so remove the links first. The asset also leaves every
+collection it was in.
+
+### Collections
+
+A **collection** is a named, ordered set of assets: a campaign's images, a press kit. An asset can
+be in any number of collections (unlike a folder, which holds it in one place), and a collection
+holds up to 1,000 assets. Collections don't change an asset or what delivery serves. Reading them
+needs `preview:read`; changing them needs `content:write`.
+
+| Route | What it does |
+| --- | --- |
+| `GET …/asset-collections` | Lists collections by name (`nextCursor` pages) |
+| `POST …/asset-collections` | Creates one: `{ name, description? }` |
+| `GET`, `PATCH`, `DELETE …/asset-collections/{id}` | Reads, renames (an empty `description` clears it) or deletes one; its assets stay in the library |
+| `GET …/asset-collections/{id}/assets` | Lists its members in order, filtered as the library is (archived members are left out unless `status` asks) |
+| `POST …/asset-collections/{id}/assets` | Appends `{ assetIds }` (up to 500 per call) in the order given; past 1,000 members the whole call is a `409` |
+| `POST …/asset-collections/{id}/assets/remove` | Removes `{ assetIds }`; ids that aren't members are ignored |
+| `PUT …/asset-collections/{id}/order` | Moves the named ids to the front in that order; the rest follow as they were. Name every member to set the whole order |
+
+The MCP tools are `asset_collections_list`, `asset_collections_get`, `asset_collections_create`,
+`asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`,
+`asset_collection_assets_add`, `asset_collection_assets_remove` and `asset_collection_reorder`; the
+Management SDK has `assets.collections`. Environment export, import and clone carry collections
+and their order; a member is kept when its asset is in the snapshot or already in the target.
+Delivery reads a collection's published members at
+[`GET /delivery/{space}/{env}/collections/{id}`](/content/guides/delivering-assets/#collections).
+
+### Download as a zip
+
+`POST …/asset-zips` with `{ "assetIds": [...] }` (1 to 1,000 assets) or `{ "collectionId": "..." }`,
+and an optional `name` for the archive, starts a background job (`202`) that puts the assets'
+current files, drafts included, in one `.zip` of up to 20 GiB. Files are stored uncompressed,
+named for their file names (made unique), and a hosted video, which has no file here, is left
+out. Follow the job at `GET …/asset-zips/{id}`: `status` is `pending`, `running`, `completed` or
+`failed` (with `error`), and `partsDone` of `partCount` shows progress. Once `completed` it has a
+`downloadUrl` that works for 15 minutes (ask again for a fresh one). The archive is kept for a day,
+then removed. An environment builds three zips at once; a fourth request answers **409** until
+one finishes. `GET …/asset-zips` lists the latest jobs. These need `preview:read`; the MCP tools
+are `asset_zip_create`, `asset_zip_get` and `asset_zips_list`, and the SDK's `assets.zips`.
+
+To give someone outside your team a file or a collection without an account, see
+[Share assets with a link](/content/guides/share-links/).
+
+**Act on many at once.** Select assets and use the bulk bar to publish, unpublish, archive, move,
+or add and remove a tag. Past about 50 assets, and for tagging at any count, the admin runs the
+action as a background job and shows its progress (it keeps going if you close the tab), then
+lists any asset it couldn't act on by name (a role that can't read the job's report sees how many
+instead). Over the API, `POST …/assets/bulk` starts the same job (`202`):
+`{ "action": "move", "ids": [...], "folderId": "..." }`, `"tag"` with `addTags` and
+`removeTags`, or `"publish"`, `"unpublish"` and `"archive"`. Each asset gets the same checks as on
+its own. Follow it at `GET …/bulk/jobs/{id}`; `…/bulk/jobs/{id}/report` names each asset that
+failed and why. `POST …/bulk/jobs/{id}/cancel` (`content:publish`) stops a job taking new work:
+assets it hasn't reached are left as they were, a batch already running finishes, and nothing done
+is undone (MCP `bulk_job_cancel`). `move` and `tag` need `content:write`; the others
+`content:publish`. The MCP tool is `assets_bulk`.
+
+## Replace a file and restore a version
+
+An asset keeps every file it has had. In its details sheet, **Versions** lists them, newest
+first, with who uploaded each and which one delivery serves. **Replace file** uploads a new one as
+the next version; **Restore** makes an older file current again, as a new version.
+
+Over the API, replacing is two calls around the upload:
+
+```sh
+# 1. Start the replacement: a signed upload for the next version, and a commit object.
+curl -s "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/file" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "fileName": "hero-v2.jpg", "contentType": "image/jpeg" }'
+
+# 2. PUT the file to upload.url, sending upload.headers.
+curl -s -X PUT "$UPLOAD_URL" -H "content-type: image/jpeg" --data-binary @hero-v2.jpg
+
+# 3. Commit it: send back the commit object from step 1.
+curl -s "$API/spaces/$SPACE/environments/main/assets/$ASSET_ID/file/commit" \
+  -H "Authorization: Bearer $CMA" -H 'content-type: application/json' \
+  -d '{ "version": 2, "fileName": "hero-v2.jpg", "contentType": "image/jpeg", "attempt": "…" }'
+```
+
+The commit is refused with `422` if nothing was uploaded, and `409` if someone else replaced the
+file first. Replaces started side by side (two tabs, a retry) each upload to their own key, so
+neither touches the other's file: the first to commit wins.
+
+A replacement past 100 MiB goes in parts, as a [large upload](#upload-a-large-file) does: `POST
+…/assets/{id}/file/uploads` with `fileName`, `contentType` and `size` returns `{ asset, version,
+upload: { uploadId, partSize, partCount } }`; sign, `PUT` and complete the parts at
+`…/assets/{id}/uploads/{uploadId}/…`, and completing commits the new version (no separate commit;
+`409` if another replace or restore took that version first). Aborting keeps the asset's file. In
+the admin, **Replace file** does this by itself for a large file, showing the bytes stored and a
+**Cancel upload**. A published asset keeps delivering the file it was published with until you publish
+it again; then the new file goes out under new URLs and the old ones stop. `GET
+…/assets/{id}/versions` lists the versions, and `POST …/assets/{id}/versions/{n}/restore` restores
+one (`content:write`). The MCP tools are `asset_replace_file`, `asset_replace_file_upload`, `asset_commit_file`,
+`asset_versions_list` and `asset_restore_version`.
+
+## Rights, expiry and embargo
+
+An asset's **Rights** carry a license and a credit, which delivery returns with it, and two dates:
+an **expiry**, when it stops being delivered, and an **embargo**, before which it can't be
+published. The library marks assets that expire within a week ("Expires soon"), those that have
+expired, and those still under embargo.
+
+Set them in the details sheet's **Rights** tab, or with
+`PUT …/assets/{id}/rights` and `{ "license": "CC-BY-4.0", "credit": "Ada", "expiresAt":
+"2027-01-31T00:00:00Z" }` (send `{}` to clear them; MCP `asset_set_rights`). Dates need a time
+zone, and an expiry must fall after the embargo. Rights decide what is delivered, so setting them
+needs `content:publish`, and on a published asset they apply at once, without republishing; an
+embargo can't be set on one that is already published.
+
+At its expiry the asset's files answer `410 Gone`, and within a minute it is unpublished. Publishing
+it before its embargo lifts, or after it expired, is refused with `409` (`asset_embargoed` or
+`asset_expired`) and a message naming the date.
+
+## Use an asset in entries
+
+An entry points at an asset with a `Link` field with `linkType` `Asset`. Publishing the entry
+checks that the asset exists. See [References](/content/reference/field-types/#references).
+
+`GET …/assets/{id}/usage` lists the entries that link to the asset, and the details sheet shows the
+same as **Referenced by** (or "Not referenced by any entry."). The MCP tool is `asset_usage`.
+Check it before you unpublish something a live page depends on.
+
+## Serve resized images
+
+A published asset arrives from the Delivery API with its URLs on the media origin: `url` (the
+original), `renditions` (your space's named sizes, such as `thumbnail` or `og`) and `srcset` (a
+ladder of widths for responsive images). Use them as given; they are immutable, and unpublishing
+the asset stops them. Renditions, the ladder, and the deprecated
+`GET /delivery/{space}/{env}/assets/{id}/transform` redirect are in
+[Delivering assets](/content/guides/delivering-assets/).
+
+With `fit=crop`, crops are anchored to the asset's focal point. Only images are transformed. The
+Management API's `GET …/assets/{id}/transform` answers with a URL as JSON
+(`asset_transform_url` over MCP), built from a fresh signed read URL for the asset's current file,
+so it serves a draft's latest version and expires with that URL (15 minutes); the details sheet has
+a **Transform preview**. For listing and
+fetching published assets, see [Reading content](/content/guides/reading-content/#assets).
+
+## Locales
+
+Alt text, titles and descriptions are per locale, and the locales available are the space's: a
+default locale and an optional list of others with fallbacks. They are set when the space is
+created (`POST /spaces` with `defaultLocale`, `locales` and `fallbacks`; the admin's new space
+dialog only asks for the default locale). `GET …/space-config` reads them. There is no route, MCP
+tool or admin screen to change a space's locales afterwards.
+
+## Next steps
+
+- [Delivering assets](/content/guides/delivering-assets/): media URLs, renditions and `srcset`.
+- [Reading content](/content/guides/reading-content/#assets): list and fetch published assets.
+- [References](/content/reference/field-types/#references): link assets from entries.
+- [Editing and publishing](/content/guides/editing-and-publishing/): publish entries that use them.
+- [AI features](/content/guides/ai/): the other AI helpers and their budget.

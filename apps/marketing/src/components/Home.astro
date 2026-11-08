@@ -1,0 +1,103 @@
+---
+import { copy } from '../i18n';
+import Base from '../layouts/Base.astro';
+import { APP_ORIGIN, docsUrl, type Locale } from '../lib/site';
+
+interface Props {
+  locale: Locale;
+}
+const { locale } = Astro.props;
+const t = copy(locale).home;
+
+// The order the REST and MCP panels both read: the same id, the same call.
+const rest = `GET /api/v1/orders/ord_7Q2… HTTP/1.1
+Authorization: Bearer cmw_live_…
+
+200 OK
+{ "id": "ord_7Q2…", "status": "waiting",
+  "waits": [{ "kind": "approval", "node": "approval" }] }`;
+const mcp = `{ "method": "tools/call",
+  "params": { "name": "get_order",
+    "arguments": { "orderId": "ord_7Q2…" } } }
+
+→ the same order, the same wait,
+  under the same role.`;
+// Two steps done, the third waiting on a person: an order mid-loop.
+const state = (i: number) => (i < 2 ? 'done' : i === 2 ? 'waiting' : undefined);
+---
+
+<Base locale={locale} path="/" title={t.metaTitle} description={t.metaDescription}>
+  <section class="hero wrap">
+    <h1>{t.heroTitle}</h1>
+    <p class="lead">{t.heroLead}</p>
+    <div class="actions">
+      <a class="button" href={docsUrl('/start/getting-started/')}>{t.ctaStart}</a>
+      <a class="button secondary" href={APP_ORIGIN}>{t.ctaSignIn}</a>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap split">
+      <div>
+        <h2>{t.loopTitle}</h2>
+        <p>{t.loopBody}</p>
+      </div>
+      <div>
+        <ol class="loop">
+          {t.loopSteps.map((step, i) => <li class={state(i)}><span>{step}</span></li>)}
+        </ol>
+        <p class="foot-note">{t.loopFoot}</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap split">
+      <div>
+        <h2>{t.apiTitle}</h2>
+        <p>{t.apiBody}</p>
+      </div>
+      <div>
+        <div class="pair">
+          <figure class="panel"><figcaption>{t.apiRest}</figcaption><pre><code>{rest}</code></pre></figure>
+          <figure class="panel"><figcaption>{t.apiMcp}</figcaption><pre><code>{mcp}</code></pre></figure>
+        </div>
+        <p class="foot-note">{t.apiFoot}</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>{t.b2bTitle}</h2>
+      <p>{t.b2bBody}</p>
+      <ol class="steps" style="margin-top: 2rem">
+        {t.b2bSteps.map((s) => <li><h3>{s.title}</h3><p>{s.body}</p></li>)}
+      </ol>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap split">
+      <h2>{t.contentTitle}</h2>
+      <p>{t.contentBody}</p>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap split">
+      <h2>{t.deployTitle}</h2>
+      <p>{t.deployBody}</p>
+    </div>
+  </section>
+
+  <section class="close">
+    <div class="wrap">
+      <h2 style="margin:0">{t.closeTitle}</h2>
+      <p class="lead">{t.closeBody}</p>
+      <div class="actions">
+        <a class="button" href={docsUrl('/')}>{t.closeCta}</a>
+      </div>
+    </div>
+  </section>
+</Base>

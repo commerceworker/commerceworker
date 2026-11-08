@@ -1,0 +1,125 @@
+---
+/*
+ * The workflow node catalog, rendered from NODE_SPECS in @commerceworker/domain at build time.
+ * Labels, config fields, defaults and output branches come from the same objects the workflow
+ * editor's palette and the run engine read, so this page cannot drift. Pass `category` to render
+ * one group.
+ */
+import {
+  CATEGORY_LABELS,
+  NODE_SPECS,
+  type NodeCategory,
+  type NodeSpec,
+} from '@commerceworker/domain';
+import CardHeading from './CardHeading.astro';
+import NodeIcon from './NodeIcon.astro';
+
+interface Props {
+  category: NodeCategory;
+}
+
+const { category } = Astro.props;
+const specs: readonly NodeSpec[] = NODE_SPECS.filter((s) => s.category === category);
+
+const show = (v: unknown) =>
+  v === undefined ? '' : typeof v === 'string' ? (v === '' ? '""' : v) : JSON.stringify(v);
+const label = CATEGORY_LABELS[category];
+---
+
+<div class="cw-catalog" data-category={category}>
+  {
+    specs.map((s) => (
+      <section class="cw-node">
+        <div class="cw-node-head">
+          <span class="cw-node-icon" title={label}>
+            <NodeIcon name={s.icon} size={16} />
+          </span>
+          <CardHeading id={s.type} level={3} text={s.label} />
+          <code class="cw-node-type">{s.type}</code>
+          {(s.rollback || s.waits) && (
+            <span class="cw-node-tags">
+              {[s.rollback && 'undo', s.waits && 'waits'].filter(Boolean).join(' · ')}
+            </span>
+          )}
+        </div>
+        <p>{s.description}</p>
+        <ul class="cw-node-facts">
+          <li>
+            <span class="cw-fact-label">Outputs</span>
+            {typeof s.outputs === 'function' ? (
+              'one per configured route'
+            ) : s.outputs.length === 0 ? (
+              'none: ends the run'
+            ) : (
+              <span class="cw-outputs">
+                {s.outputs.map((o) => (
+                  <code>{o}</code>
+                ))}
+              </span>
+            )}
+          </li>
+          {s.rollback && (
+            <li>
+              <span class="cw-fact-label">Undo</span>reversed if the run later fails
+            </li>
+          )}
+          {s.waits && (
+            <li>
+              <span class="cw-fact-label">Waits</span>for a person or an event
+            </li>
+          )}
+          {s.loop && (
+            <li>
+              <span class="cw-fact-label">Loop</span>accepts a <code>next</code> back-edge
+            </li>
+          )}
+          {s.retries !== undefined && (
+            <li>
+              <span class="cw-fact-label">Retries</span>
+              {s.retries} by default
+            </li>
+          )}
+        </ul>
+        {s.fields.length > 0 && (
+          <table class="cw-fields" role="table">
+            <thead role="rowgroup">
+              <tr role="row">
+                <th role="columnheader">Field</th>
+                <th role="columnheader">Kind</th>
+                <th role="columnheader">Default</th>
+                <th role="columnheader">Notes</th>
+              </tr>
+            </thead>
+            <tbody role="rowgroup">
+              {s.fields.map((f) => (
+                <tr role="row">
+                  <td role="cell">
+                    <code>{f.key}</code>
+                    {f.required && ' (required)'}
+                  </td>
+                  <td role="cell">{f.kind}</td>
+                  <td role="cell">{f.default !== undefined && <code>{show(f.default)}</code>}</td>
+                  <td role="cell">
+                    {f.label}
+                    {f.options && (
+                      <>
+                        {'. One of '}
+                        {f.options.map((o, i) => (
+                          <>
+                            {i > 0 && ', '}
+                            <code>{o}</code>
+                          </>
+                        ))}
+                      </>
+                    )}
+                    {f.hint && `. ${f.hint}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    ))
+  }
+</div>

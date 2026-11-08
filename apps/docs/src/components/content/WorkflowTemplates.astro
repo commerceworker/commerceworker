@@ -1,0 +1,95 @@
+---
+/*
+ * The built-in workflow templates, rendered from WORKFLOW_TEMPLATES in @commerceworker/domain: the
+ * same builders a workspace starts a new workflow from. Each node links to its catalog entry.
+ */
+import { nodeSpec, WORKFLOW_TEMPLATES } from '@commerceworker/domain';
+import CardHeading from './CardHeading.astro';
+import NodeIcon from './NodeIcon.astro';
+
+const workflows = Object.values(WORKFLOW_TEMPLATES).map((t) => t());
+---
+
+{
+  workflows.map((w) => (
+    <section class="cw-node">
+      <div class="cw-node-head">
+        <CardHeading id={w.id} level={2} text={w.name} />
+        <code class="cw-node-type">{w.id}</code>
+        {w.gatesPublish && <span class="cw-node-tags">gates publish</span>}
+      </div>
+      <p>{w.description}</p>
+      <ul class="cw-node-facts">
+        <li>
+          <span class="cw-fact-label">Starts on</span>
+          {w.graph.nodes
+            .filter((n) => n.type.startsWith('trigger.'))
+            .map((n) => nodeSpec(n.type)?.label ?? n.type)
+            .join(', ')}
+        </li>
+        <li>
+          <span class="cw-fact-label">Nodes</span>
+          {w.graph.nodes.length}
+        </li>
+        <li>
+          <span class="cw-fact-label">Edges</span>
+          {w.graph.edges.length}
+        </li>
+      </ul>
+      <details>
+        <summary>Nodes</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Label</th>
+              <th>Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.graph.nodes.map((n) => (
+              <tr>
+                <td>
+                  <code>{n.id}</code>
+                </td>
+                <td>{n.label}</td>
+                <td>
+                  <a class="cw-node-link" href={`/content/reference/nodes/#${n.type}`}>
+                    <NodeIcon name={nodeSpec(n.type)?.icon ?? 'Circle'} size={13} />
+                    {nodeSpec(n.type)?.label ?? n.type}
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+      <details>
+        <summary>Edges</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>From</th>
+              <th>Branch</th>
+              <th>To</th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.graph.edges.map((e) => (
+              <tr>
+                <td>
+                  <code>{e.source}</code>
+                </td>
+                <td>{e.sourceHandle ? <code>{e.sourceHandle}</code> : 'out'}</td>
+                <td>
+                  <code>{e.target}</code>
+                  {e.targetHandle && ` (${e.targetHandle})`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </section>
+  ))
+}

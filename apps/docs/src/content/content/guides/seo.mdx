@@ -1,0 +1,165 @@
+---
+title: SEO and sitemaps
+description: Give entries search and social metadata with a Seo field, and serve a sitemap of your published pages.
+---
+
+Search engine metadata is part of an entry: a field of type `Seo` holds the page's search title,
+description, canonical URL, a flag that keeps it out of search results, and a social sharing
+image. It is saved with the draft, published with the entry and delivered with its other fields.
+Delivery also serves a **sitemap** of every published page, built from each content type's
+[URL pattern](/content/guides/content-modeling/) and the entries' SEO metadata.
+
+## Before you start
+
+- A content type needs a URL pattern (such as `/blog/{slug}`) for its entries to appear in the
+  sitemap. A type without one can still hold SEO metadata.
+- Editing SEO metadata needs `content:write`, like any edit; publishing it needs
+  `content:publish`. The sitemap needs `delivery:read` on Delivery, or `preview:read` over the
+  Management API and MCP. See [Team and roles](/content/guides/team-and-roles/).
+
+## Add a Seo field to a content type
+
+In the content type dialog, add a field and choose the type **Seo**. A type has at most one, at
+the top level (not inside a component), and it is offered until one row is already `Seo`. Make it
+**localized** to give each locale its own metadata. Over the API and MCP it is an ordinary field
+definition:
+
+```json
+{ "apiId": "seo", "name": "Search engines", "type": "Seo", "localized": true, "required": false, "position": 4 }
+```
+
+Its value always has the same parts, each optional:
+
+| Part           | Meaning                                                                                             |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| `title`        | The page title in search results (up to 200 characters; results show about 60)                       |
+| `description`  | The meta description (up to 500 characters; results show about 160)                                  |
+| `canonicalUrl` | Where the original lives when this page copies one: a site path (`/guides/setup`) or an absolute `http(s)` URL |
+| `noindex`      | `true` keeps the page out of search results and out of the sitemap                                   |
+| `ogImage`      | The image shown when the page is shared: an asset link, `{ "id": …, "linkType": "Asset" }`            |
+
+Anything else is refused with `422`, and the issue names the part (`seo.canonicalUrl`). The social
+image is a reference like any link: an entry can't be published while it points at an asset that
+isn't.
+
+## Edit SEO metadata
+
+- **In the admin**, the Seo field shows an input per part in the entry editor, each with a line
+  saying what it is for; the title and description count their characters as you type.
+- **Over the Management API**, write it with the entry's other fields (`PUT …/entries/{id}`), or
+  change just it: `PATCH /spaces/{space}/environments/{env}/entries/{id}/seo` with
+  `{ "locale"?, "title"?, "description"?, "canonicalUrl"?, "noindex"?, "ogImage"? }`. A part left
+  out keeps its value and `null` clears it; `locale` defaults to the default locale and only a
+  localized Seo field takes another. It saves a new draft version and returns the entry; a type
+  with no Seo field answers `422`. A role whose field rules make the Seo field read-only or hidden
+  gets `403`.
+- **Over MCP**, `entries_set_seo` takes the same change.
+
+Either way the change is a draft: publish the entry to put it live.
+
+## Read SEO metadata
+
+Delivery returns the Seo field with the entry, like any field. With `?locale=`, it is one object;
+with `?include=1`, the social image arrives as the delivered asset:
+
+```json
+{
+  "id": "…",
+  "contentType": "article",
+  "fields": {
+    "title": "Hello",
+    "seo": {
+      "title": "Hello | Blog",
+      "description": "Our first post.",
+      "ogImage": { "id": "…", "linkType": "Asset" }
+    }
+  }
+}
+```
+
+GraphQL types it as an object (`ArticleSeo`), so a query selects its parts, and
+`@commerceworker/sdk-codegen` types it too.
+
+## The sitemap
+
+`GET /delivery/{space}/{env}/sitemap` lists the published entries of every published content type
+with a URL pattern, by entry id, each with its paths:
+
+```json
+{
+  "items": [
+    {
+      "entryId": "…",
+      "contentType": "article",
+      "lastmod": "2026-11-02T09:30:00.000Z",
+      "urls": [
+        { "path": "/en-US/blog/hello", "locale": "en-US" },
+        { "path": "/de/blog/hallo", "locale": "de" }
+      ]
+    }
+  ],
+  "next": "…"
+}
+```
+
+- `lastmod` is when the entry's live version was published.
+- An entry has one URL per locale when its pattern has `{locale}` or a localized slug, following
+  each locale's fallbacks; otherwise one, in the default locale. Locales that come out on the same
+  path are listed once.
+- Left out: an entry whose Seo value says `noindex` (in that locale), an entry whose canonical URL
+  is not its own path, and an entry with no slug for its pattern. Pass `base` (your site's URL,
+  `?base=https://www.example.com`) and a canonical URL on another site, or outside the path `base`
+  names (`https://www.example.com/docs`), is left out too. Paths compare with percent-encoding and
+  a trailing slash ignored.
+- Page with `limit` (up to 5,000 entries, default 1,000) and `from` set to the previous page's
+  `next`; `next` is `null` on the last page. A page can hold fewer than `limit` items, since
+  entries that are left out still take their place.
+- A key whose role limits it to some content types sees only their entries. A key denied the Seo
+  field gets that type's entries without the noindex and canonical exclusions, since which entries
+  drop out would reveal what the field holds.
+
+The SDK reads it with `client.sitemap({ from, limit, base })`.
+
+## Serve sitemap.xml to crawlers
+
+`GET /delivery/{space}/{env}/sitemap.xml?base=https://www.example.com` answers the sitemaps.org
+XML a crawler reads: each URL is `base` plus the path, with `lastmod`, and an entry listed in
+several locales carries `hreflang` alternates. `base` is required (`422` without it) and keeps a
+path prefix, so a site served under `/docs` passes `https://example.com/docs`.
+
+A Delivery key must never reach a crawler, so serve your own `/sitemap.xml` by proxying to Delivery
+with your key, passing the query string through:
+
+```ts
+// A route in your site, or an edge function in front of it.
+export async function sitemap(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const upstream = new URL(`https://cdn.your-workspace.commerceworker.com/delivery/site/main/sitemap.xml`);
+  upstream.searchParams.set('base', url.origin);
+  const page = url.searchParams.get('page');
+  if (page) upstream.searchParams.set('page', page);
+  const res = await fetch(upstream, { headers: { Authorization: `Bearer ${env.CDA_TOKEN}` } });
+  return new Response(res.body, {
+    status: res.status,
+    headers: { 'content-type': 'application/xml; charset=utf-8' },
+  });
+}
+```
+
+A sitemap file holds at most 50,000 URLs. Past that, `sitemap.xml` answers a **sitemap index**
+whose entries are `<base>/sitemap.xml?page=<token>`, each naming a range of entries (so one
+published after the index was read still lands in a page), and each of those answers one page: the proxy
+above serves them by passing `page` through. Point `robots.txt` at your `/sitemap.xml`.
+
+## Caching
+
+The sitemap is cached in Delivery like every read, and purged with the rest of the environment
+when an entry is published or unpublished, a release is published, or a content type (and so its
+URL pattern) is published. A draft change to SEO metadata reaches the sitemap when it is
+published.
+
+## Next steps
+
+- [Content modeling](/content/guides/content-modeling/#url-pattern) for the URL patterns the sitemap is built from.
+- [Redirects](/content/guides/redirects/) to keep old URLs working when a slug changes.
+- [Build your own frontend](/content/guides/your-own-frontend/) to render the metadata.

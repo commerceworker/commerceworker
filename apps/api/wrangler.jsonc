@@ -1,0 +1,158 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The template for every deployment: scripts/fleet.ts renders wrangler.<id>.json from this file
+  // and the deployment's registry entry <id>.jsonc (names, ids, routes, vars). Never deploy this file by hand.
+  //
+  // The api Worker: Management/Preview REST, MCP, OAuth, setup, media, live. HTTP only: queue
+  // consumers, cron, Durable Objects and Workflows live in the engine Worker, bound here by
+  // script name (deploy order: engine first).
+  "name": "commerceworker-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // nodejs_compat: node:crypto (token hashing, webhook HMAC). global_fetch_strictly_public: a
+  // webhook, function or plugin fetch can never reach a private address (SSRF backstop under the
+  // application's own url-safety checks).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Minified for a smaller script and a faster cold start; the uploaded source maps keep stack
+  // traces readable.
+  "minify": true,
+  "upload_source_maps": true,
+  // Several D1 round-trips per request: run near the D1 primary.
+  "placement": { "mode": "smart" },
+  "limits": { "cpu_ms": 5000 },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "invocation_logs": true }
+  },
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "commerceworker_metrics" }],
+
+  // ---- Data -----------------------------------------------------------------------------------
+  // D1 is the system of record. Requests open a read-replica session (wire.ts); turn on read
+  // replication per database (scripts/provision.sh does).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/store/migrations"
+    }
+  ],
+  "kv_namespaces": [{ "binding": "KV_CACHE" }],
+  "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "commerceworker-media" }],
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "commerceworker-vectors" }],
+  "ai": { "binding": "AI" },
+  "images": { "binding": "IMAGES" },
+  "stream": { "binding": "STREAM" },
+  "worker_loaders": [{ "binding": "PLUGIN_LOADER" }],
+  "ratelimits": [
+    { "name": "RATE_LIMIT_READ", "namespace_id": "1001", "simple": { "limit": 600, "period": 60 } },
+    {
+      "name": "RATE_LIMIT_WRITE",
+      "namespace_id": "1002",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    { "name": "RATE_LIMIT_AI", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } }
+  ],
+
+  // ---- Async ----------------------------------------------------------------------------------
+  "queues": {
+    "producers": [
+      { "binding": "EVENTS_QUEUE", "queue": "commerceworker-events" },
+      { "binding": "BULK_QUEUE", "queue": "commerceworker-bulk" },
+      { "binding": "AGENTS_QUEUE", "queue": "commerceworker-agents" },
+      // A completed signed upload, and a re-ingest request, for the engine's asset ingest.
+      { "binding": "ASSET_EVENTS_QUEUE", "queue": "commerceworker-asset-events" }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "LIVE_HUB", "class_name": "LiveHubDO", "script_name": "commerceworker-pipeline" },
+      {
+        "name": "AUTH_LIMITER",
+        "class_name": "RateLimiterDO",
+        "script_name": "commerceworker-pipeline"
+      },
+      {
+        "name": "AI_BUDGET",
+        "class_name": "CostGuardDO",
+        "script_name": "commerceworker-pipeline"
+      },
+      { "name": "SEARCH", "class_name": "SearchShardDO", "script_name": "commerceworker-pipeline" },
+      // The admin's assistant: /agents/assistant-agent/<person> is forwarded to it once the
+      // signed principal names that person (@commerceworker/http/assistant/gate).
+      {
+        "name": "ASSISTANT_AGENT",
+        "class_name": "AssistantAgent",
+        "script_name": "commerceworker-pipeline"
+      }
+    ]
+  },
+  "workflows": [
+    {
+      "binding": "AGENT_WF",
+      "name": "commerceworker-agent",
+      "class_name": "AgentWorkflow",
+      "script_name": "commerceworker-pipeline"
+    },
+    {
+      "binding": "EDITORIAL_WF",
+      "name": "commerceworker-editorial",
+      "class_name": "EditorialWorkflow",
+      "script_name": "commerceworker-pipeline"
+    }
+  ],
+  // `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the deployment sets an
+  // Email Sending sender (EMAIL_FROM); a bound EMAIL without a sender is refused at boot.
+
+  // ---- Vars (secrets: DATA_KEY, TOKEN_PEPPER, SETUP_TOKEN, ADMIN_TOKEN, MCP_TOKEN,
+  // MEDIA_SIGNING_SECRET, STREAM_WEBHOOK_SECRET, PRINCIPAL_KEY) -----------
+  "vars": {
+    // delivery: the admin's own reads of published content (compare, search, live), signed by the
+    // web principal. Public delivery clients use the cached delivery Worker at cdn.<domain>.
+    "ROLE": "management,preview,delivery",
+    "REQUIRE_SECURE_SECRETS": "true",
+    "SEED_DEV": "false",
+    "SEED_SCALE": "1",
+    // The enterprise starter (a large demo brand, installed in the background): demos only.
+    "DEMO_STARTERS": "false",
+    "AGENT_RUNTIME": "cloudflare-workflows",
+    "AGENTS_ENRICH": "false",
+    "AGENTS_MODERATE": "false",
+    "AGENTS_AUTO_APPLY": "false",
+    "AGENTS_SCHEDULES": "false",
+    "VERSION_ARCHIVE": "false",
+    "PLUGIN_MIN_RELEASE_AGE_HOURS": "",
+    "PLUGIN_SOURCE_HOSTS": "",
+    "AI_PROVIDER": "workers-ai",
+    "AI_MODE": "live",
+    "AI_TIMEOUT_MS": "20000",
+    "AI_GATEWAY_ID": "commerceworker",
+    "WORKERS_AI_MODEL_FLAGSHIP": "",
+    "WORKERS_AI_MODEL_BALANCED": "",
+    "WORKERS_AI_MODEL_FAST": "",
+    "EMBEDDINGS_PROVIDER": "workers-ai",
+    "EMBEDDINGS_DIM": "768",
+    "EMBEDDINGS_MODEL": "",
+    "ALLOW_FAKE_ADAPTERS": "",
+    "MEDIA_BASE_URL": "",
+    // The media Worker's origin (https://media.<domain>), rendered per deployment. Empty: delivered
+    // assets keep the api's signed URLs, without renditions or a srcset.
+    "MEDIA_PUBLIC_URL": "",
+    "IMAGES_ZONE_ORIGIN": "",
+    "AI_MAX_REQUESTS_PER_WINDOW": "60",
+    "AI_MAX_TOKENS_PER_WINDOW": "200000",
+    "AI_BUDGET_WINDOW_SECONDS": "60",
+    "DELIVERY_CACHE_TTL_SECONDS": "86400",
+    "DELIVERY_LIST_TTL_SECONDS": "3600",
+    "EVENT_RETENTION_HOURS": "168",
+    "OAUTH_ISSUER": "",
+    "OAUTH_RESOURCE": "",
+    "OAUTH_ACCESS_TOKEN_TTL_SECONDS": "3600",
+    "OAUTH_REFRESH_TOKEN_TTL_SECONDS": "2592000",
+    "EMAIL_FROM": "",
+    "EMAIL_FROM_NAME": ""
+  }
+}

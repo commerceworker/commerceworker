@@ -1,0 +1,158 @@
+packages:
+  - 'packages/*'
+  - 'packages/sdk/*'
+  - 'apps/*'
+  - 'plugins/*'
+
+# Single source of truth for every external dependency version. Every
+# package.json names its dependencies `catalog:`; bump the version here and it moves everywhere at once.
+# Only peerDependencies keep their own ranges. `catalogMode: strict` makes `pnpm add` refuse a version
+# outside the catalog, so add the entry here first. scripts/catalog.test.ts holds every package to it.
+catalogMode: strict
+
+catalog:
+  # React
+  react: ^19.2.8
+  react-dom: ^19.2.8
+  '@types/react': ^19.2.0
+  '@types/react-dom': ^19.2.0
+
+  # shadcn/ui primitives (shared by packages/ui and apps/web)
+  class-variance-authority: ^0.7.1
+  clsx: ^2.1.1
+  lucide-react: ^1.58.0
+  radix-ui: ^1.6.0
+  tailwind-merge: ^3.0.2
+  recharts: ^3.10.1
+
+  # Styling — Tailwind v4 is CSS-first; keep the plugin and core in lockstep
+  tailwindcss: ^4.3.3
+  '@tailwindcss/vite': ^4.3.3
+
+  # Data and validation
+  drizzle-orm: ^0.45.4
+  zod: ^4.6.7
+  json-logic-js: ^2.0.5
+
+  # Agents
+  agents: 0.32.0
+  '@cloudflare/ai-chat': 0.12.2
+  ai: 7.0.159
+  '@ai-sdk/react': 4.0.163
+  '@ai-sdk/provider': 4.0.27
+  streamdown: 2.7.1
+  # The assistant panel's Message Scroller (components/ai-elements/message-scroller.tsx).
+  '@shadcn/react': 0.3.1
+  # The code block's highlighter (app/lib/highlighter.tsx), loaded only when a block shows.
+  shiki: 4.5.0
+
+  # Build toolchain
+  typescript: ^7.0.2
+  vitest: 5.0.5
+  vite: ^8.0.12
+
+  # Cloudflare
+  wrangler: ^4.149.0
+  '@cloudflare/workers-types': ^5.20261009.1
+  '@cloudflare/vitest-plugin': ^1.4.0
+
+
+  # Used by one package each (moved here from their package.json)
+  '@a2a-js/sdk': 1.3.0
+  '@astrojs/starlight': ^0.42.8
+  '@babel/plugin-proposal-decorators': 8.0.2
+  '@biomejs/biome': ^2.5.15
+  '@cfworker/json-schema': 4.1.1
+  '@cloudflare/vite-plugin': ^1.63.1
+  '@cloudflare/workers-oauth-provider': ^1.2.4
+  '@fontsource-variable/inter': ^5.3.0
+  '@fontsource/ibm-plex-mono': ^5.3.0
+  '@modelcontextprotocol/server': 2.4.0
+  '@playwright/test': 1.64.1
+  '@react-router/dev': ^8.4.0
+  '@simplewebauthn/browser': 14.0.0
+  '@simplewebauthn/server': 14.0.3
+  '@types/json-logic-js': ^2.0.8
+  '@types/node': ^26.6.6
+  '@xyflow/react': ^12.12.0
+  astro: ^7.3.8
+  esbuild: 0.28.2
+  isbot: ^5.1.36
+  jose: 6.2.14
+  jsonc-parser: 3.3.1
+  lucide: 1.66.0
+  postal-mime: ^4.0.8
+  react-router: ^8.4.0
+  tsx: ^4.23.15
+  turbo: ^2.11.7
+  tw-animate-css: ^1.4.0
+  uqr: 0.1.3
+  use-stick-to-bottom: ^1.1.6
+
+  # Shared UI components (packages/ui)
+  '@base-ui/react': ^1.8.0
+  '@tanstack/react-table': ^8.21.3
+  '@testing-library/user-event': ^14.6.7
+  cmdk: ^1.1.1
+  date-fns: ^4.4.0
+  embla-carousel-react: ^8.6.0
+  input-otp: ^1.5.0
+  react-day-picker: ^9.14.0
+  react-dropzone: ^14.4.1
+  react-hook-form: ^7.87.0
+  react-resizable-panels: ^4.12.4
+  sonner: ^2.0.8
+  vaul: ^1.1.2
+
+  # Internationalization (packages/i18n)
+  i18next: ^25.10.10
+  i18next-browser-languagedetector: ^8.2.1
+  react-i18next: ^16.6.6
+
+  # Content management, HTTP and MCP surfaces, SDKs
+  '@tanstack/react-query': ^5.101.4
+  '@tiptap/core': 3.32.2
+  '@tiptap/extension-table': 3.32.2
+  '@tiptap/pm': 3.32.2
+  '@tiptap/react': 3.32.2
+  '@tiptap/starter-kit': 3.32.2
+  hono: ^4.13.2
+  graphql: ^17.0.2
+  hono-openapi: ^1.3.1
+  zod-openapi: ^6.0.1
+  '@hono/standard-validator': ^0.4.0
+  '@scalar/hono-api-reference': ^0.12.17
+  '@scalar/api-reference': ^1.76.4
+  fast-png: ^8.0.0
+  thumbhash: ^0.1.1
+  '@modelcontextprotocol/client': ^2.4.0
+  tsup: ^9.0.0
+  jsdom: ^30.0.1
+  '@testing-library/dom': ^10.4.1
+  '@testing-library/react': ^16.3.2
+  '@axe-core/playwright': ^4.13.0
+  vue: ^3.5.41
+overrides:
+  # GHSA: quadratic selector parsing (< 7.1.6). Starlight → expressive-code → postcss-nested@6
+  # still asks for ^6, which has no patched release. Drop once postcss-nested moves to ^7.
+  'postcss-nested>postcss-selector-parser': ^7.1.6
+  # GHSA-27r3-jxmh-p828: DoS via trailing bytes after a compressed body (< 2.4.0). express@5.3.0
+  # (via @a2a-js/sdk and the MCP SDK) allows ^2.3.0. Drop once express requires ^2.4.0.
+  'express>body-parser': ^2.4.0
+  # GHSA-xjj6-f33q-929c: DoS via an unhandled error on excessive content-encodings (undici < 7.30.1
+  # and 8.0.0–8.12.1). The AI SDK allows ^7.29.0 and Astro's unifont ^8.0.0; drop these once they
+  # require the patched releases.
+  '@ai-sdk/provider-utils>undici': ^7.30.1
+  'unifont>undici': ^8.12.2
+
+peerDependencyRules:
+  allowedVersions:
+    # agents pins its MCP server peer to exactly 2.3.1, but the engine serves /mcp with the SDK's
+    # own createMcpHandler (apps/engine/src/mcp.ts) and never loads agents/mcp/server. agents'
+    # MCP client keeps its own @modelcontextprotocol/core 2.3.1. Drop once agents allows ^2.4.
+    'agents>@modelcontextprotocol/server': 2.4.0
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp

@@ -1,0 +1,121 @@
+---
+title: AI features
+description: Draft, translate, tag and audit content with AI that is validated like a human edit, and run agents that enrich and moderate it.
+---
+
+You will use AI in the entry editor, save prompts your team reuses, and set agents loose on new
+content. Every AI feature in CommerceWorker follows one rule: **an AI can never produce content a person
+couldn't**. Generated values are checked against the content model with the same validation as a
+human edit, and most features return a proposal you look at before anything is saved.
+
+## Before you start
+
+AI features that change an entry need `content:write`. Managing AI actions needs `content:manage`,
+and the agent run log needs `space:admin`. Features run through the same routes and
+[MCP tools](/content/guides/mcp/#tools) as every other capability; `…` below stands for
+`/spaces/{space}/environments/{env}`.
+
+## In the entry editor
+
+| Feature          | What it does                                                         | API (`POST …/entries/…`)     |
+| ---------------- | -------------------------------------------------------------------- | ---------------------------- |
+| **Generate**     | Drafts a new entry of a type from a prompt                           | `…/generate`                 |
+| **Canvas**       | Turns free-form prose into a structured entry, field by field        | `…/canvas`                   |
+| **Translate**    | Translates an entry's localized fields into another locale           | `…/{id}/translate`           |
+| **Summarize**    | Writes a summary, optionally into a field                            | `…/{id}/summarize`           |
+| **Autofill**     | Fills one empty field from the rest of the entry                     | `…/{id}/autofill`            |
+| **Suggest tags** | Proposes tags from your taxonomy, and new ones                       | `…/{id}/suggest-tags`        |
+| **Audit**        | Reviews an entry for problems, and can open tasks for them           | `…/{id}/audit`               |
+| **Moderate**     | Classifies an entry's text for policy problems                       | `…/{id}/moderate`            |
+
+The editing features take `"apply": true` to save the result as a new draft version straight
+away; without it, they return the proposal for you to accept. Either way the result is a draft:
+nothing AI-generated is published without someone (or a workflow) publishing it.
+
+On assets, **Generate alt text** describes an image for accessibility, and **Suggest tags** proposes
+tags. See [Media and assets](/content/guides/media/#generate-alt-text-and-tags-with-ai).
+
+### AI actions
+
+An **AI action** is a saved prompt your team reuses: "rewrite for a younger audience", "write a
+meta description". It has a prompt template with variables, an optional target field and a tier,
+and runs against an entry like the built-in features. Manage them in **Settings → AI actions**,
+or:
+
+| Do this | API | MCP |
+| ------- | --- | --- |
+| List | `GET …/ai-actions` | `ai_actions_list` |
+| Create | `POST …/ai-actions` (`name`, `promptTemplate`, `targetField`, `tier`) | `ai_action_create` |
+| Run | `POST …/ai-actions/{id}/run` (`variables`, `entryId`, `locale`, `apply`) | `ai_action_run` |
+| Delete | `DELETE …/ai-actions/{id}` | |
+
+Like the built-in editing features, a run returns a proposal unless `apply` is true, and then
+saves a draft.
+
+## Search
+
+Delivery search is hybrid by default, combining keyword matching with semantic similarity; the
+editor also finds related entries and near-duplicates by meaning. See
+[Reading content](/content/guides/reading-content/#search).
+
+## Agents
+
+Agents run on their own, on publish or on a [schedule](/content/guides/releases-and-scheduling/#agent-schedules):
+
+- **Enrich** fills empty text fields on a newly published entry.
+- **Moderate** classifies the entry and records a hold when something is flagged, or when the
+  model gives no usable answer.
+- **Curate** proposes improvements to text that's already there.
+- **Repurpose** derives variants for other channels, such as a social post or a newsletter blurb.
+
+The moderation agent's **hold** is a record for people to act on, not an automatic unpublish; a
+workflow can branch on the result (see [`ai.moderate`](/content/reference/nodes/#ai.moderate)) to route
+flagged entries to a person before they publish.
+
+Whether an agent's changes apply directly or wait as an
+[agent review](/content/guides/approvals/#agent-reviews) is a setting; reviewing first is the default
+posture, and repurposing always waits for review. To run agents on a cadence, see
+[Agent schedules](/content/guides/releases-and-scheduling/#agent-schedules).
+
+### Agent run log and usage
+
+Each run is recorded with its decisions and token usage. Read the log at
+`GET …/agent-runs` (filter with `workflow`, `limit`) and totals at `GET …/agent-runs/usage`
+(`workflow`, `since`); both need `space:admin`. The admin's **Overview** shows recent agent runs and a 14-day token chart; there is no MCP tool for the log.
+
+## Model tiers
+
+Features ask for a **tier**, not a specific model: `fast` for classification and tagging,
+`balanced` for drafting (the default), `flagship` for the hardest writing. Models run at the
+edge, and your workspace maps each tier to a model, so a model can change without changing a
+workflow or an integration.
+
+## Decisions
+
+Workflow steps that choose rather than write use a **decision model**:
+classifying an entry, picking a route, moderating, and assessing. So do the moderation agent and
+tag suggestions, which pick from your existing tags and propose a new one only when none fits. Instead of writing an answer, it
+gives a probability for every allowed answer. So a classification reports how sure it is of each
+label, and a moderation step flags only above the probability you set (**Flag at**, 0.5 by
+default). The answer is always one of the options the step defines. A step that can't get an answer
+still fails safe: moderation flags the entry, and a router takes its most careful route.
+
+## The AI budget
+
+Usage is metered per space against a rolling window with a ceiling on requests and on tokens. When
+a space is over either ceiling, the next AI call is refused with a `429` ("AI budget exceeded for
+this space; retry later") and nothing is generated; the window resets on its own. Calls from
+the entry editor, the API, MCP and workflows all count, and so does the processing of uploads
+(alt text, tags, and reading the text of documents and recordings), which skips those parts
+rather than failing when the budget is spent. Background agent passes can be given a
+separate, stricter window, so batch work can't use up the budget editors need; an agent pass
+refused for budget is recorded in the run log as `skipped` with the reason. The deployment's
+administrator sets the ceilings and the window, and can turn metering off.
+
+## Next steps
+
+- [Approvals and reviews](/content/guides/approvals/): decide what agents propose.
+- [Workflows](/content/guides/workflows/): use AI nodes in a graph.
+- [Reading content](/content/guides/reading-content/#search): hybrid, semantic and keyword search.
+- [MCP server](/content/guides/mcp/): let your own agents call the same features.
+

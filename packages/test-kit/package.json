@@ -1,0 +1,40 @@
+{
+  "name": "@commerceworker/test-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./commerce": {
+      "types": "./src/commerce/index.ts",
+      "default": "./src/commerce/index.ts"
+    },
+    "./d1": {
+      "types": "./src/d1-query-counter.ts",
+      "default": "./src/d1-query-counter.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "check-types": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/domain": "workspace:*",
+    "@commerceworker/ports": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/typescript-config": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "vitest": ">=5"
+  }
+}

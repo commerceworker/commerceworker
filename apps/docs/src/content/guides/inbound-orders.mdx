@@ -1,0 +1,149 @@
+---
+title: Inbound orders
+description: Start orders from a storefront, marketplace, POS or other channel with a signed POST, route them to a flow, and send them safely more than once.
+---
+
+import Values from '../../components/Values.astro';
+
+Systems that take orders elsewhere (a storefront checkout, a marketplace, a till) start them with
+`POST /api/v1/webhooks/orders`. The request is signed with an [integration's](/reference/rest-api/#integrations) key instead of
+carrying a token. The order starts on a published
+flow and shows up in the dashboard under its channel, with the sender's id as its external id.
+Shopify and EDI X12 850 senders can post their native payloads instead; see
+[Channel adapters](/guides/channel-adapters/), which share this page's routing and idempotency.
+
+## Payload
+
+The body is the order input from [Start an order](/reference/rest-api/#start-an-order) plus the
+fields that identify the order and pick the flow:
+
+```json
+{
+  "model": "b2c",
+  "channel": "web",
+  "externalId": "SHOP-10442",
+  "source": "shopify",
+  "customerId": "cus_ada",
+  "currency": "USD",
+  "lines": [{ "sku": "MON-27", "qty": 1 }],
+  "shipTo": { "line1": "1 Main St", "city": "Austin", "region": "TX", "postalCode": "78701", "country": "US" }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `model` | Required: one of <Values of="order-models" />. See [Commerce models](/guides/commerce-models/) |
+| `channel` | Required (no default here): one of <Values of="order-channels" /> |
+| `externalId` | Required, 1 to 200 characters: the order's id in the sending system. With `channel` it identifies the order |
+| `lines` | `{ sku, name?, qty, unitPrice?, sellerId? }`. Required unless `documentText` is sent for the [Extract order](/reference/nodes/#ai.extract) node |
+| `flowId` | Optional. Runs this flow instead of the routed one |
+| `source` | Optional, up to 60 characters. The sending system, for display (`shopify`); kept in `meta.source` |
+| `shipTo` | Optional. An address string (up to 500 characters) or `{ name?, line1, line2?, city, region?, postalCode, country, latitude?, longitude? }`. Kept in `meta.shipTo`, where the `no_po_box` policy rule reads it. `latitude` (-90 to 90) and `longitude` (-180 to 180) let route fulfillment [ship from the nearest store](/guides/fulfillment/#nearest-store) |
+| `vars` | Optional. Seeds the run's variables |
+
+The rest (`title`, `customerId`, `currency`, `contact`, `fulfillment`, `documentText`,
+`documentKey`, `meta`) are the fields of `input` in the REST API. `currency` defaults to `USD` and
+must have an exchange rate, or the request returns `400`. The server sets `meta.via` to `webhook`.
+The [Webhook trigger](/reference/nodes/#trigger.webhook) summarises the order as
+`<channel label> · <externalId>`, plus `(<source>)` when the order carries a `source` that differs from the channel, and outputs `{ channel, externalId, source }` (`source` falls back to the node's configured one).
+
+## Signing
+
+Sign the raw body exactly as for [signed events](/guides/approvals-and-events/#signed-events):
+`X-CommerceWorker-Signature: t=<unix seconds>,k=<integration id>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`,
+with a timestamp within five minutes. `k` is the `id` of the integration whose secret signs the request. Sign the bytes you send; re-serialising the JSON afterwards
+breaks the signature.
+
+```bash
+BODY='{"model":"b2c","channel":"web","externalId":"SHOP-10442","lines":[{"sku":"MON-27","qty":1}]}'
+T=$(date +%s)
+SIG=$(printf '%s.%s' "$T" "$BODY" | openssl dgst -sha256 -hmac "$COMMERCEWORKER_SIGNING_SECRET" -hex | sed 's/^.* //')
+curl -X POST https://app.commerceworker.com/api/v1/webhooks/orders \
+  -H "X-CommerceWorker-Signature: t=$T,k=$COMMERCEWORKER_INTEGRATION_ID,v1=$SIG" -H 'content-type: application/json' \
+  -d "$BODY"
+```
+
+From Node:
+
+```ts
+import { createHmac } from 'node:crypto';
+
+const body = JSON.stringify({
+  model: 'b2c',
+  channel: 'web',
+  externalId: 'SHOP-10442',
+  lines: [{ sku: 'MON-27', qty: 1 }],
+});
+// integrationId and secret come from creating the integration.
+const t = Math.floor(Date.now() / 1000);
+const v1 = createHmac('sha256', secret).update(`${t}.${body}`).digest('hex');
+const res = await fetch('https://app.commerceworker.com/api/v1/webhooks/orders', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', 'x-commerceworker-signature': `t=${t},k=${integrationId},v1=${v1}` },
+  body,
+});
+```
+
+## What an integration may start
+
+An admin creates one integration per sending system and scopes it
+([Integrations](/reference/rest-api/#integrations)). To start orders it needs `startOrders: true`.
+If it is bound to a `channel`, every order it posts must be on that channel. If the body names a
+`flowId`, that flow must be in the integration's `flows` (or `flows` is `["*"]`); a body without
+`flowId` is routed as below whatever `flows` says. Anything outside the scope is a `403`.
+
+## Routing
+
+The flow that runs is, in order:
+
+1. The body's `flowId`.
+2. The `<model>:<channel>` entry in the workspace's order routes, else in the built-in routes.
+3. The `<model>:*` entry, likewise.
+4. The model's default [built-in flow](/guides/templates/): `tpl-b2b-order` for `b2b`,
+   `tpl-storefront-order` for `b2c`, `tpl-omnichannel-order` for `d2c`, `tpl-marketplace-order` for `marketplace`, `tpl-subscription`,
+   `tpl-purchase-request` and `tpl-reorder` for the others.
+
+The built-in routes send till sales to the point-of-sale flow: `b2c:pos` and `d2c:pos` run
+`tpl-pos-sale` (see [Fulfillment](/guides/fulfillment/#carry-out-and-point-of-sale)).
+
+The workspace's order routes are set by your CommerceWorker administrator: a map from `model:channel`
+or `model:*` to a flow id, which overrides the built-in routes key by key. Keys are lowercase
+letters, digits and underscores (`*` is allowed after the colon). For example:
+
+```json
+{ "b2c:pos": "flow-pos-order", "marketplace:*": "flow-marketplace-order" }
+```
+
+Here a `b2c` order from `pos` runs `flow-pos-order` instead of `tpl-pos-sale`, any `marketplace` order runs
+`flow-marketplace-order`, and everything else runs its built-in route or its model's default. A new order's flow must have
+a published version, or the request returns `409` and starts nothing. A retry of an order already
+started finds it first, so it still returns `200` after its flow is unpublished.
+
+## Idempotency
+
+`channel` and `externalId` are the idempotency key (`order:<channel>:<externalId>`), so a sender
+can retry freely. A repeat that matches the first request returns `200` with the existing order.
+The match is a fingerprint of the body you sent, not of the flow it was routed to, so a retry
+still finds its order after the order routes change. The same
+pair with different contents returns `422` and starts nothing. To change an accepted order,
+[deliver events](/guides/approvals-and-events/) to it.
+
+An order started this way is recorded in the [audit log](/guides/team-and-roles/#audit-log) once,
+against the integration (`integration:<name>`) and `via` a signed webhook, as is an event delivered
+by a signed webhook; a replay is not.
+
+## Responses
+
+| Status | Meaning |
+|---|---|
+| `201` | Started: `{ orderId, flowId }` |
+| `200` | A replay of an order already started: `{ orderId, replayed: true }` |
+| `400` | Body is not JSON, is not a valid order (with `issues`), or uses a currency with no exchange rate |
+| `401` | Missing, malformed, stale or wrong signature; no `k=`; an unknown or revoked integration |
+| `403` | The integration may not start orders, is bound to another channel, or may not choose that `flowId` |
+| `409` | A new order's flow has no published version |
+| `422` | The same `channel` and `externalId` already arrived with different contents |
+| `429` | The integration sent more than 1,200 requests in a minute (events included); retry after `Retry-After` seconds |
+| `500` | Engine error |
+
+Errors are `{ "error": "…" }`. Treat `201` and `200` as accepted; retry on `5xx` with the same body.

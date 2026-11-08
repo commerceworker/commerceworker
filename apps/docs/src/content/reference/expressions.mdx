@@ -1,0 +1,182 @@
+---
+title: Expressions and policy rules
+description: The run context, JSON Logic expressions, {{path}} text templates, the variables nodes set, the policy check's rules, ship-to addresses and the pricing chain.
+---
+
+import Values from '../../components/Values.astro';
+
+Node configs hold data, not code. Conditions are [JSON Logic](https://jsonlogic.com) expressions and
+text fields interpolate `{{path}}` templates, so a flow is safe to store, to diff and to accept from
+the copilot.
+
+## The run context
+
+Every expression and template sees one object:
+
+| Path | Contents |
+|---|---|
+| `order` | The order: `id`, `model`, `channel`, `externalId`, `title`, `customerId`, `contact`, `fulfillment`, `currency`, `lines` (each may carry `locationId`, the store it ships from on a split), `meta`, `shippingOption`, `subtotal`, `shipping`, `tax`, `total` (`subtotal + shipping + tax`), `createdAt`, once priced `fxRate` and `baseTotal` (see [Currency](#currency)), and once taxed `taxRate` and `taxShipping`. Pricing, shipping-rate and tax nodes update the totals as they run |
+| `vars` | Run variables: seeded by the start request's `vars`, then set by nodes and events (below). Carried across continue-as-new |
+| `nodes` | Each node's latest output, by node id, for example `nodes.risk.score` |
+| `input` | The order's `meta` |
+| `now` | When the current run started, in epoch milliseconds |
+
+## JSON Logic
+
+Fields of kind `logic` take a JSON Logic expression: Condition's `expression`, Loop's `while`, Wait's
+`until`, Refund's `amount`, Restock's `lines`, and each value in Set variables' `assign`. `{ "var": "order.total" }`
+reads a path from the context.
+
+```json
+{ "and": [
+  { ">": [{ "var": "order.total" }, 1000] },
+  { "==": [{ "var": "vars.category" }, "it_hardware"] }
+] }
+```
+
+CommerceWorker adds three operations:
+
+| Operation | Result |
+|---|---|
+| `{ "now": [] }` | The current time in epoch ms |
+| `{ "days": [n] }` | `n` days in ms: `{ "+": [{ "var": "now" }, { "days": [14] }] }` |
+| `{ "len": [x] }` | Length of an array or string, else `0` |
+
+A condition is true by JSON Logic's truthiness: empty arrays, `0`, `""` and `null` are false. A plain
+value (a number, `true`) is its own result, which is why Loop's default `while` is `true`.
+
+A node's result, including any clock it read, is recorded once, so an order that resumes or
+retries later sees the same value.
+
+## Text templates
+
+Text fields replace `{{path.to.value}}` with the value at that path in the run context. A missing
+value becomes an empty string and an object is written as JSON. Templates apply to Approval's
+`title`, Notify's `subject` and `body`, End's `reason`, Refund's `reason` and Generate PO's
+`supplier`.
+
+```text
+{{ref}} is on its way ({{vars.tracking}})
+```
+
+`{{ref}}` is the reference the customer knows: the order's outside number, else its title, else its
+id. Use it in anything a customer reads; `{{order.id}}` is the internal id.
+
+## Variables nodes set
+
+| Variable | Set by |
+|---|---|
+| `policyFailures` | Policy check: the failure messages |
+| `suggestedAddress` | Validate address, on `corrected`: the normalised ship-to |
+| `refunded` | Refund, on `ok`: the amount refunded |
+| `invoiceKey`, `dueDate` | Generate invoice |
+| `poKey`, `supplier` | Generate PO (Demand forecast may also set `supplier`) |
+| `tracking` | Create shipment: the tracking number, or every shipment's joined with `, ` on a split |
+| `fulfillmentLocation` | Route fulfillment: the chosen store's name (a split joins its sources' names with ` and `), or `null` for central stock |
+| `pickupCode` | Ready for pickup: the six-character code the customer shows |
+| `entitlements` | Deliver digital goods: `[{ sku, code }]`, one per unit |
+| `returnTracking` | Return label |
+| `erpRef` | ERP sync |
+| `poNumber` | Extract order |
+| `risk` | Risk score: the 0–100 score |
+| `sellers`, `pendingSellers` | Split by seller: all seller ids, and those still to answer (Seller response also resets `pendingSellers`) |
+| `rejectedSellers` | Seller response, on `partial`: the sellers that rejected |
+| `commission`, `payouts` | Seller payouts: total commission, and `[{ sellerId, net }]` |
+| configurable (`category`) | Classify: the label it chose, under its `into` field |
+| configurable (`summary`) | Summarize: the summary, under its `into` field |
+| configurable (`assessment`) | Assess: the answers by question id, under its `into` field, for example `vars.assessment.urgent.noul` or `vars.assessment.route.probabilities.needs_approval` |
+| any | Set variables: one per key in `assign` |
+
+A **Wait for event** node stores the event's payload under the event name, with each run of
+characters other than letters and digits replaced by `_`: `return.requested` becomes
+`vars.return_requested`, so a refund can use `{ "var": "vars.return_requested.amount" }`.
+
+## Policy rules
+
+The [Policy check](/reference/nodes/#commerce.policy) node's `rules` field is a list of rule
+objects. Every rule runs, and the node takes `fail` with
+every failure listed (in `vars.policyFailures`), so a customer hears about all of them at once. The
+rule names are <Values of="policy-rules" />.
+
+| Rule | Fields | Fails when |
+|---|---|---|
+| `min_order_amount` | `amount` | `order.total` is below `amount` |
+| `max_order_amount` | `amount` | `order.total` is above `amount` |
+| `max_qty_per_sku` | `qty` (integer) | Any SKU's quantity, summed across lines, exceeds `qty` |
+| `business_hours` | `start` (0–23), `end` (1–24), `days` (0 = Sunday … 6; default Monday–Friday), `timeZone` (default `UTC`) | The order is checked outside `[start, end)` on the listed days, in `timeZone` |
+| `no_po_box` | | `order.meta.shipTo` (a string, or an object of address lines) contains a PO box |
+| `restricted_skus` | `skus` (non-empty) | Any line's SKU is in `skus` |
+
+```json
+[
+  { "rule": "min_order_amount", "amount": 25 },
+  { "rule": "max_qty_per_sku", "qty": 500 },
+  { "rule": "business_hours", "start": 8, "end": 18, "timeZone": "America/Chicago" },
+  { "rule": "no_po_box" }
+]
+```
+
+## Ship-to addresses
+
+[Validate address](/reference/nodes/#commerce.address_validate) reads `order.meta.shipTo` as an
+object with `line1`, `city`, `postalCode` and `country`, and optionally `name`, `line2` and
+`region`. The node trims and collapses whitespace, maps
+country names to two-letter codes (`"usa"` → `US`, `"UK"` → `GB`), and requires a state or province
+for `US`, `CA` and `AU`, accepting the full name (`"Illinois"` → `IL`). It formats postcodes for `US`
+(`627011234` → `62701-1234`), `CA` (`M5V 3L9`), `GB` (`SW1A 2AA`), `AU` and `DE`; other countries
+only need one. The node takes `valid` when nothing changed, `corrected` when normalising changed a
+field (the result is in `vars.suggestedAddress`, the order is untouched), and `invalid` with every
+problem in its summary and output, including a missing or free-text ship-to.
+
+```json
+{ "line1": "1 Main St", "city": "Springfield", "region": "IL", "postalCode": "62701", "country": "US" }
+```
+
+## Pricing chain
+
+[Price lines](/reference/nodes/#commerce.price) prices each line through the workspace's chain of
+price sources, in priority order. The default chain is price books (stops when one matches),
+contract prices (stops) and volume tiers (keeps going), with the product's list price as the
+fallback. The Commerce page shows the chain in order; your administrator maintains its entries.
+
+1. For each active source in order, the node finds its entries that match the line and takes the
+   lowest price among them, so the deepest volume tier wins.
+2. It adds that price as a candidate. If the source stops processing, the chain ends there.
+3. It gives the line the lowest candidate, or the list price when no source matched.
+
+A matching contract price therefore wins even above list price, and with the default priorities a
+customer's contract is reached before a cheaper volume tier. Price-book and volume-tier entries
+match when every scope they set fits: SKU, customer, customer tier, minimum quantity (the line's
+quantity) and a start/end window. Each sets either a fixed price or a percentage off the list
+price. Contract prices are the customer's agreed prices per SKU.
+
+The node's `useContracts` and `usePriceRules` fields drop the contract source or the price-book and
+volume sources for that node. A line with its own `unitPrice` keeps it. The node's `basis` field picks the source: `auto` prices buy-side
+models (procurement, replenishment) at the product's cost without the chain and every other model through it,
+`chain` and `cost` force one or the other (see [Commerce models](/guides/commerce-models/#pricing)). The node's output lists each line's
+`unitPrice`, the source (`by`) and the entry (`rule`), and its summary counts lines per source.
+
+## Currency
+
+An order's `currency` is any code the workspace has an exchange rate for; the REST API answers
+`400` for one without. A new workspace has a rate for `USD` only, so an order in another currency
+is refused until its rate is added. Prices, price rules, credit limits, balances, budgets and reports are in the
+base currency, `USD`. Price lines reads the rate (units of the order's currency per one USD),
+converts each base price at it, and stores it on the order as `fxRate`, so later rate changes never
+reprice the order. A `unitPrice` given on the order is
+already in the order's currency. Totals carry `baseTotal`, the total in USD.
+
+- Amounts on the order, its documents, payments and refunds are in the order's currency.
+- Credit check and budget check compare `baseTotal`; the credit check reports in the order's
+  currency, and an unpaid invoice to a business customer adds `baseTotal` to their balance.
+- The dashboard converts at each order's `fxRate`, so its figures are in USD.
+- `order.total` in an expression is in the order's currency; use `order.baseTotal` for a threshold
+  that should hold across currencies. Policy rule amounts compare `order.total`.
+
+The Commerce page lists the workspace's rates; your administrator keeps them current.
+
+## Durations
+
+Fields of kind `duration` are a whole number and a unit: `second`, `minute`, `hour`, `day`, `week`,
+`month` (30 days) or `year` (365 days), singular or plural: `"30 seconds"`, `"2 days"`. No wait or
+timeout is shorter than one second.

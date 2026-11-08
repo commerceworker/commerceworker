@@ -1,0 +1,70 @@
+---
+title: Documentation
+description: API-first, agent-first commerce and content on Cloudflare. Every order runs as a durable flow graph; content is modeled once and delivered anywhere.
+template: splash
+hero:
+  title: Every order is a loop that runs to its outcome.
+  tagline: >-
+    Draw a flow from catalog nodes: pricing, payments, approvals, shipping, store pickup, digital
+    delivery, marketplace sellers, AI triage. CommerceWorker runs each order, from any channel, through it
+    durably, waits for people and partners, and rolls back what it did when the order fails.
+  actions:
+    - text: Get started
+      link: /start/getting-started/
+      icon: right-arrow
+    - text: How it works
+      link: /start/concepts/
+      variant: secondary
+    - text: REST API
+      link: /reference/rest-api/
+      variant: minimal
+    - text: Content management
+      link: /content/
+      variant: minimal
+---
+
+import { CardGrid, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+import OrderRun from '../components/OrderRun.astro';
+import b2bRun from '../data/runs/b2b-order.json';
+import pickupRun from '../data/runs/pickup-order.json';
+
+<Tabs>
+  <TabItem label="Pick up in store">
+    <OrderRun run={pickupRun}>
+      on the dashboard's “Buy online, pick up in store” scenario: a direct-to-consumer web order held
+      at the SoHo store, waiting for the customer to collect it
+    </OrderRun>
+  </TabItem>
+  <TabItem label="Purchase order by email">
+    <OrderRun run={b2bRun}>
+      on the dashboard's “B2B PO by email” scenario, recorded without a model (hence “heuristic” on
+      the extract step, which found <code>cus_northwind</code> from the email's{' '}
+      <code>From:</code> line)
+    </OrderRun>
+  </TabItem>
+</Tabs>
+
+## What it runs
+
+Every [commerce model](/guides/commerce-models/): B2B, B2C, direct to consumer, marketplace, subscription,
+procurement and replenishment, from any channel. Each model starts from a [built-in flow](/guides/templates/)
+you can open in the editor, change and republish.
+
+- **Flows are data.** A flow is a JSON graph of [catalog nodes](/reference/nodes/). Publishing makes an
+  immutable version, and each order pins the version it started on.
+- **Orders are durable.** Each node runs once and its result is kept, so an order survives
+  restarts, waits days for a person or a payment, and rolls back its reservations, holds and
+  shipments when it fails.
+- **Every order is live.** The order page shows each node as it runs, and approvals and events
+  reach the waiting node from the dashboard, the API, a signed webhook or the assistant.
+- **AI never blocks an order.** Every model call has a schema, a 20-second cap and a deterministic
+  fallback.
+
+## Where next
+
+<CardGrid>
+  <LinkCard title="Getting started" href="/start/getting-started/" description="Sign in, run a scenario, start an order over the API." />
+  <LinkCard title="Building flows" href="/guides/building-flows/" description="Nodes, branches, joins, loops, expressions and publishing." />
+  <LinkCard title="Node catalog" href="/reference/nodes/" description="Every node type, its config fields and its output branches." />
+  <LinkCard title="REST API" href="/reference/rest-api/" description="Start orders, deliver events, decide approvals and subscribe to webhooks." />
+</CardGrid>

@@ -1,0 +1,29 @@
+{
+  "name": "@commerceworker/marketing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The commerceworker.com marketing site: static Astro pages in English and Spanish, Ledger from @commerceworker/design, served as Workers static assets.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build && node scripts/check-links.mjs",
+    "preview": "astro preview",
+    "deploy": "pnpm build && wrangler deploy",
+    "lint": "biome check .",
+    "check-types": "astro sync && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@commerceworker/design": "workspace:*",
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource/ibm-plex-mono": "catalog:",
+    "astro": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "UNLICENSED"
+}

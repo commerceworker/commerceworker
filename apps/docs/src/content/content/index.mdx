@@ -1,0 +1,51 @@
+---
+title: Content management
+description: Model, write, review and publish structured content in CommerceWorker, and deliver it to any channel over REST, GraphQL, SDKs and MCP.
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+CommerceWorker manages content as well as commerce. Editors model, write, review and publish in
+the studio; developers read the same content over REST, GraphQL and SDKs; AI agents work through an
+MCP server that can do exactly what a person with the same key can, and nothing more. Start with
+[Getting started](/content/start/getting-started/) or [Concepts](/content/start/concepts/), or go to
+the [REST API](/content/reference/rest-api/).
+
+## What it does
+
+- **Structured content, modeled once.** Content types are typed, validated fields: text, rich
+  text, references, components and repeaters, localized per field. See
+  [Content modeling](/content/guides/content-modeling/).
+- **Every change is a version.** Saving a draft appends an immutable version; publishing pins one
+  for delivery. Entries move through
+  <span class="cw-badge" data-state="draft">Draft</span>{' '}
+  <span class="cw-badge" data-state="changed">Changed</span>{' '}
+  <span class="cw-badge" data-state="published">Published</span>, and you can diff or restore any
+  version. See [Editing and publishing](/content/guides/editing-and-publishing/).
+- **Review before it ships.** Workflows route entries through validation, policy checks,
+  approvals and AI steps, and releases publish many entries as one. See
+  [Workflows](/content/guides/workflows/) and [Approvals and reviews](/content/guides/approvals/).
+- **AI that proposes, people that decide.** Drafting, translation, tagging, enrichment and
+  moderation return proposals you review, with the same validation as a human edit. See
+  [AI features](/content/guides/ai/).
+- **Branch, compare and merge.** Clone an environment to try a model change on a copy of live
+  content, compare it with the original, merge it back, and point a stable alias at whichever
+  environment is live. See [Environments](/content/guides/environments/).
+- **Media with the content.** Upload images, video and files, add alt text and a focal point, and
+  serve resized images from the Delivery API. See [Media and assets](/content/guides/media/).
+- **Connect it to everything else.** Webhooks notify other systems of every change. In
+  **Settings**, admins also manage functions that react to events, plugins that run on the write
+  path, and app extensions that add UI to the editor. See [Webhooks](/content/guides/webhooks/) and
+  [Functions, plugins and extensions](/content/guides/extending/).
+- **One surface for people and agents.** The REST API, the admin and the MCP server call the same
+  operations under the same permission checks. See [MCP server](/content/guides/mcp/).
+
+## Where next
+
+<CardGrid>
+  <LinkCard title="Getting started" href="/content/start/getting-started/" description="Model a type, publish an entry, read it over the Delivery API." />
+  <LinkCard title="Workflows" href="/content/guides/workflows/" description="Route entries through review, approvals and AI steps." />
+  <LinkCard title="Environments" href="/content/guides/environments/" description="Clone, compare, merge and switch what is live." />
+  <LinkCard title="Reading content" href="/content/guides/reading-content/" description="Query, filter, localize, search and stream published content." />
+  <LinkCard title="Node catalog" href="/content/reference/nodes/" description="Every workflow node type, its fields and its output branches." />
+</CardGrid>

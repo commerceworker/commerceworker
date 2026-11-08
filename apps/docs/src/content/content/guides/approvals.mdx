@@ -1,0 +1,98 @@
+---
+title: Approvals and reviews
+description: Who may approve what, separation of duties, escalation, and reviewing what AI agents propose before it is applied.
+---
+
+You will decide what is waiting on you in the **Approvals** inbox, and set who may decide, whether
+people can approve their own work, and when an approval escalates. CommerceWorker has two kinds of
+review, and both come down to a person with the right permission saying yes or no:
+
+- an **approval** in a [workflow](/content/guides/workflows/): a step that waits for a decision on an
+  entry before the workflow continues;
+- an **agent review**: an AI proposal (new field values, tags, a translation) waiting to be applied
+  or discarded.
+
+## Before you start
+
+- Deciding an approval needs the scope the approval names, `workflow:approve` unless the node says
+  otherwise, plus read access to the entry's content type.
+- Listing tasks and agent reviews needs `preview:read`; deciding an agent review needs
+  `content:write`.
+- Setting the space-wide separation-of-duties default needs `space:admin`.
+
+## Approvals
+
+### Decide what is waiting
+
+Open **Approvals**. It lists, oldest first, the **Workflow steps** paused for a decision and the
+**Agent proposals** waiting for review; an event wait is listed too, but only the event moves it
+on. Open an entry from a row to see what you are deciding, add an optional note, and approve or
+reject. A count beside **Approvals** in the sidebar and on the phone's tab bar says how many items
+wait, refreshed every minute; like the lists, it leaves out content types you can't read.
+
+| Do this        | API                                                     | MCP                  |
+| -------------- | ------------------------------------------------------- | -------------------- |
+| Count what waits | `GET …/approvals/count` (`workflowTasks`, `agentReviews`, `total`) | `approvals_count` |
+| List tasks     | `GET …/workflow-tasks?status=pending`                   | `workflow_task_list` |
+| Decide a task  | `POST …/workflow-tasks/{id}/decide` (`decision`: `approved` or `rejected`, `note`) | `workflow_task_decide` |
+
+`…` stands for `/spaces/{space}/environments/{env}`. Whoever decides does so with their own
+permissions, in the admin, over the API or through MCP: an agent holding a key without the
+approval's scope can't approve it.
+
+### Configure an approval
+
+The [`control.approval`](/content/reference/nodes/#control.approval) node waits for a decision inside a
+[workflow](/content/guides/workflows/) run and leaves on one of three branches: `approved`, `rejected`, or
+`escalated` when nobody decides in time.
+
+| Setting             | What it does                                                                     |
+| ------------------- | -------------------------------------------------------------------------------- |
+| **Who may decide**  | The scope a person needs to approve or reject. The default, `workflow:approve`, lets the [Approver](/content/guides/team-and-roles/) role and up decide; `content:write` lets editors decide; `content:publish` keeps the decision with publishers. |
+| **Separate duties** | Whoever started the run can't decide it, so nobody approves their own work. Left unset, it follows the space default below. |
+| **Escalate after**  | A duration; defaults to `2 days`. When it passes, the `escalated` branch is taken, and a decision after the window is refused. |
+| **Assignee**        | Who the approval is addressed to, shown in the inbox; defaults to `editor`.      |
+| **Instructions**    | What the reviewer should check, shown with the request.                          |
+
+Chain approvals for multi-step sign-off. The built-in
+[Editorial review](/content/reference/workflow-templates/#tpl-editorial-review) template asks an editor
+first, then legal only for entries tagged `legal`, with separation of duties on the legal step.
+
+#### Separation of duties by default
+
+A space has one default for approvals whose node leaves **Separate duties** unset: off, until a
+`space:admin` turns it on with `PUT …/workflow-settings` (`{ "separateDuties": true }`; read it with
+`GET`, or use the `workflow_settings_set` MCP tool). It applies to approvals opened after the
+change. With separation of duties on, an API key can't decide at all, because a key is not a
+person; a person must.
+
+### Stage gates
+
+A workflow [stage](/content/guides/workflows/#stages) is a lighter gate: moving an entry into a stage needs
+that stage's scope, so "Approved" can be reserved for people who may publish.
+
+## Agent reviews
+
+When an AI agent produces a change that isn't set to apply on its own, it is saved as a pending
+**agent review**: the proposed field values, the agent's notes on why, and the entry they're for.
+Nothing touches the entry until someone decides.
+
+- **Approve** applies the proposal as a new draft version, through the same validation as a human
+  edit. It is applied exactly once, even if two reviewers click at the same moment.
+- **Reject** discards it; nothing is applied.
+
+| Do this       | API                                         | MCP tool               | Scope           |
+| ------------- | ------------------------------------------- | ---------------------- | --------------- |
+| List pending  | `GET …/agent-reviews?status=pending`        | `agent_review_list`    | `preview:read`  |
+| Approve       | `POST …/agent-reviews/{id}/approve`         | `agent_review_approve` | `content:write` |
+| Reject        | `POST …/agent-reviews/{id}/reject`          | `agent_review_reject`  | `content:write` |
+
+An approved proposal lands as a draft, so a reviewer who may write but not publish can accept it,
+and someone who may publish decides when it goes live.
+
+## Next steps
+
+- [Workflows](/content/guides/workflows/): build the graph an approval sits in.
+- [AI features](/content/guides/ai/#agents): what agents propose, and the holds the moderation agent records.
+- [Team and roles](/content/guides/team-and-roles/): who holds `workflow:approve`.
+- [Permission scopes](/content/reference/scopes/): every scope an approval can require.

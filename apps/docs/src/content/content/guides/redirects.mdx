@@ -1,0 +1,179 @@
+---
+title: Redirects
+description: Send old paths to new ones, automatically when a slug changes, and apply the rules in your front end or at the edge.
+---
+
+A redirect sends a reader from one path on your site to another. CommerceWorker serves no site, so
+a redirect is data: you keep the set here, Delivery hands it out, and your front end (or an edge
+function in front of it) answers the request. Each environment has its own set, and it travels with
+[snapshots, exports and clones](/content/guides/environments/#export-and-import-a-snapshot).
+
+## Before you start
+
+- Reading redirects needs `preview:read`; creating, changing, importing or deleting them needs
+  `content:manage`. Delivery's redirect routes need `delivery:read`. See
+  [Team and roles](/content/guides/team-and-roles/).
+- An environment holds up to 10,000 redirects, because Delivery serves the whole set in one
+  response.
+
+## Manage redirects in the admin
+
+Open **Settings → Workspace → Redirects**. The list searches source, destination and note, and each
+row has a switch to turn the redirect off without deleting it. **Add redirect** and the edit action
+open a dialog:
+
+| Field       | Meaning                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------- |
+| Source      | The path to match, such as `/old-page`, or a pattern (below)                                         |
+| Destination | A path such as `/new-page`, or an absolute `https://` URL; may carry a query and a fragment          |
+| Status      | `301` (the default), `302`, `307` or `308`                                                           |
+| Locale      | Optional. Limits the redirect to requests in that locale                                             |
+| Note        | Optional, up to 500 characters                                                                       |
+| Enabled     | A disabled redirect is kept but never served                                                         |
+
+A source is unique per locale. A path is normalized as a browser sends it: repeated and trailing
+slashes are dropped and non-ASCII characters are percent-encoded, so `/über/` is stored as
+`/%C3%BCber`. A source holds no query string or fragment. A destination is a path starting with `/`
+or an `https://` URL without credentials; other schemes and `//host` are refused.
+
+Every change is checked against the whole set. A redirect that would form a **loop** (A to B and B
+back to A) or repeat a source is refused with `422`. A **chain** (A to B, and B to C) is allowed,
+because it works, but readers take an extra hop: the screen flags it and **Collapse chains**
+points each chain's first redirect at where the chain ends.
+
+## Patterns and precedence
+
+A source is exact, or a pattern of whole segments:
+
+| Segment     | Matches                                  |
+| ----------- | ---------------------------------------- |
+| `/blog`     | That segment, exactly                    |
+| `[slug]`    | Any one segment                          |
+| `[...rest]` | One or more segments; only as the last   |
+
+A destination can insert what the source captured, by the same name:
+
+| Source            | Destination        | Request           | Goes to           |
+| ----------------- | ------------------ | ----------------- | ----------------- |
+| `/docs/[...path]` | `/help/[...path]`  | `/docs/api/keys`  | `/help/api/keys`  |
+| `/blog/[slug]`    | `/articles/[slug]` | `/blog/hello`     | `/articles/hello` |
+| `/blog/[slug]`    | `/articles/[slug]` | `/blog/a/b`       | no match          |
+
+A parameter takes a whole segment (`/blog/post-[slug]` is refused), a name appears once in a
+source, and a destination can only use names its source captures, with the same kind.
+
+When several redirects match a path:
+
+1. An **exact** source beats any pattern.
+2. Between patterns, the more specific wins, comparing segment by segment: a fixed segment beats
+   `[param]`, which beats `[...splat]`. `/blog/archive/[year]` wins over `/blog/[...rest]`.
+3. A tie goes to the redirect for the request's locale, then to the lower source, then the lower id.
+
+A redirect with a locale applies only to requests in that locale; a request with no locale meets
+only the redirects that have none. The request's query string is appended to the destination unless
+the destination has its own.
+
+## Redirect slug changes
+
+When a content type has a [URL pattern](/content/guides/content-modeling/#url-pattern) such as
+`/blog/{slug}`, CommerceWorker keeps your old links working. If you publish an entry that was
+already live and its slug changed, the publish also writes a `301` from the old path to the new
+one, in the same step:
+
+- Redirects that already pointed at the old path are repointed at the new one, so no chain forms.
+- A redirect away from the new path is removed, so no loop forms.
+- A localized slug writes a redirect for that locale only.
+- Nothing is written for a first publish, for a type without a URL pattern, or when the
+  environment is at its 10,000-redirect limit.
+
+It works the same for a single publish, a [release](/content/guides/releases-and-scheduling/) and a bulk
+publish. These redirects are marked as made by a slug change and show in the list like any other,
+so you can change the status or turn one off.
+
+## Import and export
+
+**Import** in the admin takes CSV or JSON. **Check** runs a dry run and reports what would be
+created, updated or left alone; **Import** then writes it. An import is all or nothing: every row
+and the set it would leave are checked first, and a refusal names each bad row. It takes up to
+1,000 rows. A row whose source and locale already exist updates that redirect; the rest are added.
+
+CSV has a header row. `source` and `destination` are required; `status`, `locale`, `enabled` and
+`note` are optional, in any order, and other columns are ignored:
+
+```csv
+source,destination,status,locale,enabled,note
+/old-pricing,/pricing,301,,true,Renamed in the spring
+/docs/[...path],/help/[...path],301,,,
+/de/preise,/de/pricing,308,de,true,
+```
+
+JSON is an array of the same fields:
+
+```json
+[
+  { "source": "/old-pricing", "destination": "/pricing" },
+  { "source": "/de/preise", "destination": "/de/pricing", "status": 308, "locale": "de" }
+]
+```
+
+Over the API, `POST …/redirects/import` takes `{ "format": "csv" | "json", "data": …, "dryRun": true }`
+and `GET …/redirects/export` returns the set as CSV in the same columns, ready to import again.
+
+## Read redirects from Delivery
+
+| Route                                           | Returns                                                                 |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `GET /delivery/{space}/{env}/redirects`         | `{ items, total }`: the enabled redirects, each `id`, `source`, `destination`, `status`, optional `locale` |
+| `GET /delivery/{space}/{env}/redirects/resolve` | `?path=&locale=` returns `{ redirect, status, location }`, or `404`      |
+
+Both are cached like other Delivery reads and purged when the set changes. To redirect every
+request, fetch the set once and match locally rather than calling `resolve` per request.
+
+## Apply redirects at the edge
+
+`@commerceworker/sdk/redirects` matches requests against the set with the same rules as
+Delivery. `createRedirectHandler` is a front-door helper: it returns a redirect `Response` for a
+request a redirect matches, or `null` to serve the request as usual.
+
+```ts
+import { createDeliveryClient } from '@commerceworker/sdk';
+import { createRedirectHandler } from '@commerceworker/sdk/redirects';
+
+const client = createDeliveryClient({
+  baseUrl: 'https://cdn.your-workspace.commerceworker.com',
+  space: 'your-space',
+  environment: 'main',
+  token: process.env.COMMERCEWORKER_CDA_TOKEN!,
+});
+
+const redirects = createRedirectHandler(() => client.redirects(), {
+  ttlMs: 60_000,
+  locale: (request) => new URL(request.url).pathname.split('/')[1] === 'de' ? 'de' : undefined,
+});
+
+export default {
+  async fetch(request: Request) {
+    return (await redirects(request)) ?? fetch(request);
+  },
+};
+```
+
+The handler fetches the set on the first request and keeps it for `ttlMs` (60 seconds by default).
+While it refreshes, the last set keeps answering, and if a refresh fails it keeps the last set, so a
+Delivery outage never takes your redirects with it. `locale` is optional; give it a function that
+returns the request's locale. For a single check, `applyRedirects(request, redirects, { locale })`
+does the same without a cache, and `createRedirectMatcher(set).match(path, locale)` returns the
+match without building a `Response`.
+
+## Agents
+
+The MCP server has `redirects_list`, `redirects_get`, `redirects_create`, `redirects_update`,
+`redirects_delete`, `redirects_import`, `redirects_resolve`, `redirects_analyze` and
+`redirects_collapse_chains`. See [MCP server](/content/guides/mcp/).
+
+## Next steps
+
+- [Content modeling](/content/guides/content-modeling/#url-pattern) for the URL pattern that drives slug redirects.
+- [Reading content](/content/guides/reading-content/) for the other Delivery routes.
+- [SDKs](/content/guides/sdks/) for the clients.
+- [REST API](/content/reference/rest-api/) lists every redirect route.

@@ -1,0 +1,1123 @@
+import { Button } from '@commerceworker/ui/button';
+import {
+  Catalog,
+  CatalogEmpty,
+  CatalogFigure,
+  CatalogRow,
+  CatalogTile,
+  ListSearch,
+  ListToolbar,
+} from '@commerceworker/ui/catalog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@commerceworker/ui/dropdown-menu';
+import { Input } from '@commerceworker/ui/input';
+import { cn } from '@commerceworker/ui/lib/utils';
+import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
+import { Segmented, SegmentedItem } from '@commerceworker/ui/segmented';
+import { MoreHorizontalIcon } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import {
+  data,
+  Form,
+  Link,
+  redirect,
+  useActionData,
+  useFetcher,
+  useLoaderData,
+  useNavigation,
+} from 'react-router';
+import { Ago } from '~/components/ago';
+import { Confirm } from '~/components/confirm';
+import { CopyButton } from '~/components/copy-button';
+import { Field } from '~/components/field';
+import { InvitesSection } from '~/components/invites';
+import { Empty, PageHeader, Section } from '~/components/page';
+import { StatusBadge } from '~/components/status';
+import { StepUpField } from '~/components/step-up-field';
+import { audit } from '~/lib/audit.server';
+import {
+  requireUser,
+  type StepUpMethod,
+  startSession,
+  stepUp,
+  stepUpMethod,
+  TWO_FACTOR_STEP_PATH,
+} from '~/lib/auth.server';
+import { initials } from '~/lib/initials';
+import { openInvites } from '~/lib/invites';
+import {
+  createInvite,
+  InviteError,
+  listInvites,
+  resendInvite,
+  revokeInvite,
+  spaceChoices,
+} from '~/lib/invites.server';
+import { isRole, ROLE_LABELS, ROLES, type Role } from '~/lib/roles';
+import { SCIM_PATH, SCIM_TOKEN_MS } from '~/lib/scim';
+import {
+  createScimToken,
+  revokeScimToken,
+  scimGroupsWithRoles,
+  scimTokenSet,
+  setScimRoles,
+} from '~/lib/scim.server';
+import {
+  setSsoSettings,
+  setTwoFactorRequirement,
+  ssoSettings,
+  twoFactorRequirement,
+} from '~/lib/settings.server';
+import { parseDomains, type SsoSettings } from '~/lib/sso';
+import { linkedToSso, ssoConfig } from '~/lib/sso.server';
+import {
+  addUser,
+  createFirstAdmin,
+  listTeam,
+  needsStepUp,
+  resetPassword,
+  setDisabled,
+  setRole,
+  TeamError,
+} from '~/lib/team.server';
+import {
+  isTwoFactorRequirement,
+  mustUseTwoFactor,
+  TWO_FACTOR_REQUIREMENTS,
+  type TwoFactorRequirement,
+} from '~/lib/two-factor';
+import { resetTwoFactor } from '~/lib/two-factor.server';
+import type { Route } from './+types/team';
+
+export const meta = () => [{ title: 'People and sign-in · CommerceWorker' }];
+
+export async function loader({ request }: Route.LoaderArgs) {
+  const me = await requireUser(request, 'admin');
+  const stepUp = await stepUpMethod(me);
+  // One clock for the page, so the server and the hydrating browser agree on the token's age.
+  const [team, twoFactorRequired, sso, scimToken, scimGroups, invites, spaces] = await Promise.all([
+    listTeam(),
+    twoFactorRequirement(),
+    ssoSettings(),
+    scimTokenSet(),
+    scimGroupsWithRoles(),
+    // Open local development (nobody signed in) has no admin to sign for, and no invitations.
+    me.kind === 'user' ? listInvites(me).then(openInvites, () => null) : Promise.resolve([]),
+    me.kind === 'user' ? spaceChoices(me) : Promise.resolve([]),
+  ]);
+  const provider = ssoConfig();
+  // The address a new person signs in at, to send along with their temporary password.
+  const signInUrl = new URL('/login', request.url).href;
+  return {
+    ...team,
+    twoFactorRequired,
+    sso: provider
+      ? { issuer: provider.issuer, settings: sso, linked: await linkedToSso(me.id) }
+      : null,
+    scim: {
+      endpoint: new URL(SCIM_PATH, request.url).href,
+      token: scimToken,
+      groups: scimGroups,
+    },
+    invites,
+    spaces,
+    me,
+    now: Date.now(),
+    signInUrl,
+    stepUp,
+  };
+}
+
+/** One-time secrets come back from the action and are shown once, never stored in the clear. */
+type Secret = { kind: 'password' | 'token'; label: string; value: string };
+
+export async function action({ request }: Route.ActionArgs) {
+  const me = await requireUser(request, 'admin');
+  const f = await request.formData();
+  const str = (k: string) => String(f.get(k) ?? '');
+  try {
+    if (str('intent') === 'first-admin') {
+      if (me.kind !== 'open') throw new TeamError('The team already has people.');
+      const id = await createFirstAdmin(request, {
+        email: str('email'),
+        name: str('name'),
+        password: str('password'),
+      });
+      // As setup's first admin: two-factor sign-in on its own page, then on to `/`.
+      return redirect(TWO_FACTOR_STEP_PATH, {
+        headers: { 'set-cookie': await startSession(request, id) },
+      });
+    }
+    if (me.kind === 'user' && (await needsStepUp(str('intent'), f, me))) {
+      const failed = await stepUp(request, me, { code: str('code'), password: str('password') });
+      if (failed) {
+        await audit(request, 'auth.step_up_failed', {
+          actor: me,
+          target: str('who') || null,
+          detail: { intent: str('intent'), error: failed, ...(str('id') ? { id: str('id') } : {}) },
+        });
+        return data({ error: failed }, { status: 403 });
+      }
+    }
+    switch (str('intent')) {
+      case 'invite':
+      case 'invite-resend':
+      case 'invite-revoke': {
+        if (me.kind === 'open')
+          throw new TeamError('Create your own admin account first; then invite people.');
+        if (str('intent') === 'invite-revoke') {
+          const r = await revokeInvite(request, me, str('id'));
+          return { done: `The invitation for ${r.email} is revoked.` };
+        }
+        const issued =
+          str('intent') === 'invite'
+            ? await createInvite(request, me, {
+                email: str('email'),
+                role: str('role'),
+                space: str('space'),
+                spaceRole: str('spaceRole'),
+              })
+            : await resendInvite(request, me, str('id'));
+        return { link: { email: issued.email, url: issued.link, expiresAt: issued.expiresAt } };
+      }
+      case 'add-user': {
+        if (me.kind === 'open')
+          throw new TeamError(
+            'Create your own admin account first; adding people turns on sign-in.',
+          );
+        const r = await addUser(request, me, {
+          email: str('email'),
+          name: str('name'),
+          role: str('role'),
+        });
+        return {
+          secret: {
+            kind: 'password',
+            label: `Temporary password for ${r.email}`,
+            value: r.password,
+          } as Secret,
+        };
+      }
+      case 'role':
+        await setRole(request, me, str('id'), str('role'));
+        return {
+          ok: true,
+          done: `${str('who')}’s role is now ${isRole(str('role')) ? ROLE_LABELS[str('role') as Role] : str('role')}.`,
+        };
+      case 'reset': {
+        const r = await resetPassword(request, me, str('id'));
+        return {
+          secret: {
+            kind: 'password',
+            label: `New temporary password for ${r.email}`,
+            value: r.password,
+          } as Secret,
+        };
+      }
+      case 'two-factor-requirement': {
+        const next = str('required');
+        if (!isTwoFactorRequirement(next))
+          throw new TeamError('Pick who must use two-factor sign-in.');
+        await setTwoFactorRequirement(request, me, next);
+        return { ok: true, done: 'Two-factor requirement saved.' };
+      }
+      case 'sso-settings': {
+        if (!ssoConfig()) throw new TeamError('Single sign-on isn’t set up for this deployment.');
+        const jit = str('jit');
+        const next: SsoSettings = {
+          jitRole: isRole(jit) && jit !== 'admin' ? jit : null,
+          domains: parseDomains(str('domains')),
+          ssoOnly: str('only') === 'on',
+        };
+        if (next.jitRole && !next.domains.length)
+          throw new TeamError('List the email domains new people may join from.');
+        // Proof it works before it is the only way in: whoever turns passwords off has used it.
+        if (next.ssoOnly && !(await linkedToSso(me.id)))
+          throw new TeamError(
+            'Sign in with single sign-on yourself once before turning passwords off.',
+          );
+        await setSsoSettings(request, me, next);
+        return { ok: true, done: 'Single sign-on settings saved.' };
+      }
+      case 'reset-two-factor':
+        await resetTwoFactor(request, me, str('id'));
+        return {
+          ok: true,
+          done: `${str('who')}’s two-factor sign-in is off; they can set it up again.`,
+        };
+      case 'disable':
+      case 'enable':
+        await setDisabled(request, me, str('id'), str('intent') === 'disable');
+        return {
+          ok: true,
+          done:
+            str('intent') === 'disable'
+              ? `${str('who')} is disabled and signed out everywhere.`
+              : `${str('who')} can sign in again.`,
+        };
+      case 'scim-token':
+        return {
+          secret: {
+            kind: 'token',
+            label: 'SCIM token',
+            value: await createScimToken(request, me),
+          } as Secret,
+        };
+      case 'scim-revoke':
+        await revokeScimToken(request, me);
+        return {
+          ok: true,
+          done: 'SCIM token revoked. Provisioning stops until you make a new one.',
+        };
+      case 'scim-roles': {
+        const map: Record<string, Role> = {};
+        for (const [k, v] of f.entries())
+          if (k.startsWith('role:') && isRole(v)) map[k.slice('role:'.length)] = v;
+        await setScimRoles(request, me, map);
+        return { ok: true, done: 'Group roles saved; members’ roles follow them now.' };
+      }
+    }
+    return data({ error: 'Unknown action' }, { status: 400 });
+  } catch (err) {
+    if (err instanceof TeamError) return data({ error: err.message }, { status: 400 });
+    if (err instanceof InviteError)
+      return data({ error: err.message }, { status: err.status >= 500 ? 502 : 400 });
+    throw err;
+  }
+}
+
+/**
+ * What each deployment role may do. What a member may do inside a space (edit, publish, manage
+ * content types) is set per space by its roles, in the space's settings.
+ */
+const ROLE_GUIDE: Record<Role, string> = {
+  member: 'Signs in and works on content, with the permissions each space’s roles give them.',
+  admin:
+    'Also manages this page (people, single sign-on, SCIM provisioning and sign-in rules) and reads the audit log.',
+};
+
+function RoleGuide() {
+  return (
+    <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+      {ROLES.map((r) => (
+        <div key={r}>
+          <dt className="font-medium">{ROLE_LABELS[r]}</dt>
+          <dd className="mt-0.5 text-muted-foreground">{ROLE_GUIDE[r]}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** A person's role, saved from their row; making them an admin asks who you are first. */
+function RoleForm({
+  id,
+  name,
+  role,
+  stepUp,
+  fetcher,
+}: {
+  id: string;
+  name: string;
+  role: Role;
+  stepUp: StepUpMethod | null;
+  fetcher: ReturnType<typeof useFetcher>;
+}) {
+  const [chosen, setChosen] = useState<Role>(role);
+  return (
+    <fetcher.Form method="post" className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <input type="hidden" name="intent" value="role" />
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="who" value={name} />
+      <RoleSelect value={role} label={`Role for ${name}`} compact onChange={setChosen} />
+      <Button
+        size="xs"
+        variant="outline"
+        type="submit"
+        aria-label={`Save the role for ${name}`}
+        disabled={fetcher.state !== 'idle'}
+      >
+        Save
+      </Button>
+      {chosen === 'admin' && role !== 'admin' ? <StepUpField method={stepUp} next="/team" /> : null}
+    </fetcher.Form>
+  );
+}
+
+function RoleSelect({
+  name = 'role',
+  value,
+  onChange,
+  label,
+  compact,
+}: {
+  name?: string;
+  value?: string;
+  onChange?: (role: Role) => void;
+  /** For a select with no visible label of its own, such as one per person's row. */
+  label?: string;
+  /** Beside a small button (a person's row); in a form it matches the text fields' height. */
+  compact?: boolean;
+}) {
+  return (
+    <NativeSelect
+      aria-label={label}
+      name={name}
+      defaultValue={value ?? 'member'}
+      className={cn('w-full min-w-28', compact ? 'h-8' : 'h-9')}
+      onChange={(e) => onChange?.(e.target.value as Role)}
+    >
+      {ROLES.map((r) => (
+        <NativeSelectOption key={r} value={r}>
+          {ROLE_LABELS[r]}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
+  );
+}
+
+export default function Team() {
+  const { people, me, now, twoFactorRequired, sso, scim, signInUrl, stepUp, invites, spaces } =
+    useLoaderData<typeof loader>();
+  const [newRole, setNewRole] = useState<Role>('member');
+  const result = useActionData<typeof action>();
+  const fetcher = useFetcher<typeof action>();
+  const shown = fetcher.data ?? result;
+  const secret = shown && 'secret' in shown ? shown.secret : null;
+  const error = shown && 'error' in shown ? shown.error : null;
+  const busy = fetcher.state !== 'idle';
+  const secretRef = useRef<HTMLDivElement>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
+  const done = shown && 'done' in shown ? shown.done : null;
+  const [asking, setAsking] = useState<{ id: string; intent: Asked } | null>(null);
+  const ask = (id: string, intent: Asked) => setAsking({ id, intent });
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<PersonFilter>('all');
+  // A question open on someone the filter hides would come back, taking focus, when they do.
+  const filterBy = (next: () => void) => {
+    next();
+    setAsking(null);
+  };
+  // The loader reads the whole team, so filtering here can't miss anyone.
+  const needle = query.trim().toLowerCase();
+  const shownPeople = people.filter(
+    (p) =>
+      (show === 'all' || !!p.disabledAt === (show === 'disabled')) &&
+      (!needle || `${p.name} ${p.email}`.toLowerCase().includes(needle)),
+  );
+  // Keep returns to the button that asked; nothing is lost if the person changes their mind.
+  const keep = () => {
+    const was = asking;
+    setAsking(null);
+    if (was)
+      requestAnimationFrame(() =>
+        document.querySelector<HTMLElement>(`[data-ask="${was.id}:${was.intent}"]`)?.focus(),
+      );
+  };
+  useEffect(() => {
+    if (done) doneRef.current?.focus();
+  }, [done]);
+  const addPerson = useRef<HTMLFormElement>(null);
+  // A new secret takes focus (it's what to act on next) and the form that made it starts fresh.
+  useEffect(() => {
+    if (!secret) return;
+    secretRef.current?.focus();
+    if (secret.kind === 'password') addPerson.current?.reset();
+  }, [secret]);
+  if (me.kind === 'open') return <FirstAdmin error={error} />;
+  return (
+    <>
+      <PageHeader
+        title="People and sign-in"
+        subtitle={
+          <>
+            Who can sign in to this deployment, how, and what each role may do. Every change here is
+            recorded in the{' '}
+            <Link to="/audit" className="text-link hover:underline">
+              audit log
+            </Link>
+            .
+          </>
+        }
+      />
+      <div className="mx-auto max-w-page px-4 pb-10 sm:px-6">
+        <div className="max-w-[1000px] space-y-6">
+          <Section title="Roles">
+            <RoleGuide />
+          </Section>
+
+          {secret ? (
+            <div
+              ref={secretRef}
+              tabIndex={-1}
+              className="rounded-md border border-wait/40 bg-wait/10 p-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            >
+              <p className="font-medium">{secret.label}</p>
+              <p className="mt-0.5 max-w-[65ch] text-muted-foreground text-xs">
+                {secret.kind === 'password' ? (
+                  <>
+                    Send it to them privately, with the sign-in page{' '}
+                    <span className="font-mono">{signInUrl}</span>. It is temporary: they choose
+                    their own when they first sign in. It is shown once.
+                  </>
+                ) : (
+                  'Copy it now. It is shown once and stored only as a hash.'
+                )}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <code className="min-w-0 flex-1 select-all break-all rounded-sm bg-card px-2 py-1.5 font-mono text-sm">
+                  {secret.value}
+                </code>
+                <CopyButton text={secret.value} />
+              </div>
+            </div>
+          ) : null}
+          {error ? (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          ) : null}
+          {done ? (
+            <p ref={doneRef} tabIndex={-1} role="status" className="text-sm outline-none">
+              {done}
+            </p>
+          ) : null}
+
+          <Section title="People" flush>
+            {people.length ? (
+              <>
+                <ListToolbar summary={`${shownPeople.length} shown`}>
+                  <ListSearch
+                    label="Search people"
+                    placeholder="Search names and emails"
+                    value={query}
+                    onChange={(e) => filterBy(() => setQuery(e.target.value))}
+                    onClear={() => filterBy(() => setQuery(''))}
+                  />
+                  <Segmented
+                    aria-label="Show people"
+                    value={show}
+                    onValueChange={(v) => filterBy(() => setShow(v as PersonFilter))}
+                  >
+                    <SegmentedItem value="all">All</SegmentedItem>
+                    <SegmentedItem value="active">Active</SegmentedItem>
+                    <SegmentedItem value="disabled">Disabled</SegmentedItem>
+                  </Segmented>
+                </ListToolbar>
+                {shownPeople.length === 0 ? (
+                  <CatalogEmpty
+                    onClear={() => {
+                      setQuery('');
+                      setShow('all');
+                    }}
+                  >
+                    No people match.
+                  </CatalogEmpty>
+                ) : (
+                  <Catalog aria-label="People" className="pt-0">
+                    {shownPeople.map((p) => {
+                      const resetsTwoFactor = !!p.twoFactorAt && p.id !== me.id;
+                      const toggle = p.disabledAt ? 'enable' : 'disable';
+                      return (
+                        <Fragment key={p.id}>
+                          <CatalogRow
+                            // The role's step-up field wraps inside the row, not past its edge.
+                            className={cn(
+                              '[&>*]:max-w-full',
+                              p.disabledAt && 'text-muted-foreground',
+                            )}
+                            media={
+                              <CatalogTile aria-hidden="true">
+                                {initials(p.name, p.email)}
+                              </CatalogTile>
+                            }
+                            title={
+                              <>
+                                {p.name}
+                                {p.id === me.id ? (
+                                  <span className="ml-1.5 font-normal text-muted-foreground text-xs">
+                                    you
+                                  </span>
+                                ) : null}
+                              </>
+                            }
+                            meta={
+                              <span className="flex flex-wrap gap-x-2">
+                                <span>{p.email}</span>
+                                {p.twoFactorAt ? <span>Two-factor</span> : null}
+                                {p.passwordChangeDue ? <span>Temporary password</span> : null}
+                              </span>
+                            }
+                            aside={
+                              <>
+                                {p.disabledAt ? <StatusBadge status="disabled" /> : null}
+                                <CatalogFigure label="Last sign-in">
+                                  {p.lastLoginAt ? <Ago ms={p.lastLoginAt} /> : 'Never'}
+                                </CatalogFigure>
+                                <RoleForm
+                                  id={p.id}
+                                  name={p.name}
+                                  role={p.role as Role}
+                                  stepUp={stepUp}
+                                  fetcher={fetcher}
+                                />
+                              </>
+                            }
+                            actions={
+                              // Disabling sits apart from the resets, so a thumb aimed at one
+                              // doesn't land on the other.
+                              <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                                <AskButton
+                                  id={p.id}
+                                  who={p.name}
+                                  intent="reset"
+                                  asking={asking}
+                                  ask={ask}
+                                >
+                                  Reset password…
+                                </AskButton>
+                                {p.id === me.id ? null : resetsTwoFactor ? (
+                                  <MoreAsks id={p.id} name={p.name} toggle={toggle} ask={ask} />
+                                ) : (
+                                  <AskButton
+                                    id={p.id}
+                                    who={p.name}
+                                    intent={toggle}
+                                    asking={asking}
+                                    ask={ask}
+                                  >
+                                    {toggle === 'enable' ? 'Enable…' : 'Disable…'}
+                                  </AskButton>
+                                )}
+                              </span>
+                            }
+                          />
+                          {/* The question gets its own line under the person, so their row keeps its
+                              shape and the name stays beside what's being asked. */}
+                          {asking?.id === p.id ? (
+                            <li>
+                              <fetcher.Form
+                                method="post"
+                                className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2"
+                                onSubmit={() => setAsking(null)}
+                              >
+                                <input type="hidden" name="intent" value={asking.intent} />
+                                <input type="hidden" name="id" value={p.id} />
+                                <input type="hidden" name="who" value={p.name} />
+                                <Confirm
+                                  message={QUESTIONS[asking.intent](p.name)}
+                                  cancelLabel="Keep"
+                                  onCancel={keep}
+                                  className="flex-1"
+                                >
+                                  {asking.intent === 'disable' ||
+                                  (asking.intent === 'enable' && p.role !== 'admin') ? null : (
+                                    <StepUpField method={stepUp} next="/team" />
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    type="submit"
+                                    disabled={busy}
+                                  >
+                                    {ACTIONS[asking.intent]}
+                                  </Button>
+                                </Confirm>
+                              </fetcher.Form>
+                            </li>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
+                  </Catalog>
+                )}
+              </>
+            ) : (
+              <Empty>Nobody is on the team yet. Add the first person below.</Empty>
+            )}
+            <fetcher.Form
+              ref={addPerson}
+              method="post"
+              className="grid items-end gap-3 border-t p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_10rem_auto]"
+            >
+              <input type="hidden" name="intent" value="add-user" />
+              <Field label="Email">
+                {/* Someone else's address: keep a password manager from offering yours. */}
+                <Input
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="off"
+                  placeholder="name@company.com"
+                />
+              </Field>
+              <Field label="Name" hint="Optional">
+                <Input name="name" autoComplete="off" />
+              </Field>
+              <Field label="Role">
+                <RoleSelect onChange={setNewRole} />
+              </Field>
+              <Button type="submit" disabled={busy}>
+                Add person
+              </Button>
+              {newRole === 'admin' ? (
+                <div className="sm:col-span-4">
+                  <StepUpField method={stepUp} next="/team" />
+                </div>
+              ) : null}
+            </fetcher.Form>
+          </Section>
+
+          <InvitesSection invites={invites} spaces={spaces} stepUp={stepUp} />
+
+          <TwoFactorRequirementForm
+            stepUp={stepUp}
+            required={twoFactorRequired}
+            missing={
+              people.filter(
+                (p) =>
+                  !p.disabledAt &&
+                  !p.twoFactorAt &&
+                  mustUseTwoFactor(p.role as Role, twoFactorRequired),
+              ).length
+            }
+          />
+
+          {sso ? <SsoForm {...sso} stepUp={stepUp} /> : null}
+
+          <ScimSection {...scim} stepUp={stepUp} fetcher={fetcher} now={now} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+type Asked = 'reset' | 'reset-two-factor' | 'disable' | 'enable';
+
+/** Which people the list shows. */
+type PersonFilter = 'all' | 'active' | 'disabled';
+
+const QUESTIONS: Record<Asked, (name: string) => string> = {
+  reset: (n) => `Give ${n} a temporary password and sign them out everywhere?`,
+  'reset-two-factor': (n) => `Turn off ${n}’s two-factor sign-in so they can set it up again?`,
+  disable: (n) => `Disable ${n}? They can’t sign in, and they’re signed out everywhere.`,
+  enable: (n) => `Enable ${n}? They can sign in again with their password or single sign-on.`,
+};
+
+const ACTIONS: Record<Asked, string> = {
+  reset: 'Reset password',
+  'reset-two-factor': 'Reset two-factor',
+  disable: 'Disable',
+  enable: 'Enable',
+};
+
+/** Opens the confirmation for an action that can't be taken back. */
+function AskButton({
+  id,
+  who,
+  intent,
+  asking,
+  ask,
+  children,
+}: {
+  id: string;
+  who: string;
+  intent: Asked;
+  asking: { id: string; intent: Asked } | null;
+  ask: (id: string, intent: Asked) => void;
+  children: React.ReactNode;
+}) {
+  const open = asking?.id === id && asking.intent === intent;
+  return (
+    <Button
+      aria-label={`${ACTIONS[intent]} for ${who}`}
+      size="xs"
+      variant="ghost"
+      type="button"
+      data-ask={`${id}:${intent}`}
+      aria-expanded={open}
+      onClick={() => ask(id, intent)}
+    >
+      {children}
+    </Button>
+  );
+}
+
+/** The third action and on, behind ⋯: each opens the same question under the person. */
+function MoreAsks({
+  id,
+  name,
+  toggle,
+  ask,
+}: {
+  id: string;
+  name: string;
+  toggle: 'enable' | 'disable';
+  ask: (id: string, intent: Asked) => void;
+}) {
+  const picked = useRef<Asked | null>(null);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`More actions for ${name}`}
+        >
+          <MoreHorizontalIcon aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-auto min-w-40"
+        // The question waits for the menu to close: the menu hands focus back to ⋯ as it goes, which
+        // would take it from Keep. Asked from there, it is ⋯ that Keep goes back to.
+        onCloseAutoFocus={() => {
+          if (picked.current) ask(id, picked.current);
+          picked.current = null;
+        }}
+      >
+        <DropdownMenuItem onSelect={() => (picked.current = 'reset-two-factor')}>
+          Reset two-factor…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant={toggle === 'disable' ? 'destructive' : 'default'}
+          onSelect={() => (picked.current = toggle)}
+        >
+          {toggle === 'enable' ? 'Enable…' : 'Disable…'}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** An open deployment: whoever sets it up creates the first admin account, which turns sign-in on. */
+function FirstAdmin({ error }: { error: string | null }) {
+  const creating = useNavigation().state === 'submitting';
+  return (
+    <>
+      <PageHeader
+        title="People and sign-in"
+        subtitle="Anyone can use this deployment until it has a first admin."
+      />
+      <div className="mx-auto max-w-page px-4 pb-10 sm:px-6">
+        <div className="grid max-w-[1000px] items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <Section title="Create your admin account">
+            <Form method="post" className="space-y-3">
+              <input type="hidden" name="intent" value="first-admin" />
+              <p className="text-muted-foreground text-sm">
+                Once it exists, everyone signs in, and you add people and API tokens here.
+              </p>
+              <Field label="Email">
+                <Input
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="username"
+                  placeholder="name@company.com"
+                />
+              </Field>
+              <Field label="Name" hint="Optional">
+                <Input name="name" />
+              </Field>
+              <Field label="Password" hint="At least 10 characters">
+                <Input
+                  name="password"
+                  type="password"
+                  required
+                  minLength={10}
+                  autoComplete="new-password"
+                />
+              </Field>
+              {error ? (
+                <p role="alert" className="text-destructive text-sm">
+                  {error}
+                </p>
+              ) : null}
+              <Button type="submit" disabled={creating}>
+                {creating ? 'Creating…' : 'Create account and sign in'}
+              </Button>
+            </Form>
+          </Section>
+          <Section title="Roles you can give people">
+            <div className="[&_dl]:sm:grid-cols-1">
+              <RoleGuide />
+            </div>
+          </Section>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** SCIM provisioning: the endpoint, its token, and which pushed groups give which role. */
+function ScimSection({
+  endpoint,
+  token,
+  groups,
+  stepUp,
+  fetcher,
+  now,
+}: {
+  /** The loader's clock, so the server and the browser agree on whether the token expired. */
+  now: number;
+  stepUp: StepUpMethod | null;
+  endpoint: string;
+  token: { updatedAt: number; updatedBy: string } | null;
+  groups: { id: string; displayName: string; members: number; role: Role | null }[];
+  fetcher: ReturnType<typeof useFetcher>;
+}) {
+  const busy = fetcher.state !== 'idle';
+  const roles = useFetcher<typeof action>();
+  const rolesError = roles.data && 'error' in roles.data ? roles.data.error : null;
+  // Mapping a group to Admin makes its members admins: that asks who you are first.
+  const [admins, setAdmins] = useState(
+    () => new Set(groups.filter((g) => g.role === 'admin').map((g) => g.id)),
+  );
+  const pick = (id: string, role: string) =>
+    setAdmins((was) => {
+      const next = new Set(was);
+      if (role === 'admin') next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  return (
+    <Section title="SCIM provisioning">
+      <p className="max-w-[65ch] text-muted-foreground text-xs">
+        Your identity provider can add people, update them and turn them off here. Turning someone
+        off signs them out everywhere and disconnects their apps and the API tokens they made. Give
+        it the endpoint and a token.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Endpoint</span>
+        <code className="select-all break-all rounded-sm bg-card px-2 py-1 font-mono">
+          {endpoint}
+        </code>
+        <CopyButton text={endpoint} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-sm">
+          {token ? (
+            <>
+              Token made <Ago ms={token.updatedAt} /> by {token.updatedBy}.{' '}
+              {now - token.updatedAt >= SCIM_TOKEN_MS
+                ? 'It has expired: provisioning is off until you replace it.'
+                : 'It works for a year; replace it before then.'}
+            </>
+          ) : (
+            'No token: provisioning is off.'
+          )}
+        </span>
+        <fetcher.Form method="post" className="flex flex-wrap items-end gap-2">
+          <input type="hidden" name="intent" value="scim-token" />
+          <StepUpField method={stepUp} next="/team" />
+          <Button size="sm" variant="outline" type="submit" disabled={busy}>
+            {token ? 'Replace token' : 'Make a token'}
+          </Button>
+        </fetcher.Form>
+        {token ? (
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="scim-revoke" />
+            <Button size="sm" variant="outline" type="submit" disabled={busy}>
+              Revoke
+            </Button>
+          </fetcher.Form>
+        ) : null}
+      </div>
+      {groups.length ? (
+        <roles.Form method="post" className="mt-4">
+          <input type="hidden" name="intent" value="scim-roles" />
+          <p className="text-sm">Groups from your identity provider</p>
+          <ul className="mt-2 divide-y rounded-md border text-sm">
+            {groups.map((g) => (
+              <li
+                key={g.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+              >
+                <span>
+                  {g.displayName}{' '}
+                  <span className="text-muted-foreground text-xs">
+                    {g.members} {g.members === 1 ? 'member' : 'members'}
+                  </span>
+                </span>
+                <NativeSelect
+                  name={`role:${g.id}`}
+                  defaultValue={g.role ?? ''}
+                  className="h-8"
+                  aria-label={`Role for ${g.displayName}`}
+                  onChange={(e) => pick(g.id, e.target.value)}
+                >
+                  <NativeSelectOption value="">Gives no role</NativeSelectOption>
+                  {ROLES.map((r) => (
+                    <NativeSelectOption key={r} value={r}>
+                      Gives {ROLE_LABELS[r]}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </li>
+            ))}
+          </ul>
+          {admins.size ? (
+            <div className="mt-2">
+              <StepUpField method={stepUp} next="/team" />
+            </div>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            type="submit"
+            className="mt-2"
+            disabled={roles.state !== 'idle'}
+          >
+            Save group roles
+          </Button>
+          {rolesError ? (
+            <p role="alert" className="mt-2 text-destructive text-sm">
+              {rolesError}
+            </p>
+          ) : null}
+          <p className="mt-2 max-w-[65ch] text-muted-foreground text-xs">
+            Someone in a group that gives a role has the highest role of their groups, or Member
+            when none of theirs gives one. Their role follows changes to their groups, and the last
+            active admin always stays an admin.
+          </p>
+        </roles.Form>
+      ) : token ? (
+        <p className="mt-3 text-muted-foreground text-xs">
+          Groups your identity provider pushes appear here, to map to roles.
+        </p>
+      ) : null}
+    </Section>
+  );
+}
+
+/** Single sign-on: who it may add, from which domains, and whether it is the only way in. */
+function SsoForm({
+  issuer,
+  settings,
+  linked,
+  stepUp,
+}: {
+  issuer: string;
+  settings: SsoSettings;
+  linked: boolean;
+  stepUp: StepUpMethod | null;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  const error = fetcher.data && 'error' in fetcher.data ? fetcher.data.error : null;
+  return (
+    <Section title="Single sign-on">
+      <p className="max-w-[65ch] text-muted-foreground text-xs">
+        People can sign in through your identity provider,{' '}
+        <span className="font-mono">{issuer}</span>. Someone already on the team is matched by email
+        on their first sign-in.
+      </p>
+      <fetcher.Form method="post" className="mt-3 grid max-w-xl gap-3">
+        <input type="hidden" name="intent" value="sso-settings" />
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="sso-jit" className="text-sm">
+            Someone not on the team
+          </label>
+          <NativeSelect
+            id="sso-jit"
+            name="jit"
+            defaultValue={settings.jitRole ?? 'off'}
+            className="h-8"
+          >
+            <NativeSelectOption value="off">Is refused</NativeSelectOption>
+            {ROLES.filter((r) => r !== 'admin').map((r) => (
+              <NativeSelectOption key={r} value={r}>
+                Joins as {ROLE_LABELS[r]}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <Field label="From these email domains">
+          <Input
+            id="sso-domains"
+            name="domains"
+            defaultValue={settings.domains.join(', ')}
+            placeholder="example.com, example.co.uk"
+            className="h-8"
+          />
+        </Field>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="only" value="on" defaultChecked={settings.ssoOnly} />
+          Single sign-on only: turn off passwords and passkeys
+        </label>
+        <StepUpField method={stepUp} next="/team" />
+        <div>
+          <Button size="sm" variant="outline" type="submit" disabled={fetcher.state !== 'idle'}>
+            Save
+          </Button>
+        </div>
+        {error ? (
+          <p role="alert" className="text-destructive text-sm">
+            {error}
+          </p>
+        ) : null}
+      </fetcher.Form>
+      <p className="mt-2 max-w-[65ch] text-muted-foreground text-xs">
+        With single sign-on only, your identity provider handles two-factor sign-in, and a person
+        disabled there can’t sign in here once their session ends; disable them here to end it now.
+        {linked
+          ? ' If the provider stops working, a setup code recovers access and turns passwords back on.'
+          : ' To turn passwords off, first sign in with single sign-on yourself.'}
+      </p>
+    </Section>
+  );
+}
+
+/** Which roles must use two-factor sign-in; people without it are sent to set it up. */
+function TwoFactorRequirementForm({
+  required,
+  missing,
+  stepUp,
+}: {
+  required: TwoFactorRequirement;
+  missing: number;
+  stepUp: StepUpMethod | null;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  const error = fetcher.data && 'error' in fetcher.data ? fetcher.data.error : null;
+  return (
+    <Section title="Two-factor sign-in">
+      <fetcher.Form method="post" className="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="intent" value="two-factor-requirement" />
+        <label htmlFor="tf-required" className="text-sm">
+          Required for
+        </label>
+        <NativeSelect id="tf-required" name="required" defaultValue={required} className="h-8">
+          {Object.entries(TWO_FACTOR_REQUIREMENTS).map(([k, label]) => (
+            <NativeSelectOption key={k} value={k}>
+              {label}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        <StepUpField method={stepUp} next="/team" />
+        <Button size="sm" variant="outline" type="submit" disabled={fetcher.state !== 'idle'}>
+          Save
+        </Button>
+      </fetcher.Form>
+      {error ? (
+        <p role="alert" className="mt-2 text-destructive text-sm">
+          {error}
+        </p>
+      ) : null}
+      <p className="mt-2 max-w-[65ch] text-muted-foreground text-xs">
+        People in these roles without two-factor sign-in can only use their Account page until they
+        set it up, and can’t turn it off. API tokens aren’t affected.
+        {required !== 'off' && missing
+          ? ` ${missing} ${missing === 1 ? 'person hasn’t' : 'people haven’t'} set it up yet.`
+          : ''}
+      </p>
+    </Section>
+  );
+}

@@ -1,0 +1,125 @@
+---
+title: MCP server
+description: Connect Claude, ChatGPT, an IDE or your own agent to a workspace over the Model Context Protocol, with the same permissions as a person.
+---
+
+Every workspace serves an MCP server at `/mcp` (streamable HTTP), on the admin's own address for
+clients that connect with OAuth and on its `api.` address for callers with a token. Its tools are the same
+operations the REST API and the admin use, behind the same permission checks, so an agent can do
+exactly what its token allows and nothing a person with that token couldn't.
+
+## Connect with OAuth
+
+MCP clients that support remote connectors (Claude, ChatGPT, MCP-capable IDEs) connect with just
+the URL:
+
+```
+https://your-workspace.commerceworker.com/mcp
+```
+
+The client discovers where to sign in, registers itself, and opens an approval screen on the
+admin. If you aren't signed in, the admin's sign-in page comes first and brings you back. You see
+which scopes the client asks for, pick the space it may work in (from the spaces you're on), and
+approve. The connection acts with your role in that space. The token it receives is capped twice: at
+what it asked for, and at what you hold. A client can never ask for `space:admin` or
+`content:manage` this way. Tokens are short-lived and refresh on use; revoke a connection at any
+time under **Settings → Access → Connected apps**.
+
+Command-line clients that can't open a browser use the device flow: they print a code to enter on
+an approval page on the admin, where you sign in and approve the same way.
+
+When an admin turns your account off, resets your password or two-factor sign-in, or your identity
+provider deactivates you, every connection you approved and every personal access token you made
+stops working.
+
+## Connect with a token
+
+For CI, scripts and agents you run yourself, use a
+[personal access token](/content/guides/api-keys/#personal-access-tokens) or a Management key with only the
+scopes the agent needs:
+
+```sh
+claude mcp add --transport http commerceworker https://api.your-workspace.commerceworker.com/mcp \
+  --header "Authorization: Bearer $COMMERCEWORKER_TOKEN"
+```
+
+Most tools take `space` and `environment` arguments, so one connection can work across
+environments its token can reach.
+
+## Tools
+
+There are 248 in all; your client lists the ones your token's scopes can use, with their descriptions
+and input schemas, when it connects. Each tool checks the token's scopes and role grants before it runs, and writes go
+through the same validation, versioning and events as a person's.
+
+| Area | Tools |
+| --- | --- |
+| Content | `entries_query`, `entries_field_values`, `entries_get`, `singleton_get`, `entries_create`, `entries_update`, `entries_validate`, `entries_set_metadata`, `entries_move`, `entries_preview_link`, `entries_publish`, `entries_unpublish`, `entries_trash`, `entries_list_trashed`, `entries_restore`, `entries_purge`, `trash_settings_get`, `trash_settings_set`, `entries_duplicate`, `entries_list_versions`, `entries_diff_versions`, `entries_restore_version`, `entries_bulk_action`, `entries_suggest`, `entry_apply_tags`, `comments_add`, `comments_list`, `tasks_create`, `tasks_list`, `tasks_resolve`, `workflow_transition` |
+| AI | `generate_draft`, `entry_from_canvas`, `entry_translate`, `entry_summarize`, `entry_autofill_field`, `entry_suggest_tags`, `entry_moderate`, `entry_audit`, `ai_actions_list`, `ai_action_create`, `ai_action_run`, `agent_schedule_list`, `agent_schedule_create`, `agent_schedule_update`, `agent_schedule_delete`, `agent_review_list`, `agent_review_approve`, `agent_review_reject` |
+| Model and taxonomy | `model_list_content_types`, `model_get_content_type`, `model_create_content_type` (takes `urlPattern`, `preview`, `singleton`, and per field `help`, `placeholder`, `description`, labelled `in` options and validation `messages`), `model_publish_content_type`, `model_content_type_dependents`, `model_delete_content_type`, `model_clone_content_type`, `model_typescript`, `model_entry_counts`, `taxonomy_list_tags`, `taxonomy_get_tag`, `taxonomy_create_tag`, `taxonomy_update_tag`, `taxonomy_create_scheme`, `taxonomy_list_concepts`, `taxonomy_get_concept`, `taxonomy_create_concept`, `taxonomy_update_concept`, `taxonomy_repair` |
+| Assets | `asset_get`, `asset_create`, `asset_publish`, `asset_unpublish`, `assets_list`, `assets_search`, `asset_reingest`, `assets_reindex`, `assets_move`, `assets_bulk`, `asset_archive`, `asset_restore`, `asset_delete`, `asset_folders_list`, `asset_folders_create`, `asset_folders_update`, `asset_folders_delete`, `asset_renditions_list`, `asset_renditions_create`, `asset_renditions_update`, `asset_renditions_delete`, `asset_set_metadata`, `asset_set_rights`, `asset_replace_file`, `asset_replace_file_upload`, `asset_commit_file`, `asset_versions_list`, `asset_restore_version`, `asset_usage`, `asset_generate_alt_text`, `asset_auto_tag`, `asset_transform_url`, `asset_video_create`, `asset_video_refresh`, `asset_preview_list`, `asset_preview_get`, `asset_collections_list`, `asset_collections_get`, `asset_collections_create`, `asset_collections_update`, `asset_collections_delete`, `asset_collection_assets_list`, `asset_collection_assets_add`, `asset_collection_assets_remove`, `asset_collection_reorder`, `share_links_list`, `share_link_create`, `share_link_get`, `share_link_revoke`, `asset_upload_start`, `asset_upload_parts`, `asset_upload_complete`, `asset_upload_abort`, `asset_zip_create`, `asset_zip_get`, `asset_zips_list` |
+| Blocks | `entry_blocks_outline` (an entry's blocks as a tree of keys and types; read-only), `entry_blocks_validate` (the same patch checked, nothing saved; read-only), `entry_blocks_patch` (insert, update, move, remove or duplicate blocks by key, all or none, as a draft; see [Field types](/content/reference/field-types/#blocks)) |
+| SEO | `entries_set_seo` (one locale of an entry's SEO metadata, as a draft), `sitemap_list` (a page of the sitemap; read-only) (see [SEO and sitemaps](/content/guides/seo/)) |
+| Redirects | `redirects_list`, `redirects_get`, `redirects_create`, `redirects_update`, `redirects_delete`, `redirects_import`, `redirects_resolve`, `redirects_analyze`, `redirects_collapse_chains` (see [Redirects](/content/guides/redirects/)) |
+| Saved views | `views_list`, `views_get`, `views_run`, `views_create`, `views_update`, `views_delete` (a run is your own entries query; see [Saved views](/content/guides/saved-views/)) |
+| Menus | `menus_list`, `menus_get`, `menus_preview`, `menus_resolve`, `menus_create`, `menus_update`, `menus_move_item`, `menus_delete` (see [Navigation menus](/content/guides/menus/)) |
+| Spaces | `spaces_list`, `space_create` (workspace admins; `starter: "sample"` adds the sample content, `"enterprise"` where offered installs a demo brand in the background), `space_starters_list`, `starter_install_get`, `locale_settings_get`, `locale_settings_set` |
+| Environments | `environment_aliases_list`, `environment_alias_set`, `environment_alias_delete`, `environments_compare`, `environments_merge`, `promotion_request`, `promotion_list`, `promotion_get`, `promotion_approve`, `promotion_reject`, `environment_delete` |
+| Import, export and clone | `import_sources`, `import_analyze`, `import_execute`, `space_export_analyze`, `space_export_import`, `environment_export`, `environment_import`, `environment_clone` |
+| Bulk jobs | `bulk_job_start`, `bulk_job_set_fields`, `bulk_job_status`, `bulk_job_report`, `bulk_job_cancel` |
+| Workflows | `workflow_list`, `workflow_save_draft`, `workflow_validate`, `workflow_publish`, `workflow_versions`, `workflow_settings_set`, `workflow_copilot`, `workflow_run_start`, `workflow_run_get`, `workflow_run_list`, `workflow_run_cancel`, `workflow_task_list`, `workflow_task_decide`, `workflow_event_deliver` |
+| Releases | `releases_create`, `releases_add_entry`, `releases_get`, `releases_list`, `releases_publish`, `schedule_action` |
+| Team and roles | `team_list`, `role_presets_list`, `role_preset_assign`, `roles_list`, `role_create`, `role_update`, `role_delete`, `invites_list`, `invite_get`, `invite_create`, `invite_resend`, `invite_revoke` |
+| Plugins | `plugins_list`, `plugin_set_enabled`, `plugin_approve_capabilities`, `plugin_get_settings`, `plugin_set_settings` |
+| Webhooks | `webhooks_list`, `webhook_create`, `webhook_update`, `webhook_delete`, `webhook_deliveries`, `webhook_test`, `webhook_resend` (`space:admin`; see [Webhooks](/content/guides/webhooks/#test-and-resend)) |
+| Functions | `functions_list`, `function_create`, `function_delete` |
+| App extensions | `app_extensions_list`, `app_extension_create`, `app_extension_delete` |
+| Audit | `audit_log_list` (filters by actor, action, target and date; pages by `cursor`; rows carry the changed field paths), `entries_list_activity` (one entry's rows, including the ones that saved it while acting on something else) |
+| Scheduler | `scheduler_status` (workspace admins: whether the engine's cron is ticking, and each sweep's last success and error), `scheduler_alerts` (who is emailed when a sweep goes stale, and what is stale now), `scheduler_alerts_set_recipients` |
+| Search | `content_search`, `content_semantic_search`, `content_related`, `content_duplicates`, `content_reindex_embeddings`, `search_index_health` |
+| API keys | `api_keys_list`, `api_key_create` (the token is in the result once, never again), `api_key_update` (the key's role), `api_key_revoke` (`space:admin`; see [API keys](/content/guides/api-keys/)) |
+| OAuth connections | `oauth_connections_list`, `oauth_connection_revoke` |
+| Docs | `docs_list`, `docs_read`, `docs_search` |
+
+A personal access token can't be minted over MCP: an agent can't mint itself a longer-lived
+credential. Mint one in the admin or over the REST API. For the same reason the API key tools
+refuse a personal access token or an OAuth token minting a key or widening one; they need
+`space:admin`, which an app connected with OAuth is never granted anyway.
+
+Every tool call that changes something is written to the space's audit log, like a REST write, as
+`MCP <tool>` (`MCP entries_update`) with who made it, the environment and the target id, and for
+a save of an entry its `detail`: the field paths and locales that changed, never a value. Reads,
+and calls that only propose (an AI tool without `apply`, an import or clone `dryRun`), write
+nothing. A call refused for invalid fields returns `isError` with the same body as the REST
+`422`: `{ "error": { "code": "validation_failed", "issues": [...] } }`, each issue naming its
+field path (`body[0].heading`), locale and message.
+
+## Skills
+
+The server also publishes MCP skills, short task guides a client can load before it works:
+`model-content` (design a content model and get its types), `author-and-publish` (find, edit and
+publish entries, releases, scheduled publishing, workflow runs) and `import-content` (map, dry-run,
+run and publish an import).
+
+For a coding agent building *on* a workspace (a site, an app, a migration) rather than working in
+it, install the [agent skills](/content/guides/agent-skills/) instead: they drive the SDKs and the
+[command-line tool](/content/guides/cli/).
+
+## Working well with agents
+
+- **Give each agent its own token**, with the narrowest scopes and a [role](/content/guides/api-keys/#roles)
+  limited to the content types it works on. The audit log then says which agent did what.
+- **Keep publishing with people.** An agent with `content:write` but not `content:publish` drafts,
+  and a person publishes. AI changes that wait for review show up in
+  [agent reviews](/content/guides/approvals/#agent-reviews).
+- **Let it read the model first.** `model_typescript` returns the content model as TypeScript,
+  which is the most compact way for an agent to learn your fields before it writes.
+- **Point it at the docs.** `docs_search` and `docs_read` let an agent look up conventions with
+  the token it already holds.
+
+## Next steps
+
+- [API keys and access](/content/guides/api-keys/) for tokens, roles and scopes.
+- [Approvals](/content/guides/approvals/#agent-reviews) for reviewing what an agent drafted.
+- [Permission scopes](/content/reference/scopes/) for what each tool needs.
+- [Command-line tool](/content/guides/cli/) for the same operations from a terminal or CI.

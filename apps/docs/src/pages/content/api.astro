@@ -1,0 +1,135 @@
+---
+/*
+ * OpenAPI explorer: Scalar over /content/openapi.json, the document the content API generates from its own routes
+ * (written before each build by scripts/openapi.ts). A page of its own rather than a Starlight
+ * route, because Scalar owns the viewport (sidebar, search, request panel) and Starlight's chrome
+ * would be a second sidebar.
+ *
+ * It keeps the docs' look: the palette and face from the admin's tokens (src/theme), a top bar,
+ * and the reader's theme. Starlight stores the choice as `starlight-theme` ('dark', 'light' or
+ * 'auto' for Match system), the inline script applies it before first paint, and Scalar's own
+ * toggle is hidden, so there is one switch.
+ *
+ * The bundle is pinned with an SRI hash; the URL and hash move together on an upgrade:
+ *   curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A
+ */
+
+import '@fontsource-variable/inter/wght.css';
+import { FONTS, palette, scalarThemeCss } from '@commerceworker/design/tokens';
+
+// Biome parses only the frontmatter, so constants used in the markup read as dead.
+// Served from this site (scripts/vendor-scalar.mjs copies the pinned bundle at build).
+const SCALAR_JS_URL = '/vendor/scalar/standalone.js';
+
+const config = {
+  url: '/content/openapi.json',
+  layout: 'modern',
+  defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
+  servers: [
+    {
+      url: 'https://{workspace}.commerceworker.com',
+      description: 'Your CommerceWorker workspace',
+      variables: { workspace: { default: 'your-workspace' } },
+    },
+    {
+      url: '{origin}',
+      description: 'A local or self-hosted API',
+      variables: { origin: { default: 'http://localhost:8787' } },
+    },
+  ],
+  agent: { disabled: true },
+  mcp: { disabled: true },
+  showDeveloperTools: 'never',
+  hideDarkModeToggle: true,
+  withDefaultFonts: false,
+  // The palette from @commerceworker/design, the same tokens the docs' theme.css is generated from.
+  customCss: scalarThemeCss(),
+  metaData: { title: 'CommerceWorker API reference' },
+};
+
+const light = palette('light');
+const dark = palette('dark');
+// A 48px top bar with a rule under it and the wordmark, as on every docs page.
+const headerCss = `
+:root {
+  --bg: ${dark.background};
+  --rule: ${dark.border};
+  --ink: ${dark.foreground};
+  --muted: ${dark['muted-foreground']};
+  --scalar-custom-header-height: 3rem;
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  --bg: ${light.background};
+  --rule: ${light.border};
+  --ink: ${light.foreground};
+  --muted: ${light['muted-foreground']};
+  color-scheme: light;
+}
+html, body { margin: 0; background: var(--bg); }
+::selection { background: color-mix(in oklch, var(--ink) 18%, transparent); }
+.ref-header {
+  position: sticky; top: 0; z-index: 1000; box-sizing: border-box;
+  height: var(--scalar-custom-header-height);
+  display: flex; align-items: center; gap: 1.5rem; padding-inline: 1.25rem;
+  background: var(--bg); border-bottom: 1px solid var(--rule);
+  font-family: ${FONTS.sans}; font-size: 0.8125rem; color: var(--muted);
+}
+.ref-header a { color: var(--muted); text-decoration: none; }
+.ref-header a:hover { color: var(--ink); }
+.ref-header a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+.ref-header .ref-title {
+  white-space: nowrap; font-weight: 600; font-size: 0.9375rem; letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.ref-note { margin-inline-start: auto; }
+.ref-note a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 50rem) { .ref-note { display: none; } }
+`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CommerceWorker API reference</title>
+    <meta
+      name="description"
+      content="OpenAPI 3.1 reference for the CommerceWorker REST API: management, delivery and preview."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script is:inline>
+      (() => {
+        let stored = null;
+        try {
+          stored = localStorage.getItem('starlight-theme');
+        } catch {}
+        // Match system unless Light or Dark was chosen (Ledger's default).
+        const light =
+          stored === 'light' ||
+          (stored !== 'dark' && !matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = light ? 'light' : 'dark';
+      })();
+    </script>
+    <style is:inline set:html={headerCss}></style>
+  </head>
+  <body>
+    <header class="ref-header">
+      <a class="ref-title" href="/">CommerceWorker</a>
+      <a href="/content/reference/rest-api/">REST API guide</a>
+      <a href="/content/guides/api-keys/">API keys</a>
+      <p class="ref-note">
+        Every deployment also serves this document at <code>/openapi.json</code>.
+      </p>
+    </header>
+    <div id="app"></div>
+    <script is:inline src={SCALAR_JS_URL}></script>
+    <script is:inline define:vars={{ config }}>
+      Scalar.createApiReference('#app', {
+        ...config,
+        forceDarkModeState: document.documentElement.dataset.theme,
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,90 @@
+---
+title: Concepts
+description: Flows, versions, orders, nodes and branches, waits, rollback and generations, and where each one lives.
+---
+
+import Values from '../../components/Values.astro';
+
+## Flow
+
+A **flow** is a directed graph of nodes and edges, stored as JSON. Each node has a catalog type
+(`commerce.reserve_inventory`, `control.approval`, `ai.router`, …), a label and a config; each edge
+connects one **output** of its source node to a target node. The [node catalog](/reference/nodes/)
+lists every type with its fields and outputs.
+
+Each flow belongs to a [commerce model](/guides/commerce-models/): <Values of="order-models" />, and lists
+the channels it is meant for. Every model has a [built-in flow](/guides/templates/), and you can add your own.
+
+## Draft and published versions
+
+The editor saves a **draft** as you work. **Publishing** validates the draft and stores it as
+an immutable, numbered **version**. An order runs the version it started on (the latest, unless the
+API request names one), so editing or republishing a flow never changes an order in flight.
+
+## Order
+
+An **order** is one run of a published flow: an input (model, channel, customer or contact, currency, lines, an optional
+fulfillment, an optional inbound document, free-form `meta`) plus the totals the flow computes. Its status is one of
+<Values of="order-statuses" />. The last five are terminal.
+
+`declined` means a policy check or an approval said no. `cancelled` means a person or an API call
+cancelled it, or it reached an End node with that outcome. `failed` means a node threw or the order
+reached an End node with outcome `failed`; once the order's compensations have run the
+status becomes `rolled_back`, and it stays `failed` if the rollback itself fails.
+
+Each order has:
+
+- a **run** that works through the flow. Each node runs once and its result is kept, so an order
+  survives restarts and can wait for days.
+- a **live state**: every node's status, the open waits and the timeline, which the order page
+  and `GET /api/v1/orders/:id` show as they change.
+
+## Branches, joins and skips
+
+A node finishes by choosing one or more of its outputs. Edges on the chosen outputs become active;
+edges on the others are skipped. A node runs once every incoming edge is resolved and at least one
+is active, so a node after an if/else runs whichever side was taken. A node whose inputs were all
+skipped is skipped too, and the skip carries on downstream. Nodes that become ready together run in
+parallel. [Building flows](/guides/building-flows/) has the exact rules.
+
+## Waits
+
+Two node types stop and wait for the outside world:
+
+- **Approval** (`control.approval`) waits for a person to approve or reject, and takes its
+  `escalated` branch if the timeout passes first.
+- **Wait for event** (`control.wait_event`) waits for a named business event such as
+  `payment.received`, and takes `timeout` if it doesn't arrive.
+
+The order records each open wait, and the dashboard, the REST API, a signed webhook or the
+workspace [assistant](/guides/assistant/) (after you confirm) can resolve it. See [Approvals and events](/guides/approvals-and-events/).
+
+## Rollback
+
+Reserving inventory, authorizing payment, creating a shipment, holding stock for pickup, delivering
+a digital good, invoicing, splitting an order by seller and paying sellers out each register a compensation on
+their step. When an order fails (an End node with outcome `failed`, or a node that throws), the
+order runs those compensations in reverse order: stock is released, the authorization voided, the
+shipment cancelled, consumed stock restocked once no shipment is live, unpaid Stripe invoices voided, on-account invoice charges reversed. Cancelling an order does the same.
+
+## Loops and generations
+
+A **Loop** node repeats its body while a condition holds, up to a limit; the end of the body
+connects back to the loop's `next` input. Subscriptions loop over billing periods and then
+**continue as new**: the run ends and a fresh run starts on the same flow with the
+variables carried over, so its history doesn't grow without bound. Each run is a
+**generation** of the same order. Step names repeat across generations, so effects (charges,
+holds, webhooks) are keyed by the step name plus the generation, and a second generation's charge
+is a new charge.
+
+## Run context
+
+Expressions and text templates in node configs see the run context: `order`, `vars` (variables set
+by nodes and events), `nodes` (each node's latest output, by id), `input` (the order's `meta`) and
+`now`. See [Expressions and policy rules](/reference/expressions/).
+
+## Outbound events
+
+Subscribers receive signed webhooks when an order is paid, invoiced, shipped, ready for pickup,
+delivered, refunded or seller payouts are scheduled, and whenever it ends (completed,
+declined, cancelled or failed). See [Outbound webhooks](/guides/outbound-webhooks/).

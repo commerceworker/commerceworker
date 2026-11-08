@@ -1,0 +1,42 @@
+---
+/*
+ * A node type's icon: the lucide glyph the catalog names (`NodeSpec.icon`). `lucide` is pinned to
+ * the version of `lucide-react` the admin uses, so a node looks the same in the editor's palette
+ * and in these docs.
+ */
+import { icons } from 'lucide';
+
+interface Props {
+  name: string;
+  size?: number;
+  class?: string;
+}
+
+const { name, size = 14, class: className } = Astro.props;
+type IconNode = [string, Record<string, string | number>][];
+const glyphs = icons as unknown as Record<string, IconNode>;
+const node = glyphs[name] ?? glyphs.Circle ?? [];
+const body = node
+  .map(
+    ([tag, attrs]) =>
+      `<${tag} ${Object.entries(attrs)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(' ')}/>`,
+  )
+  .join('');
+---
+
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  aria-hidden="true"
+  class={className}
+  set:html={body}
+/>

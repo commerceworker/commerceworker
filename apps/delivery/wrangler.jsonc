@@ -1,0 +1,85 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Template; scripts/fleet.ts renders wrangler.<id>.json per deployment (route cdn.<domain>).
+  // The public Content Delivery API. The default entrypoint is the uncached gateway (auth, rate
+  // limit, canonical URL); `Delivery` is the cached entrypoint behind Workers Caching.
+  "name": "commerceworker-delivery",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Minified for a smaller script and a faster cold start; the uploaded source maps keep stack
+  // traces readable.
+  "minify": true,
+  "upload_source_maps": true,
+  // Edge-facing and cache-first: no Smart Placement (a cache hit should answer from the nearest
+  // colo; misses read D1 replicas, which are themselves spread out).
+  "limits": { "cpu_ms": 2000 },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.05,
+    "logs": { "enabled": true, "invocation_logs": false }
+  },
+  "cache": { "enabled": true, "cross_version_cache": true },
+  "exports": {
+    "default": { "type": "worker", "cache": { "enabled": false } },
+    "Delivery": { "type": "worker", "cache": { "enabled": true } }
+  },
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "commerceworker_metrics" }],
+  // Read-only use of the system of record, through read-replica sessions.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  // KV: the tag-versioned delivery cache and the authenticated-principal cache.
+  "kv_namespaces": [{ "binding": "KV_CACHE" }],
+  "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "commerceworker-media" }],
+  // Semantic and hybrid search: query embeddings (Workers AI), vectors (Vectorize), the lexical
+  // shards (engine-owned Durable Objects).
+  "ai": { "binding": "AI" },
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "commerceworker-vectors" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "LIVE_HUB", "class_name": "LiveHubDO", "script_name": "commerceworker-pipeline" },
+      { "name": "SEARCH", "class_name": "SearchShardDO", "script_name": "commerceworker-pipeline" }
+    ]
+  },
+  "ratelimits": [
+    { "name": "RATE_LIMIT_READ", "namespace_id": "1004", "simple": { "limit": 1200, "period": 60 } }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "commerceworker-purge",
+        "max_batch_size": 100,
+        "max_batch_timeout": 12,
+        "max_concurrency": 1,
+        "max_retries": 10,
+        "retry_delay": 30,
+        "dead_letter_queue": "commerceworker-purge-dlq"
+      },
+      { "queue": "commerceworker-purge-dlq", "max_batch_size": 100, "max_batch_timeout": 30 }
+    ]
+  },
+  "vars": {
+    // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
+    "QUEUE_SUFFIX": "",
+    "ROLE": "delivery",
+    "REQUIRE_SECURE_SECRETS": "true",
+    "AI_PROVIDER": "workers-ai",
+    "AI_GATEWAY_ID": "commerceworker",
+    "EMBEDDINGS_PROVIDER": "workers-ai",
+    "EMBEDDINGS_DIM": "768",
+    "EMBEDDINGS_MODEL": "",
+    "MEDIA_BASE_URL": "",
+    // The media Worker's origin (https://media.<domain>), rendered per deployment. Empty: delivered
+    // assets keep the api's signed URLs, without renditions or a srcset.
+    "MEDIA_PUBLIC_URL": "",
+    "DELIVERY_CACHE_TTL_SECONDS": "86400",
+    "DELIVERY_LIST_TTL_SECONDS": "3600"
+  }
+}

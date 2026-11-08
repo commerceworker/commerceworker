@@ -1,0 +1,65 @@
+---
+title: Agent skills
+description: Installable skills that teach a coding agent to build on CommerceWorker, model content as code and migrate content in, using the SDKs and the CLI.
+---
+
+A skill is a folder of instructions (`SKILL.md` and its references) that a coding agent loads when
+a task calls for it. CommerceWorker publishes three for developers building on a workspace, in the
+`skills/` folder of the [CommerceWorker repository](https://github.com/commerceworker/commerceworker):
+
+| Skill                                  | For                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `building-on-commerceworker`            | Choosing an SDK, Delivery or Preview, writes and read-your-writes, generated types, rendering rich text and embeds, caching |
+| `modeling-content-with-commerceworker`  | Field types, components, repeaters and blocks, validations, localization, and the model as a file with `commerceworker model apply` |
+| `migrating-to-commerceworker`           | Importing a WordPress export, CSV or JSON: mapping, rich text conversion, dry runs, publishing and checking the result |
+
+They tell the agent to use the [CLI](/content/guides/cli/) and the [SDKs](/content/guides/sdks/), and link these
+docs for detail. Every command, flag and SDK method they name is checked against the code when it
+changes, so a skill doesn't drift from the tools it describes.
+
+These are separate from the skills the [MCP server](/content/guides/mcp/#skills) serves, which guide an
+agent working *inside* a workspace through MCP tools.
+
+## Install
+
+With the open `skills` CLI, which works with Claude Code and other agents:
+
+```sh
+npx skills add commerceworker/commerceworker@building-on-commerceworker
+npx skills add commerceworker/commerceworker@modeling-content-with-commerceworker
+npx skills add commerceworker/commerceworker@migrating-to-commerceworker
+```
+
+Add `-g` to install for your user rather than the project.
+
+Or copy the folders yourself. For Claude Code, a project's skills live in `.claude/skills/` and
+your own in `~/.claude/skills/`:
+
+```sh
+git clone --depth 1 https://github.com/commerceworker/commerceworker /tmp/commerceworker
+mkdir -p .claude/skills
+cp -R /tmp/commerceworker/skills/* .claude/skills/
+```
+
+Commit them to share with your team. To update, copy them again (or `npx skills update`).
+
+## Give the agent access
+
+The skills expect the CLI to be installed and signed in:
+
+```sh
+npm install -D @commerceworker/sdk
+npx commerceworker login --url https://api.your-workspace.commerceworker.com
+npx commerceworker doctor
+```
+
+For an agent that runs unattended, set `COMMERCEWORKER_TOKEN` and `COMMERCEWORKER_URL` to a
+[key](/content/guides/api-keys/) with only the scopes the task needs: `preview:read` to read and generate
+types, `content:write` to create entries and import, `content:publish` to publish, and
+`content:manage` to change the content model. The agent can do exactly what that key can.
+
+## Next steps
+
+- [Command-line tool](/content/guides/cli/) for every command and its output.
+- [Content modeling](/content/guides/content-modeling/) for the model the skills describe.
+- [MCP server](/content/guides/mcp/) to connect an agent to a workspace directly.

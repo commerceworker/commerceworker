@@ -1,0 +1,33 @@
+{
+  "name": "@commerceworker/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The api Worker: Management and Preview REST (Hono + OpenAPI), the MCP server, OAuth, media and the live route. HTTP only; human sign-in is the web Worker's, async work and stateful objects the engine's.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "smoke:mcp": "node scripts/mcp-smoke.mjs",
+    "smoke:mcp-search": "node scripts/mcp-search-smoke.mjs"
+  },
+  "dependencies": {
+    "@commerceworker/agent-runtime": "workspace:*",
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/http": "workspace:*",
+    "@commerceworker/platform": "workspace:*",
+    "@commerceworker/seed": "workspace:*",
+    "hono": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@modelcontextprotocol/client": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  },
+  "license": "Apache-2.0"
+}

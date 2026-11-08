@@ -1,0 +1,5 @@
+# Local development needs no secrets: PRINCIPAL_KEY and DATA_KEY fall back to fixed dev keys
+# (DEV_PRINCIPAL_KEY in @commerceworker/security, DEV_DATA_KEY in app/lib/encryption.ts), and with no
+# people on localhost the admin is open until you add the first one.
+# SETUP_TOKEN=
+# OIDC_CLIENT_SECRET=

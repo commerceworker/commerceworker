@@ -1,0 +1,94 @@
+---
+title: Commerce models and channels
+description: The models an order can belong to, the channels it can arrive on, buy-side and sell-side pricing, and the optional contact, fulfillment and external id fields.
+---
+
+import Values from '../../components/Values.astro';
+import ModelTable from '../../components/ModelTable.astro';
+
+An order has a **model** (what kind of commerce it is) and a **channel** (where it came in). Both
+are part of the order input and both are checked when the order starts. The model also decides which
+[flow](/guides/templates/) a new flow starts from and how lines are priced.
+
+## Models
+
+Models: <Values of="order-models" />.
+
+<ModelTable />
+
+`input.model` is required. A flow has one `model` and a list of `channels` it is meant for. Inbound
+routing and the UI use the channels; they do not restrict which orders run on the flow.
+
+## Channels
+
+Channels: <Values of="order-channels" />. `input.channel` defaults to `api`. The dashboard starts
+orders as `manual`, [email intake](/guides/email-intake/) as `email`, and the daily stock review as
+`schedule`. Orders placed by an AI shopping platform through [agentic checkout](/reference/ucp/) arrive as `agent`, labelled AI agent. Storefronts, marketplaces and POS systems send orders with a signed webhook; see
+[Inbound orders](/guides/inbound-orders/), and Shopify webhooks and EDI X12 850 purchase orders (channel `edi`, label EDI, `b2b`) arrive through [Channel adapters](/guides/channel-adapters/). Orders on `pos` run the point-of-sale flow, `tpl-pos-sale`, for the `b2c` and `d2c` models. `GET /api/v1/orders` filters on `model` and `channel`
+(see [REST API](/reference/rest-api/#list-orders)).
+
+## Pricing
+
+Procurement and replenishment orders are **buy-side**: the business is the buyer, so lines price at
+the product's cost. Every other model is **sell-side** and runs the
+[pricing chain](/reference/expressions/#pricing-chain) (price book, contract, volume, list).
+
+The [Price](/reference/nodes/#commerce.price) node's `basis` field makes that explicit:
+
+| `basis` | Lines are priced |
+|---|---|
+| `auto` (default) | At cost for buy-side models, through the chain otherwise |
+| `chain` | Through the pricing chain, whatever the model |
+| `cost` | At the product's cost |
+
+A line with its own `unitPrice` keeps it under every basis.
+
+## Order fields
+
+Besides `customerId`, `currency`, `lines` and `meta`, the input takes:
+
+| Field | Meaning |
+|---|---|
+| `externalId` | The order's id in its channel (storefront, marketplace, POS). Searchable with `q` |
+| `contact` | `{ email, name?, phone? }` for a buyer without a customer account, such as guest checkout or a POS receipt. `email` is searchable with `q` |
+| `fulfillment` | `{ method, locationId? }`. `method` is one of <Values of="fulfillment-methods" />; `locationId` is the store to fulfil from or hand over at. See [Fulfillment](/guides/fulfillment/) |
+| `lines[].sellerId` | The marketplace seller for a line; otherwise the product's seller, or first party |
+| `lines[].locationId` | Set by route fulfillment on a split shipment: the store a line ships from. Unset means `fulfillment.locationId`, or central stock |
+
+All of these are on the run context's `order` (see [Expressions](/reference/expressions/#the-run-context)),
+so a condition can branch on `order.model`, `order.channel` or `order.fulfillment.method`. The
+order list filters on `model` and `channel` and searches `externalId` and the contact email, and the
+[outbound webhook](/guides/outbound-webhooks/) order summary carries `model`, `channel` and
+`externalId`.
+
+Customers have a `kind`: `business`, `consumer` or `internal`.
+
+## Guest checkout
+
+An order with a `contact` and no `customerId` is a guest order. On the **New order** form, choose
+**Guest** under **Buyer** and give an email (and optionally a name), and the **Guest checkout** demo scenario (where the demo data is loaded) starts one.
+The order page shows `Guest · <email>` in place of a customer.
+
+- [Credit check](/reference/nodes/#commerce.credit_check): a guest, or a customer whose `kind` is not
+  `business`, has no credit account. The node takes the branch set by `noAccount` (`over_limit` by
+  default, `ok` to let them through) and reports "Guest checkout (no credit account)" or
+  "No credit account (consumer)".
+- [Generate invoice](/reference/nodes/#commerce.invoice): only an invoice to a business customer that is not
+  yet paid in full is added to their balance, and its summary ends "· on account".
+  Set `onAccount` to `false` to never add it. `terms` defaults to `due_on_receipt`. With
+  `provider: stripe` the invoice is also issued through Stripe and paid online (see
+  [Payments](/guides/payments/#invoices-paid-through-stripe)); a paid invoice takes its charge back
+  off the balance.
+- [Notify](/reference/nodes/#commerce.notify) with `to: customer` falls back to `contact.email`.
+- [Risk score](/guides/ai/#ai-nodes): the offline heuristic adds 15 for a guest ("Guest checkout")
+  and 30 for an order with neither customer nor contact ("Unknown customer").
+- The Commerce page's customers table shows each customer's `kind`; a consumer or internal customer
+  reads "Pays at checkout" in place of payment terms.
+
+## Starting a flow for a model
+
+**New flow** on `/flows` takes a model. With the Template start it copies that model's default flow
+from the table above into a new flow of its own, so editing the copy never changes the built-in one
+(see [Building flows](/guides/building-flows/#creating-a-flow)). `b2c` starts from the storefront flow, `tpl-storefront-order`, and `d2c` from `tpl-omnichannel-order`, which routes each order to
+shipping, store pickup or digital delivery (see [Fulfillment](/guides/fulfillment/)); `marketplace` has its own,
+`tpl-marketplace-order` (see [Marketplace](/guides/marketplace/)).
