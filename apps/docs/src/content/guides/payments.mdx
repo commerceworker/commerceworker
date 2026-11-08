@@ -78,7 +78,8 @@ step saved.
   hold is released. A marketplace order whose seller rejected their part captures only what was
   kept (see [Marketplace](/guides/marketplace/#partial-acceptance-and-capture)).
 - **Void.** When an order fails after authorizing, the rollback cancels the hold. Cancelling an
-  order does the same. In Stripe the PaymentIntent is canceled first and the payment marked
+  order does the same, and so does a flow that ends declined or cancelled: the hold is voided as
+  the order ends, and the timeline says so. A flow that ends completed keeps its hold. In Stripe the PaymentIntent is canceled first and the payment marked
   `voided` only once Stripe confirms, so a void that fails is retried, not lost. A hold that was
   captured in the meantime stays captured.
 - **Refund** returns up to the requested amount of what was captured or charged and not yet

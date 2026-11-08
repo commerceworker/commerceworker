@@ -48,8 +48,9 @@ import { orderAgent } from './namespaces';
 import { EXECUTORS, type NodeResult, ROLLBACKS, scaled } from './nodes';
 import { instanceExists } from './orders';
 import { emit, orderSummary } from './outbox';
+import { voidAuthorizations } from './payments';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
-import { capReason, failureReason } from './words';
+import { capReason, failureReason, plural } from './words';
 
 export type OrderWorkflowParams = {
   orderId: string;
@@ -63,7 +64,14 @@ export type OrderWorkflowParams = {
 type Outcome =
   | { kind: 'complete'; result: NodeResult }
   | { kind: 'loop'; next: boolean; result: NodeResult }
-  | { kind: 'end'; outcome: 'completed' | 'declined' | 'cancelled' | 'failed'; reason: string }
+  | {
+      kind: 'end';
+      outcome: 'completed' | 'declined' | 'cancelled' | 'failed';
+      reason: string;
+      /** The End node and its step key, for what runs once the batch has finished. */
+      nodeId: string;
+      key: string;
+    }
   | { kind: 'continue' };
 
 /** Workflow event types allow only [a-zA-Z0-9_-]. */
@@ -173,12 +181,57 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
 
     const outcome = end?.outcome ?? 'completed';
     const reason = end?.reason ?? '';
+    // Ending declined or cancelled isn't a failure, so no rollback runs: void any card hold the
+    // order still has, rather than leave it open until the card network releases it. After the
+    // whole batch, so a hold a sibling placed alongside the End node is voided too.
+    if (end && (outcome === 'declined' || outcome === 'cancelled')) {
+      await this.voidOpenHolds(step, p, end.nodeId, end.key);
+    }
     await snapshot(outcome, { reason });
     if (outcome === 'failed') {
       // Fails the instance; Workflows then runs every registered rollback in reverse order.
       throw new NonRetryableError(reason || 'Order failed');
     }
     return { outcome, total: ctx.order.total };
+  }
+
+  /**
+   * Voids the order's open authorizations as one step (`<end key>:void`). Retry-safe: each void is
+   * keyed by its payment row, and a hold already voided is skipped.
+   */
+  private async voidOpenHolds(
+    step: WorkflowStep,
+    p: OrderWorkflowParams,
+    nodeId: string,
+    key: string,
+  ) {
+    const env = this.env;
+    const fx = effectKey(p.generation, key);
+    await step.do(
+      `${key}:void`,
+      { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+      async () => {
+        const voided = await voidAuthorizations(env, p.orderId);
+        if (voided) {
+          // Sent from inside the step, so it is reported once; a failed report doesn't redo the void.
+          try {
+            await orderAgent(env, p.orderId).report({
+              generation: p.generation,
+              log: {
+                at: Date.now(),
+                nodeId,
+                kind: 'rollback',
+                message: `Voided ${plural(voided, 'authorization')}: the order ended without payment`,
+                key: `${fx}:void`,
+              },
+            });
+          } catch (err) {
+            console.warn('void report failed', err);
+          }
+        }
+        return voided;
+      },
+    );
   }
 
   /** Starts the next generation. Retry-safe: a retry after `create` succeeded finds the instance. */
@@ -350,7 +403,7 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
           outcome,
           reason,
         });
-        return { kind: 'end', outcome, reason };
+        return { kind: 'end', outcome, reason, nodeId: node.id, key };
       }
 
       case 'control.continue_as_new':

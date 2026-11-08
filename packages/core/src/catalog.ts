@@ -372,7 +372,7 @@ export const NODE_SPECS = [
     category: 'commerce',
     label: 'Authorize payment',
     description:
-      'Places an authorization hold for the order total, or checks the card and saves it for later charges. A hold is voided automatically if the order later fails.',
+      'Places an authorization hold for the order total, or checks the card and saves it for later charges. A hold is voided automatically if the order later fails, is cancelled or ends declined.',
     icon: 'CreditCard',
     fields: [
       {

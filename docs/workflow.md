@@ -104,7 +104,10 @@ Waiting and control nodes are handled in `runNode` itself:
 - **`control.loop`.** One step decides `next = runs <= maxIterations && truthy(while)`; the
   outcome goes to `completeLoop`.
 - **`control.end`.** Reports, emits `order.${outcome}`, and ends the run with that outcome and the
-  interpolated reason, capped at 200 characters.
+  interpolated reason, capped at 200 characters. An end `declined` or `cancelled` is not a failure,
+  so no rollback runs; once the batch it ended in has finished, one more step (`<key>:void`) voids
+  the order's open authorizations (`voidAuthorizations`, keyed per payment row) and logs a
+  `rollback` timeline entry when it voided any. A `completed` end keeps its holds.
 - **`control.continue_as_new`.** See below.
 
 ## Reports to the agent
