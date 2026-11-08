@@ -1,8 +1,8 @@
 /**
- * Three small logs the engine keeps: the intake log of every inbound order email, accepted or
+ * Four small logs: the intake log of every inbound order email, accepted or
  * not; the payment processor's events already handled (so a redelivered one is a duplicate); and
- * each person's assistant usage per day, which their daily token budget is counted against. Each is
- * pruned by the retention sweep. `d1IntakeLog`, `d1PaymentEventLog` and `d1UsageStore`
+ * each person's assistant usage per day, which their daily token budget is counted against; and the
+ * signed webhooks the web app already took. Each is pruned by the retention sweep. `d1IntakeLog`, `d1PaymentEventLog` and `d1UsageStore`
  * (packages/db) and their in-memory twins (packages/test-kit) implement them, held to one contract.
  */
 
@@ -32,6 +32,20 @@ export interface PaymentEventLog {
   /** Notes the order an event was about. */
   link(id: string, orderId: string): Promise<void>;
   /** Frees an event whose handling failed, so a redelivery handles it. */
+  release(id: string): Promise<void>;
+}
+
+/**
+ * Signed webhooks already delivered, by their signature: a replay of one is refused while the
+ * signature is still valid, and a delivery that failed is given back so its retry goes through.
+ */
+export interface WebhookReceipts {
+  /**
+   * Records a delivered signature at `now`, dropping receipts older than `ttlMs` in the same
+   * round trip; false when it was already recorded.
+   */
+  claim(id: string, now: number, ttlMs: number): Promise<boolean>;
+  /** Forgets a receipt, so the signature can be delivered again. */
   release(id: string): Promise<void>;
 }
 

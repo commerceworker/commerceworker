@@ -2,8 +2,8 @@ import { env } from 'cloudflare:workers';
 import { describeLogsContract } from '@commerceworker/test-kit/commerce';
 import { like } from 'drizzle-orm';
 import { createDb } from '../src/index';
-import { d1IntakeLog, d1PaymentEventLog, d1UsageStore } from '../src/logs';
-import { aiUsage, inboundEmails, paymentEvents } from '../src/schema';
+import { d1IntakeLog, d1PaymentEventLog, d1UsageStore, d1WebhookReceipts } from '../src/logs';
+import { aiUsage, inboundEmails, paymentEvents, webhookReceipts } from '../src/schema';
 
 const DB = (env as unknown as { DB: D1Database }).DB;
 
@@ -12,5 +12,11 @@ describeLogsContract('D1', async () => {
   await db.delete(inboundEmails).where(like(inboundEmails.id, 'lg_%'));
   await db.delete(paymentEvents).where(like(paymentEvents.id, 'lg_%'));
   await db.delete(aiUsage).where(like(aiUsage.principalId, 'lg_%'));
-  return { intake: d1IntakeLog(DB), events: d1PaymentEventLog(DB), usage: d1UsageStore(DB) };
+  await db.delete(webhookReceipts).where(like(webhookReceipts.id, 'lg_%'));
+  return {
+    intake: d1IntakeLog(DB),
+    events: d1PaymentEventLog(DB),
+    usage: d1UsageStore(DB),
+    receipts: d1WebhookReceipts(DB),
+  };
 });

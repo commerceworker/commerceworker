@@ -38,7 +38,6 @@ vi.mock('~/lib/env.server', () => ({
     addTaxCertificate,
     taxCertificates: async (customerId: string) => held.get(customerId) ?? null,
   }),
-  db: () => ({}),
   docs: () => ({
     put: async (key: string, body: Uint8Array, o: { httpMetadata?: { contentType?: string } }) => {
       objects.set(key, { bytes: new Uint8Array(body), type: o.httpMetadata?.contentType });

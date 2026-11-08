@@ -16,7 +16,7 @@ vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),
   createRequestHandler: () => rendered,
 }));
-vi.mock('~/lib/env.server', () => ({ engine: () => ({}), db: () => ({}), docs: () => ({}) }));
+vi.mock('~/lib/env.server', () => ({ engine: () => ({}), docs: () => ({}) }));
 vi.mock('~/lib/auth.server', () => ({
   principal: async () => null,
   apiPrincipal: vi.fn(),

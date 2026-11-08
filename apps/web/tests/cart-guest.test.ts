@@ -20,7 +20,6 @@ vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
 vi.mock('~/lib/env.server', () => ({
   engine: () => ({ fetch: engineFetch, redeemCartStart, cartSnapshot }),
-  db: () => ({ select: () => ({ from: () => ({ orderBy: async () => [] }) }) }),
   docs: () => ({}),
 }));
 vi.mock('~/lib/orders.server', () => ({ customerNames: async () => ({}) }));
