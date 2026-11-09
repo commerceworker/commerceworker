@@ -40,6 +40,7 @@ import { runCases } from './admin';
 import { draftCartReply } from './cart-reply';
 import { changeCart, getCart, listCarts, openCart } from './carts';
 import { acceptProductDrafts, discardProductEdits, stageProductEdits } from './catalog';
+import { putCatalogChannel, putCatalogType } from './catalog-writes';
 import {
   type ActionInput,
   type ActionTool,
@@ -102,6 +103,16 @@ export const ACTION_TOOLS: ActionTool[] = [
   'cancel_cart',
   'test_flow',
   'publish_catalog',
+  'put_catalog_products',
+  'delete_catalog_products',
+  'delete_catalog_type',
+  'delete_catalog_channel',
+  'put_catalog_categories',
+  'delete_catalog_categories',
+  'start_catalog_feed',
+  'cancel_catalog_feed',
+  'reindex_catalog',
+  'rebuild_catalog_gaps',
   'create_promotion',
   'set_promotion_status',
   'verify_tax_certificate',
@@ -207,6 +218,15 @@ export async function runTool<T extends AssistantTool>(
         env,
         p,
         (input as ToolInput<'accept_product_drafts'>).key,
+        trailOf(p, name, opts),
+      );
+    case 'put_catalog_type':
+      return putCatalogType(env, p, input as ToolInput<'put_catalog_type'>, trailOf(p, name, opts));
+    case 'put_catalog_channel':
+      return putCatalogChannel(
+        env,
+        p,
+        input as ToolInput<'put_catalog_channel'>,
         trailOf(p, name, opts),
       );
     case 'discard_product_edits': {

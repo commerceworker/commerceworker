@@ -22,10 +22,8 @@ import {
   startOrderSchema,
   ucpSettingsSchema,
 } from '@commerceworker/core';
-import { BOARD_COLUMNS, GAP_KINDS } from '@commerceworker/core/product';
-import { z } from 'zod';
 import {
-  cancelInput,
+  BOARD_COLUMNS,
   catalogCategoriesDeleteInput,
   catalogCategoriesInput,
   catalogChannelInput,
@@ -37,6 +35,11 @@ import {
   catalogProductsInput,
   catalogPublishInput,
   catalogTypeInput,
+  GAP_KINDS,
+} from '@commerceworker/core/product';
+import { z } from 'zod';
+import {
+  cancelInput,
   createCartInput,
   dataSubjectInput,
   decisionInput,

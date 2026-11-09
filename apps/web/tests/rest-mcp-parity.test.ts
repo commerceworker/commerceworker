@@ -5,6 +5,16 @@
  * other takes it too, or it is listed.
  */
 import { cartOpSchema, REST_OPERATION_TOOLS, TOOL_INPUTS } from '@commerceworker/core';
+import {
+  catalogCategoriesDeleteInput,
+  catalogCategoriesInput,
+  catalogChannelInput,
+  catalogDeleteInput,
+  catalogDiscardInput,
+  catalogEditsInput,
+  catalogProductsInput,
+  catalogTypeInput,
+} from '@commerceworker/core/product';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -83,6 +93,45 @@ const PAIRS: {
     body: submitCartInput,
     path: ['cartId'],
     differs: { version: 'REST’s name for cartVersion, matching the cart’s ETag; both are taken' },
+  },
+  // The catalog's writes: the same zod objects, so any difference is a bug.
+  {
+    rest: 'POST /catalog/products',
+    tool: 'put_catalog_products',
+    body: catalogProductsInput,
+    path: [],
+  },
+  {
+    rest: 'POST /catalog/products/delete',
+    tool: 'delete_catalog_products',
+    body: catalogDeleteInput,
+    path: [],
+  },
+  { rest: 'POST /catalog/types', tool: 'put_catalog_type', body: catalogTypeInput, path: [] },
+  {
+    rest: 'POST /catalog/channels',
+    tool: 'put_catalog_channel',
+    body: catalogChannelInput,
+    path: [],
+  },
+  {
+    rest: 'POST /catalog/categories',
+    tool: 'put_catalog_categories',
+    body: catalogCategoriesInput,
+    path: [],
+  },
+  {
+    rest: 'POST /catalog/categories/delete',
+    tool: 'delete_catalog_categories',
+    body: catalogCategoriesDeleteInput,
+    path: [],
+  },
+  { rest: 'POST /catalog/edits', tool: 'stage_product_edits', body: catalogEditsInput, path: [] },
+  {
+    rest: 'POST /catalog/edits/discard',
+    tool: 'discard_product_edits',
+    body: catalogDiscardInput,
+    path: ['what'],
   },
 ];
 

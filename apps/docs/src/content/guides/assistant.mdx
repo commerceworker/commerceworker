@@ -167,9 +167,11 @@ the messages are masked unless the deployment sends personal data to the model. 
 tools, so nothing a buyer wrote can make it act, and the draft is never sent for you. A link the chat doesn't already hold is removed from the
 draft. A cart's chat reaches a model only here.
 
-The Catalog page's staging, accepting and dropping (`stage_product_edits`, `accept_product_drafts`,
-`discard_product_edits`) run only from its buttons, since each overwrites or drops what waits to
-publish. The assistant drafts with `draft_product_content`, and a person accepts.
+Staging and dropping edits (`stage_product_edits`, `discard_product_edits`) run at once, from the
+Catalog page's buttons or a tool call, since they change only what waits to publish. Accepting a
+draft (`accept_product_drafts`) runs only from the page's button: the assistant drafts with
+`draft_product_content`, and a person accepts. Writing the live catalog (products, categories,
+feeds, deletes, reindexing) stops at a confirm card like publishing does.
 
 `start_scenario` (`operator`) runs one of the demo scenarios by its id, without a card, only where
 the demo data is loaded, and only from its button on the dashboard or the scenarios page. The model

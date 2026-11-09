@@ -105,6 +105,18 @@ export type AssistantTool =
   | 'accept_product_drafts'
   | 'discard_product_edits'
   | 'publish_catalog'
+  | 'put_catalog_products'
+  | 'delete_catalog_products'
+  | 'put_catalog_type'
+  | 'delete_catalog_type'
+  | 'put_catalog_channel'
+  | 'delete_catalog_channel'
+  | 'put_catalog_categories'
+  | 'delete_catalog_categories'
+  | 'start_catalog_feed'
+  | 'cancel_catalog_feed'
+  | 'reindex_catalog'
+  | 'rebuild_catalog_gaps'
   | 'create_promotion'
   | 'set_promotion_status'
   | 'verify_tax_certificate'
@@ -455,8 +467,8 @@ export const ASSISTANT_TOOLS: Record<
     description:
       'Run a test order on a flow: publishes its saved draft first when it changed since the live version, then starts an order with a demo input where the demo data is loaded.',
   },
-  // The Catalog page's own buttons (`PAGE_ONLY_TOOLS`): each overwrites or drops what waits to
-  // publish. A model drafts instead (`draft_product_content`), and a person accepts.
+  // Staging and discarding change only what waits to publish, so they run at once, from the
+  // Catalog page's buttons and over MCP. Accepting a draft is the page's own (`PAGE_ONLY_TOOLS`).
   stage_product_edits: {
     role: 'operator',
     confirm: false,
@@ -466,6 +478,7 @@ export const ASSISTANT_TOOLS: Record<
   },
   accept_product_drafts: {
     role: 'operator',
+    // The page's own button (`PAGE_ONLY_TOOLS`): a person accepts what the assistant drafted.
     confirm: false,
     label: 'Accepted the drafts',
     title: 'Accept a product’s drafts',
@@ -485,6 +498,101 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Publish catalog edits',
     description:
       'Publish the staged edits of up to 500 products to the live catalog, each product all or none.',
+  },
+  put_catalog_products: {
+    role: 'operator',
+    confirm: true,
+    label: 'Write catalog products',
+    title: 'Write catalog products',
+    description:
+      'Create or update up to 500 products. This writes the live catalog, not a draft: a stored product publishes to the storefront and feeds within the minute, and a field a person edited keeps their text and becomes a conflict. Unchanged products write nothing.',
+  },
+  delete_catalog_products: {
+    role: 'operator',
+    confirm: true,
+    label: 'Delete catalog products',
+    title: 'Delete catalog products',
+    description: 'Delete up to 500 products by key and take them off the storefront and the feeds.',
+  },
+  put_catalog_type: {
+    role: 'operator',
+    confirm: false,
+    label: 'Saved a product type',
+    title: 'Save a product type',
+    description:
+      'Add a product type, or its next version. A new version may only add to the type. Nothing is published until products use it.',
+  },
+  delete_catalog_type: {
+    role: 'operator',
+    confirm: true,
+    label: 'Delete a product type',
+    title: 'Delete a product type',
+    description:
+      'Remove every version of a product type. The catalog refuses while any product uses it.',
+  },
+  put_catalog_channel: {
+    role: 'operator',
+    confirm: false,
+    label: 'Saved a channel',
+    title: 'Save a catalog channel',
+    description:
+      'Add or change a channel: where products are published, with its currency and locales. A changed currency or locale list reaches published documents on the next reindex.',
+  },
+  delete_catalog_channel: {
+    role: 'admin',
+    confirm: true,
+    label: 'Delete a channel',
+    title: 'Delete a catalog channel',
+    description:
+      'Remove a channel and take down everything published in it. Products keep their listing data for it.',
+  },
+  put_catalog_categories: {
+    role: 'operator',
+    confirm: true,
+    label: 'Write categories',
+    title: 'Write catalog categories',
+    description:
+      'Add or change up to 500 categories. The category tree is republished live once for the call.',
+  },
+  delete_catalog_categories: {
+    role: 'operator',
+    confirm: true,
+    label: 'Delete categories',
+    title: 'Delete catalog categories',
+    description:
+      'Remove categories. The catalog refuses while one has children outside the set or products in it.',
+  },
+  start_catalog_feed: {
+    role: 'operator',
+    confirm: true,
+    label: 'Start a catalog feed',
+    title: 'Start a catalog feed',
+    description:
+      'Import products from a CSV or NDJSON file given as text (up to 256 KiB; larger files go to the REST API). The feed writes the live catalog: each product it stores publishes within the minute.',
+  },
+  cancel_catalog_feed: {
+    role: 'operator',
+    confirm: true,
+    label: 'Cancel a feed',
+    title: 'Cancel a catalog feed',
+    description:
+      'Stop a feed that has not finished. Parts already handed to the catalog still apply, so some products may have been written.',
+  },
+  reindex_catalog: {
+    role: 'admin',
+    confirm: true,
+    label: 'Reindex the catalog',
+    title: 'Reindex the catalog',
+    description:
+      'Republish every product, after a document format, channel or renderer change. It queues work for every shard and publisher.',
+  },
+  rebuild_catalog_gaps: {
+    role: 'admin',
+    confirm: true,
+    label: 'Rebuild catalog gaps',
+    title: 'Rebuild the catalog’s gap index',
+    description:
+      'Recount every product’s content gaps, after a channel’s locales change or to build the index for older products. It reads every product.',
   },
   create_promotion: {
     role: 'operator',
@@ -665,6 +773,8 @@ export const WRITES_WITHOUT_CONFIRM: readonly AssistantTool[] = [
   'stage_product_edits',
   'accept_product_drafts',
   'discard_product_edits',
+  'put_catalog_type',
+  'put_catalog_channel',
   'run_plugin_cases',
 ];
 
@@ -676,9 +786,7 @@ export const WRITES_WITHOUT_CONFIRM: readonly AssistantTool[] = [
 export const PAGE_ONLY_TOOLS: readonly AssistantTool[] = [
   'start_scenario',
   'save_flow_draft',
-  'stage_product_edits',
   'accept_product_drafts',
-  'discard_product_edits',
   'run_plugin_cases',
   'draft_cart_reply',
 ];

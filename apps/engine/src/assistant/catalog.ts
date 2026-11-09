@@ -8,7 +8,7 @@
  */
 
 import { type ActionPreview, boundText, fingerprintOf, type Principal } from '@commerceworker/core';
-import type { FieldRef, StageEdit } from '@commerceworker/core/product';
+import { editsStaged, type FieldRef, type StageEdit } from '@commerceworker/core/product';
 import { recordAudit } from '../audit';
 import type { Confirmed } from './data';
 import { Refused } from './data';
@@ -25,13 +25,7 @@ export async function stageProductEdits(env: Env, p: Principal, edits: StageEdit
   if (results.length)
     await recordAudit(env, 'catalog.edits_staged', {
       actor: p,
-      detail: {
-        staged: staged.length,
-        refused: results.length - staged.length,
-        products: new Set(staged.map((r) => r.key)).size,
-        fromDrafts: edits.filter((e, i) => e.source === 'assistant' && results[i]?.ok).length,
-        ...trail,
-      },
+      detail: { ...editsStaged(edits, results), ...trail },
     });
   return {
     done: `Staged ${staged.length} of ${results.length} edit${results.length === 1 ? '' : 's'}`,

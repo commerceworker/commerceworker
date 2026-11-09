@@ -6,6 +6,7 @@
 export * from './api';
 export * from './content';
 export * from './feed';
+export * from './inputs';
 export * from './listing-index';
 export * from './listing-spec';
 export * from './model';
@@ -15,3 +16,4 @@ export * from './render';
 export * from './routing';
 export * from './search';
 export * from './validate';
+export * from './writes';

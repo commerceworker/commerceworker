@@ -52,6 +52,16 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'publish_flow',
   'publish_catalog',
   'uninstall_plugin',
+  // The catalog's writes go live, or take something down, or drop what a person staged.
+  'put_catalog_products',
+  'delete_catalog_products',
+  'delete_catalog_type',
+  'delete_catalog_channel',
+  'put_catalog_categories',
+  'delete_catalog_categories',
+  'start_catalog_feed',
+  'cancel_catalog_feed',
+  'discard_product_edits',
 ]);
 /** Calling these twice with the same input does nothing more the second time. */
 const IDEMPOTENT = new Set<AssistantTool>([
@@ -59,6 +69,16 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'decide_approvals',
   'cancel_order',
   'submit_cart',
+  // The same input again finds the catalog as it left it.
+  'put_catalog_products',
+  'delete_catalog_products',
+  'put_catalog_channel',
+  'put_catalog_categories',
+  'delete_catalog_categories',
+  'reindex_catalog',
+  'rebuild_catalog_gaps',
+  'stage_product_edits',
+  'discard_product_edits',
 ]);
 /**
  * These reach outside CommerceWorker: cancelling voids payments and cancels shipments with the
