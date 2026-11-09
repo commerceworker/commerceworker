@@ -10,7 +10,7 @@ import { assessQuestionsSchema } from './assess';
 import type { AssistantTool } from './assistant';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
 import { flowGraphSchema } from './order-schemas';
-import { RESERVED_EVENT_FIELDS } from './order-waits';
+import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
 import { pluginCasesSchema } from './plugins';
 import { EDIT_SOURCES } from './product/api';
 import {
@@ -23,6 +23,25 @@ import { PROMOTION_KINDS } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
+
+/** The longest reason a cancel carries. */
+export const MAX_CANCEL_REASON = 500;
+
+/**
+ * Fields an operation takes the same way over REST and MCP. Each transport builds its body from
+ * these (REST's in apps/web/app/lib/api-schemas.ts), so a bound changes for both at once;
+ * `apps/web/tests/rest-mcp-parity.test.ts` holds the two to each other.
+ */
+export const OPERATION_FIELDS = {
+  decision: z.enum(['approved', 'rejected']),
+  decisionNote: z.string().max(MAX_DECISION_NOTE),
+  cancelReason: z.string().max(MAX_CANCEL_REASON),
+  cartTitle: z.string().trim().min(1).max(MAX_CART_TITLE),
+  cartFlowId: z.string().min(1).max(100),
+  cartCustomerId: z.string().min(1).max(100),
+  cartVersion: z.number().int().positive(),
+} as const;
+const F = OPERATION_FIELDS;
 
 const orderId = z.string().describe('The order id (ord_…) or its #reference, e.g. #k3x9q2');
 const cartId = z.string().max(100).describe('The cart id (cart_…)');
@@ -92,9 +111,9 @@ export const TOOL_INPUTS = {
       .describe('Guidance from the person: tone, length, terms to keep'),
   }),
   create_cart: z.object({
-    title: z.string().min(1).max(MAX_CART_TITLE),
-    flowId: z.string().describe('A published flow with a Price lines step (list_flows)'),
-    customerId: z.string().optional().describe('The customer it is for (cus_…)'),
+    title: F.cartTitle,
+    flowId: F.cartFlowId.describe('A published flow with a Price lines step (list_flows)'),
+    customerId: F.cartCustomerId.optional().describe('The customer it is for (cus_…)'),
   }),
   change_cart: z.object({
     cartId,
@@ -110,12 +129,12 @@ export const TOOL_INPUTS = {
       .string()
       .optional()
       .describe('The approval step; omit when the order has only one open'),
-    decision: z.enum(['approved', 'rejected']),
-    note: z.string().optional(),
+    decision: F.decision,
+    note: F.decisionNote.optional(),
   }),
   decide_approvals: z.object({
-    decision: z.enum(['approved', 'rejected']),
-    note: z.string().max(2000).optional(),
+    decision: F.decision,
+    note: F.decisionNote.optional(),
     approvals: z
       .array(z.object({ orderId, nodeId: z.string().min(1).max(200) }))
       .min(1)
@@ -139,7 +158,7 @@ export const TOOL_INPUTS = {
       .optional()
       .describe('What the event carries, e.g. { "sellerId": "…", "decision": "accepted" }'),
   }),
-  cancel_order: z.object({ orderId, reason: z.string() }),
+  cancel_order: z.object({ orderId, reason: F.cancelReason }),
   record_return: z.object({
     orderId,
     reasonCode: z.enum(RETURN_REASON_CODES as [ReturnReason, ...ReturnReason[]]),
@@ -152,10 +171,7 @@ export const TOOL_INPUTS = {
   }),
   submit_cart: z.object({
     cartId,
-    cartVersion: z
-      .number()
-      .int()
-      .positive()
+    cartVersion: F.cartVersion
       .optional()
       .describe('The cart version you read (get_cart); refused if the cart has changed since'),
   }),

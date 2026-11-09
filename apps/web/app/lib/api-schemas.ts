@@ -2,8 +2,8 @@
 
 import {
   isWebhookUrl,
-  MAX_CART_TITLE,
   MAX_EVENT_PAYLOAD_BYTES,
+  OPERATION_FIELDS,
   ORDER_CHANNELS,
   OUTBOUND_EVENTS,
   payloadFits,
@@ -35,22 +35,31 @@ export const eventSchema = z.object({
 
 export const orderEventInput = eventSchema.omit({ orderId: true });
 
-export const decisionInput = z.object({
-  decision: z.enum(['approved', 'rejected']),
-  note: z.string().max(2000).optional(),
+// The order and cart bodies are built from the fields MCP's tools take (OPERATION_FIELDS in
+// @commerceworker/core), so both transports bound them alike; tests/rest-mcp-parity.test.ts holds
+// each body to its tool.
+const F = OPERATION_FIELDS;
+
+export const decisionInput = z.object({ decision: F.decision, note: F.decisionNote.optional() });
+
+/** REST's reason is optional (it defaults to "Cancelled via API"); MCP's assistant asks for one. */
+export const cancelInput = z.object({ reason: F.cancelReason.optional() });
+
+/**
+ * Holds a submit to the cart version the caller read (`version` in GET /carts/:id, its ETag).
+ * `cartVersion`, MCP's name for it, is taken too.
+ */
+export const submitCartInput = z.object({
+  version: F.cartVersion.optional(),
+  cartVersion: F.cartVersion.optional(),
 });
-
-export const cancelInput = z.object({ reason: z.string().max(500).optional() });
-
-/** Holds a submit to the cart version the caller read (`version` in GET /carts/:id, its ETag). */
-export const submitCartInput = z.object({ version: z.number().int().positive().optional() });
 
 /** A staff cart: who opens it is the caller, never the body. */
 export const createCartInput = z.object({
-  title: z.string().trim().min(1).max(MAX_CART_TITLE),
+  title: F.cartTitle,
   /** A published flow with a Price lines step; it prices the cart and runs its order. */
-  flowId: z.string().min(1).max(100),
-  customerId: z.string().min(1).max(100).nullable().optional(),
+  flowId: F.cartFlowId,
+  customerId: F.cartCustomerId.nullable().optional(),
 });
 
 export const subscriptionInput = z.object({
