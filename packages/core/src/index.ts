@@ -34,6 +34,7 @@ export * from './money';
 export * from './order-index';
 export * from './order-report';
 export * from './order-schemas';
+export * from './order-waits';
 export * from './payments';
 export * from './plugin-host';
 export * from './plugin-ui';

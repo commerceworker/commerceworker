@@ -8,12 +8,15 @@
 import type { ReturnRequest } from '@commerceworker/core';
 import {
   aiGateFeedback,
+  approvalWait,
   atLeast,
+  decisionProblem,
   EMPTY_ORDER_STATE,
   eraseOrderState,
+  eventProblem,
+  eventWait,
   type FlowVersion,
   foldReport,
-  MAX_EVENT_PAYLOAD_BYTES,
   type NodeRun,
   newId,
   type Order,
@@ -25,7 +28,6 @@ import {
   type PendingWait,
   type Principal,
   type ProxiedPrincipal,
-  payloadFits,
   ROLE_LABELS,
   type Role,
   TERMINAL_ORDER_STATUSES,
@@ -464,10 +466,8 @@ export class OrderAgent extends Agent<Env, State> {
     deciderId?: string,
   ) {
     const caller = await this.authorize('approver');
-    if (decision !== 'approved' && decision !== 'rejected')
-      throw new Error('decision must be approved or rejected');
-    if (note !== undefined && (typeof note !== 'string' || note.length > 2000))
-      throw new Error('note must be at most 2000 characters');
+    const invalid = decisionProblem(decision, note);
+    if (invalid) throw new Error(invalid);
     // On a socket the audit trail names the signed-in person, never what the page sent.
     if (caller) by = caller.email ?? caller.name;
     by = String(by).slice(0, 200);
@@ -476,7 +476,7 @@ export class OrderAgent extends Agent<Env, State> {
       ? await separationRefusal(this.env, this.state.orderId, deciderId)
       : null;
     if (own) throw new Error(own);
-    const w = this.state.waits.find((x) => x.kind === 'approval' && x.nodeId === nodeId);
+    const w = approvalWait(this.state.waits, nodeId);
     if (!w || !this.state.instanceId) throw new Error('That node is not waiting for an approval');
     const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
     await instance.sendEvent({ type: w.eventType, payload: { decision, by, note: note ?? null } });
@@ -519,11 +519,9 @@ export class OrderAgent extends Agent<Env, State> {
   private async deliverEvent(event: string, payload: Record<string, unknown>) {
     const caller = await this.authorize('operator');
     // The payload lands in the order's variables, every broadcast and the next generation.
-    if (typeof event !== 'string' || !event || event.length > 100)
-      throw new Error('event must be a name of at most 100 characters');
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !payloadFits(payload))
-      throw new Error(`payload must be an object of at most ${MAX_EVENT_PAYLOAD_BYTES} bytes`);
-    const w = this.state.waits.find((x) => x.kind === 'event' && x.event === event);
+    const invalid = eventProblem(event, payload);
+    if (invalid) throw new Error(invalid);
+    const w = eventWait(this.state.waits, event);
     if (!w || !this.state.instanceId) return { delivered: false };
     const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
     await instance.sendEvent({ type: w.eventType, payload: { ...payload, event, at: Date.now() } });
