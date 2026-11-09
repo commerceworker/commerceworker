@@ -10,18 +10,20 @@
 
 import { env } from 'cloudflare:workers';
 import {
-  checkoutFlowProblem,
+  changeUcpSettings,
+  getUcpAdmin,
+  readUcpAdminSettings,
+  revokeUcpPlatform,
+} from '@commerceworker/application/commerce';
+import {
   DEV_PRINCIPAL_KEY,
-  type FlowGraph,
   newId,
   type PlatformCaller,
   PRINCIPAL_HEADER,
-  readUcpSettings,
   signPlatform,
   UCP_MCP_PATH,
   UCP_PATH,
   UCP_PLATFORM_KEY_PREFIX,
-  UCP_SETTINGS_KEY,
   type UcpSettings,
   ucpAgentProfile,
   ucpError,
@@ -34,9 +36,13 @@ import { afterResponse, engine } from './env.server';
 import { overBudget } from './rate-limit';
 import { flowStore, ucpStore, workspaceStore } from './wire.server';
 
-/** What the API shows: never the key. */
-export async function listPlatforms() {
-  return ucpStore().platforms(500);
+const ports = () => ({ workspace: workspaceStore(), flows: flowStore(), ucp: ucpStore() });
+
+/** The settings and platforms the API shows: never a key. Read from D1, not an isolate's copy. */
+export async function ucpAdmin() {
+  const admin = await getUcpAdmin(ports());
+  cachedSettings = { value: admin.settings, at: Date.now() };
+  return admin;
 }
 
 /** The key is returned once, here; afterwards only the platform holds it. */
@@ -55,9 +61,7 @@ export async function addPlatform(input: z.infer<typeof platformInput>, by: stri
 }
 
 /** Revoked at once. The row stays, so its checkouts and orders still name it. */
-export async function revokePlatform(id: string) {
-  return (await ucpStore().revokePlatform(id, Date.now())) ?? null;
-}
+export const revokePlatform = (id: string) => revokeUcpPlatform(ports(), id, Date.now());
 
 const SETTINGS_CACHE_MS = 30_000;
 let cachedSettings: { value: UcpSettings; at: number } | null = null;
@@ -71,7 +75,7 @@ let cachedSettings: { value: UcpSettings; at: number } | null = null;
 export async function ucpSettings({ fresh = false } = {}): Promise<UcpSettings> {
   if (!fresh && cachedSettings && Date.now() - cachedSettings.at < SETTINGS_CACHE_MS)
     return cachedSettings.value;
-  const value = readUcpSettings(await workspaceStore().setting(UCP_SETTINGS_KEY));
+  const value = await readUcpAdminSettings({ workspace: workspaceStore() });
   cachedSettings = { value, at: Date.now() };
   return value;
 }
@@ -79,16 +83,11 @@ export const forgetUcpSettings = () => {
   cachedSettings = null;
 };
 
-/** Why `flowId` can't take checkouts (unknown, unpublished, or never holds a card), or null. */
-export async function checkoutFlowRefusal(flowId: string): Promise<string | null> {
-  const version = await flowStore().version(flowId);
-  if (!version) return `No published flow ${flowId}`;
-  return checkoutFlowProblem(version as unknown as FlowGraph);
-}
-
+/** Sets the settings, once their checkout flow can take checkouts; this isolate keeps them. */
 export async function setUcpSettings(next: UcpSettings, by: string) {
-  await workspaceStore().setSetting(UCP_SETTINGS_KEY, JSON.stringify(next), by);
-  cachedSettings = { value: next, at: Date.now() };
+  const changed = await changeUcpSettings(ports(), next, by);
+  if (changed.ok) cachedSettings = { value: next, at: Date.now() };
+  return changed;
 }
 
 /** How often a platform's last use is written back. */

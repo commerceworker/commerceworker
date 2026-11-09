@@ -37,6 +37,7 @@ import { PROMOTION_KINDS } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
+import { ucpSettingsSchema } from './ucp/profile';
 
 /**
  * The flow draft a publish or test is held to: `get_flow`'s `draft`. Over REST it is required (a
@@ -405,6 +406,13 @@ export const TOOL_INPUTS = {
     subscriptionId: z.string().max(60),
     limit: z.number().int().min(1).max(200).optional().describe('Default 50'),
   }),
+  delete_webhook_subscription: z.object({ subscriptionId: z.string().min(1).max(60) }),
+  list_integrations: z.object({}),
+  revoke_integration: z.object({ integrationId: z.string().min(1).max(60) }),
+  get_ucp_settings: z.object({}),
+  // The REST body, exactly: one schema holds both transports to the same bounds.
+  set_ucp_settings: ucpSettingsSchema,
+  revoke_ucp_platform: z.object({ platformId: z.string().min(1).max(60) }),
   publish_catalog: z.object({
     keys: z.array(productKey).min(1).max(500).describe('Product keys whose staged edits publish'),
   }),
@@ -731,6 +739,46 @@ export const TOOL_OUTPUTS = {
       }),
     ),
   }),
+  delete_webhook_subscription: actionOutput,
+  list_integrations: row({
+    integrations: z.array(
+      row({
+        id: z.string(),
+        name: z.string(),
+        events: z.array(z.string()),
+        startOrders: z.boolean(),
+        flows: z.array(z.string()),
+        channel: z.string().nullable(),
+        createdAt: z.number(),
+        createdBy: z.string().nullable(),
+        lastUsedAt: z.number().nullable(),
+        revokedAt: z.number().nullable(),
+        previousExpiresAt: z.number().nullable(),
+      }),
+    ),
+  }),
+  revoke_integration: actionOutput,
+  get_ucp_settings: row({
+    settings: row({
+      checkoutFlowId: z.string().nullable().describe('The flow checkouts start; null while off'),
+      links: z.array(row({ type: z.string(), url: z.string(), title: z.string().optional() })),
+      orderUrl: z.string().nullable(),
+    }),
+    platforms: z.array(
+      row({
+        id: z.string(),
+        name: z.string(),
+        profileUrl: z.string(),
+        keyPrefix: z.string().describe('The key’s first characters, to tell keys apart'),
+        createdAt: z.number(),
+        createdBy: z.string().nullable(),
+        lastUsedAt: z.number().nullable(),
+        revokedAt: z.number().nullable(),
+      }),
+    ),
+  }),
+  set_ucp_settings: actionOutput,
+  revoke_ucp_platform: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,

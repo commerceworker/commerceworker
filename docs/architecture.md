@@ -431,8 +431,12 @@ the same operations as REST.
 The retention sweep prunes `ucp_idempotency` after 48 hours and abandoned `checkout_sessions` 30 days after
 they expire (see [Retention](data-model.md#retention)). Audit actions `ucp.settings`,
 `ucp.platform_added` and `ucp.platform_revoked` (group `ucp`, "Agentic checkout") are written by the
-admin API (`/api/v1/ucp`, `handleUcpAdmin` in `api.server.ts`), which refuses a flow that
-`checkoutFlowProblem` rejects; demo mode locks `/api/v1/ucp`.
+admin API (`/api/v1/ucp`, `handleUcpAdmin` in `api.server.ts`) and, for settings and revoking a platform,
+by the engine's confirmed MCP tools (`set_ucp_settings`, `revoke_ucp_platform`, `apps/engine/src/assistant/access.ts`).
+Both run `changeUcpSettings` and `revokeUcpPlatform` (`packages/application/src/commerce/ucp.ts`), which
+refuse a flow that `checkoutFlowProblem` rejects and hand back the audit event to record; demo mode locks
+`/api/v1/ucp`. Webhook subscriptions and integrations are served the same way (`webhook-subscriptions.ts`,
+`integrations.ts`).
 
 ## Secrets at rest
 

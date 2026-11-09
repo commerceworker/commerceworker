@@ -65,8 +65,8 @@ describe('webhook subscriptions', () => {
     await outbox.rotateSubscription(subscription.id, 'sealed-x', Date.now() - 1);
     expect((await listSubscriptions())[0]?.previousExpiresAt).toBeNull();
     expect(await rotateSubscription('whs_none')).toBeNull();
-    expect(await deleteSubscription(subscription.id)).toBe(true);
-    expect(await deleteSubscription(subscription.id)).toBe(false);
+    expect(await deleteSubscription(subscription.id)).toMatchObject({ ok: true });
+    expect(await deleteSubscription(subscription.id)).toMatchObject({ ok: false });
   });
 
   it("reads a subscription's deliveries with their payloads parsed", async () => {

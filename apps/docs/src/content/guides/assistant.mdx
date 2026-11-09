@@ -96,7 +96,7 @@ waits at and since when, steps run, recent activity),
 [cart's](/guides/carts/) lines with their ids, its price with shipping and tax, promotion codes,
 its ship-to and the shipping options on offer, the problems its price
 found, and why it can't be submitted yet), `list_flows` and `get_flow` (a saved
-draft with its validation problems). Every role can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) and webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), as the REST API shows them, never with a secret. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
+draft with its validation problems). Every role can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), integrations (`list_integrations`) and agentic checkout (`get_ucp_settings`), as the REST API shows them, never with a secret or a key. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
 conversation: what it is doing while the reply streams, then what it found. An order's line names
 the step it waits at or stopped at, and opens that step on the order's graph; answers about an order
 say the same. A line for one cart, flow or assessment links to it too, and a reply that opened
@@ -138,6 +138,10 @@ A2A skills. Only a signed-in person verifies a certificate, never an API token.
 | `approve_plugin` | `admin` | Installs an uploaded or drafted plugin version; needs a step-up |
 | `rollback_plugin` | `admin` | Runs an earlier version of a plugin again; needs a step-up |
 | `uninstall_plugin` | `admin` | Uninstalls a plugin installed at runtime; needs a step-up |
+| `delete_webhook_subscription` | `admin` | Removes an outbound webhook subscription and its record of deliveries. The card shows where it posts and its last delivery |
+| `revoke_integration` | `admin` | Revokes an integration's signing keys at once. The card shows its name and when it was last used |
+| `revoke_ucp_platform` | `admin` | Revokes an AI shopping platform's key; its checkouts and orders stay. The card shows its name and when it was last used |
+| `set_ucp_settings` | `admin` | Sets agentic checkout's flow (none turns it off), legal links and order page URL, as the REST API does; refused for a flow that never authorizes a card |
 | `publish_catalog` | `operator` | Publishes up to 500 products' staged edits to the live catalog, each product all or none. The card lists each product and its staged fields, and is held to them |
 | `test_flow` | `operator` | Publishes a flow's saved draft when it changed since the live version, then starts a test order with a demo input; the card says which |
 

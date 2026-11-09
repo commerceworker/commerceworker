@@ -7,7 +7,9 @@
  */
 
 import {
+  getUcpAdmin,
   listAuditEvents,
+  listIntegrations,
   listWebhookDeliveries,
   listWebhookSubscriptions,
   verifyAuditTrail,
@@ -35,7 +37,7 @@ import {
   type StageEdit,
 } from '@commerceworker/core/product';
 import { pluginStatuses, pluginUsage } from '../plugins';
-import { auditLog, webhookOutbox } from '../wire';
+import { auditLog, integrationStore, ucpStore, webhookOutbox, workspaceStore } from '../wire';
 import { runCases } from './admin';
 import { draftCartReply } from './cart-reply';
 import { changeCart, getCart, listCarts, openCart } from './carts';
@@ -124,6 +126,10 @@ export const ACTION_TOOLS: ActionTool[] = [
   'approve_plugin',
   'rollback_plugin',
   'uninstall_plugin',
+  'delete_webhook_subscription',
+  'revoke_integration',
+  'set_ucp_settings',
+  'revoke_ucp_platform',
 ];
 
 export const isActionTool = (name: AssistantTool): name is ActionTool =>
@@ -312,6 +318,12 @@ export async function runTool<T extends AssistantTool>(
         ),
       };
     }
+    case 'list_integrations':
+      return {
+        integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),
+      };
+    case 'get_ucp_settings':
+      return getUcpAdmin({ workspace: workspaceStore(env), ucp: ucpStore(env) });
     case 'start_scenario':
       return startScenario(
         env,

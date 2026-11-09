@@ -2,8 +2,9 @@
  * Every operation is accounted for on both transports. Each REST operation (in the OpenAPI
  * document) has an MCP tool twin, or is REST's alone with a reason; each workspace tool MCP offers
  * has a REST twin, or is MCP's alone with a reason. A reason is either by design (who or what may
- * use it) or a gap still to close. A new route or tool that is neither fails here, so the two
- * transports can't drift apart unnoticed. rest-mcp-parity.test.ts holds each twin's inputs alike.
+ * use it) or a gap still to close; none is open now, so every one-sided operation is so by design.
+ * A new route or tool that is neither fails here, so the two transports can't drift apart
+ * unnoticed. rest-mcp-parity.test.ts holds each twin's inputs alike.
  */
 import { ASSISTANT_TOOLS, type AssistantTool, isPageOnly, isPanelOnly } from '@commerceworker/core';
 import { describe, expect, it } from 'vitest';
@@ -36,6 +37,12 @@ const TWINS: Record<string, AssistantTool> = {
   'GET /api/v1/plugins/{id}/usage': 'get_plugin_usage',
   'GET /api/v1/webhook-subscriptions': 'list_webhook_subscriptions',
   'GET /api/v1/webhook-subscriptions/{id}/deliveries': 'list_webhook_deliveries',
+  'DELETE /api/v1/webhook-subscriptions/{id}': 'delete_webhook_subscription',
+  'GET /api/v1/integrations': 'list_integrations',
+  'DELETE /api/v1/integrations/{id}': 'revoke_integration',
+  'GET /api/v1/ucp': 'get_ucp_settings',
+  'POST /api/v1/ucp/settings': 'set_ucp_settings',
+  'DELETE /api/v1/ucp/platforms/{id}': 'revoke_ucp_platform',
   'GET /api/v1/catalog/products/{key}': 'get_product',
   'GET /api/v1/catalog/products/{key}/sheet': 'get_product_sheet',
   'GET /api/v1/catalog/aliases/{alias}': 'find_product_by_alias',
@@ -91,17 +98,11 @@ const REST_ONLY: Record<string, Why> = {
     design: 'Erasing a person cannot be undone: an admin’s request, never an agent’s',
   },
   'POST /api/v1/webhook-subscriptions': CREDENTIALS,
-  'DELETE /api/v1/webhook-subscriptions/{id}': { gap: 'Removing a webhook subscription (admin)' },
   'POST /api/v1/webhook-subscriptions/{id}/rotate': CREDENTIALS,
-  'GET /api/v1/integrations': { gap: 'Listing integrations (admin)' },
   'POST /api/v1/integrations': CREDENTIALS,
   'POST /api/v1/integrations/{id}/rotate': CREDENTIALS,
-  'DELETE /api/v1/integrations/{id}': { gap: 'Revoking an integration (admin)' },
   'POST /api/v1/plugins': { design: 'Uploads a signed plugin bundle: a file, from a person or CI' },
-  'GET /api/v1/ucp': { gap: 'UCP settings and platforms (admin)' },
-  'POST /api/v1/ucp/settings': { gap: 'Changing UCP settings (admin)' },
   'POST /api/v1/ucp/platforms': CREDENTIALS,
-  'DELETE /api/v1/ucp/platforms/{id}': { gap: 'Revoking a UCP platform (admin)' },
 };
 
 /** Tools MCP offers with no REST route, and why. */
@@ -153,14 +154,11 @@ describe('every operation is on both transports, or says why not', () => {
       expect(routed.has(op), `${op} has a tool now: drop it from REST_ONLY`).toBe(false);
   });
 
-  it('counts what is left to close', () => {
+  it('has no gap left to close', () => {
     const gaps = [...Object.values(REST_ONLY), ...Object.values(MCP_ONLY)].filter(
       (w) => 'gap' in w,
     );
-    // Exactly: closing a gap lowers it, and a new one-sided operation must say why here.
-    expect(gaps.length).toBe(GAPS_OPEN);
+    // Exactly none: a new one-sided operation says why it is by design, or it is closed first.
+    expect(gaps.length).toBe(0);
   });
 });
-
-/** The gaps open today: the admin routes (webhooks, integrations, UCP) and six model-backed tools. */
-const GAPS_OPEN = 6;

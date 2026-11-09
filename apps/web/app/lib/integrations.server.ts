@@ -5,14 +5,18 @@
  */
 
 import {
+  integrationScope,
+  integrationView,
+  listIntegrations as listIntegrationsUseCase,
+  revokeIntegration as revokeIntegrationUseCase,
+} from '@commerceworker/application/commerce';
+import {
   type IntegrationScope,
   newId,
   newWebhookSecret,
-  type OrderChannel,
   ROTATION_GRACE_MS,
   secretContext,
 } from '@commerceworker/core';
-import type { IntegrationView } from '@commerceworker/ports/commerce';
 import type { z } from 'zod';
 import type { integrationInput } from './api-schemas';
 import { openSecret, sealSecret } from './data-key.server';
@@ -26,30 +30,8 @@ export type Integration = IntegrationScope & {
   previousExpiresAt: number | null;
 };
 
-const scope = (r: IntegrationView): IntegrationScope => ({
-  events: JSON.parse(r.events) as string[],
-  startOrders: r.startOrders,
-  flows: JSON.parse(r.flows) as string[],
-  channel: (r.channel as OrderChannel | null) ?? null,
-});
-
-/** What the API shows: never a secret. */
-const view = (r: IntegrationView) => ({
-  id: r.id,
-  name: r.name,
-  ...scope(r),
-  createdAt: r.createdAt,
-  createdBy: r.createdBy,
-  lastUsedAt: r.lastUsedAt,
-  revokedAt: r.revokedAt,
-  /** When the previous secret stops working, while a rotation is under way. */
-  previousExpiresAt:
-    r.previousExpiresAt && r.previousExpiresAt > Date.now() ? r.previousExpiresAt : null,
-});
-
-export async function listIntegrations() {
-  return (await integrationStore().list(500)).map(view);
-}
+export const listIntegrations = () =>
+  listIntegrationsUseCase({ integrations: integrationStore() }, Date.now());
 
 /** The secret is returned once, here; afterwards only the sender holds it. */
 export async function createIntegration(input: z.infer<typeof integrationInput>, by: string) {
@@ -70,7 +52,7 @@ export async function createIntegration(input: z.infer<typeof integrationInput>,
     secret: await sealSecret(secret, secretContext.integration(id)),
   });
   const made = { ...row, lastUsedAt: null, revokedAt: null, previousExpiresAt: null };
-  return { integration: view(made), secret };
+  return { integration: integrationView(made, Date.now()), secret };
 }
 
 /**
@@ -85,14 +67,12 @@ export async function rotateIntegration(id: string) {
     await sealSecret(secret, secretContext.integration(id)),
     Date.now() + ROTATION_GRACE_MS,
   );
-  return row ? { integration: view(row), secret } : null;
+  return row ? { integration: integrationView(row, Date.now()), secret } : null;
 }
 
 /** Revoked at once, both secrets. The row stays for the audit log. */
-export async function revokeIntegration(id: string) {
-  const row = await integrationStore().revoke(id, Date.now());
-  return row ? view(row) : null;
-}
+export const revokeIntegration = (id: string) =>
+  revokeIntegrationUseCase({ integrations: integrationStore() }, id, Date.now());
 
 /** The integration a signature names, with its secrets, if it exists and isn't revoked. */
 export async function findIntegration(id: string): Promise<Integration | null> {
@@ -105,7 +85,7 @@ export async function findIntegration(id: string): Promise<Integration | null> {
     previousSecret:
       r.previousSecret && (await openSecret(r.previousSecret, secretContext.integration(r.id))),
     previousExpiresAt: r.previousExpiresAt,
-    ...scope(r),
+    ...integrationScope(r),
   };
 }
 

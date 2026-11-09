@@ -144,14 +144,7 @@ import { pluginStatuses } from './plugins.server';
 import { decider, signedActor } from './principal.server';
 import { overBudget } from './rate-limit';
 import { matchOperation, operationRole, queryInput } from './rest-operations';
-import {
-  addPlatform,
-  checkoutFlowRefusal,
-  listPlatforms,
-  revokePlatform,
-  setUcpSettings,
-  ucpSettings,
-} from './ucp.server';
+import { addPlatform, revokePlatform, setUcpSettings, ucpAdmin } from './ucp.server';
 import {
   createSubscription,
   deleteSubscription,
@@ -592,11 +585,12 @@ async function handleSubscriptions(
   }
   const id = parts[1]!;
   if (parts.length === 2 && request.method === 'DELETE') {
-    if (!(await deleteSubscription(id))) return json({ error: 'Not found' }, 404);
-    await audit(request, 'webhook.unsubscribed', {
+    const removed = await deleteSubscription(id);
+    if (!removed.ok) return json({ error: 'Not found' }, 404);
+    await audit(request, removed.audit.action, {
       actor: caller,
-      target: id,
-      detail: { via: 'api' },
+      target: removed.audit.target,
+      detail: { ...removed.audit.detail, via: 'api' },
     });
     return json({ ok: true });
   }
@@ -698,11 +692,11 @@ async function handleIntegrations(
   }
   if (parts.length === 2 && request.method === 'DELETE') {
     const revoked = await revokeIntegration(id);
-    if (!revoked) return json({ error: 'Not found' }, 404);
-    await audit(request, 'integration.revoked', {
+    if (!revoked.ok) return json({ error: 'Not found' }, 404);
+    await audit(request, revoked.audit.action, {
       actor: caller,
-      target: revoked.name,
-      detail: { id },
+      target: revoked.audit.target,
+      detail: revoked.audit.detail,
     });
     return json({ ok: true });
   }
@@ -715,22 +709,15 @@ async function handleUcpAdmin(
   parts: string[],
   body: () => Promise<unknown>,
 ): Promise<Response> {
-  if (parts.length === 1 && request.method === 'GET')
-    return json({ settings: await ucpSettings({ fresh: true }), platforms: await listPlatforms() });
+  if (parts.length === 1 && request.method === 'GET') return json(await ucpAdmin());
   if (parts[1] === 'settings' && parts.length === 2 && request.method === 'POST') {
     const parsed = ucpSettingsSchema.safeParse(await body());
     if (!parsed.success)
       return json({ error: 'Invalid settings', issues: parsed.error.issues }, 400);
-    const flowId = parsed.data.checkoutFlowId;
-    const refusal = flowId ? await checkoutFlowRefusal(flowId) : null;
-    if (refusal) return json({ error: refusal }, 422);
-    const from = await ucpSettings({ fresh: true });
-    await setUcpSettings(parsed.data, actor(caller));
-    await audit(request, 'ucp.settings', {
-      actor: caller,
-      detail: { from: from.checkoutFlowId, to: flowId },
-    });
-    return json({ settings: parsed.data });
+    const changed = await setUcpSettings(parsed.data, actor(caller));
+    if (!changed.ok) return json({ error: changed.error }, 422);
+    await audit(request, changed.audit.action, { actor: caller, detail: changed.audit.detail });
+    return json({ settings: changed.settings });
   }
   if (parts[1] === 'platforms' && parts.length === 2 && request.method === 'POST') {
     const parsed = platformInput.safeParse(await body());
@@ -746,11 +733,11 @@ async function handleUcpAdmin(
   }
   if (parts[1] === 'platforms' && parts.length === 3 && request.method === 'DELETE') {
     const revoked = await revokePlatform(parts[2]!);
-    if (!revoked) return json({ error: 'Not found' }, 404);
-    await audit(request, 'ucp.platform_revoked', {
+    if (!revoked.ok) return json({ error: 'Not found' }, 404);
+    await audit(request, revoked.audit.action, {
       actor: caller,
-      target: revoked.name,
-      detail: { id: revoked.id },
+      target: revoked.audit.target,
+      detail: revoked.audit.detail,
     });
     return json({ ok: true });
   }

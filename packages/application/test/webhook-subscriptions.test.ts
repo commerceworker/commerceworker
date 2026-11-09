@@ -1,6 +1,11 @@
 import { InMemoryWebhookOutbox } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { listWebhookDeliveries, listWebhookSubscriptions } from '../src/commerce';
+import {
+  getWebhookSubscription,
+  listWebhookDeliveries,
+  listWebhookSubscriptions,
+  removeWebhookSubscription,
+} from '../src/commerce';
 
 const now = Date.UTC(2026, 10, 9);
 const sub = (id: string, createdAt: number) => ({
@@ -69,5 +74,30 @@ describe('listWebhookDeliveries', () => {
     });
     expect(await listWebhookDeliveries({ outbox }, 'whs_a', 1)).toHaveLength(1);
     expect(await listWebhookDeliveries({ outbox }, 'whs_none')).toEqual([]);
+  });
+});
+
+describe('getWebhookSubscription and removeWebhookSubscription', () => {
+  it('finds one as the API shows it, and removes it once with the audit event both channels write', async () => {
+    const outbox = new InMemoryWebhookOutbox({ subscriptions: [sub('whs_a', 1), sub('whs_b', 2)] });
+    expect(await getWebhookSubscription({ outbox }, 'whs_a', now)).toMatchObject({
+      id: 'whs_a',
+      events: ['order.shipped'],
+    });
+    expect(JSON.stringify(await getWebhookSubscription({ outbox }, 'whs_a', now))).not.toMatch(
+      /secret|sealed/i,
+    );
+    expect(await getWebhookSubscription({ outbox }, 'whs_none', now)).toBeUndefined();
+
+    expect(await removeWebhookSubscription({ outbox }, 'whs_a')).toEqual({
+      ok: true,
+      audit: { action: 'webhook.unsubscribed', target: 'whs_a', detail: {} },
+    });
+    expect((await listWebhookSubscriptions({ outbox }, now)).map((s) => s.id)).toEqual(['whs_b']);
+    // The second time there is nothing to remove, and it says so.
+    expect(await removeWebhookSubscription({ outbox }, 'whs_a')).toEqual({
+      ok: false,
+      error: 'No webhook subscription whs_a.',
+    });
   });
 });

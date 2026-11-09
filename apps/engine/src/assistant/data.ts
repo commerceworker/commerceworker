@@ -36,6 +36,7 @@ import {
   type Role,
   returnRequest,
   TERMINAL_ORDER_STATUSES,
+  type ToolInput,
   validateGraph,
 } from '@commerceworker/core';
 import { copilot, modelView } from '../ai';
@@ -45,6 +46,16 @@ import { orderAgent } from '../namespaces';
 import { registry } from '../plugins';
 import { separationRefusal } from '../separation';
 import { flowStore, inventoryStore, orderQueries, pricingStore } from '../wire';
+import {
+  previewDeleteWebhook,
+  previewRevokeIntegration,
+  previewRevokePlatform,
+  previewUcpSettings,
+  runDeleteWebhook,
+  runRevokeIntegration,
+  runRevokePlatform,
+  runUcpSettings,
+} from './access';
 import {
   type PluginChange,
   previewApprovalSeparation,
@@ -420,6 +431,10 @@ export type ActionInput = {
   set_promotion_status: { promotionId: string; status: 'active' | 'paused' };
   verify_tax_certificate: { customerId: string; certificateId: string };
   revoke_tax_certificate: { customerId: string; certificateId: string };
+  delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
+  revoke_integration: ToolInput<'revoke_integration'>;
+  set_ucp_settings: ToolInput<'set_ucp_settings'>;
+  revoke_ucp_platform: ToolInput<'revoke_ucp_platform'>;
 } & CatalogWrite;
 export type ActionTool = keyof ActionInput;
 
@@ -645,6 +660,26 @@ export async function previewAction<T extends ActionTool>(
           input as ActionInput['verify_tax_certificate'],
           roleBlock,
         );
+      case 'delete_webhook_subscription':
+        return await previewDeleteWebhook(
+          env,
+          input as ActionInput['delete_webhook_subscription'],
+          roleBlock,
+        );
+      case 'revoke_integration':
+        return await previewRevokeIntegration(
+          env,
+          input as ActionInput['revoke_integration'],
+          roleBlock,
+        );
+      case 'revoke_ucp_platform':
+        return await previewRevokePlatform(
+          env,
+          input as ActionInput['revoke_ucp_platform'],
+          roleBlock,
+        );
+      case 'set_ucp_settings':
+        return await previewUcpSettings(env, input as ActionInput['set_ucp_settings'], roleBlock);
       case 'put_catalog_products':
       case 'delete_catalog_products':
       case 'delete_catalog_type':
@@ -915,6 +950,14 @@ export async function runAction<T extends ActionTool>(
         input as ActionInput['verify_tax_certificate'],
         trail,
       );
+    case 'delete_webhook_subscription':
+      return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
+    case 'revoke_integration':
+      return runRevokeIntegration(env, p, input as ActionInput['revoke_integration'], trail);
+    case 'revoke_ucp_platform':
+      return runRevokePlatform(env, p, input as ActionInput['revoke_ucp_platform'], trail);
+    case 'set_ucp_settings':
+      return runUcpSettings(env, p, input as ActionInput['set_ucp_settings'], trail);
     case 'put_catalog_products':
     case 'delete_catalog_products':
     case 'delete_catalog_type':

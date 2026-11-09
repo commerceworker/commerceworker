@@ -6,7 +6,9 @@ import {
   type OrderState,
   PRINCIPAL_HEADER,
   type Principal,
+  readUcpSettings,
   sealAuditRow,
+  UCP_SETTINGS_KEY,
 } from '@commerceworker/core';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { auditEvents, createDb } from '@commerceworker/db';
@@ -15,7 +17,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
 import { startOrder } from '../src/orders';
-import { auditLog, webhookOutbox } from '../src/wire';
+import { auditLog, integrationStore, ucpStore, webhookOutbox, workspaceStore } from '../src/wire';
 import { signed } from './principal';
 
 const state = async (id: string) => (await env.ORDER_AGENT.getByName(id).snapshot()) as OrderState;
@@ -311,12 +313,14 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(67);
+    expect(admin).toHaveLength(73);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
       'get_plugin_usage',
+      'get_ucp_settings',
       'list_audit_events',
+      'list_integrations',
       'list_plugins',
       'list_webhook_deliveries',
       'list_webhook_subscriptions',
@@ -414,6 +418,336 @@ describe('MCP', () => {
         error: { message: 'Tool list_webhook_subscriptions not found' },
       });
     }
+  });
+
+  describe('outside access, for an admin', () => {
+    const admin = person('admin', 'ann@example.com');
+    const operator = person('operator', 'ops@example.com');
+    // A secret, a key (its prefix is shown, as REST shows it: never more) or its hash.
+    const SECRETS =
+      /sealed-|whsec_|cmw_ucp_[\w-]{9,}|keyhash-|previousSecret|key_hash|keyHash|"secret"/i;
+    const stamp = Date.now();
+    const named = (k: number) => ({
+      hook: `whs_adm_${stamp}_${k}`,
+      live: `int_adm_${stamp}_${k}`,
+      old: `int_adm_old_${stamp}_${k}`,
+      platform: `ucp_adm_${stamp}_${k}`,
+      revoked: `ucp_adm_old_${stamp}_${k}`,
+    });
+    // Each test seeds its own rows: the database is shared across the file.
+    let ids = named(0);
+    let seeded = 0;
+
+    const audited = async (action: string) =>
+      (
+        await createDb(env.DB)
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.action, action))
+          .all()
+      ).map((e) => ({ target: e.target, actor: e.actor, detail: JSON.parse(e.detail ?? '{}') }));
+
+    async function seed() {
+      ids = named(++seeded);
+      await workspaceStore(env).clearSetting(UCP_SETTINGS_KEY);
+      await webhookOutbox(env).addSubscription({
+        id: ids.hook,
+        url: 'https://hooks.example/orders?token=hunter2',
+        secret: 'sealed-hook-secret',
+        events: JSON.stringify(['order.shipped']),
+        createdAt: stamp,
+      });
+      await webhookOutbox(env).record(
+        [
+          {
+            id: `del_${ids.hook}`,
+            subscriptionId: ids.hook,
+            subject: 'ord_1',
+            event: 'order.shipped',
+            payload: '{}',
+          },
+        ],
+        stamp,
+      );
+      const base = { secret: 'sealed-int-secret', events: '["payment.received"]', flows: '[]' };
+      await integrationStore(env).add({
+        ...base,
+        id: ids.live,
+        name: 'Payments',
+        startOrders: true,
+        channel: null,
+        createdAt: stamp,
+        createdBy: 'ann@example.com',
+      });
+      await integrationStore(env).add({
+        ...base,
+        id: ids.old,
+        name: 'Retired',
+        startOrders: false,
+        channel: null,
+        createdAt: stamp - 1,
+        createdBy: null,
+      });
+      await integrationStore(env).revoke(ids.old, stamp);
+      await integrationStore(env).touch(ids.live, Date.UTC(2026, 9, 1));
+      for (const [id, name] of [
+        [ids.platform, 'Shopper'],
+        [ids.revoked, 'Gone'],
+      ] as const)
+        await ucpStore(env).addPlatform({
+          id,
+          name,
+          profileUrl: `https://agent.example/${id}?k=v`,
+          keyPrefix: 'cmw_ucp_abcd',
+          keyHash: `keyhash-${id}`,
+          createdAt: stamp,
+          createdBy: null,
+        });
+      await ucpStore(env).revokePlatform(ids.revoked, stamp);
+    }
+
+    /** Previews, then confirms with the code, once. */
+    async function confirm(p: Principal, name: string, args: Record<string, unknown>) {
+      const first = await call(p, name, args);
+      expect(first.isError, `${name} preview: ${first.content[0]?.text}`).toBeFalsy();
+      expect(first.structuredContent, name).toMatchObject({
+        preview: { title: expect.any(String), consequences: expect.any(Array) },
+        confirmation: expect.stringMatching(/^cfm_[0-9a-f]{32}$/),
+      });
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(p, name, { ...args, confirmation: code });
+      expect(done.isError, `${name}: ${done.content[0]?.text}`).toBeFalsy();
+      expect((await call(p, name, { ...args, confirmation: code })).isError, `${name} twice`).toBe(
+        true,
+      );
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+        outputs: [first, done],
+      };
+    }
+
+    it('offers the reads and the four confirmed actions to an admin only, with honest hints', async () => {
+      const adminTools = await tools(admin);
+      const opTools = await tools(operator);
+      for (const name of ['list_integrations', 'get_ucp_settings'])
+        expect(adminTools.find((t) => t.name === name)?.annotations, name).toMatchObject({
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        });
+      for (const name of [
+        'delete_webhook_subscription',
+        'revoke_integration',
+        'revoke_ucp_platform',
+        'set_ucp_settings',
+      ]) {
+        expect(
+          adminTools.find((t) => t.name === name),
+          name,
+        ).toMatchObject({
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+          },
+          inputSchema: { properties: { confirmation: {} } },
+        });
+      }
+      // The settings are the REST body: the same fields, the same bounds.
+      expect(adminTools.find((t) => t.name === 'set_ucp_settings')?.inputSchema).toMatchObject({
+        properties: { checkoutFlowId: {}, links: { maxItems: 10 }, orderUrl: {} },
+      });
+      for (const role of ['viewer', 'operator'] as const) {
+        const names = (await tools(person(role, `${role}@example.com`))).map((t) => t.name);
+        for (const name of [
+          'list_integrations',
+          'get_ucp_settings',
+          'delete_webhook_subscription',
+          'revoke_integration',
+          'revoke_ucp_platform',
+          'set_ucp_settings',
+        ])
+          expect(names, `${name} for a ${role}`).not.toContain(name);
+      }
+      const r = await rpc(operator, 'tools/call', {
+        name: 'revoke_integration',
+        arguments: { integrationId: ids.live },
+      });
+      expect(r.body).toMatchObject({ error: { message: 'Tool revoke_integration not found' } });
+      expect(opTools.some((t) => t.name === 'set_ucp_settings')).toBe(false);
+    });
+
+    it('reads integrations and agentic checkout as REST does, and shows no secret', async () => {
+      await seed();
+      const listed = await call(admin, 'list_integrations', {});
+      const rows = listed.structuredContent!.integrations as Record<string, unknown>[];
+      expect(rows.find((i) => i.id === ids.live)).toMatchObject({
+        name: 'Payments',
+        events: ['payment.received'],
+        startOrders: true,
+        lastUsedAt: Date.UTC(2026, 9, 1),
+        revokedAt: null,
+      });
+      // A revoked one is listed too, as REST lists it.
+      expect(rows.find((i) => i.id === ids.old)).toMatchObject({ revokedAt: stamp });
+
+      const ucp = await call(admin, 'get_ucp_settings', {});
+      expect(ucp.structuredContent).toMatchObject({
+        settings: { checkoutFlowId: null, links: [], orderUrl: null },
+      });
+      const platforms = ucp.structuredContent!.platforms as Record<string, unknown>[];
+      expect(platforms.find((x) => x.id === ids.platform)).toMatchObject({
+        name: 'Shopper',
+        revokedAt: null,
+      });
+      for (const out of [listed, ucp])
+        expect(JSON.stringify(out.structuredContent)).not.toMatch(SECRETS);
+    });
+
+    it('previews what goes, then confirms: each runs REST’s use-case and audits via MCP', async () => {
+      await seed();
+      const hook = await confirm(admin, 'delete_webhook_subscription', {
+        subscriptionId: ids.hook,
+      });
+      // Where it posts, without the query a receiver may keep a token in; and what goes with it.
+      expect(hook.preview.title).toBe('Remove the webhook to https://hooks.example/orders');
+      expect(hook.preview.consequences.join('\n')).toMatch(/Last delivery .*pending/);
+      expect(hook.preview.consequences.join('\n')).toMatch(/deliveries goes with it/);
+      expect((await webhookOutbox(env).listSubscriptions(500)).some((s) => s.id === ids.hook)).toBe(
+        false,
+      );
+      expect((await audited('webhook.unsubscribed')).at(-1)).toMatchObject({
+        target: ids.hook,
+        actor: 'ann@example.com',
+        detail: { via: 'mcp', tool: 'delete_webhook_subscription' },
+      });
+
+      const integration = await confirm(admin, 'revoke_integration', {
+        integrationId: ids.live,
+      });
+      expect(integration.preview.title).toBe('Revoke the integration Payments');
+      expect(integration.preview.consequences).toContain('Last used 2026-10-01');
+      expect(integration.preview.consequences.join('\n')).toMatch(/start orders/);
+      expect((await integrationStore(env).active(ids.live))?.id).toBeUndefined();
+      expect((await audited('integration.revoked')).at(-1)).toMatchObject({
+        target: 'Payments',
+        detail: { id: ids.live, via: 'mcp', tool: 'revoke_integration' },
+      });
+
+      const platform = await confirm(admin, 'revoke_ucp_platform', { platformId: ids.platform });
+      expect(platform.preview.title).toBe('Revoke the platform Shopper');
+      expect(platform.preview.consequences).toContain('Never used');
+      expect(platform.preview.consequences.join('\n')).toContain(
+        `https://agent.example/${ids.platform}`,
+      );
+      expect(platform.preview.consequences.join('\n')).not.toContain('k=v');
+      expect(await ucpStore(env).livePlatform(`keyhash-${ids.platform}`)).toBeUndefined();
+      expect((await audited('ucp.platform_revoked')).at(-1)).toMatchObject({
+        target: 'Shopper',
+        detail: { id: ids.platform, via: 'mcp', tool: 'revoke_ucp_platform' },
+      });
+
+      const links = [{ type: 'privacy', url: 'https://shop.example/privacy' }];
+      const set = await confirm(admin, 'set_ucp_settings', {
+        checkoutFlowId: 'tpl-storefront-order',
+        links,
+        orderUrl: 'https://shop.example/orders/{id}',
+      });
+      expect(set.preview.title).toBe('Turn agentic checkout on');
+      expect(set.preview.consequences.join('\n')).toMatch(/Now: off/);
+      expect(readUcpSettings(await workspaceStore(env).setting(UCP_SETTINGS_KEY))).toEqual({
+        checkoutFlowId: 'tpl-storefront-order',
+        links,
+        orderUrl: 'https://shop.example/orders/{id}',
+      });
+      expect((await audited('ucp.settings')).at(-1)).toMatchObject({
+        actor: 'ann@example.com',
+        detail: { from: null, to: 'tpl-storefront-order', via: 'mcp', tool: 'set_ucp_settings' },
+      });
+      // Reading it back shows what was set.
+      expect((await call(admin, 'get_ucp_settings', {})).structuredContent).toMatchObject({
+        settings: { checkoutFlowId: 'tpl-storefront-order', links },
+      });
+
+      const off = await confirm(admin, 'set_ucp_settings', { checkoutFlowId: null });
+      expect(off.preview.title).toBe('Turn agentic checkout off');
+      expect(off.preview.consequences.join('\n')).toMatch(/Discovery answers 404/);
+      expect(readUcpSettings(await workspaceStore(env).setting(UCP_SETTINGS_KEY))).toEqual({
+        checkoutFlowId: null,
+        links: [],
+        orderUrl: null,
+      });
+
+      // Nothing a secret in any preview or result.
+      for (const out of [hook, integration, platform, set, off].flatMap((r) => r.outputs))
+        expect(JSON.stringify(out.structuredContent)).not.toMatch(SECRETS);
+    });
+
+    it('refuses a confirm for another input, and previews nothing it would refuse', async () => {
+      await seed();
+      // A code is for the input it previewed.
+      const first = await call(admin, 'revoke_integration', { integrationId: ids.live });
+      const swapped = await call(admin, 'revoke_integration', {
+        integrationId: ids.old,
+        confirmation: first.structuredContent!.confirmation,
+      });
+      expect(swapped.isError).toBe(true);
+      expect(swapped.content[0]!.text).toMatch(/different action or input/);
+      const settings = await call(admin, 'set_ucp_settings', {
+        checkoutFlowId: 'tpl-storefront-order',
+      });
+      const wider = await call(admin, 'set_ucp_settings', {
+        checkoutFlowId: 'tpl-storefront-order',
+        links: [{ type: 'terms', url: 'https://shop.example/terms' }],
+        confirmation: settings.structuredContent!.confirmation,
+      });
+      expect(wider.isError).toBe(true);
+      expect(wider.content[0]!.text).toMatch(/different action or input/);
+      // Nothing happened.
+      expect((await integrationStore(env).active(ids.live))?.id).toBe(ids.live);
+      expect(
+        readUcpSettings(await workspaceStore(env).setting(UCP_SETTINGS_KEY)).checkoutFlowId,
+      ).toBeNull();
+
+      // Blocked at the preview, with no code issued: unknown, and already revoked.
+      for (const [name, input, why] of [
+        [
+          'delete_webhook_subscription',
+          { subscriptionId: 'whs_nope' },
+          'No webhook subscription whs_nope.',
+        ],
+        ['revoke_integration', { integrationId: 'int_nope' }, 'No integration int_nope.'],
+        ['revoke_integration', { integrationId: ids.old }, 'Retired is already revoked.'],
+        ['revoke_ucp_platform', { platformId: 'ucp_nope' }, 'No platform ucp_nope.'],
+        ['revoke_ucp_platform', { platformId: ids.revoked }, 'Gone is already revoked.'],
+        ['set_ucp_settings', { checkoutFlowId: 'tpl-nope' }, 'No published flow tpl-nope'],
+        [
+          'set_ucp_settings',
+          { checkoutFlowId: 'tpl-b2b-order' },
+          'The checkout flow must authorize the payment (commerce.authorize_payment).',
+        ],
+      ] as const) {
+        const r = await call(admin, name, input);
+        expect(r.isError, name).toBe(true);
+        expect(r.content[0]!.text, name).toBe(why);
+        expect(r.structuredContent?.confirmation, name).toBeUndefined();
+      }
+      // Bounds REST holds: the order URL names {id}, at most 10 links.
+      expect(
+        (await call(admin, 'set_ucp_settings', { checkoutFlowId: null, orderUrl: 'https://x.y/' }))
+          .isError,
+      ).toBe(true);
+      expect(
+        (
+          await call(admin, 'set_ucp_settings', {
+            checkoutFlowId: null,
+            links: Array.from({ length: 11 }, () => ({ type: 't', url: 'https://x.y/' })),
+          })
+        ).isError,
+      ).toBe(true);
+    });
   });
 
   it('reads the catalog as a viewer, with REST’s answers, bounds and refusals', async () => {
