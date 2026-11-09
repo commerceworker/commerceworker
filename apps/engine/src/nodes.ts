@@ -13,6 +13,7 @@ import {
   applyPromotions,
   bookReturnLabel,
   bookShipment,
+  handOverOrder,
   MissingExchangeRateError,
   MissingLabelError,
   priceOrder,
@@ -28,10 +29,13 @@ import {
   assessBranch,
   assessQuestionsSchema,
   BASE_CURRENCY,
+  budgetCheck,
   CUSTOMER_MATCHED_BY,
   checkAddress,
   creditCheck,
+  DEFAULT_ORDER_BUDGET,
   describeAnswers,
+  digitalLines,
   durationMs,
   evaluate,
   evaluatePolicy,
@@ -59,7 +63,6 @@ import {
   taxExemptNote,
   taxRegionsSchema,
   threeWayMatch,
-  toBase,
   truthy,
   uncheckedRoute,
   validateOrder,
@@ -405,8 +408,8 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.budget_check': async ({ ctx, config }) => {
-    const budget = num(config.budget, 25_000);
-    const within = (ctx.order.baseTotal ?? toBase(ctx.order.total, ctx.order.fxRate)) <= budget;
+    const budget = num(config.budget, DEFAULT_ORDER_BUDGET);
+    const { within } = budgetCheck(ctx.order, budget);
     return {
       branches: [within ? 'within' : 'over'],
       output: { budget },
@@ -701,22 +704,13 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.handover': async ({ env, ctx, stepKey }) => {
-    const r = await fulfillmentStore(env).handOver(ctx.order, stepKey);
-    // The goods left the store: the held stock is spent.
-    await inventoryStore(env).consume(ctx.order.id);
+    const r = await handOverOrder(commercePorts(env), ctx.order, stepKey);
     return { output: r, summary: r.collected === 'pickup' ? 'Collected' : 'Carried out' };
   },
 
   'commerce.deliver_digital': async ({ env, ctx, stepKey }) => {
-    const kinds = new Map(
-      (await pricingStore(env).products(ctx.order.lines.map((l) => l.sku))).map((p) => [
-        p.sku,
-        p.kind,
-      ]),
-    );
-    const digital = [...ctx.order.lines.entries()]
-      .filter(([, l]) => kinds.get(l.sku) === 'digital')
-      .map(([index, l]) => ({ index, sku: l.sku, qty: l.qty }));
+    const products = await pricingStore(env).products(ctx.order.lines.map((l) => l.sku));
+    const digital = digitalLines(ctx.order.lines, products);
     const codes = await fulfillmentStore(env).issueEntitlements(ctx.order.id, stepKey, digital);
     return {
       output: { entitlements: codes },

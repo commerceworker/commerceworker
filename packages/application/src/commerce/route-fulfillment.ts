@@ -116,3 +116,19 @@ export async function routeFulfillment(
     });
   return done({ branch: method, method, locationId: store.id, locationName: store.name });
 }
+
+/**
+ * The customer has the goods (`commerce.handover`): a staged pickup is collected, or a carry-out
+ * is recorded, and the stock the order held is spent. Keyed by the step: a retry records nothing
+ * more, and consuming spends a hold once.
+ */
+export async function handOverOrder(
+  ports: { readonly fulfillment: FulfillmentStore; readonly inventory: InventoryStore },
+  order: Pick<Order, 'id' | 'fulfillment'>,
+  stepKey: string,
+): Promise<{ collected: 'pickup' | 'carry_out' }> {
+  const r = await ports.fulfillment.handOver(order, stepKey);
+  // The goods left the store: the held stock is spent.
+  await ports.inventory.consume(order.id);
+  return r;
+}

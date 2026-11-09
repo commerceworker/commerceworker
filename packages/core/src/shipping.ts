@@ -297,7 +297,7 @@ export function shippableLines(
 ): ParcelLine[] {
   const bySku = new Map(products.map((p) => [p.sku, p]));
   return lines
-    .filter((l) => bySku.get(l.sku)?.kind !== 'digital')
+    .filter((l) => !isDigital(bySku.get(l.sku)?.kind))
     .map((l) => {
       const p = bySku.get(l.sku);
       return {
@@ -308,4 +308,18 @@ export function shippableLines(
         heightCm: p?.heightCm,
       };
     });
+}
+
+/** A product delivered as a code or a download, never shipped. */
+export const isDigital = (kind: string | null | undefined) => kind === 'digital';
+
+/** The order's digital lines, by their product's kind, with each line's index on the order. */
+export function digitalLines(
+  lines: readonly OrderLine[],
+  products: readonly { sku: string; kind?: string | null }[],
+): { index: number; sku: string; qty: number }[] {
+  const kinds = new Map(products.map((p) => [p.sku, p.kind]));
+  return [...lines.entries()]
+    .filter(([, l]) => isDigital(kinds.get(l.sku)))
+    .map(([index, l]) => ({ index, sku: l.sku, qty: l.qty }));
 }
