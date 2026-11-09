@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -30,7 +31,7 @@ async function json<T>(res: Response): Promise<T> {
 
 async function seed() {
   const { ctx, rag, blob, ai } = wire(config);
-  const app = createApp(ctx, config, rag, blob, ai);
+  const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   for (const apiId of ['note', 'page']) {
     await app.request(`${M}/content-types`, {
       method: 'POST',

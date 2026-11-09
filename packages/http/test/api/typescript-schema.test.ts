@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -56,7 +57,7 @@ let app: ReturnType<typeof createApp>;
 
 beforeEach(async () => {
   const { ctx, rag, blob, ai } = wire(config);
-  app = createApp(ctx, config, rag, blob, ai);
+  app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   await app.request(`${M}/content-types`, {
     method: 'POST',
     headers: cma,

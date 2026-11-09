@@ -8,6 +8,7 @@ import {
 } from '@commerceworker/application';
 import type { BulkChunkDueEvent, FieldDefinition } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { InMemoryContentStore } from '@commerceworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -50,7 +51,7 @@ const symbol = (apiId: string, position: number): FieldDefinition =>
 
 async function makeApp() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
     apiId: 'note',
     name: 'Note',

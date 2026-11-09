@@ -1,6 +1,7 @@
 import { type AppContext, dispatchEvent } from '@commerceworker/application';
 import type { DomainEvent } from '@commerceworker/domain';
 import { loadConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { starterChunkRunner } from '@commerceworker/seed';
 import { RecordingWebhookSender } from '@commerceworker/test-kit';
 import { describe, expect, it, vi } from 'vitest';
@@ -41,7 +42,7 @@ const admin = { authorization: 'Bearer admin', 'content-type': 'application/json
 function setup(demoStarters: boolean) {
   const config = configWith(demoStarters);
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const store = wired.ctx.store as unknown as { allEvents(): DomainEvent[] };
   let dispatched = store.allEvents().length;
   /** The engine's part: every new event through dispatch, starter chunks included. */

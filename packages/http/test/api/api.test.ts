@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -21,7 +22,7 @@ const config: ApiConfig = testConfig({
 
 function makeApp() {
   const { ctx, rag, blob, ai } = wire(config);
-  return createApp(ctx, config, rag, blob, ai);
+  return createApp(ctx, config, rag, blob, ai, inMemoryEdge());
 }
 
 const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
@@ -88,7 +89,7 @@ describe('API vertical slice over HTTP', () => {
     // so a clean entry still publishes (the gate only blocks flagged content).
     const gated: ApiConfig = { ...config, moderateBeforePublish: true };
     const { ctx, rag, blob, ai } = wire(gated);
-    const app = createApp(ctx, gated, rag, blob, ai);
+    const app = createApp(ctx, gated, rag, blob, ai, inMemoryEdge());
     await app.request(`${M}/content-types`, {
       method: 'POST',
       headers: cma,

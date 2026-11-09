@@ -14,7 +14,6 @@ import {
   maskDeniedFields,
   SCOPES,
   unwritableFieldsFor,
-  ValidationError,
   withAuthorIdsFor,
 } from '@commerceworker/domain';
 import { Hono } from 'hono';
@@ -168,11 +167,6 @@ export function entriesRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     async (c) => {
       const body = await parseBody(c, resolveEmbedBody);
-      if (!deps.remoteFetcher) {
-        throw new ValidationError([
-          { field: 'url', message: 'This deployment cannot fetch embed metadata' },
-        ]);
-      }
       return c.json(await resolveEmbed(deps.remoteFetcher, body));
     },
   );

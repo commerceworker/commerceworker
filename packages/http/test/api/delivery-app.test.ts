@@ -1,5 +1,6 @@
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import type { Principal } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApiHasher } from '../../src/api/auth';
 import { deliveryApp, deliveryRoutes } from '../../src/api/routes/delivery';
@@ -22,6 +23,7 @@ function app() {
   const principal = { spaceId: 's1', kind: 'cda', scopes: ['delivery:read'] } as Principal;
   return deliveryApp(
     deliveryRoutes({
+      ...inMemoryEdge(),
       ctx,
       hasher: createApiHasher(config.tokenPepper),
       adminToken: '',

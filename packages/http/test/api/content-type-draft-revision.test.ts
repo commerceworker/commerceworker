@@ -6,6 +6,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { InMemoryContentStore } from '@commerceworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -53,7 +54,7 @@ const definition = {
 /** An app with a published `page` type holding one published entry. */
 async function setup() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const save = (body: unknown) =>
     app.request(`${M}/content-types`, {
       method: 'POST',

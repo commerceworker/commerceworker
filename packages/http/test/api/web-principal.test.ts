@@ -5,6 +5,7 @@ import {
   findMemberForSignIn,
 } from '@commerceworker/application';
 import { loadConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { deriveAssistantPrincipalKey } from '@commerceworker/security/assistant-key';
 import { principalTarget, signPrincipal } from '@commerceworker/security/principal';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -34,7 +35,7 @@ describe('the web principal (x-cw-principal)', () => {
   let app: ReturnType<typeof createApp>;
   beforeEach(() => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   });
 
   it('lets a deployment admin in with a header signed for this path', async () => {
@@ -93,7 +94,7 @@ describe('the web principal (x-cw-principal)', () => {
 
   it('lists a member only the spaces they are on the team of', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app2 = createApp(ctx, config, rag, blob, ai);
+    const app2 = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const asMember = async () =>
       app2.request('/spaces', {
         headers: {
@@ -113,7 +114,7 @@ describe('the web principal (x-cw-principal)', () => {
 
   it('describes a person as they are in the space asked about', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app2 = createApp(ctx, config, rag, blob, ai);
+    const app2 = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     await createSpace(ctx, { spaceId: 's2', name: 'Two', defaultLocale: 'en-US' });
     // A member limited to one content type in s1, an editor in s2, and on no team in s3.
     const limited = await createRole(ctx, 's1', {
@@ -149,7 +150,7 @@ describe('the web principal (x-cw-principal)', () => {
 
   it('lets a member with the Administrator preset run bulk jobs over entries, and not a narrower one', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app2 = createApp(ctx, config, rag, blob, ai);
+    const app2 = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const limited = await createRole(ctx, 's1', {
       name: 'Posts only',
       scopes: ['content:write', 'content:publish', 'preview:read'],

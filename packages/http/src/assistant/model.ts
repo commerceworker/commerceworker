@@ -7,22 +7,18 @@
  */
 
 import {
-  NO_LOG_PAYLOAD,
-  WORKERS_AI_MODEL_BY_TIER,
-  workersAiModelsFromEnv,
-} from '@commerceworker/adapters/ai-workers';
-import {
   ASSISTANT_TOOLS,
   type AssistantContext,
   isAssistantTool,
   isSetupScope,
   normalizeSlug,
 } from '@commerceworker/domain';
-import type { EdgeEnv } from '@commerceworker/platform/env';
-import { createAI, type WorkersAIModelId } from 'agents/models/ai-sdk';
-import type { LanguageModel } from 'ai';
+import {
+  ASSISTANT_AI_TIMEOUT_MS,
+  type AssistantLlm,
+} from '@commerceworker/platform/assistant-model';
 
-type Model = Extract<LanguageModel, { specificationVersion: 'v4' }>;
+type Model = AssistantLlm;
 export type AssistantModel = Model;
 type CallOptions = Parameters<Model['doStream']>[0];
 type Prompt = CallOptions['prompt'];
@@ -30,58 +26,26 @@ type StreamPart =
   Awaited<ReturnType<Model['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never;
 type GenerateResult = Awaited<ReturnType<Model['doGenerate']>>;
 
-/** A slow model must not hold the person hostage: the mock answers after this. */
-const AI_TIMEOUT_MS = 20_000;
-
 /** Which model answered a turn: `mock` costs nothing and isn't metered. */
 export type ModelSource = { source: 'model' | 'mock'; model?: string };
 
-const sha256 = async (text: string) =>
-  [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-
 /**
- * The model for one turn. `used.source` says which model answered once it has, so the turn is
- * metered only when a real one did.
+ * The model for one turn. `primary` is the composition root's real model (absent under
+ * AI_MODE=mock or with no AI binding, so the mock answers every turn). `used.source` says which
+ * model answered once it has, so the turn is metered only when a real one did.
  */
 export async function assistantModel(
-  env: EdgeEnv,
+  primary: ((personId: string) => Promise<Model>) | undefined,
   context: AssistantContext,
   used: ModelSource,
   personId: string,
 ): Promise<Model> {
   const mock = mockModel(context);
-  if (env.AI_MODE === 'mock' || !env.AI) {
+  if (!primary) {
     used.source = 'mock';
     return mock;
   }
-  const models = workersAiModelsFromEnv(env as unknown as Record<string, string | undefined>);
-  const flagship = (models.flagship ?? WORKERS_AI_MODEL_BY_TIER.flagship) as WorkersAIModelId;
-  const fast = (models.fast ?? WORKERS_AI_MODEL_BY_TIER.fast) as WorkersAIModelId;
-  const gatewayId = env.AI_GATEWAY_ID ?? '';
-  const ai = createAI({
-    // EdgeEnv types only the `run` the adapters use; createAI takes the whole binding.
-    binding: env.AI as unknown as Ai,
-    // An empty id calls Workers AI directly; undefined would pick the account's "default" gateway.
-    gateway: gatewayId
-      ? {
-          id: gatewayId,
-          ...(env.AI_GATEWAY_LOGS ? { collectLog: env.AI_GATEWAY_LOGS === 'true' } : {}),
-          metadata: { prompt: 'assistant' },
-          retries: { maxAttempts: 2, retryDelayMs: 500, backoff: 'exponential' },
-          requestTimeoutMs: AI_TIMEOUT_MS,
-        }
-      : { id: '' },
-  });
-  const primary = ai(flagship, {
-    fallback: fast === flagship ? [] : [fast],
-    // Workers AI's prefix cache: the system prompt and tools repeat within a conversation.
-    sessionAffinity: await sha256(`assistant:${personId}`),
-    // Tool results carry people's content: the gateway keeps no prompt or answer.
-    headers: { ...NO_LOG_PAYLOAD },
-  });
-  return withFallback(primary, mock, used);
+  return withFallback(await primary(personId), mock, used);
 }
 
 function timeout<T>(p: PromiseLike<T>, ms: number): Promise<T> {
@@ -108,7 +72,7 @@ export function withFallback(primary: Model, fallback: Model, used: ModelSource)
     supportedUrls: {},
     async doGenerate(options) {
       try {
-        const res = await timeout(primary.doGenerate(options), AI_TIMEOUT_MS);
+        const res = await timeout(primary.doGenerate(options), ASSISTANT_AI_TIMEOUT_MS);
         used.source = 'model';
         used.model = primary.modelId;
         return res;
@@ -119,10 +83,10 @@ export function withFallback(primary: Model, fallback: Model, used: ModelSource)
       }
     },
     async doStream(options) {
-      const deadline = Date.now() + AI_TIMEOUT_MS;
+      const deadline = Date.now() + ASSISTANT_AI_TIMEOUT_MS;
       let reader: ReadableStreamDefaultReader<StreamPart> | undefined;
       try {
-        const res = await timeout(primary.doStream(options), AI_TIMEOUT_MS);
+        const res = await timeout(primary.doStream(options), ASSISTANT_AI_TIMEOUT_MS);
         reader = res.stream.getReader();
         const read = reader;
         const held: StreamPart[] = [];

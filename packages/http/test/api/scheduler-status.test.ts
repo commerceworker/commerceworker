@@ -3,6 +3,7 @@ import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-run
 import { recordSchedulerTick, SchedulerTick } from '@commerceworker/application';
 import type { Principal } from '@commerceworker/domain';
 import { type ApiConfig, loadConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { principalTarget, signPrincipal } from '@commerceworker/security/principal';
 import {
   FixedClock,
@@ -37,7 +38,7 @@ function build() {
   const w = wire(config);
   const clock = new FixedClock(new Date('2026-11-01T10:00:00.000Z'));
   const ctx = { ...w.ctx, clock };
-  return { ctx, clock, app: createApp(ctx, config, w.rag, w.blob, w.ai) };
+  return { ctx, clock, app: createApp(ctx, config, w.rag, w.blob, w.ai, inMemoryEdge()) };
 }
 
 async function tick(ctx: Parameters<typeof recordSchedulerTick>[0], fail?: string) {
@@ -106,7 +107,7 @@ describe('GET /health/scheduler', () => {
       },
     };
     const w = wire(config);
-    const app = createApp({ ...broken, clock }, config, w.rag, w.blob, w.ai);
+    const app = createApp({ ...broken, clock }, config, w.rag, w.blob, w.ai, inMemoryEdge());
     const res = await app.request('/health/scheduler');
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ scheduler: 'unknown' });
@@ -155,7 +156,7 @@ describe('/deployment/scheduler/alerts', () => {
       PRINCIPAL_KEY: KEY,
     } as NodeJS.ProcessEnv);
     const w = wire(signedConfig);
-    const app = createApp(w.ctx, signedConfig, w.rag, w.blob, w.ai);
+    const app = createApp(w.ctx, signedConfig, w.rag, w.blob, w.ai, inMemoryEdge());
     const member = async (method: string) => ({
       'x-cw-principal': await signPrincipal(
         KEY,
@@ -235,6 +236,7 @@ describe('MCP scheduler_status', () => {
   function deps(ctx: McpDeps['ctx']): McpDeps {
     const ai = new StubAIProvider(() => ({}));
     return {
+      ...inMemoryEdge(),
       ctx,
       ai,
       rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
@@ -272,6 +274,7 @@ describe('MCP scheduler alert tools', () => {
     const ai = new StubAIProvider(() => ({}));
     const server = buildServer(
       {
+        ...inMemoryEdge(),
         ctx,
         ai,
         rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
@@ -357,6 +360,7 @@ describe('scheduler alert recipients audit', () => {
     const ai = new StubAIProvider(() => ({}));
     const server = buildServer(
       {
+        ...inMemoryEdge(),
         ctx,
         ai,
         rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

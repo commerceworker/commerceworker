@@ -631,11 +631,6 @@ export function registerReadTools(server: McpServer, t: ToolContext): void {
     },
     async (args) => {
       guard(SCOPES.contentWrite, scopeOf(args));
-      if (!deps.remoteFetcher) {
-        throw new ValidationError([
-          { field: 'url', message: 'This deployment cannot fetch embed metadata' },
-        ]);
-      }
       return ok(await resolveEmbed(deps.remoteFetcher, { url: args.url }));
     },
   );

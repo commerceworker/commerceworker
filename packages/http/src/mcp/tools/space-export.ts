@@ -29,11 +29,6 @@ export function registerSpaceExportTools(server: McpServer, t: ToolContext): voi
   const spaceExport = (
     args: { payload: string; publish?: boolean; addLocales?: boolean } & Scope,
   ) => {
-    if (!deps.spaceExportReader) {
-      throw new ValidationError([
-        { field: 'payload', message: 'This deployment cannot read space exports' },
-      ]);
-    }
     if (args.addLocales) guard(SCOPES.spaceAdmin, args);
     // As the route: it writes (and publishes) entries of every type the export defines.
     authorizeEveryContentType(principal, args.publish !== false ? ['write', 'publish'] : ['write']);

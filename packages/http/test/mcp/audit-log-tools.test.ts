@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { type AppContext, createSpace } from '@commerceworker/application';
 import { type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { AuditEntry } from '@commerceworker/ports';
 import {
   FixedClock,
@@ -25,6 +26,7 @@ function makeDeps(): McpDeps {
     ids: new SequenceIdGenerator('m'),
   };
   return {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

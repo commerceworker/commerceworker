@@ -27,7 +27,7 @@ export function importsRoutes(deps: AuthDeps): Hono<AuthVars> {
     requireScope(SCOPES.contentWrite),
     (c) =>
       c.json({
-        items: Object.values(deps.importSources ?? {}).map((s) => ({ id: s.id, name: s.name })),
+        items: Object.values(deps.importSources).map((s) => ({ id: s.id, name: s.name })),
       }),
   );
   app.post(

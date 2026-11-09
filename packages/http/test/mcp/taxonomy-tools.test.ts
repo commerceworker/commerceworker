@@ -11,6 +11,7 @@ import {
   setEntryMetadata,
 } from '@commerceworker/application';
 import { type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FakePasswordHasher,
   FixedClock,
@@ -39,6 +40,7 @@ async function setup() {
     passwords: new FakePasswordHasher(),
   };
   const deps: McpDeps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

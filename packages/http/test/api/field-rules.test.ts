@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -66,7 +67,7 @@ const listing = {
 
 function setup() {
   const { ctx, rag, blob, ai } = wire(config);
-  const app = createApp(ctx, config, rag, blob, ai);
+  const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   const send = (path: string, method: string, body?: unknown) =>
     app.request(path, { method, headers: cma, body: body ? JSON.stringify(body) : undefined });
   return { send, ctx };
@@ -106,7 +107,7 @@ describe('conditional field rules over HTTP', () => {
 
   it('answers a writer the same whether a disabled field it may not write is empty or filled', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const as =
       (headers: Record<string, string>) => (path: string, method: string, body?: unknown) =>
         app.request(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -176,7 +177,7 @@ describe('conditional field rules over HTTP', () => {
 
   it('lets a writer save around a required field its role makes read-only', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const as =
       (headers: Record<string, string>) => (path: string, method: string, body?: unknown) =>
         app.request(path, { method, headers, body: body ? JSON.stringify(body) : undefined });

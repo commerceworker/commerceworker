@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -24,7 +25,7 @@ const M = '/spaces/s1/environments/main';
 
 function makeApp() {
   const { ctx, rag, blob, ai } = wire(config);
-  return createApp(ctx, config, rag, blob, ai);
+  return createApp(ctx, config, rag, blob, ai, inMemoryEdge());
 }
 
 describe('request body validation', () => {

@@ -9,6 +9,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import { type FieldDefinition, type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FakeBlobStore,
   FakePasswordHasher,
@@ -41,6 +42,7 @@ async function connect(principal: Principal) {
     passwords: new FakePasswordHasher(),
   };
   const deps: McpDeps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

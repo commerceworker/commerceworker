@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createDeliveryClient } from '@commerceworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -25,7 +26,7 @@ const M = '/spaces/s1/environments/main';
 describe('Delivery delta cursor (?since)', () => {
   it('returns only entries published after the cursor', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     await app.request(`${M}/content-types`, {
       method: 'POST',
       headers: cma,

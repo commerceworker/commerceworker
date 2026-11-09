@@ -22,11 +22,6 @@ export function spaceExportRoutes(deps: AuthDeps): Hono<AuthVars> {
     c: Context<AuthVars>,
     body: { payload: string; publish?: boolean; addLocales?: boolean },
   ) => {
-    if (!deps.spaceExportReader) {
-      throw new ValidationError([
-        { field: 'payload', message: 'This deployment cannot read space exports' },
-      ]);
-    }
     // Adding locales changes the space for every environment: a space admin's call.
     if (body.addLocales)
       authorize(c.get('principal'), SCOPES.spaceAdmin, c.req.param('space') as string);

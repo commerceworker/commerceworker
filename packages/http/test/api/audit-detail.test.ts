@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { type Principal, SCOPES } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { AuditEntry } from '@commerceworker/ports';
 import { RecordingEmailSender } from '@commerceworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
@@ -129,6 +130,7 @@ describe('audit row detail, over REST and MCP', () => {
       wired.rag,
       wired.blob,
       wired.ai,
+      inMemoryEdge(),
       wired.bus,
       undefined,
       undefined,
@@ -148,6 +150,7 @@ describe('audit row detail, over REST and MCP', () => {
     await rest('POST', '/content-types/article/published');
 
     const deps: McpDeps = {
+      ...inMemoryEdge(),
       ctx: wired.ctx,
       ai: wired.ai,
       rag: wired.rag,

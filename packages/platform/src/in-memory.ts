@@ -1,3 +1,6 @@
+import { createRemoteFetcher } from '@commerceworker/adapters/http-effects';
+import { createSpaceExportReader } from '@commerceworker/adapters/import-space-export';
+import { structuredImportSources } from '@commerceworker/adapters/import-structured';
 import { type AppContext, createHasher, type RagDeps } from '@commerceworker/application';
 import { type ApiKeyKind, scopesForKind } from '@commerceworker/domain';
 import type {
@@ -8,6 +11,9 @@ import type {
   EventBus,
   GenerateRequest,
   IdGenerator,
+  ImportSource,
+  RemoteFetcher,
+  SpaceExportReader,
 } from '@commerceworker/ports';
 import { pbkdf2PasswordHasher } from '@commerceworker/security/credentials';
 import {
@@ -25,7 +31,22 @@ import { newId as uuidv7 } from './ids';
 const clock: Clock = { now: () => new Date() };
 const ids: IdGenerator = { newId: () => uuidv7() };
 
-export interface InMemoryWired {
+/** The import and fetch adapters `wireEdge` binds, for tests and callers that wire by hand. */
+export interface EdgeAdapters {
+  readonly importSources: Readonly<Record<string, ImportSource>>;
+  readonly spaceExportReader: SpaceExportReader;
+  readonly remoteFetcher: RemoteFetcher;
+}
+
+export function inMemoryEdge(): EdgeAdapters {
+  return {
+    importSources: structuredImportSources(),
+    spaceExportReader: createSpaceExportReader(),
+    remoteFetcher: createRemoteFetcher(),
+  };
+}
+
+export interface InMemoryWired extends EdgeAdapters {
   readonly ctx: AppContext;
   readonly rag: RagDeps;
   readonly blob: BlobStore;
@@ -99,5 +120,6 @@ export function wire(config: ApiConfig): InMemoryWired {
     blob: new FakeBlobStore(),
     ai: new StubAIProvider(devGenerate),
     bus: new InMemoryEventBus(),
+    ...inMemoryEdge(),
   };
 }

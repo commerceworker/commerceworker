@@ -6,6 +6,7 @@ import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-run
 import type { AppContext } from '@commerceworker/application';
 import type { Principal } from '@commerceworker/domain';
 import { SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -33,6 +34,7 @@ function makeDeps(): McpDeps {
     ids: new SequenceIdGenerator('h'),
   };
   return {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

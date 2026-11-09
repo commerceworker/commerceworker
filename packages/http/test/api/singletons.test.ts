@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createDeliveryClient, DeliveryError } from '@commerceworker/sdk-core';
 import { createManagementClient } from '@commerceworker/sdk-management';
 import { describe, expect, it } from 'vitest';
@@ -32,7 +33,7 @@ const symbol = (apiId: string, position: number, localized = false) => ({
 
 function setup() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const fetch = ((url: string | URL | Request, init?: RequestInit) =>
     app.request(String(url), init)) as typeof globalThis.fetch;
   const client = (token: string, preview = false) =>

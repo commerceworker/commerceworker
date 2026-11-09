@@ -36,8 +36,9 @@ const config = loadConfig({
   SEED_SPACE_ID: 'docs',
 } as NodeJS.ProcessEnv);
 
-const { ctx, rag, blob, ai, bus } = wire(config);
-const app = createApp(ctx, config, rag, blob, ai, bus);
+const wired = wire(config);
+const { ctx, rag, blob, ai, bus } = wired;
+const app = createApp(ctx, config, rag, blob, ai, wired, bus);
 const res = await app.request('/openapi.json');
 if (!res.ok) throw new Error(`GET /openapi.json answered ${res.status}`);
 const spec = (await res.json()) as { paths?: Record<string, unknown> };

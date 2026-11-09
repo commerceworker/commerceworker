@@ -1,4 +1,5 @@
 import { loadConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { wire } from './wire';
@@ -26,7 +27,7 @@ describe('team and role presets over HTTP', () => {
   let app: ReturnType<typeof createApp>;
   beforeEach(() => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   });
 
   const team = async () =>

@@ -1,5 +1,6 @@
 import { createRedirectMatcher as domainMatcher, type Redirect } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createDeliveryClient } from '@commerceworker/sdk-core';
 import { createRedirectHandler, createRedirectMatcher } from '@commerceworker/sdk-core/redirects';
 import { describe, expect, it } from 'vitest';
@@ -96,7 +97,7 @@ describe('the SDK’s redirect matching against the server’s', () => {
 describe('@commerceworker/sdk-core redirects against the live Delivery API (in-process)', () => {
   it('reads the set, resolves a path and applies it in front of a site', async () => {
     const wired = wire(config);
-    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
     const res = await app.request('/spaces/s1/environments/main/redirects/import', {
       method: 'POST',
       headers: { Authorization: 'Bearer admin', 'Content-Type': 'application/json' },

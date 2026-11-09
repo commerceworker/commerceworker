@@ -1,6 +1,7 @@
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { type AppContext, installPlugin } from '@commerceworker/application';
 import { type PluginManifest, type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FakeBlobStore,
   FixedClock,
@@ -42,6 +43,7 @@ beforeEach(async () => {
   store = new InMemoryContentStore();
   const ctx: AppContext = { store, clock: new FixedClock(), ids: new SequenceIdGenerator('m') };
   deps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

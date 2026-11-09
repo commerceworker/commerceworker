@@ -76,6 +76,9 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       blob: wired.blob,
       ai: wired.ai,
       bus: wired.bus,
+      importSources: wired.importSources,
+      spaceExportReader: wired.spaceExportReader,
+      remoteFetcher: wired.remoteFetcher,
       agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
       rateLimiter,
     };
@@ -109,7 +112,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
         : {}),
       // Bounded and redirect-refusing, as the HTTP API's: embed_resolve fetches with it.
       remoteFetcher: wired.remoteFetcher,
-      // The space export tools read with it, as the HTTP API's routes do.
+      // The import tools' readers and the space export reader, as the HTTP API's routes use.
+      importSources: wired.importSources,
       spaceExportReader: wired.spaceExportReader,
       signalReview: env.AGENT_WF
         ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
@@ -136,6 +140,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       wired.rag,
       wired.blob,
       wired.ai,
+      wired,
       wired.bus,
       rateLimiter,
       // Review decisions reach the durable watcher as Workflow events.

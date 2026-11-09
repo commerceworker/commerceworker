@@ -12,7 +12,7 @@ import {
   upgradePlugin,
   upgradePluginFromUrl,
 } from '@commerceworker/application';
-import { SCOPES, ValidationError } from '@commerceworker/domain';
+import { SCOPES } from '@commerceworker/domain';
 import { Hono } from 'hono';
 import { type AuthDeps, type AuthVars, requireScope } from '../../auth';
 import { doc } from '../../docs/openapi';
@@ -31,14 +31,6 @@ import { pluginSummary } from './shared';
 
 export function pluginsRoutes(deps: AuthDeps): Hono<AuthVars> {
   const { ctx, blob } = deps;
-  const requireFetcher = () => {
-    if (deps.remoteFetcher) return deps.remoteFetcher;
-    // A deployment with no outbound fetcher cannot install from a URL, and
-    // saying so beats a stack trace about an undefined method.
-    throw new ValidationError([
-      { field: 'packageUrl', message: 'This deployment cannot fetch remote plugin packages' },
-    ]);
-  };
   const app = new Hono<AuthVars>();
 
   // --- plugins (install, consent, lifecycle) -------------------------------
@@ -107,7 +99,7 @@ export function pluginsRoutes(deps: AuthDeps): Hono<AuthVars> {
       return c.json(
         await inspectPluginPackage(
           ctx,
-          requireFetcher(),
+          deps.remoteFetcher,
           body as unknown as Parameters<typeof inspectPluginPackage>[2],
           deps.pluginSources ?? {},
         ),
@@ -130,7 +122,7 @@ export function pluginsRoutes(deps: AuthDeps): Hono<AuthVars> {
       const plugin = await installPluginFromUrl(
         ctx,
         blob,
-        requireFetcher(),
+        deps.remoteFetcher,
         c.get('principal'),
         c.req.param('space'),
         body as unknown as Parameters<typeof installPluginFromUrl>[5],
@@ -153,7 +145,7 @@ export function pluginsRoutes(deps: AuthDeps): Hono<AuthVars> {
       const plugin = await upgradePluginFromUrl(
         ctx,
         blob,
-        requireFetcher(),
+        deps.remoteFetcher,
         c.get('principal'),
         c.req.param('space'),
         { ...body, expectedId: body.expectedId ?? c.req.param('id') } as unknown as Parameters<

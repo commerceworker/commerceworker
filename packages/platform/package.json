@@ -7,6 +7,7 @@
   "exports": {
     "./asset-ingest": "./src/asset-ingest.ts",
     "./asset-zip": "./src/asset-zip.ts",
+    "./assistant-model": "./src/assistant-model.ts",
     "./auth-rate-limit": "./src/auth-rate-limit.ts",
     "./config": "./src/config.ts",
     "./dead-letters": "./src/dead-letters.ts",
@@ -39,7 +40,9 @@
     "@commerceworker/ports": "workspace:*",
     "@commerceworker/redaction": "workspace:*",
     "@commerceworker/security": "workspace:*",
-    "@commerceworker/test-kit": "workspace:*"
+    "@commerceworker/test-kit": "workspace:*",
+    "agents": "catalog:",
+    "ai": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",

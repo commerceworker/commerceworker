@@ -1,6 +1,7 @@
 import { type AppContext, importChunkRunner, runBulkChunk } from '@commerceworker/application';
 import type { BulkChunkDueEvent } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { BlobStore, RemoteFetcher } from '@commerceworker/ports';
 import { spaceExportFixture } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -82,7 +83,7 @@ beforeEach(async () => {
   ctx = wired.ctx;
   blob = wired.blob;
   files.calls.length = 0;
-  app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   await app.request('/spaces/s1/environments', {
     method: 'POST',
     headers: admin,

@@ -41,10 +41,13 @@ export interface McpDeps {
   readonly adminToken: string;
   /** When true, publish runs moderation first and blocks flagged content. */
   readonly moderateBeforePublish?: boolean;
-  /** Readers for external content formats, by source id. */
-  readonly importSources?: Readonly<Record<string, ImportSource>>;
-  /** Reads the JSON space export format. Absent: the space export tools refuse. */
-  readonly spaceExportReader?: SpaceExportReader;
+  /**
+   * Readers for external content formats, by source id. Required: a caller that left it out once
+   * shipped an api Worker whose `import_*` tools answered "no import sources".
+   */
+  readonly importSources: Readonly<Record<string, ImportSource>>;
+  /** Reads the JSON space export format. */
+  readonly spaceExportReader: SpaceExportReader;
   /** Starts/signals/cancels editorial workflow runs; absent → run tools refuse (not configured). */
   readonly workflowEngine?: WorkflowEngine;
   /** AI, email and webhook ports for workflow node compensations (cancel). */
@@ -54,8 +57,8 @@ export interface McpDeps {
   readonly blob?: BlobStore;
   /** Hands asset files to ingest; absent, asset_reingest refuses (not configured). */
   readonly assetIngest?: AssetIngestQueue;
-  /** Bounded, redirect-refusing outbound GETs (embed metadata); absent, embed_resolve refuses. */
-  readonly remoteFetcher?: RemoteFetcher;
+  /** Bounded, redirect-refusing outbound GETs (embed metadata). */
+  readonly remoteFetcher: RemoteFetcher;
   /** Whether people sign in through SSO (for the last-administrator rule). Absent: no SSO. */
   readonly accessPolicy?: AccessPolicy;
   /** The admin's origin, where invitation links open (as AuthDeps' `inviteOrigin`). */

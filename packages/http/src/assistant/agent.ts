@@ -61,6 +61,7 @@ import { readContext } from './context';
 import { assistantCaller, engineKeys } from './gate';
 import { BUDGET_SPENT, meterTurn } from './meter';
 import {
+  type AssistantModel,
   assistantModel,
   DECLINED_REASON,
   type EmittedCall,
@@ -97,6 +98,8 @@ export type SocketClaims = { readonly sub: string; readonly sid?: string; readon
 /** One invocation's MCP wiring, released when the call is done. */
 export interface AssistantWiring {
   readonly deps: McpDeps;
+  /** The real model, from the composition root; absent, the mock answers every turn. */
+  readonly model: ((personId: string) => Promise<AssistantModel>) | undefined;
   close(): Promise<void>;
 }
 
@@ -710,7 +713,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
       const scope = { spaceId: context.scope.spaceId, environmentId: context.scope.environmentId };
       const meter = meterTurn(w.deps.ctx.costGuard, scope, () => used.source === 'model', close);
       const model = recordingCalls(
-        await assistantModel(this.env, context, used, who.claims.sub),
+        await assistantModel(w.model, context, used, who.claims.sub),
         (call) => this.record(call, context.scope, principal),
       );
       if (!(await meter.begin())) {

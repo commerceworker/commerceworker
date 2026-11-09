@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import type { AppContext } from '@commerceworker/application';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -14,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import type { McpDeps } from '../../src/mcp/deps';
 import { mcpRoutes } from '../../src/mcp/routes';
 
-/** Deps shaped like the api Worker's: everything it wires, and no `importSources`. */
+/** Deps as a composition root hands them over: the import sources come with the adapters. */
 function apiLikeDeps(): McpDeps {
   const ctx: AppContext = {
     store: new InMemoryContentStore(),
@@ -22,6 +23,7 @@ function apiLikeDeps(): McpDeps {
     ids: new SequenceIdGenerator('r'),
   };
   return {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
@@ -50,7 +52,7 @@ const textOf = (result: unknown) =>
     ?.text ?? '') as string;
 
 describe('the /mcp route', () => {
-  it('offers the structured import sources when the caller wires none', async () => {
+  it('offers the import sources the composition root wired', async () => {
     const client = await connect(apiLikeDeps());
     const result = await client.callTool({ name: 'import_sources', arguments: {} });
     expect(result.isError).toBeFalsy();
@@ -58,7 +60,7 @@ describe('the /mcp route', () => {
     expect(ids).toEqual(['csv', 'json', 'wxr']);
   });
 
-  it("keeps the caller's own sources when it wires some", async () => {
+  it('offers exactly the sources it was given, adding none of its own', async () => {
     const deps = apiLikeDeps();
     const only = { id: 'only', name: 'Only', parse: async () => ({ rows: [] }) };
     const client = await connect({

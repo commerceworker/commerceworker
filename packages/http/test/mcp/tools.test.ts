@@ -11,6 +11,7 @@ import {
 } from '@commerceworker/application';
 import type { Principal } from '@commerceworker/domain';
 import { SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FakeVideoHost,
   FixedClock,
@@ -49,6 +50,7 @@ function makeDeps(): McpDeps {
     ids: new SequenceIdGenerator('m'),
   };
   return {
+    ...inMemoryEdge(),
     ctx,
     ai: stubAI(),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

@@ -55,6 +55,9 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
       blob: wired.blob,
       ai: wired.ai,
       bus: wired.bus,
+      importSources: wired.importSources,
+      spaceExportReader: wired.spaceExportReader,
+      remoteFetcher: wired.remoteFetcher,
       agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
       trustedPrincipal: () => principal,
     };

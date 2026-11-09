@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { FakeAssetIngestQueue } from '@commerceworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -34,6 +35,7 @@ function makeApp(opts: { ingest?: FakeAssetIngestQueue } = {}) {
     wired.rag,
     wired.blob,
     wired.ai,
+    inMemoryEdge(),
     wired.bus,
     undefined,
     undefined,
