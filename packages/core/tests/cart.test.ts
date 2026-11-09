@@ -3,6 +3,7 @@ import {
   applyCartOp,
   attachmentName,
   attachmentProblem,
+  CART_CHANGED_SINCE_CONFIRM,
   CART_EXTEND_STEP_MS,
   type Cart,
   type CartActor,
@@ -12,9 +13,12 @@ import {
   canReadCart,
   canRemoveAttachment,
   cartAttachmentKey,
+  cartCancelProblem,
   cartOpSchema,
+  cartOrderStart,
   cartReadyProblem,
   cartShippingOption,
+  cartSubmitProblem,
   cartSummary,
   cartView,
   chatBody,
@@ -23,6 +27,7 @@ import {
   externalCartCap,
   externalCartEnd,
   externalCartProblem,
+  type FlowVersion,
   finishCart,
   guestCartOpen,
   isCartExpired,
@@ -36,6 +41,7 @@ import {
   MIN_EXTERNAL_CART_IDLE_MS,
   newCart,
   normalizePromoCode,
+  quotedCart,
   SHIP_TO_LIMITS,
   staffCartActor,
   storedCart,
@@ -786,6 +792,133 @@ describe('a cart in its events', () => {
       status: 'submitted',
       orderId: 'ord_9',
       quote: { total: 10 },
+    });
+  });
+});
+
+describe("the CartAgent's decisions", () => {
+  const ready = (c: Partial<Cart> = {}) =>
+    cart({
+      quote: {
+        ...quote,
+        lines: [{ id: 'li_1', sku: 'SKU-1', title: 'Desk', qty: 2, unitPrice: 5, ships: true }],
+        shippingOption: 'ground',
+      },
+      quotedVersion: 1,
+      ...c,
+    });
+  const flow = (types: string[]): FlowVersion => ({
+    id: 'flow_1',
+    name: 'Flow',
+    description: '',
+    model: 'b2b',
+    channels: [],
+    nodes: types.map((type, i) => ({
+      id: `n${i}`,
+      type,
+      label: type,
+      config: {},
+      position: { x: i, y: 0 },
+    })),
+    edges: [],
+    version: 3,
+    publishedAt: 0,
+  });
+
+  it('lets an Operator submit a ready staff cart at the version they confirmed, once', () => {
+    const submit = (c: Cart, actor: CartActor = operator, o = {}) =>
+      cartSubmitProblem(c, actor, { submitting: false, ...o });
+    expect(submit(ready())).toBeNull();
+    expect(submit(ready(), viewer)).toBe('This needs the Operator role.');
+    expect(submit(ready(), guest)).toBe('This needs the Operator role.');
+    expect(submit(ready(), operator, { submitting: true })).toBe('The cart is being submitted.');
+    expect(submit(ready(), operator, { confirmedVersion: 0 })).toBe(CART_CHANGED_SINCE_CONFIRM);
+    expect(submit(ready(), operator, { confirmedVersion: 1 })).toBeNull();
+    expect(submit(ready({ external }))).toBe('An external cart goes back to its buyer.');
+    expect(submit(cart())).toBe(cartReadyProblem(cart()));
+  });
+
+  it('lets an Operator cancel a cart until it is final', () => {
+    expect(cartCancelProblem(cart(), operator, { submitting: false })).toBeNull();
+    expect(cartCancelProblem(cart(), viewer, { submitting: false })).toBe(
+      'This needs the Operator role.',
+    );
+    expect(cartCancelProblem(cart(), operator, { submitting: true })).toBe(
+      'The cart is being submitted.',
+    );
+    expect(cartCancelProblem(cart({ status: 'submitted' }), operator, { submitting: false })).toBe(
+      'The cart is submitted.',
+    );
+  });
+
+  it('starts its order once, keyed by the cart, with what the quote charged and where it ships', () => {
+    const shipTo = { line1: '1 Main St', city: 'Austin', postalCode: '78701', country: 'US' };
+    expect(
+      cartOrderStart(
+        ready({ customerId: 'cus_1', promoCodes: ['SAVE5'], shipTo }),
+        { id: 'flow_1', model: 'b2b' },
+        operator,
+      ),
+    ).toEqual({
+      flowId: 'flow_1',
+      idempotencyKey: 'cart:cart_1',
+      startedBy: 'usr_1',
+      input: {
+        model: 'b2b',
+        channel: 'manual',
+        externalId: 'cart_1',
+        title: 'Q4 restock',
+        currency: 'USD',
+        customerId: 'cus_1',
+        lines: [{ sku: 'SKU-1', name: 'Desk', qty: 2 }],
+        shippingOption: 'ground',
+        meta: { cart: { id: 'cart_1' }, promoCodes: ['SAVE5'], shipTo },
+      },
+    });
+    const bare = cartOrderStart(
+      ready({ quote: { ...ready().quote!, shippingOption: null } }),
+      flow([]),
+      operator,
+    );
+    expect(bare.input).not.toHaveProperty('customerId');
+    expect(bare.input).not.toHaveProperty('shippingOption');
+    expect(bare.input.meta).toEqual({ cart: { id: 'cart_1' } });
+  });
+
+  it("takes a quote's titles and prices for the cart's version, and warns what the flow overrides", () => {
+    const fresh = {
+      ...quote,
+      lines: [{ id: 'li_1', sku: 'SKU-1', title: 'Desk', qty: 2, unitPrice: 5, ships: true }],
+      shippingOptions: [{ id: 'cheap', title: 'Cheapest', amount: 0 }],
+      shippingOption: 'cheap',
+    };
+    const c = cart({ version: 4, promoCodes: ['SAVE5'], shippingOption: 'ground' });
+    const out = quotedCart(c, flow(['commerce.price', 'commerce.shipping_rate']), {
+      quote: fresh as never,
+      issues: [{ kind: 'error', code: 'out_of_stock', content: 'Only 1 left.' }],
+    });
+    expect(out).toMatchObject({ quotedVersion: 4, quote: fresh });
+    expect(out.lines).toEqual([{ id: 'li_1', sku: 'SKU-1', qty: 2, title: 'Desk', unitPrice: 5 }]);
+    expect(out.issues.map((i) => i.code)).toEqual(['out_of_stock', 'promotion', 'shipping_option']);
+    expect(out.issues[2]?.content).toContain('“Cheapest”');
+    // A flow that applies promotions and keeps the chosen option has nothing to warn of.
+    const kept = quotedCart(
+      cart({ promoCodes: ['SAVE5'], shippingOption: 'cheap' }),
+      flow(['commerce.price', 'commerce.discount', 'commerce.shipping_rate']),
+      { quote: fresh as never, issues: [] },
+    );
+    expect(kept.issues).toEqual([]);
+    // No quote: the lines stay as they were.
+    expect(quotedCart(c, flow([]), { quote: null, issues: [] }).lines).toEqual(c.lines);
+  });
+
+  it('says the flow is gone, with no quote, when it was deleted', () => {
+    expect(
+      quotedCart(cart({ quote, version: 2 }), null, { quote: null, issues: [] }),
+    ).toMatchObject({
+      quote: null,
+      quotedVersion: 2,
+      issues: [{ kind: 'error', code: 'invalid', content: 'The cart’s flow is gone.' }],
     });
   });
 });

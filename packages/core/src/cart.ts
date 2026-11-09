@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import type { ShipAddress } from './address';
+import type { StartOrderOnceInput } from './api';
 import {
   applyLines,
   type CheckoutIssue,
@@ -20,9 +21,11 @@ import {
   isCompleteAddress,
   MAX_CHECKOUT_LINES,
   MAX_LINE_QUANTITY,
+  quoteNodes,
 } from './checkout';
 import { MAX_EXTERNAL_CART_MS } from './plugin-host';
 import { atLeast, type Principal, type Role } from './roles';
+import type { FlowVersion } from './types';
 
 export const CART_STATUSES = ['open', 'locked', 'submitted', 'returned', 'canceled'] as const;
 export type CartStatus = (typeof CART_STATUSES)[number];
@@ -465,6 +468,118 @@ export function cartReadyProblem(cart: Cart): string | null {
  * The option the cart ships by: while its quote is current, the one the quote charged (the flow's
  * shipping step may pick the cheapest or fastest whatever was chosen); before that, the chosen one.
  */
+/**
+ * Why `actor` can't submit the cart now, or null: an Operator's, on a staff cart that is ready,
+ * at the version they confirmed (when they confirmed one), and not while it is already being sent.
+ */
+export function cartSubmitProblem(
+  cart: Cart,
+  actor: CartActor,
+  opts: { submitting: boolean; confirmedVersion?: number },
+): string | null {
+  if (actor.kind !== 'staff' || !atLeast(actor.role, 'operator'))
+    return 'This needs the Operator role.';
+  if (opts.submitting) return 'The cart is being submitted.';
+  if (opts.confirmedVersion !== undefined && cart.version !== opts.confirmedVersion)
+    return CART_CHANGED_SINCE_CONFIRM;
+  if (cart.external) return 'An external cart goes back to its buyer.';
+  return cartReadyProblem(cart);
+}
+
+/** Why `actor` can't cancel the cart now, or null: an Operator's, on a cart not yet final. */
+export function cartCancelProblem(
+  cart: Cart,
+  actor: CartActor,
+  opts: { submitting: boolean },
+): string | null {
+  if (actor.kind !== 'staff' || !atLeast(actor.role, 'operator'))
+    return 'This needs the Operator role.';
+  if (opts.submitting) return 'The cart is being submitted.';
+  return isFinalCart(cart) ? `The cart is ${cart.status}.` : null;
+}
+
+/**
+ * The order a ready cart starts on its flow, once: keyed by the cart, so a retry after a failure
+ * part-way finds the same order. It ships where the cart was quoted for, with the option the quote
+ * charged, as a completed checkout's does. Call only when `cartSubmitProblem` is null.
+ */
+export function cartOrderStart(
+  cart: Cart,
+  flow: Pick<FlowVersion, 'id' | 'model'>,
+  actor: Pick<CartActor, 'id'>,
+): StartOrderOnceInput {
+  const q = cart.quote!;
+  return {
+    flowId: flow.id,
+    idempotencyKey: `cart:${cart.id}`,
+    startedBy: actor.id,
+    input: {
+      model: flow.model,
+      channel: 'manual',
+      externalId: cart.id,
+      title: cart.title,
+      currency: q.currency,
+      ...(cart.customerId ? { customerId: cart.customerId } : {}),
+      lines: q.lines.map((l) => ({ sku: l.sku, name: l.title, qty: l.qty })),
+      // What the quote charged, which is what the flow's shipping step will pick again.
+      ...(q.shippingOption ? { shippingOption: q.shippingOption } : {}),
+      meta: {
+        cart: { id: cart.id },
+        ...(cart.promoCodes.length ? { promoCodes: cart.promoCodes } : {}),
+        ...(cart.shipTo ? { shipTo: cart.shipTo } : {}),
+      },
+    },
+  };
+}
+
+/**
+ * The cart with a fresh quote from its flow's pricing nodes (`quoted`, as the engine worked it
+ * out), quoted for its current version. Lines take the quote's titles and unit prices. Two
+ * warnings join the quote's own issues: promotion codes on a flow with no Apply promotions step,
+ * and a chosen shipping option the flow overrides. With no flow (it was deleted), no quote and an
+ * error saying so.
+ */
+export function quotedCart(
+  cart: Cart,
+  flow: FlowVersion | null,
+  quoted: { quote: CheckoutQuote | null; issues: CheckoutIssue[] },
+): Cart {
+  if (!flow)
+    return {
+      ...cart,
+      quote: null,
+      quotedVersion: cart.version,
+      issues: [{ kind: 'error', code: 'invalid', content: 'The cart’s flow is gone.' }],
+    };
+  const { quote } = quoted;
+  const issues = [...quoted.issues];
+  // Codes on a cart whose flow never applies them would otherwise just sit there.
+  if (cart.promoCodes.length && !quoteNodes(flow).some((n) => n.type === 'commerce.discount'))
+    issues.push({
+      kind: 'warning',
+      code: 'promotion',
+      content:
+        'This cart’s flow has no Apply promotions step, so its codes don’t change the price.',
+      path: '$.promoCodes',
+    });
+  // A flow whose shipping step picks the cheapest or fastest charges that one, whatever was
+  // chosen: say so rather than show a choice the order won't keep.
+  if (cart.shippingOption && quote?.shippingOption && quote.shippingOption !== cart.shippingOption)
+    issues.push({
+      kind: 'warning',
+      code: 'shipping_option',
+      content: `This cart’s flow picks its own shipping option (“${quote.shippingOptions.find((o) => o.id === quote.shippingOption)?.title ?? quote.shippingOption}”), not “${cart.shippingOption}”.`,
+      path: '$.shippingOption',
+    });
+  const lines = quote
+    ? cart.lines.map((l) => {
+        const priced = quote.lines.find((p) => p.id === l.id);
+        return priced ? { ...l, title: priced.title, unitPrice: priced.unitPrice } : l;
+      })
+    : cart.lines;
+  return { ...cart, lines, quote, quotedVersion: cart.version, issues };
+}
+
 export const cartShippingOption = (cart: Cart): string | null =>
   isQuoteCurrent(cart) ? cart.quote!.shippingOption : (cart.shippingOption ?? null);
 
