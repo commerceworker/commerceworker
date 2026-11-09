@@ -66,11 +66,15 @@ describe('aiGateFeedback', () => {
     });
   });
 
-  it('marks nothing for the heuristic, a call without a log entry, or a branch not taken', () => {
+  it('marks nothing for the heuristic, a guard overriding the model, a call without a log entry, or a branch not taken', () => {
     expect(
       aiGateFeedback(state({ ...model, source: 'heuristic' }), 'trust', 'rejected'),
     ).toBeNull();
     expect(aiGateFeedback(state({ ...model, unchecked: true }), 'trust', 'rejected')).toBeNull();
+    // A route guard, not the model, sent it here: the model chose another route.
+    expect(
+      aiGateFeedback(state({ ...model, overridden: 'auto_approve' }), 'trust', 'rejected'),
+    ).toBeNull();
     expect(aiGateFeedback(state({ ...model, logId: undefined }), 'trust', 'rejected')).toBeNull();
     expect(aiGateFeedback(state(model, 'low'), 'trust', 'rejected')).toBeNull();
     expect(aiGateFeedback({ ...state(model), flow: null }, 'trust', 'rejected')).toBeNull();

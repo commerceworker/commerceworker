@@ -1,10 +1,11 @@
 {
-  "$comment": "One real run of tpl-b2b-order: the engine in workerd (AI_MODE=mock) on its input below (the dashboard's \"B2B PO by email\" scenario), stopped at its payment wait. Drawn by apps/docs/src/components/OrderRun.astro; apps/engine/tests/docs-sample-run.test.ts replays it and fails when the engine would now run it differently, and its diff is the update.",
+  "$comment": "One real run of tpl-b2b-order: the engine in workerd (AI_MODE=mock) on its input below (a PO emailed from the customer's own address, which intake resolves to `customerId` without matching a typed name, so the template's auto-approve guard holds), stopped at its payment wait. Drawn by apps/docs/src/components/OrderRun.astro; apps/engine/tests/docs-sample-run.test.ts replays it and fails when the engine would now run it differently, and its diff is the update.",
   "flowId": "tpl-b2b-order",
   "input": {
     "model": "b2b",
     "channel": "email",
     "currency": "USD",
+    "customerId": "cus_northwind",
     "lines": [],
     "meta": {},
     "documentText": "From: Northwind Traders\nSubject: PO #NW-7781\n\nHi team, please ship 120 x WID-100 (industrial widgets), 40 x GSK-010 gasket kits and 8 x WID-200.\nDeliver to dock 4. Thanks, Priya — Purchasing"
@@ -32,7 +33,7 @@
     },
     "extract": {
       "status": "succeeded",
-      "summary": "3 lines · Northwind Traders (heuristic)",
+      "summary": "3 lines (heuristic)",
       "branches": ["out"]
     },
     "validate": {
@@ -77,6 +78,9 @@
       "status": "skipped"
     },
     "approval": {
+      "status": "skipped"
+    },
+    "fast_ok": {
       "status": "skipped"
     },
     "reserve": {

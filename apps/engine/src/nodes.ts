@@ -40,6 +40,7 @@ import {
   type FulfillmentMethod,
   fromBase,
   getPath,
+  guardRoute,
   interpolate,
   money,
   type NodeRegistry,
@@ -49,6 +50,7 @@ import {
   policyRulesSchema,
   type RunContext,
   renderDocument,
+  riskBranch,
   SHIPPING_SELECTIONS,
   type ShippingSelection,
   shippingConfigSchema,
@@ -59,6 +61,7 @@ import {
   threeWayMatch,
   toBase,
   truthy,
+  uncheckedRoute,
   validateOrder,
 } from '@commerceworker/core';
 import * as ai from './ai';
@@ -897,20 +900,17 @@ export const EXECUTORS: Record<string, Exec> = {
     const customer = await pricingStore(env).customer(ctx.order.customerId);
     const { value, ...via } = await ai.riskScore(env, ctx.order, customer, aiCall(i));
     const threshold = num(config.threshold, 70);
-    if (unchecked(via)) {
-      // Scored at least at the threshold, so a condition on `risk` downstream agrees with the branch.
-      const risk = Math.max(value.score, threshold);
+    const { branch, risk } = riskBranch(value.score, threshold, unchecked(via));
+    if (unchecked(via))
       return {
-        branches: ['high'],
+        branches: [branch],
         vars: { risk },
         output: { ...value, ...via, unchecked: true },
         summary: 'Risk not checked: the model was unavailable, so treated as high',
       };
-    }
-    const high = value.score >= threshold;
     return {
-      branches: [high ? 'high' : 'low'],
-      vars: { risk: value.score },
+      branches: [branch],
+      vars: { risk },
       output: { ...value, ...via },
       summary: `Risk ${Math.round(value.score)}${value.reasons[0] ? ` · ${value.reasons[0]}` : ''}`,
     };
@@ -968,19 +968,37 @@ export const EXECUTORS: Record<string, Exec> = {
       aiCall(i),
     );
     if (unchecked(via)) {
-      // A person looks at it if the flow has that route; otherwise the heuristic's choice stands.
-      const route = routes.includes('needs_approval') ? 'needs_approval' : value.route;
+      // A person looks at it if the flow has that route; otherwise the heuristic's choice stands,
+      // held to the same guards as the model's.
+      const picked = uncheckedRoute(routes, value.route);
+      const { route, overridden } = guardRoute(picked, config, routes, ctx);
       const reason =
         route === value.route
           ? value.reason
-          : 'The model was unavailable, so this order goes to approval.';
+          : overridden
+            ? `${overridden}'s guard didn't hold, so this order goes to ${route}.`
+            : 'The model was unavailable, so this order goes to approval.';
       return {
         branches: [route],
-        output: { route, reason, ...via, unchecked: true },
+        output: { route, reason, ...via, unchecked: true, ...(overridden ? { overridden } : {}) },
         summary: `→ ${route} (model unavailable)`,
       };
     }
-    return { branches: [value.route], output: { ...value, ...via }, summary: `→ ${value.route}` };
+    // The model can name only a configured route; a guarded one is taken only if its check holds.
+    const { route, overridden } = guardRoute(value.route, config, routes, ctx);
+    if (overridden)
+      return {
+        branches: [route],
+        output: {
+          ...value,
+          ...via,
+          route,
+          overridden,
+          reason: `The model chose ${overridden} (${value.reason}), but its guard didn't hold.`,
+        },
+        summary: `→ ${route} (${overridden}'s guard didn't hold)`,
+      };
+    return { branches: [route], output: { ...value, ...via }, summary: `→ ${route}` };
   },
 
   'ai.assess': async (i) => {
