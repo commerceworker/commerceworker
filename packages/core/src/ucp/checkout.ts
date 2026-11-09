@@ -5,14 +5,16 @@
  *
  * Discounts (./discount.ts) carry promotion codes in and the promotions the quote applied out.
  *
- * Fulfillment is shipping only: one method covering every line that ships, one destination (the
+ * Fulfillment is shipping, and pickup where the flow offers it (`flowOffersPickup`): a `pickup`
+ * method whose destinations are the stores that hold every physical line, selected by id. Shipping:
+ * one method covering every line that ships, one destination (the
  * ship-to, `dest_1`) and one group (`fg_1`) whose options are the checkout flow's shipping rates.
  */
 
 import { z } from 'zod';
 import type { ShipAddress } from '../address';
 import type { CheckoutIssue, CheckoutPatch, CheckoutSession } from '../checkout';
-import { MAX_CHECKOUT_LINES, MAX_LINE_QUANTITY } from '../checkout';
+import { isPickup, MAX_CHECKOUT_LINES, MAX_LINE_QUANTITY } from '../checkout';
 import { toMinor } from '../money';
 import { discountView, MAX_DISCOUNT_CODES } from './discount';
 import { UCP_VERSION, ucpMessage } from './errors';
@@ -134,6 +136,7 @@ export function selectedInstrument(input: z.infer<typeof ucpCompleteInput>): Ucp
 }
 
 export const DESTINATION_ID = 'dest_1';
+export const PICKUP_METHOD_ID = 'fm_pickup';
 export const SHIPPING_METHOD_ID = 'fm_shipping';
 export const SHIPPING_GROUP_ID = 'fg_1';
 
@@ -176,7 +179,11 @@ export function checkoutPatch(
   capabilities: ReadonlyMap<UcpCapability, string> = new Map(),
 ): CheckoutPatch {
   const b = input.buyer;
-  const shipping = input.fulfillment?.methods?.find((m) => !m.type || m.type === 'shipping');
+  const methods = input.fulfillment?.methods;
+  // A method is named by the id we gave it, else by its type (which an update may leave out).
+  const shipping =
+    methods?.find((m) => m.id === SHIPPING_METHOD_ID) ??
+    methods?.find((m) => m.id !== PICKUP_METHOD_ID && (!m.type || m.type === 'shipping'));
   let shipTo: Partial<ShipAddress> | null = null;
   if (shipping) {
     const dests = shipping.destinations ?? [];
@@ -184,6 +191,12 @@ export function checkoutPatch(
     if (chosen) shipTo = fromPostal(chosen);
     else if (shipping.selected_destination_id === DESTINATION_ID) shipTo = current?.shipTo ?? null;
   }
+  // A pickup method naming a store replaces shipping: the goods are collected, not sent.
+  const pickup = capabilities.has(FULFILLMENT_CAPABILITY)
+    ? methods?.find(
+        (m) => (m.id === PICKUP_METHOD_ID || m.type === 'pickup') && m.selected_destination_id,
+      )
+    : undefined;
   const option = shipping?.groups?.find((g) => g.selected_option_id)?.selected_option_id ?? null;
   return {
     lines: input.line_items.map((l) => ({ id: l.id, sku: l.item.id, qty: l.quantity })),
@@ -193,8 +206,14 @@ export function checkoutPatch(
       ...(b?.last_name ? { lastName: b.last_name } : {}),
       ...(b?.phone_number ? { phone: b.phone_number } : {}),
     },
-    shipTo,
-    shippingOption: option,
+    shipTo: pickup ? null : shipTo,
+    shippingOption: pickup ? null : option,
+    // Update replaces the whole checkout, so a platform that stops sending the store goes back to shipping.
+    ...(capabilities.has(FULFILLMENT_CAPABILITY)
+      ? pickup
+        ? { fulfillment: 'pickup' as const, pickupLocationId: pickup.selected_destination_id! }
+        : { fulfillment: 'ship' as const, pickupLocationId: null }
+      : {}),
     ...(capabilities.has(DISCOUNT_CAPABILITY) ? { promoCodes: input.discounts?.codes ?? [] } : {}),
   };
 }
@@ -253,7 +272,13 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
       ? [{ type: 'discount', display_text: 'Discount', amount: -(itemsOff + shippingOff) }]
       : []),
     ...(q?.ships
-      ? [{ type: 'fulfillment', display_text: 'Shipping', amount: m(q.shipping) + shippingOff }]
+      ? [
+          {
+            type: 'fulfillment',
+            display_text: isPickup(s) ? 'Pickup' : 'Shipping',
+            amount: m(q.shipping) + shippingOff,
+          },
+        ]
       : []),
     { type: 'tax', display_text: 'Tax', amount: m(q?.tax ?? 0) },
     { type: 'total', display_text: 'Total', amount: m(q?.total ?? 0) },
@@ -262,6 +287,26 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
   const fulfills = view.capabilities.has(FULFILLMENT_CAPABILITY) && q?.ships;
   const shippedIds = (q?.lines ?? []).filter((l) => l.ships).map((l) => l.id);
   const selected = s.shippingOption ?? q?.shippingOption ?? null;
+  // The stores the last write found able to take the order (`s.pickupStores`); the one chosen
+  // stays listed once nothing qualifies or the checkout is done.
+  const stores = fulfills ? (s.pickupStores ?? []) : [];
+  const pickupMethod =
+    stores.length || isPickup(s)
+      ? {
+          id: PICKUP_METHOD_ID,
+          type: 'pickup',
+          line_item_ids: shippedIds,
+          destinations: stores.map((st) => ({
+            id: st.id,
+            type: 'business_location',
+            name: st.name,
+            ...(st.postalCode ? { address: { postal_code: st.postalCode } } : {}),
+          })),
+          selected_destination_id: isPickup(s) ? (s.pickupLocationId ?? null) : null,
+          // Nothing to choose beyond the store: collecting costs nothing.
+          groups: [] as { id: string; line_item_ids: string[]; selected_option_id: null }[],
+        }
+      : undefined;
   const fulfillmentView = fulfills
     ? {
         methods: [
@@ -289,8 +334,23 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
               },
             ],
           },
+          ...(pickupMethod ? [pickupMethod] : []),
         ],
-        available_methods: [{ type: 'shipping', line_item_ids: shippedIds }],
+        available_methods: [
+          { type: 'shipping', line_item_ids: shippedIds },
+          ...(pickupMethod
+            ? [
+                {
+                  type: 'pickup',
+                  line_item_ids: shippedIds,
+                  fulfillable_on: 'now',
+                  description: stores.length
+                    ? `Available for pickup at ${stores.map((st) => st.name).join(', ')}`
+                    : 'No store can take every item for pickup right now',
+                },
+              ]
+            : []),
+        ],
       }
     : undefined;
 
@@ -330,6 +390,34 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
       ? { order: { id: s.orderId, permalink_url: view.permalink } }
       : {}),
   };
+}
+
+/**
+ * A pickup method that names line items must name every one that ships: the order is picked up
+ * whole (it holds one fulfillment method), so a method covering some lines would silently pick up
+ * the rest too. A request that names none (create does not) says nothing.
+ */
+export function pickupLineIssues(
+  input: UcpCheckoutInput | undefined,
+  s: CheckoutSession,
+): CheckoutIssue[] {
+  const method = input?.fulfillment?.methods?.find(
+    (m) => (m.id === PICKUP_METHOD_ID || m.type === 'pickup') && m.selected_destination_id,
+  );
+  const named = method?.line_item_ids;
+  if (!Array.isArray(named) || !named.length) return [];
+  const missing = (s.quote?.lines ?? []).filter((l) => l.ships && !named.includes(l.id));
+  return missing.length
+    ? [
+        {
+          kind: 'error',
+          code: 'pickup_unavailable',
+          content: `Pickup covers every item that ships; line_item_ids must also name ${missing.map((l) => l.id).join(', ')}.`,
+          path: '$.fulfillment',
+          severity: 'recoverable',
+        },
+      ]
+    : [];
 }
 
 /** Issues only UCP raises: goods that ship when the platform can't send an address. */

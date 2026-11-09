@@ -17,6 +17,7 @@ import {
   checkAddress,
   type FlowVersion,
   isBuySide,
+  isPickup,
   type Order,
   type OrderChannel,
   type OrderLine,
@@ -76,7 +77,11 @@ export function draftOrder(
           },
         }
       : {}),
-    fulfillment: { method: ships ? 'ship' : 'digital' },
+    fulfillment: !ships
+      ? { method: 'digital' }
+      : isPickup(s)
+        ? { method: 'pickup', locationId: s.pickupLocationId! }
+        : { method: 'ship' },
     ...(s.shippingOption ? { shippingOption: s.shippingOption } : {}),
     meta: {
       ...extra.meta,
@@ -108,7 +113,9 @@ export async function quoteCheckout(
       issues.push(issue('item_unavailable', `${l.sku} is not sold here.`, `$.line_items[${i}]`));
       continue;
     }
-    if (p.kind === 'digital') continue;
+    // A pickup draws on its store's stock, not the warehouse's: the store check in the checkout
+    // (`pickupCheck`) holds it to that.
+    if (p.kind === 'digital' || isPickup(s)) continue;
     const wanted = (held.get(l.sku) ?? 0) + l.qty;
     held.set(l.sku, wanted);
     if (wanted > p.stock - p.reserved)

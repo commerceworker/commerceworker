@@ -5,10 +5,12 @@ import {
   type CheckoutQuote,
   type CheckoutSession,
   checkoutFlowProblem,
+  flowOffersPickup,
   isExpired,
   isOpenCheckout,
   LOOP_INPUT,
   missingInfo,
+  omnichannelOrderFlow,
   openStatus,
   patchCheckout,
   quoteNodes,
@@ -195,5 +197,24 @@ describe('checkoutFlowProblem', () => {
     expect(checkoutFlowProblem(terms)).toMatch(/terms/);
     auth.config = { method: 'card', purpose: 'verify' };
     expect(checkoutFlowProblem(terms)).toMatch(/verifies/);
+  });
+});
+
+describe('flowOffersPickup', () => {
+  it('is true for a flow that routes a pickup and false for one that ships everything', () => {
+    expect(flowOffersPickup(omnichannelOrderFlow())).toBe(true);
+    expect(flowOffersPickup(storefrontOrderFlow())).toBe(false);
+  });
+
+  it('needs the routing step to follow the order and a path out of its pickup branch', () => {
+    const flow = omnichannelOrderFlow();
+    const route = flow.nodes.find((n) => n.type === 'commerce.route_fulfillment')!;
+    const fixed = {
+      ...flow,
+      nodes: flow.nodes.map((n) => (n === route ? { ...n, config: { method: 'ship' } } : n)),
+    };
+    expect(flowOffersPickup(fixed)).toBe(false);
+    const noPath = { ...flow, edges: flow.edges.filter((e) => e.sourceHandle !== 'pickup') };
+    expect(flowOffersPickup(noPath)).toBe(false);
   });
 });

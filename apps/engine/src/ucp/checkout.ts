@@ -15,9 +15,11 @@ import {
   type CheckoutSession,
   checkoutPatch,
   type FlowVersion,
+  FULFILLMENT_CAPABILITY,
   isExpired,
   isFinalCheckout,
   isOpenCheckout,
+  isPickup,
   missingInfo,
   newId,
   ORDER_CAPABILITY,
@@ -26,6 +28,7 @@ import {
   orderPermalink,
   type PlatformCaller,
   patchCheckout,
+  pickupLineIssues,
   protocolIssues,
   selectedInstrument,
   toUcpCheckout,
@@ -43,6 +46,7 @@ import { startOrderOnce } from '../orders';
 import { checkoutSessions, paymentLedger, pricingStore, shippingStore } from '../wire';
 import { CHECKOUT_CURRENCY, paymentHandlers, ucpSettings } from './config';
 import { authorizeCheckout, releaseHold } from './payments';
+import { pickupCheck } from './pickup';
 import { quoteCheckout } from './quote';
 
 export type UcpResult = { status: number; body: unknown };
@@ -91,15 +95,39 @@ async function refresh(
   flow: FlowVersion,
   s: CheckoutSession,
   ctx: UcpContext,
+  input?: UcpCheckoutInput,
 ): Promise<CheckoutSession> {
   const { quote, issues } = await quoteCheckout(env, flow, s);
   const priced = { ...s, quote };
+  // The stores that could take the order are worked out once, here, and kept on the session for
+  // every response; a store the platform chose must be one of them.
+  const pickup = quote?.ships ? await pickupCheck(env, flow, priced) : null;
+  const pickupIssues: CheckoutIssue[] = [
+    ...(pickup?.problem && isPickup(s)
+      ? [
+          {
+            kind: 'error' as const,
+            code: 'pickup_unavailable',
+            content: pickup.problem,
+            path: '$.fulfillment',
+            severity: 'recoverable' as const,
+          },
+        ]
+      : []),
+    ...(isPickup(s) ? pickupLineIssues(input, priced) : []),
+  ];
   const all: CheckoutIssue[] = [
     ...issues,
+    ...pickupIssues,
     ...missingInfo(priced),
     ...protocolIssues(priced, ctx.capabilities),
   ];
-  return { ...priced, issues: all, status: openStatus(all) };
+  return {
+    ...priced,
+    pickupStores: ctx.capabilities.has(FULFILLMENT_CAPABILITY) ? (pickup?.stores ?? []) : [],
+    issues: all,
+    status: openStatus(all),
+  };
 }
 
 async function respond(
@@ -164,6 +192,7 @@ export async function createCheckout(
     flow,
     patchCheckout(empty, checkoutPatch(input, undefined, ctx.capabilities)),
     ctx,
+    input,
   );
   // Nothing in it can be bought: there is no checkout to create.
   const unavailable = s.issues.filter((i) => i.code === 'item_unavailable');
@@ -205,7 +234,7 @@ export async function updateCheckout(
   const flow = await checkoutFlow(env, settings);
   if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
   const patch: CheckoutPatch = checkoutPatch(input, s, ctx.capabilities);
-  const next = await refresh(env, flow, bump(patchCheckout(s, patch), {}), ctx);
+  const next = await refresh(env, flow, bump(patchCheckout(s, patch), {}), ctx, input);
   if (!(await save(env, next, s.version))) return raced();
   return respond(env, next, ctx, 200, settings);
 }
@@ -315,7 +344,11 @@ export async function completeCheckout(
           ...(name ? { name } : {}),
           ...(claimed.buyer.phone ? { phone: claimed.buyer.phone } : {}),
         },
-        fulfillment: { method: q.ships ? 'ship' : 'digital' },
+        fulfillment: !q.ships
+          ? { method: 'digital' }
+          : isPickup(claimed)
+            ? { method: 'pickup', locationId: claimed.pickupLocationId! }
+            : { method: 'ship' },
         ...((claimed.shippingOption ?? q.shippingOption)
           ? { shippingOption: (claimed.shippingOption ?? q.shippingOption)! }
           : {}),

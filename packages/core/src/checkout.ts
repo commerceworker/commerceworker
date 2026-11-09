@@ -121,6 +121,9 @@ export type CheckoutQuote = {
   discounts?: { applied: QuoteDiscount[]; refused: { code: string; reason: string }[] };
 };
 
+/** A store offered for pickup. */
+export type PickupStore = { id: string; name: string; postalCode?: string };
+
 export type CheckoutSession = {
   id: string;
   /** Who opened it: the protocol's caller (a UCP platform). */
@@ -132,6 +135,10 @@ export type CheckoutSession = {
   fulfillment: FulfillmentMethod;
   shipTo: Partial<ShipAddress> | null;
   shippingOption: string | null;
+  /** The store the buyer collects from, when `fulfillment` is `pickup`. */
+  pickupLocationId?: string | null;
+  /** The stores that could take the whole order for pickup, as of the last write. */
+  pickupStores?: PickupStore[];
   /** Promotion codes as the platform sent them; unset for a session that never had any. */
   promoCodes?: string[];
   quote: CheckoutQuote | null;
@@ -151,6 +158,8 @@ export type CheckoutPatch = {
   buyer?: CheckoutBuyer;
   shipTo?: Partial<ShipAddress> | null;
   shippingOption?: string | null;
+  fulfillment?: FulfillmentMethod;
+  pickupLocationId?: string | null;
   promoCodes?: string[];
 };
 
@@ -185,9 +194,15 @@ export function patchCheckout(s: CheckoutSession, patch: CheckoutPatch): Checkou
     buyer: patch.buyer ? { ...patch.buyer } : s.buyer,
     shipTo: patch.shipTo !== undefined ? patch.shipTo : s.shipTo,
     shippingOption: patch.shippingOption !== undefined ? patch.shippingOption : s.shippingOption,
+    ...(patch.fulfillment !== undefined ? { fulfillment: patch.fulfillment } : {}),
+    ...(patch.pickupLocationId !== undefined ? { pickupLocationId: patch.pickupLocationId } : {}),
     ...(patch.promoCodes !== undefined ? { promoCodes: patch.promoCodes } : {}),
   };
 }
+
+/** Whether the buyer chose to collect the physical lines from a store. */
+export const isPickup = (s: Pick<CheckoutSession, 'fulfillment' | 'pickupLocationId'>) =>
+  s.fulfillment === 'pickup' && !!s.pickupLocationId;
 
 /** What a ship-to needs before anything ships to it; the rest (name, line 2, region) is optional. */
 export const ADDRESS_FIELDS = ['line1', 'city', 'postalCode', 'country'] as const;
@@ -214,7 +229,8 @@ export function missingInfo(s: CheckoutSession): CheckoutIssue[] {
   if (!s.lines.length) out.push(missing('$.line_items', 'Add at least one line item.'));
   if (!s.buyer.email) out.push(missing('$.buyer.email', "The buyer's email is required."));
   const q = s.quote;
-  if (q?.ships) {
+  // A pickup needs a store (checked by the protocol layer), not an address or a shipping option.
+  if (q?.ships && !isPickup(s)) {
     if (!isCompleteAddress(s.shipTo))
       out.push(missing('$.fulfillment', 'A complete shipping address is required.'));
     if (q.shippingOptions.length && !s.shippingOption && !q.shippingOption)
@@ -295,4 +311,22 @@ export function checkoutFlowProblem(graph: FlowGraph): string | null {
   if (authorize.config?.purpose === 'verify')
     return 'The checkout flow only verifies the card; it must hold the payment to capture it later.';
   return null;
+}
+
+/**
+ * Whether the flow can fulfil a pickup, so a checkout may offer one: it has a Route fulfillment
+ * step (`commerce.route_fulfillment`) that follows the order's own method (`from_order`, the
+ * default; a step fixed to one method would send every order the same way) and an edge out of its
+ * `pickup` branch, which is the path that holds the goods at the store and readies them. A flow
+ * with no such path (the storefront template ships everything) offers no pickup.
+ */
+export function flowOffersPickup(graph: FlowGraph): boolean {
+  return graph.nodes.some((n) => {
+    if (n.type !== 'commerce.route_fulfillment') return false;
+    const method = n.config?.method ?? 'from_order';
+    return (
+      method === 'from_order' &&
+      graph.edges.some((e) => e.source === n.id && e.sourceHandle === 'pickup')
+    );
+  });
 }

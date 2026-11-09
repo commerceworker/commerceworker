@@ -115,6 +115,21 @@ describe('routing fulfillment', () => {
     expect(r).toMatchObject({ branches: ['pickup'], locationId: 'soho', locationName: 'Soho' });
   });
 
+  it('adds up the lines of one SKU before checking a store holds them', async () => {
+    // Soho holds one TEE: two lines of one each need two.
+    const two = order(
+      [
+        { sku: 'TEE', qty: 1 },
+        { sku: 'TEE', qty: 1 },
+      ],
+      'soho',
+    );
+    expect(await routeFulfillment(ports(), two, 'pickup')).toMatchObject({
+      branches: ['unavailable'],
+      reason: 'Soho does not have every item',
+    });
+  });
+
   it("refuses pickup at a store that doesn't offer it, or that is missing a line", async () => {
     expect(
       await routeFulfillment(ports(), order([{ sku: 'TEE', qty: 1 }], 'outlet'), 'pickup'),

@@ -23,6 +23,7 @@ import { eraseDataSubject, exportDataSubject } from '../src/subjects';
 import { ucpProfile } from '../src/ucp/config';
 import { signed } from './principal';
 import {
+  address,
   db,
   enableUcp,
   key,
@@ -628,5 +629,30 @@ describe('UCP discounts', () => {
     }, 'the return window');
     expect(state.order!.meta?.promoCodes).toEqual([SAVE]);
     expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
+  });
+});
+
+describe('UCP pickup on a flow without a pickup path', () => {
+  it('offers no pickup, and refuses a store the platform names', async () => {
+    const r = await ucp(alpha, 'POST', '/ucp/v1/checkout-sessions', {
+      ...monitorCheckout,
+      fulfillment: {
+        methods: [
+          { type: 'shipping', destinations: [address] },
+          { type: 'pickup', selected_destination_id: 'loc_soho' },
+        ],
+      },
+    });
+    // No store is offered; the one named stays on the checkout beside the error.
+    const pickup = r.body.fulfillment.methods.find((m: { type: string }) => m.type === 'pickup');
+    expect(pickup).toMatchObject({ destinations: [], selected_destination_id: 'loc_soho' });
+    const plain = (await ucp(alpha, 'POST', '/ucp/v1/checkout-sessions', monitorCheckout)).body;
+    expect(plain.fulfillment.methods.map((m: { type: string }) => m.type)).toEqual(['shipping']);
+    expect(plain.fulfillment.available_methods).toEqual([
+      { type: 'shipping', line_item_ids: [plain.line_items[0].id] },
+    ]);
+    expect(r.body.messages).toEqual([
+      expect.objectContaining({ code: 'pickup_unavailable', path: '$.fulfillment' }),
+    ]);
   });
 });
