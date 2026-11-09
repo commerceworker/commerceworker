@@ -3,10 +3,15 @@
  * D1: `inbound_emails`, `payment_events` and `ai_usage`. Moved here from the engine. The contract
  * in @commerceworker/test-kit/commerce holds these and the in-memory stores to the same behaviour.
  */
-import type { IntakeLog, PaymentEventLog, UsageStore } from '@commerceworker/ports/commerce';
+import type {
+  IntakeLog,
+  PaymentEventLog,
+  UsageStore,
+  WebhookReceipts,
+} from '@commerceworker/ports/commerce';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { createDb } from './index';
-import { aiUsage, inboundEmails, paymentEvents } from './schema';
+import { aiUsage, inboundEmails, paymentEvents, webhookReceipts } from './schema';
 
 export function d1IntakeLog(d1: D1Database): IntakeLog {
   const d = createDb(d1);
@@ -63,6 +68,27 @@ export function d1UsageStore(d1: D1Database): UsageStore {
         .where(lt(aiUsage.day, beforeDay))
         .returning({ day: aiUsage.day });
       return gone.length;
+    },
+  };
+}
+
+export function d1WebhookReceipts(d1: D1Database): WebhookReceipts {
+  const d = createDb(d1);
+  return {
+    async claim(id, now, ttlMs) {
+      // Expired receipts go first, in the same batch: an old one never blocks a new claim.
+      const [, claimed] = await d.batch([
+        d.delete(webhookReceipts).where(lt(webhookReceipts.receivedAt, now - ttlMs)),
+        d
+          .insert(webhookReceipts)
+          .values({ id, receivedAt: now })
+          .onConflictDoNothing()
+          .returning({ id: webhookReceipts.id }),
+      ]);
+      return claimed.length > 0;
+    },
+    async release(id) {
+      await d.delete(webhookReceipts).where(eq(webhookReceipts.id, id));
     },
   };
 }

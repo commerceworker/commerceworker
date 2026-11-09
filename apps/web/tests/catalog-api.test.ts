@@ -35,7 +35,6 @@ vi.mock('cloudflare:workers', () => ({ env: {} }));
 vi.mock('~/lib/env.server', () => ({
   catalog: () => catalog,
   engine: () => engine,
-  db: () => ({}),
   afterResponse: () => {},
 }));
 vi.mock('~/lib/flows.server', () => ({ ensureSeeded: async () => {}, listFlows: async () => [] }));

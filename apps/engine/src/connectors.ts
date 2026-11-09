@@ -8,18 +8,10 @@
  * "payment_decline", "charge_fail", "out_of_stock", "three_way_mismatch".
  */
 
-import { voidOpenLabels } from '@commerceworker/application/commerce';
+import * as uc from '@commerceworker/application/commerce';
 import { newId, type Order } from '@commerceworker/core';
-import { voidInvoices } from './billing';
-import { voidAuthorizations } from './payments';
-import {
-  balanceStore,
-  commercePorts,
-  fulfillmentStore,
-  inventoryStore,
-  marketplaceStore,
-  shippingStore,
-} from './wire';
+import { paymentMode } from './payments';
+import { commercePorts, invoiceStore, paymentLedger } from './wire';
 
 export const simulate = (order: Order) => String(order.meta?.simulate ?? '');
 
@@ -60,38 +52,19 @@ export {
 // Documents are rendered by core (`renderDocument`) and filed through the documents port; messages
 // go through the message port. Both are bound in ./wire.ts: `documentStore(env)`, `messageStore(env)`.
 
-/** Undo everything compensable for an order (cancel path; Workflow rollback covers failures). */
-export async function compensateOrder(env: Env, orderId: string) {
-  // First, so a label a provider made is voided there before its shipment reads as cancelled.
-  const labels = await voidOpenLabels(commercePorts(env), orderId);
-  const [released, voided, cancelled, sellerOrdersCancelled, payoutsReversed, revoked, invoices] =
-    await Promise.all([
-      inventoryStore(env).release(orderId),
-      voidAuthorizations(env, orderId),
-      shippingStore(env).cancelOpen(orderId),
-      marketplaceStore(env).cancel(orderId),
-      marketplaceStore(env).reversePayouts(orderId),
-      fulfillmentStore(env).revokeEntitlements(orderId),
-      voidInvoices(env, orderId),
-    ]);
-  // After the void, so an invoice found paid in Stripe keeps its (settled) account charge.
-  const unbilled = await balanceStore(env).reverse(orderId);
-  // After the cancel above, so a shipment it cancelled no longer holds the stock.
-  const restored = await inventoryStore(env).restoreShipped(orderId);
-  return {
-    released,
-    voided,
-    // Shipments voided at their provider were cancelled with the void.
-    cancelled: cancelled + labels.voided,
-    restored,
-    sellerOrdersCancelled,
-    payoutsReversed,
-    revoked,
-    unbilled,
-    invoicesVoided: invoices.voided,
-    invoicesPaid: invoices.paid,
-    labelsNotVoided: labels.failed,
-  };
-}
+/**
+ * Undo everything compensable for an order (cancel path; Workflow rollback covers failures): the
+ * `compensateOrder` use-case (@commerceworker/application/commerce) over this deployment's ports.
+ */
+export const compensateOrder = (env: Env, orderId: string) =>
+  uc.compensateOrder(
+    {
+      ...commercePorts(env),
+      ledger: paymentLedger(env),
+      mode: paymentMode(env),
+      invoices: invoiceStore(env),
+    },
+    orderId,
+  );
 
 export const idFor = newId;

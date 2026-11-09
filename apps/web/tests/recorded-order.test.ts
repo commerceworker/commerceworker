@@ -2,7 +2,7 @@ import type { FlowGraph } from '@commerceworker/core';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
-vi.mock('~/lib/env.server', () => ({ db: () => ({}) }));
+vi.mock('~/lib/env.server', () => ({}));
 
 const { recordedEdges, recordedReversals, recordedRuns } = await import('../app/lib/orders.server');
 const { clearRightEdge } = await import('../app/components/flow-canvas');

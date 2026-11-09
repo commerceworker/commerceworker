@@ -42,38 +42,16 @@ const engine = {
   cancelCart: vi.fn(),
 };
 
-const receipts = new Set<string>();
-/** Just enough of drizzle for the webhook receipts: claim with insert, release with delete. */
-const fakeDb = {
-  insert: () => ({
-    values: (v: { id: string }) => ({
-      onConflictDoNothing: () => ({
-        returning: async () => {
-          if (receipts.has(v.id)) return [];
-          receipts.add(v.id);
-          return [v];
-        },
-      }),
-    }),
-  }),
-  delete: () => ({
-    where: async (cond: { eq?: string }) => {
-      if (cond.eq) receipts.delete(cond.eq);
-    },
-  }),
-};
-// The release deletes by id (`eq`); the prune by age (`lt`) leaves fresh receipts alone.
-vi.mock('drizzle-orm', async (actual) => ({
-  ...(await actual<typeof import('drizzle-orm')>()),
-  eq: (_col: unknown, value: string) => ({ eq: value }),
-  lt: () => ({}),
-}));
+/** The signed webhooks already taken, in memory: claimed on delivery, given back on failure. */
+const { InMemoryWebhookReceipts } = await import('@commerceworker/test-kit/commerce');
+let receipts = new InMemoryWebhookReceipts();
+vi.mock('~/lib/wire.server', () => ({ webhookReceipts: () => receipts }));
 const env: Record<string, unknown> = {};
 /** The actor a binding call carries, as the engine reads it (local dev's key in tests). */
 const actorOf = (signed: string, call: string) => verifyRpcActor([DEV_PRINCIPAL_KEY], signed, call);
 
 vi.mock('cloudflare:workers', () => ({ env }));
-vi.mock('~/lib/env.server', () => ({ engine: () => engine, db: () => fakeDb }));
+vi.mock('~/lib/env.server', () => ({ engine: () => engine }));
 vi.mock('~/lib/flows.server', () => ({ ensureSeeded: async () => {}, listFlows: async () => [] }));
 vi.mock('~/lib/orders.server', () => ({ currencies: async () => [], listOrders: async () => [] }));
 const audit = vi.fn();
@@ -546,7 +524,7 @@ describe('signed events', () => {
     );
 
   beforeEach(() => {
-    receipts.clear();
+    receipts = new InMemoryWebhookReceipts();
     engine.sendEvent.mockReset();
   });
 

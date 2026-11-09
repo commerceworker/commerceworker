@@ -75,7 +75,8 @@ describe('the content type delete job card', () => {
     expect(
       await screen.findByText('“Note” was deleted, with its entries', undefined, { timeout: 5000 }),
     ).toBeTruthy();
-    expect(onSettled).toHaveBeenCalledTimes(1);
+    // Settling runs in an effect after the render that shows the outcome: wait for it.
+    await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/Deleting the content type/)).toBeNull();
   });
 

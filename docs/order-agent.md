@@ -50,7 +50,10 @@ state and call methods, never write state.
 ## Reports
 
 `report(r)` merges a report from the Workflow (see
-[Order Workflow](workflow.md#reports-to-the-agent)):
+[Order Workflow](workflow.md#reports-to-the-agent)) with `foldReport`
+(`packages/core/src/order-report.ts`, unit tested in `packages/core/tests/order-report.test.ts`), a
+pure step; the agent then appends the timeline lines it returns, records the run it says finished,
+and syncs the index:
 
 - **Sequenced** reports (with `seq`) are fresh if they come from a newer generation, or the same
   generation with a higher `seq`. Only fresh ones update `plan`, `order` and `vars`. A plan never
@@ -184,7 +187,7 @@ when nothing waits yet and the order hasn't ended.
 ## Cancel
 
 `cancel` terminates the Workflow instance (logging, not failing, if that throws), runs
-`compensateOrder` (release held stock, void open authorizations, cancel booked shipments and staged pickups, cancel seller orders, reverse scheduled payouts, revoke issued digital codes, void unpaid Stripe invoices, restock consumed stock once no shipment is live, then reverse on-account invoice charges not already settled by a paid invoice), marks
+`compensateOrder` (the use-case in `packages/application/src/commerce/compensate-order.ts`, unit tested over the in-memory stores: release held stock, void open authorizations, cancel booked shipments and staged pickups, cancel seller orders, reverse scheduled payouts, revoke issued digital codes, void unpaid Stripe invoices, restock consumed stock once no shipment is live, then reverse on-account invoice charges not already settled by a paid invoice), marks
 every pending approval row `cancelled`, sets status `cancelled` with the reason and clears the
 waits. Terminating means no End node runs, so the agent announces the ending itself: it schedules
 `emitWebhook` for `order.cancelled`. A second `cancel` that arrives while the first is still running returns `{ ok: false }` without doing anything.

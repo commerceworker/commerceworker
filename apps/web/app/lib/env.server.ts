@@ -1,7 +1,6 @@
 import { env, waitUntil } from 'cloudflare:workers';
 import type { EngineRpc } from '@commerceworker/core';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
-import { createDb } from '@commerceworker/db';
 
 /** The engine Worker, typed by the shared RPC contract. */
 export function engine(): EngineRpc & Pick<Fetcher, 'fetch'> {
@@ -19,10 +18,6 @@ export function catalog(): ProductCatalogRpc {
  */
 export function passwordPepper(): string | undefined {
   return (env as { PASSWORD_PEPPER?: string }).PASSWORD_PEPPER || undefined;
-}
-
-export function db() {
-  return createDb(env.DB);
 }
 
 export function docs() {

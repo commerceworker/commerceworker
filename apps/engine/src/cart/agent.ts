@@ -16,7 +16,6 @@ import {
   atLeast,
   attachmentName,
   attachmentProblem,
-  CART_CHANGED_SINCE_CONFIRM,
   CART_CHAT_BROADCAST,
   CART_EVENT_RETRIES,
   CART_START_TTL_MS,
@@ -39,9 +38,12 @@ import {
   canRemoveAttachment,
   cartAttachmentKey,
   cartAttachmentPrefix,
+  cartCancelProblem,
   cartEventRetryDelaySec,
   cartIndexRow,
+  cartOrderStart,
   cartReadyProblem,
+  cartSubmitProblem,
   cartSummary,
   chatBody,
   checkCartReturn,
@@ -58,7 +60,7 @@ import {
   newId,
   type PluginCart,
   type ProxiedPrincipal,
-  quoteNodes,
+  quotedCart,
   storedCart,
 } from '@commerceworker/core';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
@@ -627,16 +629,9 @@ export class CartAgent extends Agent<Env, CartState> {
     /** The version the person confirmed (a confirmed preview): refused when the cart moved on. */
     confirmedVersion?: number,
   ): Promise<{ ok: true; orderId: string } | { ok: false; error: string }> {
-    if (actor.kind !== 'staff' || !atLeast(actor.role, 'operator'))
-      return { ok: false, error: 'This needs the Operator role.' };
-    if (this.submitting) return { ok: false, error: 'The cart is being submitted.' };
     const c = this.cart();
-    if (confirmedVersion !== undefined && c.version !== confirmedVersion)
-      return { ok: false, error: CART_CHANGED_SINCE_CONFIRM };
-    if (c.external) return { ok: false, error: 'An external cart goes back to its buyer.' };
-    const problem = cartReadyProblem(c);
+    const problem = cartSubmitProblem(c, actor, { submitting: this.submitting, confirmedVersion });
     if (problem) return { ok: false, error: problem };
-    const q = c.quote!;
     const held = c;
     // Held before the first await, so no op or cancel lands between the check and the start.
     this.submitting = true;
@@ -644,27 +639,7 @@ export class CartAgent extends Agent<Env, CartState> {
     try {
       const flow = await loadFlowVersion(this.env, c.flowId);
       if (!flow) throw new Error('The cart’s flow is gone.');
-      const started = await startOrderOnce(this.env, {
-        flowId: flow.id,
-        idempotencyKey: `cart:${c.id}`,
-        startedBy: actor.id,
-        input: {
-          model: flow.model,
-          channel: 'manual',
-          externalId: c.id,
-          title: c.title,
-          currency: q.currency,
-          ...(c.customerId ? { customerId: c.customerId } : {}),
-          lines: q.lines.map((l) => ({ sku: l.sku, name: l.title, qty: l.qty })),
-          // What the quote charged, which is what the flow's shipping step will pick again.
-          ...(q.shippingOption ? { shippingOption: q.shippingOption } : {}),
-          meta: {
-            cart: { id: c.id },
-            ...(c.promoCodes.length ? { promoCodes: c.promoCodes } : {}),
-            ...(c.shipTo ? { shipTo: c.shipTo } : {}),
-          },
-        },
-      });
+      const started = await startOrderOnce(this.env, cartOrderStart(c, flow, actor));
       if ('mismatch' in started) throw new Error('This cart already started a different order.');
       await this.save(
         finishCart(held, { status: 'submitted', orderId: started.orderId }, Date.now()),
@@ -724,11 +699,9 @@ export class CartAgent extends Agent<Env, CartState> {
   }
 
   async cancelAs(actor: CartActor): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (actor.kind !== 'staff' || !atLeast(actor.role, 'operator'))
-      return { ok: false, error: 'This needs the Operator role.' };
-    if (this.submitting) return { ok: false, error: 'The cart is being submitted.' };
     const c = this.cart();
-    if (isFinalCart(c)) return { ok: false, error: `The cart is ${c.status}.` };
+    const problem = cartCancelProblem(c, actor, { submitting: this.submitting });
+    if (problem) return { ok: false, error: problem };
     await this.save(finishCart(c, { status: 'canceled' }, Date.now()), 'cart.canceled');
     return { ok: true };
   }
@@ -744,48 +717,15 @@ export class CartAgent extends Agent<Env, CartState> {
     const c = this.cart();
     const flow = await loadFlowVersion(this.env, c.flowId);
     if (!flow) {
-      await this.save({
-        ...c,
-        quote: null,
-        quotedVersion: c.version,
-        issues: [{ kind: 'error', code: 'invalid', content: 'The cart’s flow is gone.' }],
-      });
+      await this.save(quotedCart(c, null, { quote: null, issues: [] }));
       return;
     }
-    const { quote, issues: found } = c.lines.length
+    const quoted = c.lines.length
       ? await quoteCheckout(this.env, flow, cartSession(c), cartDraftExtra(c))
       : { quote: null, issues: [] };
-    const issues = [...found];
-    // Codes on a cart whose flow never applies them would otherwise just sit there.
-    if (c.promoCodes.length && !quoteNodes(flow).some((n) => n.type === 'commerce.discount'))
-      issues.push({
-        kind: 'warning',
-        code: 'promotion',
-        content:
-          'This cart’s flow has no Apply promotions step, so its codes don’t change the price.',
-        path: '$.promoCodes',
-      });
-    // A flow whose shipping step picks the cheapest or fastest charges that one, whatever was
-    // chosen: say so rather than show a choice the order won't keep.
-    if (c.shippingOption && quote?.shippingOption && quote.shippingOption !== c.shippingOption)
-      issues.push({
-        kind: 'warning',
-        code: 'shipping_option',
-        content: `This cart’s flow picks its own shipping option (“${quote.shippingOptions.find((o) => o.id === quote.shippingOption)?.title ?? quote.shippingOption}”), not “${c.shippingOption}”.`,
-        path: '$.shippingOption',
-      });
+    // A quote finished after the cart changed again is dropped: that change priced it anew.
     if (this.state.cart?.version !== c.version) return;
-    const now = this.cart();
-    const lines = quote
-      ? now.lines.map((l) => {
-          const priced = quote.lines.find((p) => p.id === l.id);
-          return priced ? { ...l, title: priced.title, unitPrice: priced.unitPrice } : l;
-        })
-      : now.lines;
-    this.setState({
-      ...this.state,
-      cart: { ...now, lines, quote, quotedVersion: now.version, issues },
-    });
+    this.setState({ ...this.state, cart: quotedCart(this.cart(), flow, quoted) });
   }
 
   // ── The cart's socket ──

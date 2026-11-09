@@ -2,12 +2,22 @@
  * The behaviour the logs keep: the in-memory stores run it in node and the D1 stores in workerd
  * (packages/db). Ids start `lg_`.
  */
-import type { IntakeLog, PaymentEventLog, UsageStore } from '@commerceworker/ports/commerce';
+import type {
+  IntakeLog,
+  PaymentEventLog,
+  UsageStore,
+  WebhookReceipts,
+} from '@commerceworker/ports/commerce';
 import { describe, expect, it } from 'vitest';
 
 export function describeLogsContract(
   name: string,
-  make: () => Promise<{ intake: IntakeLog; events: PaymentEventLog; usage: UsageStore }>,
+  make: () => Promise<{
+    intake: IntakeLog;
+    events: PaymentEventLog;
+    usage: UsageStore;
+    receipts: WebhookReceipts;
+  }>,
 ) {
   describe(`${name}: the logs contract`, () => {
     it('records an inbound email once by its message id', async () => {
@@ -32,6 +42,19 @@ export function describeLogsContract(
       await events.link('lg_evt_1', 'ord_1');
       await events.release('lg_evt_1');
       expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 3)).toBe(true);
+    });
+
+    it('takes a signed webhook once, gives back a failed one, and lets an expired one go', async () => {
+      const { receipts } = await make();
+      const T = 9_000_000_000_000;
+      const TTL = 600_000;
+      expect(await receipts.claim('lg_sig_1', T, TTL)).toBe(true);
+      expect(await receipts.claim('lg_sig_1', T + 1, TTL)).toBe(false);
+      await receipts.release('lg_sig_1');
+      expect(await receipts.claim('lg_sig_1', T + 2, TTL)).toBe(true);
+      // Past the window, the old receipt is dropped and the id taken afresh.
+      expect(await receipts.claim('lg_sig_1', T + 2 + TTL + 1, TTL)).toBe(true);
+      expect(await receipts.claim('lg_sig_2', T + 2 + TTL + 1, TTL)).toBe(true);
     });
 
     it("adds a person's tokens per day, and prunes old days", async () => {

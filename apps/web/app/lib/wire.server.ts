@@ -13,6 +13,7 @@ import { d1BackOffice } from '@commerceworker/db/back-office';
 import { d1CartRecords } from '@commerceworker/db/cart-records';
 import { d1FlowStore } from '@commerceworker/db/flow-store';
 import { d1IntegrationStore } from '@commerceworker/db/integration-store';
+import { d1WebhookReceipts } from '@commerceworker/db/logs';
 import { d1OrderBoard } from '@commerceworker/db/order-board';
 import { d1OrderRecords } from '@commerceworker/db/order-records';
 import { d1PasskeyStore } from '@commerceworker/db/passkey-store';
@@ -39,6 +40,7 @@ import type {
   ScimDirectory,
   UcpStore,
   WebhookOutbox,
+  WebhookReceipts,
   WorkspaceStore,
 } from '@commerceworker/ports/commerce';
 
@@ -95,3 +97,6 @@ export const auditLog = (): AuditLog => d1AuditLog(env.DB);
 
 /** The signed health check's write to D1 and back (`probeDb`). */
 export const d1Writable = (id: string) => probeDb(createDb(env.DB), id);
+
+/** Signed webhooks already taken, so a replayed signature is refused. */
+export const webhookReceipts = (): WebhookReceipts => d1WebhookReceipts(env.DB);

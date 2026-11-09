@@ -44,32 +44,25 @@ test('the composition root does bind the D1 adapters', () => {
   assert.match(readFileSync(COMPOSITION_ROOT, 'utf8'), D1_ADAPTERS);
 });
 
-// The web app is moving onto the same ports, slice by slice (ROADMAP, P1): its composition root is
-// apps/web/app/lib/wire.server.ts. Files still reaching D1 themselves (through `@commerceworker/db`,
-// `db()` from env.server.ts, or the `DB` binding) are listed here until they move. The list only
-// shrinks: a new file can't reach D1, and a moved file must come off it.
+// The web app follows the same rule: its composition root is apps/web/app/lib/wire.server.ts, the
+// one web file that imports the D1 adapters (`@commerceworker/db` or a subpath), calls `createDb` or
+// touches the `DB` binding. Everything else asks the root for a port.
 const WEB = 'apps/web/app';
-const WEB_ROOTS = new Set([join(WEB, 'lib/wire.server.ts'), join(WEB, 'lib/env.server.ts')]);
-const WEB_PENDING = new Set([
-  'apps/web/app/lib/api.server.ts',
-]);
+const WEB_ROOT = join(WEB, 'lib/wire.server.ts');
 const WEB_D1 = (src: string) =>
-  D1_ADAPTERS.test(src) || /\bdb\(\)/.test(src) || D1_BINDING.test(src);
+  D1_ADAPTERS.test(src) || /\bcreateDb\(|\bdb\(\)/.test(src) || D1_BINDING.test(src);
 
-test('the web app reaches D1 only through its composition root, apart from files still moving', () => {
+test('the web app reaches D1 only through its composition root', () => {
   const reaching = files(WEB)
-    .filter((f) => !WEB_ROOTS.has(f))
+    .filter((f) => f !== WEB_ROOT)
     .filter((f) => WEB_D1(readFileSync(f, 'utf8')));
-  const unlisted = reaching.filter((f) => !WEB_PENDING.has(f));
   assert.deepEqual(
-    unlisted,
+    reaching,
     [],
-    `Reach D1 through a port bound in apps/web/app/lib/wire.server.ts:\n${unlisted.join('\n')}`,
+    `Reach D1 through a port bound in apps/web/app/lib/wire.server.ts:\n${reaching.join('\n')}`,
   );
-  const moved = [...WEB_PENDING].filter((f) => !reaching.includes(f));
-  assert.deepEqual(
-    moved,
-    [],
-    `These no longer reach D1: take them off WEB_PENDING:\n${moved.join('\n')}`,
-  );
+});
+
+test('the web composition root does bind the D1 adapters', () => {
+  assert.match(readFileSync(WEB_ROOT, 'utf8'), D1_ADAPTERS);
 });
