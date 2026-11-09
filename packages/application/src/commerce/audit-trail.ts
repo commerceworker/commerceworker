@@ -2,8 +2,22 @@
  * Reading the audit trail: the events, and whether its hash chain holds. The REST route and the
  * MCP tools both call these, so the two transports show the same thing.
  */
-import { type AuditChainCheck, verifyAuditChain } from '@commerceworker/core';
+import {
+  type AuditChainCheck,
+  type BusinessAuditAction,
+  verifyAuditChain,
+} from '@commerceworker/core';
 import type { AuditEvent, AuditLog } from '@commerceworker/ports/commerce';
+
+/**
+ * An audit event a use-case asks its caller to record once the change is made: the channel adds
+ * who acted and how it got in (`via`), so the REST API and MCP write the same action and detail.
+ */
+export type AuditDraft = {
+  action: BusinessAuditAction;
+  target?: string;
+  detail: Record<string, unknown>;
+};
 
 /** Sealed events checked per call; `next` continues from where one stopped. */
 export const VERIFY_BATCH = 2000;

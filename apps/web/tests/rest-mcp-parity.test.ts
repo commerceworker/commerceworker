@@ -4,7 +4,12 @@
  * allowed only where it is listed here with why; a field one side gains is a failure until the
  * other takes it too, or it is listed.
  */
-import { cartOpSchema, REST_OPERATION_TOOLS, TOOL_INPUTS } from '@commerceworker/core';
+import {
+  cartOpSchema,
+  REST_OPERATION_TOOLS,
+  TOOL_INPUTS,
+  ucpSettingsSchema,
+} from '@commerceworker/core';
 import {
   catalogCategoriesDeleteInput,
   catalogCategoriesInput,
@@ -132,6 +137,32 @@ const PAIRS: {
     tool: 'discard_product_edits',
     body: catalogDiscardInput,
     path: ['what'],
+  },
+  {
+    rest: 'POST /ucp/settings',
+    tool: 'set_ucp_settings',
+    // The one schema: REST parses its body with it and MCP takes it as the tool's input.
+    body: ucpSettingsSchema,
+    path: [],
+  },
+  // The removals and revocations take only the id in the path.
+  {
+    rest: 'DELETE /webhook-subscriptions/{id}',
+    tool: 'delete_webhook_subscription',
+    body: z.object({}),
+    path: ['subscriptionId'],
+  },
+  {
+    rest: 'DELETE /integrations/{id}',
+    tool: 'revoke_integration',
+    body: z.object({}),
+    path: ['integrationId'],
+  },
+  {
+    rest: 'DELETE /ucp/platforms/{id}',
+    tool: 'revoke_ucp_platform',
+    body: z.object({}),
+    path: ['platformId'],
   },
 ];
 

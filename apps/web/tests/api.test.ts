@@ -68,7 +68,7 @@ vi.mock('~/lib/carts.server', () => ({
   isCartStatus: (v: unknown) =>
     ['open', 'locked', 'submitted', 'returned', 'canceled'].includes(v as string),
 }));
-const webhooks = { rotateSubscription: vi.fn() };
+const webhooks = { rotateSubscription: vi.fn(), deleteSubscription: vi.fn() };
 vi.mock('~/lib/webhooks.server', () => webhooks);
 
 const scope = { events: ['payment.received'], startOrders: false, flows: [], channel: null };
@@ -103,6 +103,14 @@ const integrations = {
   listIntegrations: vi.fn(),
 };
 vi.mock('~/lib/integrations.server', () => integrations);
+
+const ucp = {
+  ucpAdmin: vi.fn(),
+  setUcpSettings: vi.fn(),
+  revokePlatform: vi.fn(),
+  addPlatform: vi.fn(),
+};
+vi.mock('~/lib/ucp.server', () => ucp);
 
 const { handleApi, handleSignedEvent } = await import('~/lib/api.server');
 const { signWebhook } = await import('@commerceworker/core');
@@ -717,7 +725,11 @@ describe('integrations over REST', () => {
     expect((await post('integrations/int_new/rotate', {}, admin)).status).toBe(200);
     integrations.rotateIntegration.mockResolvedValueOnce(null);
     expect((await post('integrations/int_nope/rotate', {}, admin)).status).toBe(404);
-    integrations.revokeIntegration.mockResolvedValueOnce({ name: 'Stripe' });
+    integrations.revokeIntegration.mockResolvedValueOnce({
+      ok: true,
+      integration: { name: 'Stripe' },
+      audit: { action: 'integration.revoked', target: 'Stripe', detail: { id: 'int_new' } },
+    });
     const del = await handleApi(
       new Request('https://app.test/api/v1/integrations/int_new', { method: 'DELETE' }),
       admin,
@@ -759,6 +771,83 @@ describe('webhook subscriptions over REST', () => {
     webhooks.rotateSubscription.mockResolvedValueOnce(null);
     expect((await post('webhook-subscriptions/whs_nope/rotate', {}, admin)).status).toBe(404);
     expect((await post('webhook-subscriptions/whs_1/rotate', {}, operator)).status).toBe(403);
+  });
+});
+
+describe('removing a webhook subscription over REST', () => {
+  beforeEach(() => audit.mockReset());
+  const del = (path: string, as = admin) =>
+    handleApi(new Request(`https://app.test/api/v1/${path}`, { method: 'DELETE' }), as);
+
+  it('records what the use-case asks, via the API; 404 when nothing was removed', async () => {
+    webhooks.deleteSubscription.mockResolvedValueOnce({
+      ok: true,
+      audit: { action: 'webhook.unsubscribed', target: 'whs_1', detail: {} },
+    });
+    expect((await del('webhook-subscriptions/whs_1')).status).toBe(200);
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'webhook.unsubscribed', {
+      actor: admin,
+      target: 'whs_1',
+      detail: { via: 'api' },
+    });
+    webhooks.deleteSubscription.mockResolvedValueOnce({ ok: false, error: 'No such one.' });
+    expect((await del('webhook-subscriptions/whs_nope')).status).toBe(404);
+    expect((await del('webhook-subscriptions/whs_1', operator)).status).toBe(403);
+    expect(audit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('agentic checkout over REST', () => {
+  beforeEach(() => audit.mockReset());
+  const settings = { checkoutFlowId: 'tpl-checkout', links: [], orderUrl: null };
+
+  it('shows the settings and platforms, and is an admin’s', async () => {
+    ucp.ucpAdmin.mockResolvedValueOnce({ settings, platforms: [] });
+    const res = await handleApi(new Request('https://app.test/api/v1/ucp'), admin);
+    expect(await res.json()).toEqual({ settings, platforms: [] });
+    expect((await handleApi(new Request('https://app.test/api/v1/ucp'), operator)).status).toBe(
+      403,
+    );
+  });
+
+  it('saves settings and records the flow they switch, or refuses with 422 and records nothing', async () => {
+    ucp.setUcpSettings.mockResolvedValueOnce({
+      ok: true,
+      settings,
+      audit: { action: 'ucp.settings', detail: { from: null, to: 'tpl-checkout' } },
+    });
+    const ok = await post('ucp/settings', settings, admin);
+    expect(await ok.json()).toEqual({ settings });
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'ucp.settings', {
+      actor: admin,
+      detail: { from: null, to: 'tpl-checkout' },
+    });
+    ucp.setUcpSettings.mockResolvedValueOnce({ ok: false, error: 'Needs a card.' });
+    const refused = await post('ucp/settings', settings, admin);
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toEqual({ error: 'Needs a card.' });
+    expect((await post('ucp/settings', { checkoutFlowId: 7 }, admin)).status).toBe(400);
+    expect(audit).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes a platform and names it in the audit log; 404 when it is unknown or already revoked', async () => {
+    const revoke = () =>
+      handleApi(
+        new Request('https://app.test/api/v1/ucp/platforms/ucp_1', { method: 'DELETE' }),
+        admin,
+      );
+    ucp.revokePlatform.mockResolvedValueOnce({
+      ok: true,
+      audit: { action: 'ucp.platform_revoked', target: 'Agent', detail: { id: 'ucp_1' } },
+    });
+    expect((await revoke()).status).toBe(200);
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'ucp.platform_revoked', {
+      actor: admin,
+      target: 'Agent',
+      detail: { id: 'ucp_1' },
+    });
+    ucp.revokePlatform.mockResolvedValueOnce({ ok: false, error: 'Already.' });
+    expect((await revoke()).status).toBe(404);
   });
 });
 

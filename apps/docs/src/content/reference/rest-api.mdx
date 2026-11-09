@@ -75,6 +75,8 @@ deployment can have different budgets; ask your CommerceWorker contact if an int
 | `POST` | `/api/v1/channels/shopify/orders` | A Shopify `orders/create` payload | `201 { orderId, flowId }`, `200` on a replay or `{ ignored: true, topic }` |
 | `POST` | `/api/v1/channels/edi/850` | Raw X12 (`application/edi-x12` or `text/plain`) | `200 { sender, results }` (operator) |
 
+An admin's reads, removals, revocations and agentic checkout settings above are also [MCP tools](/reference/mcp/#outside-access) that run the same code. Creating or rotating a subscription, integration or platform is REST's alone: its secret or key is shown once.
+
 ## Flows
 
 `GET /api/v1/flows` lists every flow, most recently updated first, with `id`, `name`,

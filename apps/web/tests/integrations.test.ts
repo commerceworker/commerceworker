@@ -69,9 +69,10 @@ describe('integrations', () => {
       previousSecret: first,
     });
     expect(await revokeIntegration(integration.id)).toMatchObject({
-      revokedAt: expect.any(Number),
+      ok: true,
+      integration: { revokedAt: expect.any(Number) },
     });
-    expect(await revokeIntegration(integration.id)).toBeNull();
+    expect(await revokeIntegration(integration.id)).toMatchObject({ ok: false });
     expect(await findIntegration(integration.id)).toBeNull();
     expect(await rotateIntegration(integration.id)).toBeNull();
     expect(await rotateIntegration('int_none')).toBeNull();

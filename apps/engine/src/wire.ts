@@ -15,6 +15,7 @@ import { d1DocumentStore, d1MessageStore } from '@commerceworker/db/document-sto
 import { d1FlowStore } from '@commerceworker/db/flow-store';
 import { d1FulfillmentStore } from '@commerceworker/db/fulfillment-store';
 import { d1IdentityStore } from '@commerceworker/db/identity-store';
+import { d1IntegrationStore } from '@commerceworker/db/integration-store';
 import { d1InventoryStore } from '@commerceworker/db/inventory-store';
 import { d1InvoiceStore } from '@commerceworker/db/invoice-store';
 import { d1IntakeLog, d1PaymentEventLog, d1UsageStore } from '@commerceworker/db/logs';
@@ -48,6 +49,7 @@ import type {
   FulfillmentStore,
   IdentityStore,
   IntakeLog,
+  IntegrationStore,
   InventoryStore,
   InvoiceStore,
   LabelService,
@@ -336,6 +338,10 @@ export const confirmationStore = (env: Pick<Env, 'DB'>): ConfirmationStore =>
 
 /** Agentic checkout's idempotency keys and platform profiles. */
 export const ucpStore = (env: Pick<Env, 'DB'>): UcpStore => d1UcpStore(env.DB);
+
+/** The external systems that sign webhooks to the workspace, each with its sealed secret. */
+export const integrationStore = (env: Pick<Env, 'DB'>): IntegrationStore =>
+  d1IntegrationStore(env.DB);
 
 /** Outbound webhook subscriptions and every delivery of every event. */
 export const webhookOutbox = (env: Pick<Env, 'DB'>): WebhookOutbox => d1WebhookOutbox(env.DB);

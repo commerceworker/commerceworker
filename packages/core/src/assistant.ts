@@ -134,6 +134,12 @@ export type AssistantTool =
   | 'get_plugin_usage'
   | 'list_webhook_subscriptions'
   | 'list_webhook_deliveries'
+  | 'delete_webhook_subscription'
+  | 'list_integrations'
+  | 'revoke_integration'
+  | 'get_ucp_settings'
+  | 'set_ucp_settings'
+  | 'revoke_ucp_platform'
   | 'draft_cart_reply'
   | 'set_assistant_routing';
 
@@ -729,6 +735,54 @@ export const ASSISTANT_TOOLS: Record<
     title: 'List a webhook’s deliveries',
     description:
       'A subscription’s latest deliveries, newest first: the event, its payload, and whether it was delivered, with attempts and the receiver’s last status or error.',
+  },
+  delete_webhook_subscription: {
+    role: 'admin',
+    confirm: true,
+    label: 'Remove a webhook subscription',
+    title: 'Remove a webhook subscription',
+    description:
+      'Remove an outbound webhook subscription, so its URL stops receiving events. Its past deliveries go with it. Creating or rotating one is done in the app or over the REST API: its signing secret is shown once.',
+  },
+  list_integrations: {
+    role: 'admin',
+    confirm: false,
+    label: 'Listed integrations',
+    title: 'List integrations',
+    description:
+      'The external systems that sign webhooks to this workspace: what each may send, whether it starts orders and on which flows, when it was last used and whether it was revoked. Never a signing secret.',
+  },
+  revoke_integration: {
+    role: 'admin',
+    confirm: true,
+    label: 'Revoke an integration',
+    title: 'Revoke an integration',
+    description:
+      'Revoke an integration at once: its signed requests are refused from now on, and so is the secret it was rotating from. This cannot be undone; the sender needs a new integration. Creating or rotating one is done in the app or over the REST API.',
+  },
+  get_ucp_settings: {
+    role: 'admin',
+    confirm: false,
+    label: 'Read agentic checkout settings',
+    title: 'Get agentic checkout settings',
+    description:
+      'Agentic checkout (UCP): the checkout flow it runs (none while it is off), the legal links and order page buyers see, and the AI shopping platforms let in, each with when it was last used and whether it was revoked. Never a platform’s key.',
+  },
+  set_ucp_settings: {
+    role: 'admin',
+    confirm: true,
+    label: 'Change agentic checkout settings',
+    title: 'Change agentic checkout settings',
+    description:
+      'Set agentic checkout: the flow a completed checkout starts (null turns it off), the legal links and the order page URL with {id}. Replaces all three. The flow must authorize a card payment.',
+  },
+  revoke_ucp_platform: {
+    role: 'admin',
+    confirm: true,
+    label: 'Revoke an AI shopping platform',
+    title: 'Revoke an AI shopping platform',
+    description:
+      'Revoke a platform’s access to agentic checkout at once: its key stops working. Its checkouts and orders stay. This cannot be undone; the platform needs a new key from the app or the REST API.',
   },
   draft_cart_reply: {
     role: 'viewer',

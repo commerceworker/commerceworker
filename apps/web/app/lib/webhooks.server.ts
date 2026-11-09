@@ -3,6 +3,7 @@
 import {
   listWebhookDeliveries,
   listWebhookSubscriptions,
+  removeWebhookSubscription,
   subscriptionView,
 } from '@commerceworker/application/commerce';
 import { newId, ROTATION_GRACE_MS, secretContext } from '@commerceworker/core';
@@ -53,9 +54,8 @@ export async function rotateSubscription(id: string) {
   return row ? { subscription: subscriptionView(row, Date.now()), secret } : null;
 }
 
-export async function deleteSubscription(id: string) {
-  return webhookOutbox().deleteSubscription(id);
-}
+export const deleteSubscription = (id: string) =>
+  removeWebhookSubscription({ outbox: webhookOutbox() }, id);
 
 /** A sandboxed plugin's latest exceptions (its Tail Worker keeps them, scrubbed), newest first. */
 export async function listPluginErrors(pluginId: string, limit = 10) {
