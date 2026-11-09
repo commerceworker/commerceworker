@@ -1,5 +1,4 @@
-import { assistantName, routeAssistant } from '@commerceworker/http/assistant/gate';
-import type { EdgeEnv } from '@commerceworker/platform/env';
+import { assistantName, deriveGateKeys, routeAssistant } from '@commerceworker/http/assistant/gate';
 import { deriveAssistantPrincipalKey } from '@commerceworker/security/assistant-key';
 import {
   PRINCIPAL_HEADER,
@@ -18,7 +17,7 @@ const ada = {
 };
 
 /** An env whose assistant namespace records what reached the object. */
-function envSeeing() {
+async function envSeeing() {
   const seen: Request[] = [];
   const namespace = {
     idFromName: (name: string) => ({ name }),
@@ -30,14 +29,18 @@ function envSeeing() {
     }),
   };
   return {
-    env: { PRINCIPAL_KEY: KEY, ASSISTANT_AGENT: namespace } as unknown as EdgeEnv,
+    // What the api entry hands the gate: the namespace and the keys derived from PRINCIPAL_KEY.
+    env: {
+      namespace: namespace as unknown as DurableObjectNamespace,
+      keys: await deriveGateKeys([KEY]),
+    },
     seen,
   };
 }
 
 describe('the assistant’s gate', () => {
   it('forwards its own person, without the SDK’s internal headers a caller sent', async () => {
-    const { env, seen } = envSeeing();
+    const { env, seen } = await envSeeing();
     const path = '/agents/assistant-agent/usr_ada/get-messages';
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
@@ -62,7 +65,7 @@ describe('the assistant’s gate', () => {
   it('accepts the key derived for the assistant, and refuses the main key', async () => {
     const path = '/agents/assistant-agent/usr_ada/get-messages';
     for (const key of [await deriveAssistantPrincipalKey(KEY)]) {
-      const { env, seen } = envSeeing();
+      const { env, seen } = await envSeeing();
       const res = await routeAssistant(
         new Request(`https://api${path}`, {
           headers: {
@@ -76,7 +79,7 @@ describe('the assistant’s gate', () => {
     }
     // The main key itself is refused on the assistant's paths.
     {
-      const { env, seen } = envSeeing();
+      const { env, seen } = await envSeeing();
       const res = await routeAssistant(
         new Request(`https://api${path}`, {
           headers: {
@@ -89,7 +92,7 @@ describe('the assistant’s gate', () => {
       expect(seen).toHaveLength(0);
     }
     // A key derived from anything else is refused.
-    const { env } = envSeeing();
+    const { env } = await envSeeing();
     const other = await deriveAssistantPrincipalKey('another-principal-key-0123456789abcdef');
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
@@ -103,7 +106,7 @@ describe('the assistant’s gate', () => {
   });
 
   it('refuses another person’s assistant before anything reaches it', async () => {
-    const { env, seen } = envSeeing();
+    const { env, seen } = await envSeeing();
     const path = '/agents/assistant-agent/usr_bob/get-messages';
     const res = await routeAssistant(
       new Request(`https://api${path}`, {
@@ -119,6 +122,21 @@ describe('the assistant’s gate', () => {
     );
     expect(res.status).toBe(403);
     expect(seen).toHaveLength(0);
+  });
+
+  it('derives a key for each principal key present, the previous one while a rotation finishes', async () => {
+    const keys = await deriveGateKeys([KEY, undefined, '']);
+    expect(keys).toEqual([await deriveAssistantPrincipalKey(KEY)]);
+    expect(await deriveGateKeys([KEY, 'previous-principal-key-0123456789abcdef'])).toHaveLength(2);
+    expect(await deriveGateKeys([undefined])).toEqual([]);
+  });
+
+  it('serves no assistant without its namespace', async () => {
+    const res = await routeAssistant(new Request('https://api/agents/assistant-agent/usr_ada'), {
+      namespace: undefined,
+      keys: await deriveGateKeys([KEY]),
+    });
+    expect(res.status).toBe(404);
   });
 
   it('reads only a well-formed person from the path', () => {

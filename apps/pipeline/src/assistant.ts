@@ -4,7 +4,6 @@
  * the same `wireEdge`, so a tool the assistant runs is the tool `/mcp` serves. Who is behind a
  * socket is read from the web app's own tables (users, sessions) in the shared D1.
  */
-import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { createHasher } from '@commerceworker/application';
 import { WEB_SIGN_IN } from '@commerceworker/http/api/access-policy';
 import {
@@ -19,6 +18,13 @@ import { sendReviewDecision } from '@commerceworker/platform/workflows';
 import { isRole, sessionIdleMs } from '@commerceworker/security/roles';
 
 export class AssistantAgent extends AssistantAgentBase {
+  protected override principalKeys(): readonly string[] {
+    const { ASSISTANT_PRINCIPAL_KEY, ASSISTANT_PRINCIPAL_KEY_PREVIOUS } = this.env;
+    return [ASSISTANT_PRINCIPAL_KEY, ASSISTANT_PRINCIPAL_KEY_PREVIOUS].filter((k): k is string =>
+      Boolean(k),
+    );
+  }
+
   protected override wire(): AssistantWiring {
     const wired = wireEdge(this.env);
     const env = this.env;
@@ -28,7 +34,7 @@ export class AssistantAgent extends AssistantAgentBase {
         ai: wired.ai,
         rag: wired.rag,
         // On-demand agent actions run in-process, as on the api's /mcp.
-        agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
+        agents: wired.inProcessAgents({ ctx: wired.ctx, ai: wired.ai }),
         hasher: createHasher(env.TOKEN_PEPPER),
         // The MCP root token never authenticates anything here: the principal is resolved first.
         adminToken: '',

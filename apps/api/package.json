@@ -14,7 +14,6 @@
     "smoke:mcp-search": "node scripts/mcp-search-smoke.mjs"
   },
   "dependencies": {
-    "@commerceworker/agent-runtime": "workspace:*",
     "@commerceworker/application": "workspace:*",
     "@commerceworker/http": "workspace:*",
     "@commerceworker/platform": "workspace:*",

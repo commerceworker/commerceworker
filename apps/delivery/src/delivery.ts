@@ -1,5 +1,4 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { createHasher, resolveEnvironment } from '@commerceworker/application';
 import { NotFoundError, type Principal } from '@commerceworker/domain';
 import type { AuthDeps } from '@commerceworker/http/api/auth';
@@ -58,7 +57,8 @@ export class Delivery extends WorkerEntrypoint<EdgeEnv> {
       importSources: wired.importSources,
       spaceExportReader: wired.spaceExportReader,
       remoteFetcher: wired.remoteFetcher,
-      agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
+      agents: wired.inProcessAgents({ ctx: wired.ctx, ai: wired.ai }),
+      rateLimiter: wired.authRateLimit,
       trustedPrincipal: () => principal,
     };
     const app = deliveryApp(deliveryRoutes(deps));

@@ -30,6 +30,7 @@ const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json
 async function setup() {
   const wired = wire(config);
   const { ctx, rag, blob, ai, bus } = wired;
+  const edge = inMemoryEdge();
   const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus);
   const forwarded: { hub: string; request: Request }[] = [];
   const ns = {
@@ -43,7 +44,8 @@ async function setup() {
   } as unknown as DurableObjectNamespace;
   const live = liveRoutes(
     {
-      ...inMemoryEdge(),
+      ...edge,
+      rateLimiter: edge.authRateLimit,
       ctx,
       hasher: createApiHasher(config.tokenPepper),
       adminToken: '',

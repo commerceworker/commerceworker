@@ -1,6 +1,6 @@
 /**
  * Shipping rates for the `commerce.shipping_rate` node, and the order totals every pricing node
- * recomputes. Pure: the engine quotes live carriers (`quoteShipping`, apps/engine/src/shipping-rates.ts) and passes their options in.
+ * recomputes. Pure: the engine quotes live carriers (the `rateShipping` use-case, with apps/engine/src/shipping-rates.ts's carrier adapter) and passes their options in.
  *
  * Rates are configured on the node, so they are pinned with the flow version: a checkout quote and
  * the order's run read the same config. Amounts are in BASE_CURRENCY, like list prices; the engine
@@ -18,7 +18,7 @@
 import { z } from 'zod';
 import { checkAddress } from './address';
 import { money, toBase } from './logic';
-import type { Order } from './types';
+import type { Order, OrderLine } from './types';
 
 const serviceSchema = z.object({
   id: z.string().regex(/^[\w-]{1,40}$/, 'Service ids are 1–40 letters, digits, _ or -'),
@@ -278,4 +278,34 @@ export function computeTotals(
   const tax = money(taxable * (order.taxRate ?? 0));
   const total = money(subtotal + shipping + tax);
   return { subtotal, shipping, tax, total, baseTotal: toBase(total, order.fxRate) };
+}
+
+/**
+ * The lines that ship, with their products' per-unit weight and size: digital lines (by their
+ * product's kind) don't.
+ */
+export function shippableLines(
+  lines: readonly OrderLine[],
+  products: readonly {
+    sku: string;
+    kind?: string | null;
+    weightKg?: number | null;
+    lengthCm?: number | null;
+    widthCm?: number | null;
+    heightCm?: number | null;
+  }[],
+): ParcelLine[] {
+  const bySku = new Map(products.map((p) => [p.sku, p]));
+  return lines
+    .filter((l) => bySku.get(l.sku)?.kind !== 'digital')
+    .map((l) => {
+      const p = bySku.get(l.sku);
+      return {
+        qty: l.qty,
+        weightKg: p?.weightKg,
+        lengthCm: p?.lengthCm,
+        widthCm: p?.widthCm,
+        heightCm: p?.heightCm,
+      };
+    });
 }

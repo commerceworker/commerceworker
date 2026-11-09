@@ -58,7 +58,7 @@ import {
 } from 'ai';
 import type { McpDeps } from '../mcp/deps';
 import { readContext } from './context';
-import { assistantCaller, engineKeys } from './gate';
+import { assistantCaller } from './gate';
 import { BUDGET_SPENT, meterTurn } from './meter';
 import {
   type AssistantModel,
@@ -175,6 +175,13 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
   /** The MCP server's dependencies for one call, from the host's composition root. */
   protected abstract wire(): AssistantWiring;
 
+  /**
+   * The keys this object verifies a request's principal with: ASSISTANT_PRINCIPAL_KEY, then
+   * ASSISTANT_PRINCIPAL_KEY_PREVIOUS while a rotation finishes. The engine holds no other
+   * principal key.
+   */
+  protected abstract principalKeys(): readonly string[];
+
   /** The person the claims name as they are now, or why they may no longer act. */
   protected abstract personNow(claims: SocketClaims): Promise<PersonNow | PersonRefused>;
 
@@ -222,7 +229,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
    * the same before forwarding; this object doesn't take its word for it.
    */
   override async fetch(request: Request): Promise<Response> {
-    const claims = await assistantCaller(engineKeys(this.env), request);
+    const claims = await assistantCaller(this.principalKeys(), request);
     if (claims instanceof Response) return claims;
     const now = await this.personNow(socketClaims(claims));
     if (isRefused(now)) {
@@ -244,7 +251,7 @@ export abstract class AssistantAgentBase extends AIChatAgent<AgentEnv> {
 
   /** The socket's own check: signed for this path, naming this person. Kept for the connection. */
   private async admit(connection: Connection, ctx: ConnectionContext): Promise<boolean> {
-    const claims = await assistantCaller(engineKeys(this.env), ctx.request);
+    const claims = await assistantCaller(this.principalKeys(), ctx.request);
     if (claims instanceof Response || claims.sub !== this.name) {
       connection.close(4403, 'Not your Coworker');
       return false;

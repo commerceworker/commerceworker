@@ -25,6 +25,7 @@
     "./messages": "./src/messages.ts",
     "./metrics": "./src/metrics.ts",
     "./purge": "./src/purge.ts",
+    "./secure-secrets": "./src/secure-secrets.ts",
     "./wire": "./src/wire.ts",
     "./workflows": "./src/workflows.ts"
   },

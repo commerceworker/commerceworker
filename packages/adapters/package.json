@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, Queues, Images, Stream, Email, Worker Loader plugins, HTTP effects (webhooks/functions), structured import parsers, the space export reader. One subpath per adapter so each Worker bundles only what it binds.",
+  "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, Queues, the native rate limiter, Images, Stream, Email, Worker Loader plugins, HTTP effects (webhooks/functions), structured import parsers, the space export reader. One subpath per adapter so each Worker bundles only what it binds.",
   "exports": {
     "./ai-workers": "./src/ai-workers/index.ts",
     "./asset-gate-kv": "./src/asset-gate-kv/index.ts",
@@ -16,6 +16,7 @@
     "./import-structured": "./src/import-structured/index.ts",
     "./plugins-cf-loader": "./src/plugins-cf-loader/index.ts",
     "./queue-cf": "./src/queue-cf/index.ts",
+    "./rate-limit-cf": "./src/rate-limit-cf/index.ts",
     "./vector-kv-dev": "./src/vector-kv-dev/index.ts",
     "./vector-vectorize": "./src/vector-vectorize/index.ts",
     "./video-stream": "./src/video-stream/index.ts"

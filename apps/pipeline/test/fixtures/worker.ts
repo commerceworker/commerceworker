@@ -3,7 +3,11 @@
 // without pulling src/index.ts's full adapter graph into the test bundle. Its
 // fetch handler is the api's forward to the assistant, so the socket tests go
 // through the same gate a deployment does.
-import { isAssistantPath, routeAssistant } from '@commerceworker/http/assistant/gate';
+import {
+  deriveGateKeys,
+  isAssistantPath,
+  routeAssistant,
+} from '@commerceworker/http/assistant/gate';
 import type { EdgeEnv } from '@commerceworker/platform/env';
 
 export { CostGuardDO } from '@commerceworker/platform/do/cost-guard';
@@ -17,7 +21,10 @@ export { EditorialTestWorkflow } from './editorial';
 
 export default {
   fetch(request: Request, env: EdgeEnv): Promise<Response> | Response {
-    if (isAssistantPath(new URL(request.url).pathname)) return routeAssistant(request, env);
+    if (isAssistantPath(new URL(request.url).pathname))
+      return deriveGateKeys([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]).then((keys) =>
+        routeAssistant(request, { namespace: env.ASSISTANT_AGENT, keys }),
+      );
     return new Response('test fixture');
   },
 };

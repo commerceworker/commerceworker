@@ -45,7 +45,7 @@ function recordingLimiter(allow: boolean) {
 
 function makeApp(config: ApiConfig, limiter?: RequestRateLimit) {
   const { ctx, rag, blob, ai, bus } = wire(config);
-  return createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus, undefined, undefined, limiter);
+  return createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus, undefined, limiter);
 }
 
 describe('request classification', () => {

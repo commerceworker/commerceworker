@@ -16,6 +16,7 @@ import {
   MissingExchangeRateError,
   MissingLabelError,
   priceOrder,
+  rateShipping,
   routeFulfillment,
   schedulePayouts,
   splitBySeller,
@@ -27,10 +28,8 @@ import {
   assessBranch,
   assessQuestionsSchema,
   BASE_CURRENCY,
-  billableKg,
   CUSTOMER_MATCHED_BY,
   checkAddress,
-  computeTotals,
   creditCheck,
   describeAnswers,
   durationMs,
@@ -46,16 +45,13 @@ import {
   type NodeRegistry,
   ORDER_CHANNEL_LABELS,
   type Order,
-  type OrderLine,
   PROVIDER_MAX_TAX_RATE,
-  pickOption,
   policyRulesSchema,
   type RunContext,
   renderDocument,
   SHIPPING_SELECTIONS,
   type ShippingSelection,
   shippingConfigSchema,
-  shipToCountry,
   stockLines,
   stringList,
   taxExemptNote,
@@ -63,6 +59,7 @@ import {
   threeWayMatch,
   toBase,
   truthy,
+  validateOrder,
 } from '@commerceworker/core';
 import * as ai from './ai';
 import * as billing from './billing';
@@ -71,7 +68,7 @@ import * as cx from './connectors';
 import { refundedAmount } from './payments';
 import { extractCatalog } from './product-index';
 import { provide } from './providers';
-import { physicalLines, quoteShipping } from './shipping-rates';
+import { liveCarrierQuote } from './shipping-rates';
 import {
   balanceStore,
   commercePorts,
@@ -174,26 +171,16 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.validate': async ({ env, ctx }) => {
-    const skus = ctx.order.lines.map((l) => l.sku);
     const [products, customer] = await Promise.all([
-      pricingStore(env).products(skus),
+      pricingStore(env).products(ctx.order.lines.map((l) => l.sku)),
       pricingStore(env).customer(ctx.order.customerId),
     ]);
-    const known = new Map(products.map((p) => [p.sku, p]));
-    const unknown = skus.filter((s) => !known.has(s));
-    if (!ctx.order.lines.length) throw new NonRetryableError('Order has no lines');
-    if (unknown.length) throw new NonRetryableError(`Unknown SKUs: ${unknown.join(', ')}`);
-    if (ctx.order.customerId && !customer)
-      throw new NonRetryableError(`Unknown customer ${ctx.order.customerId}`);
-    const lines: OrderLine[] = ctx.order.lines.map((l) => ({
-      ...l,
-      qty: Math.max(1, Math.round(l.qty)),
-      name: l.name ?? known.get(l.sku)!.name,
-    }));
+    const v = validateOrder(ctx.order, products, !!customer);
+    if ('problem' in v) throw new NonRetryableError(v.problem);
     return {
-      order: { lines },
-      output: { customer: customer?.name ?? null, lines: lines.length },
-      summary: `${lineCount(lines.length)}${customer ? ` · ${customer.name}` : ''}`,
+      order: { lines: v.lines },
+      output: { customer: customer?.name ?? null, lines: v.lines.length },
+      summary: `${lineCount(v.lines.length)}${customer ? ` · ${customer.name}` : ''}`,
     };
   },
 
@@ -256,94 +243,70 @@ export const EXECUTORS: Record<string, Exec> = {
     const rates = shippingConfigSchema.safeParse(config.rates);
     if (!rates.success)
       throw new NonRetryableError(`Invalid shipping rates: ${rates.error.issues[0]?.message}`);
+    const by = providerOf(config);
+    const r = await rateShipping(
+      { pricing: pricingStore(env), liveQuote: liveCarrierQuote(env) },
+      ctx.order,
+      {
+        config: rates.data,
+        select: (SHIPPING_SELECTIONS as readonly string[]).includes(str(config.select))
+          ? (config.select as ShippingSelection)
+          : 'from_order',
+        provider: by
+          ? {
+              id: by,
+              quote: (req) =>
+                provide(env, by, {
+                  surface: 'shipping.rates',
+                  op: 'quote',
+                  nodeId: node.id,
+                  stepKey,
+                  orderId: ctx.order.id,
+                  config,
+                  order: ctx.order,
+                  input: { ...req, currency: BASE_CURRENCY },
+                }).catch((err: unknown) => {
+                  // As with a live carrier: rates fall back rather than fail the order.
+                  console.warn(`shipping rates from ${by}`, err);
+                  throw err;
+                }),
+            }
+          : undefined,
+      },
+    );
     const method = ctx.order.fulfillment?.method ?? 'ship';
-    const lines = method === 'ship' ? await physicalLines(env, ctx.order) : [];
-    const units = lines.reduce((n, l) => n + l.qty, 0);
-    if (!units) {
-      const t = computeTotals({ ...ctx.order, shipping: 0 });
+    if (r.outcome === 'none')
       return {
         branches: ['ok'],
-        order: t,
+        order: r.totals,
         output: { method, shipping: 0, option: null },
         summary:
           method === 'ship'
             ? 'Nothing to ship'
             : `No shipping (${FULFILLMENT_METHOD_LABELS[method].toLowerCase()})`,
       };
-    }
-    const fx = ctx.order.fxRate;
-    const country = shipToCountry(ctx.order);
-    // Weighed only when the basis asks; a unit whose product has no weight or size counts
-    // `defaultKg`, and the output says how many did.
-    const weighed = billableKg(rates.data, lines);
-    const req = {
-      itemCount: units,
-      ...(weighed ? { billableKg: weighed.kg } : {}),
-      country,
-      subtotal: toBase(ctx.order.subtotal, fx),
-    };
-    const weight = weighed
-      ? { basis: rates.data.basis, billableKg: weighed.kg, estimatedUnits: weighed.estimated }
-      : {};
-    const by = providerOf(config);
-    const { options, source, providerError } = await quoteShipping(
-      env,
-      rates.data,
-      req,
-      by
-        ? {
-            id: by,
-            quote: () =>
-              provide(env, by, {
-                surface: 'shipping.rates',
-                op: 'quote',
-                nodeId: node.id,
-                stepKey,
-                orderId: ctx.order.id,
-                config,
-                order: ctx.order,
-                input: { ...req, currency: BASE_CURRENCY },
-              }),
-          }
-        : undefined,
-    );
-    // Rates are in the base currency; the order pays in its own.
-    const offered = options.map((o) => ({ ...o, amount: fromBase(o.amount, fx) }));
-    const select = (SHIPPING_SELECTIONS as readonly string[]).includes(str(config.select))
-      ? (config.select as ShippingSelection)
-      : 'from_order';
-    const wanted = ctx.order.shippingOption;
-    const chosen = pickOption(offered, select, wanted);
     // A provider that failed is named in the output and summary, not only in the logs.
-    const fellBack = by && providerError ? { providerError: `${by}: ${providerError}` } : {};
-    const note = by && providerError ? ` (${by} unavailable)` : '';
-    if (!chosen)
+    const fellBack = by && r.providerError ? { providerError: `${by}: ${r.providerError}` } : {};
+    const note = by && r.providerError ? ` (${by} unavailable)` : '';
+    const seen = {
+      country: r.country ?? null,
+      units: r.units,
+      ...(r.weight ?? {}),
+      source: r.source,
+    };
+    const chosen = r.chosen;
+    if (!chosen || !r.totals) {
+      const wanted = ctx.order.shippingOption;
       return {
         branches: ['unavailable'],
-        output: {
-          country: country ?? null,
-          units,
-          ...weight,
-          source,
-          options: offered,
-          wanted: wanted ?? null,
-          ...fellBack,
-        },
-        summary: `${wanted && offered.length ? `“${wanted}” is not offered` : 'No shipping options'}${note}`,
+        output: { ...seen, options: r.options, wanted: wanted ?? null, ...fellBack },
+        summary: `${wanted && r.options.length ? `“${wanted}” is not offered` : 'No shipping options'}${note}`,
       };
-    const t = computeTotals({ ...ctx.order, shipping: chosen.amount });
+    }
     return {
       branches: ['ok'],
-      order: { ...t, shippingOption: chosen.id },
-      output: {
-        country: country ?? null,
-        units,
-        ...weight,
-        source,
-        option: chosen,
-        options: offered,
-        ...fellBack,
-      },
+      order: { ...r.totals, shippingOption: chosen.id },
+      output: { ...seen, option: chosen, options: r.options, ...fellBack },
       vars: { shippingCarrier: chosen.carrier },
       summary: `${chosen.title} (${chosen.carrier.toUpperCase()}) · ${chosen.free ? 'free' : cash(chosen.amount, ctx)}${note}`,
     };

@@ -42,7 +42,7 @@ function fakeLimiter(blocked = false) {
 
 function makeApp(limiter: AuthRateLimit) {
   const { ctx, rag, blob, ai, bus } = wire(config);
-  return createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus, limiter);
+  return createApp(ctx, config, rag, blob, ai, { ...inMemoryEdge(), authRateLimit: limiter }, bus);
 }
 
 describe('injected auth rate limiter (distributed seam)', () => {

@@ -1,7 +1,13 @@
 import { createRemoteFetcher } from '@commerceworker/adapters/http-effects';
 import { createSpaceExportReader } from '@commerceworker/adapters/import-space-export';
 import { structuredImportSources } from '@commerceworker/adapters/import-structured';
-import { type AppContext, createHasher, type RagDeps } from '@commerceworker/application';
+import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
+import {
+  type AgentRunner,
+  type AppContext,
+  createHasher,
+  type RagDeps,
+} from '@commerceworker/application';
 import { type ApiKeyKind, scopesForKind } from '@commerceworker/domain';
 import type {
   AIProvider,
@@ -25,6 +31,7 @@ import {
   LocalEmbeddingsProvider,
   StubAIProvider,
 } from '@commerceworker/test-kit';
+import { type AuthRateLimit, AuthRateLimiter } from './auth-rate-limit';
 import type { ApiConfig } from './config';
 import { newId as uuidv7 } from './ids';
 
@@ -36,6 +43,10 @@ export interface EdgeAdapters {
   readonly importSources: Readonly<Record<string, ImportSource>>;
   readonly spaceExportReader: SpaceExportReader;
   readonly remoteFetcher: RemoteFetcher;
+  /** The failed-auth limiter; in-process, as a bare `createApp` caller has no Durable Object. */
+  readonly authRateLimit: AuthRateLimit;
+  /** On-demand agent actions run in-process (`wireEdge` binds the same). */
+  readonly inProcessAgents: (deps: { ctx: AppContext; ai: AIProvider }) => AgentRunner;
 }
 
 export function inMemoryEdge(): EdgeAdapters {
@@ -43,6 +54,8 @@ export function inMemoryEdge(): EdgeAdapters {
     importSources: structuredImportSources(),
     spaceExportReader: createSpaceExportReader(),
     remoteFetcher: createRemoteFetcher(),
+    authRateLimit: new AuthRateLimiter(10, 60_000),
+    inProcessAgents: ({ ctx, ai }) => new InProcessAgentRuntime(makeActivities({ ctx, ai })),
   };
 }
 
