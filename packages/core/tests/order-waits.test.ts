@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   approvalWait,
   decisionProblem,
+  deliveredEventProblem,
   eventProblem,
   eventWait,
   MAX_DECISION_NOTE,
@@ -47,5 +48,16 @@ describe("resuming an order's waits", () => {
     expect(approvalWait(waits, 'pay')).toBeUndefined();
     expect(eventWait(waits, 'payment.received')?.nodeId).toBe('pay');
     expect(eventWait(waits, 'Manager')).toBeUndefined();
+  });
+});
+
+describe('a delivered event', () => {
+  it('refuses a return and any field its source writes, whoever sends it', () => {
+    expect(deliveredEventProblem('payment.received', { amount: 5 })).toBeNull();
+    expect(deliveredEventProblem('payment.received', undefined)).toBeNull();
+    expect(deliveredEventProblem('return.requested', {})).toMatch(/order page/);
+    expect(deliveredEventProblem('x', { by: 'me', source: 'stripe', ok: 1 })).toBe(
+      "payload can't set by, source: the delivery records who sent it",
+    );
   });
 });

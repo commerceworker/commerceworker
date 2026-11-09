@@ -177,6 +177,11 @@ with every run of non-alphanumerics replaced by `_` (`payment.received` → `var
 The response is `{ delivered: true, nodeId }`, or `{ delivered: false }` when no node is waiting for
 that event yet. An unknown order is `404`. See [Approvals and events](/guides/approvals-and-events/).
 
+The delivery records who sent it: the payload gains `source: "api"` and `by` (the token's name), so
+a payload that sets any of `by`, `event`, `at`, `outcome`, `source`, `provider`, `invoiceId`,
+`paymentIntentId`, `note` or `goodsBack` is `422`, as it is over MCP. A return or claim
+(`return.requested`) is `422` too: record it from the order page, which checks it against the order.
+
 ## Decide an approval
 
 ```http
@@ -308,6 +313,8 @@ X-CommerceWorker-Signature: t=<unix seconds>,k=<integration id>,v1=<hex HMAC-SHA
 JavaScript. Signatures more than five minutes from now are rejected. A delivered event's signature
 is recorded, so the same signed request sent again inside that window is not delivered twice. A `409` is not
 recorded and may be retried.
+The payload follows the order route's rules: it gains `source: "webhook"` and `by` (the
+integration), and the same fields and `return.requested` are `422`.
 
 The order routes bound their bodies the same way: `POST /api/v1/orders/{id}/events` takes `event`
 (1 to 100 characters) and an optional `payload` of at most 32 KiB of JSON,
