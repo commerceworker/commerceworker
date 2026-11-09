@@ -19,6 +19,7 @@
     "./editorial-host": "./src/editorial-host.ts",
     "./env": "./src/env.ts",
     "./ids": "./src/ids.ts",
+    "./in-memory": "./src/in-memory.ts",
     "./messages": "./src/messages.ts",
     "./metrics": "./src/metrics.ts",
     "./purge": "./src/purge.ts",

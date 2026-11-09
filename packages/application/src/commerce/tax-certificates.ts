@@ -4,6 +4,7 @@
  * With the workspace's approval separation on, whoever added a certificate can't verify it.
  */
 import {
+  certificateVerifyProblem,
   checkTaxCertificateInput,
   MAX_TAX_CERTIFICATES,
   type Refusable,
@@ -70,9 +71,10 @@ export async function addTaxCertificate(
 }
 
 /**
- * Marks an active, unexpired certificate verified by `actor`. Verifying it again changes nothing.
- * With approval separation on (`separated`), whoever added it can't verify it: the same setting
- * that keeps a person from approving their own order keeps them from vouching for their own entry.
+ * Marks an active, unexpired certificate verified by `actor`, under core's
+ * `certificateVerifyProblem`. Verifying it again changes nothing. With approval separation on
+ * (`separated`), whoever added it can't verify it: the same setting that keeps a person from
+ * approving their own order keeps them from vouching for their own entry.
  */
 export async function verifyTaxCertificate(
   ports: TaxCertificatePorts,
@@ -84,12 +86,10 @@ export async function verifyTaxCertificate(
 ): Promise<Refusable<TaxCertificateChange>> {
   const c = await ports.certificates.find(customerId, id);
   if (!c) return refuse('No such certificate.');
-  if (c.status === 'revoked') return refuse('The certificate was revoked; add a new one.');
-  if (c.verifiedAt !== null) return done(c, false);
-  if (c.expiresAt !== null && now > c.expiresAt)
-    return refuse('The certificate has expired; add the renewed one.');
-  if (c.createdById === actor.id && (await separated()))
-    return refuse('Someone other than whoever added the certificate must verify it.');
+  // An RPC actor is staff the web app signed for a person (the web app has no token route to it).
+  const problem = await certificateVerifyProblem(c, { id: actor.id, person: true }, now, separated);
+  if (problem && 'already' in problem) return done(c, false);
+  if (problem) return refuse(problem.refuse);
   await ports.certificates.verify(customerId, id, actor.name, now);
   return done({ ...c, verifiedBy: actor.name, verifiedAt: now }, true);
 }

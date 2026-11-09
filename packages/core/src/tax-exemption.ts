@@ -199,6 +199,32 @@ export function taxCertificateState(
 }
 
 /**
+ * Why `by` can't verify the certificate at `now`, `{ already: true }` when it is verified (nothing
+ * to do), or null. A person verifies, signed in as themselves: an API token's id is its own, never
+ * its maker's, so separation of duties couldn't tell who added it. With separation on
+ * (`separated`, asked only when it matters), whoever added it can't verify it. One rule for every
+ * way in: the assistant's confirm card and the use-case behind the engine's RPC both ask it.
+ */
+export async function certificateVerifyProblem(
+  c: Pick<TaxCertificate, 'status' | 'verifiedAt' | 'expiresAt' | 'createdById'>,
+  by: { id: string; person: boolean },
+  now: number,
+  separated: () => Promise<boolean>,
+): Promise<{ refuse: string } | { already: true } | null> {
+  if (c.status === 'revoked') return { refuse: 'The certificate was revoked; add a new one.' };
+  if (c.verifiedAt !== null) return { already: true };
+  if (c.expiresAt !== null && now > c.expiresAt)
+    return { refuse: 'The certificate has expired; add the renewed one.' };
+  if (!by.person)
+    return {
+      refuse: 'A person verifies a certificate, signed in as themselves, not with an API token.',
+    };
+  if (c.createdById === by.id && (await separated()))
+    return { refuse: 'Someone other than whoever added the certificate must verify it.' };
+  return null;
+}
+
+/**
  * The certificate that exempts a sale to `country` and `region` placed at `now`: verified, not
  * revoked and unexpired then, and covering the place. The first in `certs`' order (oldest first).
  * Null when none does.
