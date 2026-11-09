@@ -1,4 +1,5 @@
 export * from './addresses';
+export * from './compensate-order';
 export * from './invoices';
 export * from './payments';
 export * from './price-order';
