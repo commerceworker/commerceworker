@@ -40,6 +40,9 @@ const engine = {
   changeCart: vi.fn(),
   submitCart: vi.fn(),
   cancelCart: vi.fn(),
+  verifyTaxCertificate: vi.fn(),
+  revokeTaxCertificate: vi.fn(),
+  runReplenish: vi.fn(async () => ({ instanceId: 'rep_1' })),
 };
 
 /** The signed webhooks already taken, in memory: claimed on delivery, given back on failure. */
@@ -912,5 +915,56 @@ describe('installing plugins over REST', () => {
     const registry = await post('plugins/example/disable', {}, admin);
     expect(registry.status).toBe(400);
     expect(await registry.json()).toEqual({ error: 'example is not installed at runtime' });
+  });
+});
+
+describe('what MCP could do and REST now can', () => {
+  const viewer: Principal = { ...operator, id: 'tok_v', role: 'viewer' };
+  const cert = 'customers/cus_1/tax-certificates/txc_1';
+  const change = (status: string, changed: boolean) => ({
+    ok: true,
+    value: { certificate: { id: 'txc_1', status }, changed },
+  });
+
+  beforeEach(() => audit.mockClear());
+
+  it('verifies a certificate as the caller, signed for that customer, and audits it once', async () => {
+    engine.verifyTaxCertificate.mockResolvedValueOnce(change('active', true));
+    const res = await post(`${cert}/verify`, {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: 'txc_1', status: 'active', changed: true });
+    const [customerId, id, signed] = engine.verifyTaxCertificate.mock.calls.at(-1)!;
+    expect([customerId, id]).toEqual(['cus_1', 'txc_1']);
+    expect(await actorOf(signed, 'tax-certificates:cus_1')).toMatchObject({
+      kind: 'staff',
+      id: 'tok_1',
+    });
+    expect(audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'tax_certificate.verified',
+      expect.objectContaining({ target: 'cus_1' }),
+    );
+    // A repeat changes nothing and records nothing.
+    audit.mockClear();
+    engine.verifyTaxCertificate.mockResolvedValueOnce(change('active', false));
+    await post(`${cert}/verify`, {});
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("answers the engine's refusal, and refuses a viewer", async () => {
+    engine.revokeTaxCertificate.mockResolvedValueOnce({ ok: false, error: 'No such certificate.' });
+    const res = await post(`${cert}/revoke`, {});
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'No such certificate.' });
+    expect((await post(`${cert}/verify`, {}, viewer)).status).toBe(403);
+    expect((await post(`${cert}/approve`, {})).status).toBe(404);
+  });
+
+  it('runs the stock review for an operator', async () => {
+    const res = await post('stock/review', {});
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ instanceId: 'rep_1' });
+    expect(audit).toHaveBeenCalledWith(expect.anything(), 'stock.review_run', expect.anything());
+    expect((await post('stock/review', {}, viewer)).status).toBe(403);
   });
 });
