@@ -195,7 +195,7 @@ code doesn't tell you:
   `feat(engine): cancel an order as a use-case`; the scope, if any, is a workspace package name
   without `@commerceworker/` or a repo scope from [commitlint.config.ts](commitlint.config.ts).
   `pnpm install` points git at `.githooks/`, whose commit-msg hook runs commitlint, and CI's
-  `commits` job checks every commit a pull request adds.
+  `commits` job checks every commit a pull request adds (Dependabot's are skipped).
 - **Merging is releasing.** A merge to `main` deploys every customer's deployment, ring by ring. Never
   deploy or migrate a remote database by hand.
 - **Claude Code toolkit.** `.claude/` holds agents, skills and hooks for this repo; see

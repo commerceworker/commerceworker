@@ -34,8 +34,16 @@ function packageScopes(): string[] {
 /** Areas that span the repo rather than one package. */
 const REPO_SCOPES = ['repo', 'ci', 'deps', 'fleet', 'toolkit', 'release'];
 
+/**
+ * Dependabot writes its own messages (`Build(deps): Bump …`) and can't lower-case them, so its
+ * commits are skipped, recognised by the sign-off it adds to every one.
+ */
+const fromDependabot = (message: string) =>
+  /^Signed-off-by: dependabot\[bot\] <[^>]+>$/m.test(message);
+
 const config: UserConfig = {
   extends: ['@commitlint/config-conventional'],
+  ignores: [fromDependabot],
   rules: {
     'scope-enum': [RuleConfigSeverity.Error, 'always', [...REPO_SCOPES, ...packageScopes()].sort()],
   },
