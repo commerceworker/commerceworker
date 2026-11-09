@@ -9,6 +9,7 @@ import { operationCall, PERSON_CONFIRMS, type Role, type RpcActor } from '@comme
 import { createDb, customers } from '@commerceworker/db';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { EngineApi } from '../src/api';
+import { DRAFT_CHANGED } from '../src/assistant/flows';
 import { ensureTemplates } from '../src/flows';
 import { signedActor } from './principal';
 
@@ -69,15 +70,42 @@ describe('running a workspace tool for the REST API', () => {
     expect((bad as { error: string }).error).toMatch(/^status:/);
   });
 
-  it('runs only the tools REST offers: not the page’s, the panel’s, or a flow’s publish', async () => {
+  it('reads the stock list for a viewer, and bounds what reaches the model', async () => {
+    const r = await run('find_products', { belowReorder: false }, staff('viewer'));
+    expect(r).toMatchObject({ ok: true });
+    const long = await run('draft_plugin', { instruction: 'x'.repeat(4001) }, staff('admin'));
+    expect(long).toMatchObject({ ok: false, status: 400 });
+    expect((long as { error: string }).error).toMatch(/^instruction:/);
+  });
+
+  it('runs only the tools REST offers: not the page’s or the panel’s', async () => {
     for (const [tool, input] of [
       ['set_member_role', { userId: 'usr_x', role: 'admin' }],
       ['accept_product_drafts', { keys: ['x'] }],
-      ['publish_flow', { flowId: 'tpl-b2b-order' }],
       // MCP offers it; REST has its own route, and the engine holds that too.
       ['cancel_order', { orderId: 'ord_x', reason: 'x' }],
     ] as const)
       expect(await run(tool, input, person('admin'))).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it('publishes only the draft its caller read', async () => {
+    const op = staff('operator');
+    const copy = (await run('duplicate_flow', { flowId: 'tpl-b2b-order' }, op)) as {
+      ok: true;
+      value: { id: string };
+    };
+    const flowId = copy.value.id;
+    const read = (await run('get_flow', { flowId }, op)) as { ok: true; value: { draft: string } };
+    expect(read.value.draft).toMatch(/^[0-9a-f]{64}$/);
+    expect(await run('publish_flow', { flowId }, op)).toMatchObject({ ok: false, status: 400 });
+    expect(await run('publish_flow', { flowId, draft: 'f'.repeat(64) }, op)).toEqual({
+      ok: false,
+      error: DRAFT_CHANGED,
+    });
+    expect(await run('publish_flow', { flowId, draft: read.value.draft }, op)).toMatchObject({
+      ok: true,
+      value: { version: 1 },
+    });
   });
 
   it('never lets a token change what buyers pay or owe, as A2A never does', async () => {

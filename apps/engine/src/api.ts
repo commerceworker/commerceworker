@@ -11,10 +11,12 @@ import {
   type CopilotRequest,
   type CopilotResult,
   type CreateCartInput,
+  DRAFT_BOUND_TOOLS,
   type EngineRpc,
   HEALTH_WRITE_PATH,
   healthReport,
   isRestOperationTool,
+  NAME_THE_DRAFT,
   type OrderState,
   operationCall,
   type PaymentEvent,
@@ -221,10 +223,14 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
       name: actor.name,
       role: actor.role,
     };
+    // A publish or test is held to the draft its caller read, as MCP's confirm holds the previewed one.
+    const draft = (parsed.data as { draft?: string }).draft;
+    if (DRAFT_BOUND_TOOLS.includes(name) && !draft)
+      return { ok: false as const, status: 400 as const, error: NAME_THE_DRAFT };
     try {
       const value = await runTool(this.env, p, name, parsed.data as ToolInput<typeof name>, {
         via: 'API',
-        confirmed: 'direct',
+        confirmed: draft && DRAFT_BOUND_TOOLS.includes(name) ? { bound: { draft } } : 'direct',
         ...(key ? { key: `api:${actor.id}:${key}` } : {}),
       });
       return { ok: true as const, value };

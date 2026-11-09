@@ -279,24 +279,31 @@ on through the order routes. `POST /api/v1/carts/:id/cancel` ends a cart that ha
 The same operations an AI agent can call over MCP are also REST routes, and they run the same way:
 the same role, the same checks against the order, flow or record as it stands, the same
 refusals, and the same audit trail (recorded as `via: api`). Each route's path names what it acts
-on, and its JSON body gives the rest of the tool's input. Among them:
+on, and its JSON body (or, for a `GET`, its query string) gives the rest of the tool's input. Among them:
 
 | Method | Path | Does |
 |---|---|---|
 | `GET` | `/api/v1/attention` | What is waiting on people |
 | `POST` | `/api/v1/orders/:orderId/restart` | Starts a fresh order like it: same customer, lines and fulfilment, on its flow's current version |
 | `POST` | `/api/v1/approvals/decide` | `{ decision, note?, approvals: [{ orderId, nodeId }] }`: decides several at once |
-| `GET` | `/api/v1/flows/:flowId` | A flow's published graph |
+| `GET` | `/api/v1/flows/:flowId` | A flow's draft graph, with `draft`, its fingerprint |
+| `POST` | `/api/v1/flows/:flowId/publish` | `{ draft }`: publishes the draft you read |
+| `POST` | `/api/v1/flows/:flowId/test` | `{ draft }`: publishes that draft if it changed, then starts a test order |
 | `POST` | `/api/v1/promotions` | Creates a promotion code |
 | `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
 | `POST` | `/api/v1/stock/review` | Runs the stock review now |
+| `GET` | `/api/v1/stock?q=&belowReorder=` | The stock list: SKUs, stock and reorder points |
+| `POST` | `/api/v1/orders/:orderId/assess` | `{ questions, images? }`: asks the model questions about an order |
+| `POST` | `/api/v1/flows/:flowId/propose` | `{ instruction }`: a change to the flow, drafted for review |
+| `POST` | `/api/v1/plugin-drafts` | `{ instruction, pluginId? }`: a logic plugin drafted for review (admin) |
 
 The [API explorer](/api/) lists every one, with its body. An operation answers `200` with what it
 did or found, `400` for a body its tool doesn't take, `403` when your role is too low, and `409`
 when it is refused. What changes what buyers pay or owe (creating a promotion or turning one on
 or off, verifying or revoking a tax certificate) needs a person signed in as themselves, never an
-API token (`403`), as over MCP. Publishing a flow stays in the app and MCP for now, where it is
-held to the draft you saw. Send an `Idempotency-Key` header and an order an operation starts
+API token (`403`), as over MCP. Publishing or testing a flow names the `draft` you read from
+`GET /api/v1/flows/:flowId`: if anyone saved a change since, it is refused (`409`) and nothing is
+published, so read the flow again. Send an `Idempotency-Key` header and an order an operation starts
 is started once for it.
 
 ## Integrations

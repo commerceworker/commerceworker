@@ -143,7 +143,7 @@ import { pluginAction, uploadBundle } from './plugin-installs.server';
 import { pluginStatuses } from './plugins.server';
 import { decider, signedActor } from './principal.server';
 import { overBudget } from './rate-limit';
-import { matchOperation, operationRole } from './rest-operations';
+import { matchOperation, operationRole, queryInput } from './rest-operations';
 import {
   addPlatform,
   checkoutFlowRefusal,
@@ -1050,7 +1050,8 @@ async function runRestOperation(
 ): Promise<Response> {
   const denied = need(operationRole(op));
   if (denied) return denied;
-  const given = op.method === 'POST' ? await body() : {};
+  const given =
+    op.method === 'POST' ? await body() : queryInput(op, new URL(request.url).searchParams);
   const input = { ...(given && typeof given === 'object' ? given : {}), ...fromPath };
   // Signed for this tool and exactly this input; named as the audit trail names the caller.
   const actor = await signedActor(
