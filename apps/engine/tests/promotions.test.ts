@@ -197,7 +197,7 @@ describe('through the assistant', () => {
 
   it('adds, pauses and resumes a code on cards that say what it does', async () => {
     await db().delete(promotions);
-    const { TOOL_INPUTS } = await import('../src/assistant/tools');
+    const { TOOL_INPUTS } = await import('@commerceworker/core');
     const { previewAction, runAction } = await import('../src/assistant/data');
     // The code is read as a cart reads it.
     const input = TOOL_INPUTS.create_promotion.parse({

@@ -23,6 +23,9 @@ import {
   mcpSkillFiles,
   type Principal,
   type Role,
+  TOOL_INPUTS,
+  TOOL_OUTPUTS,
+  type ToolInput,
 } from '@commerceworker/core';
 import {
   acceptedContent,
@@ -34,13 +37,7 @@ import {
 import { memorySkillFiles, SkillCatalog } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { previewAction, Refused } from './assistant/data';
-import {
-  isActionTool,
-  runTool,
-  TOOL_INPUTS,
-  TOOL_OUTPUTS,
-  type ToolInput,
-} from './assistant/tools';
+import { isActionTool, runTool } from './assistant/tools';
 import { issueConfirmation, redeemConfirmation, useConfirmation } from './confirmations';
 import { forwardedPrincipal } from './principal';
 
