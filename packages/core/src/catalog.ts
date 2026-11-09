@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { assessConfigErrors, assessOutputs, assessQuestionsSchema } from './assess';
 import { policyRulesSchema } from './policy';
+import { routeGuardErrors } from './route-guards';
 import { SHIPPING_SELECTIONS, shippingConfigSchema, taxRegionsSchema } from './shipping';
 
 export type NodeCategory = 'trigger' | 'commerce' | 'control' | 'ai';
@@ -859,7 +860,7 @@ export const NODE_SPECS = [
     category: 'ai',
     label: 'Agent router',
     description:
-      'An LLM reads the order and context, then chooses exactly one route. Each route is an output.',
+      'An LLM reads the order and context, then chooses exactly one route. Each route is an output. A route can have a guard checked in code, so text in the order can’t send it past a person.',
     icon: 'Bot',
     fields: [
       {
@@ -874,8 +875,23 @@ export const NODE_SPECS = [
         kind: 'list',
         default: ['auto_approve', 'needs_approval', 'ask_customer'],
       },
+      {
+        key: 'guards',
+        label: 'Guards',
+        kind: 'json',
+        hint: 'Route → JSON Logic condition checked in code, e.g. {"auto_approve": {"<": [{"var": "order.total"}, 1000]}}. The model can take a guarded route only when its condition holds; otherwise the order takes the fallback.',
+        schema: z.record(z.string(), z.unknown()),
+      },
+      {
+        key: 'fallback',
+        label: 'Fallback route',
+        kind: 'text',
+        hint: 'Where a guarded choice goes when its condition fails. Defaults to needs_approval.',
+      },
     ],
     outputs: (config) => stringList(config.routes, ['auto_approve', 'needs_approval']),
+    validate: (config) =>
+      routeGuardErrors(config, stringList(config.routes, ['auto_approve', 'needs_approval'])),
   }),
   node({
     type: 'ai.assess',

@@ -1,5 +1,6 @@
 export * from './a2a';
 export * from './address';
+export * from './ai-gates';
 export * from './api';
 export * from './assess';
 export * from './assistant';
@@ -48,6 +49,7 @@ export * from './redact';
 export * from './retention';
 export * from './returns';
 export * from './roles';
+export * from './route-guards';
 export * from './scenarios';
 export * from './shipping';
 export * from './subscriptions';

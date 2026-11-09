@@ -36,6 +36,9 @@ export const SCENARIOS: Scenario[] = [
       model: 'b2b',
       channel: 'email',
       currency: 'USD',
+      // As email intake sends a PO from the customer's own address: a name typed in the PO alone
+      // isn't trusted, and the template's guard would send it to sales approval.
+      customerId: 'cus_northwind',
       lines: [],
       meta: {},
       documentText:

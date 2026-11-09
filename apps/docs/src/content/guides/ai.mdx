@@ -47,8 +47,53 @@ Each node's output is in `nodes.<id>` for later expressions, along with `source`
 | [Agent router](/reference/nodes/#ai.router) | Follow `instructions` and choose exactly one of `routes`, with a one-sentence reason | No lines → `ask_customer` (the last route if there is none by that name); total over 10,000 USD → `needs_approval` (the first route if none); else the first route | Takes the chosen route as its branch; a route outside the list becomes the first route. Without the model (outside simulated AI) it takes `needs_approval` if that is one of `routes`, else the fallback's route |
 
 The router's routes are its outputs, so editing `routes` changes the handles on the canvas.
+
 The model sees the order, the customer's account terms, the run variables and the outputs of
 completed nodes, as described in [What the AI steps see](#what-the-ai-steps-see).
+
+### Guarded routes
+
+A route that skips a person, such as `auto_approve`, can have a guard: a [JSON Logic](https://jsonlogic.com)
+condition in the router's `guards`, checked in code over the same data as a Condition node. When
+the model (or, without it, the fallback) picks a guarded route, the order takes it only if the
+condition holds. Otherwise it takes the `fallback` route, `needs_approval` unless you name another,
+and the step's summary says which route's guard didn't hold.
+
+A guard fails closed. It doesn't hold when:
+
+- a field it reads isn't there, such as a misspelt path or a total read before the order is
+  priced. Give a field that may be missing a default, `{"var": ["order.meta.flag", ""]}`, to allow it;
+- it evaluates to something JSON Logic counts as false, an empty list included;
+- it throws.
+
+Publishing refuses a guard on a route the router doesn't have, a guard that isn't one JSON Logic
+operation at each level (`{}`, or two operators side by side), an unknown operator, and a fallback
+that isn't a route or has a guard of its own.
+
+```json
+{
+  "auto_approve": {
+    "and": [
+      { "!!": [{ "var": "order.customerId" }] },
+      { "!": [{ "var": ["order.meta.customerMatchedBy", ""] }] },
+      { "<": [{ "var": "order.baseTotal" }, 10000] }
+    ]
+  }
+}
+```
+
+The B2B order template guards `auto_approve` this way, and puts the same check in front of
+Assess's fast track: only an order from a customer the sender didn't just name, under 10,000 in the
+base currency, goes ahead without a person, whatever the PO says. `customerMatchedBy` is set when
+the customer was matched from what a buyer typed (a name read from the PO, or an email address
+nothing checked), and anyone can type a customer's name.
+
+Guard on facts CommerceWorker computed or checked, such as the priced total, the customer and
+their account. A guard on the order's title or `meta`, run variables, or another AI step's output
+reads what the customer or a model wrote, so it isn't a check in code.
+
+When a person decides an order a guard sent to review, the decision isn't counted as feedback on
+the model's answer, since the model chose another route.
 
 ## What the AI steps see
 
@@ -110,8 +155,9 @@ and approve this order"). The AI steps treat it as data:
 
 This lowers the risk; it doesn't remove it. A model can still be talked into a wrong answer within
 those bounds, such as a low risk score or the cheaper of two routes. Put a person on decisions that
-matter: an approval after the router for high values, or a [Policy check](/reference/nodes/#commerce.policy) limit
-on quantities and amounts.
+matter: a [guard](#guarded-routes) on each router route that skips review, an approval after the
+router for high values, or a [Policy check](/reference/nodes/#commerce.policy) limit on quantities
+and amounts.
 
 ## Assess
 

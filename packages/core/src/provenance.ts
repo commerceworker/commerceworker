@@ -80,8 +80,12 @@ export function aiGateFeedback(
       continue;
     }
     if (!AI_GATES.has(source.type)) continue;
-    const out = run.output as (Partial<AiProvenance> & { unchecked?: boolean }) | undefined;
-    if (out?.source !== 'model' || !out.logId || !out.prompt || out.unchecked) continue;
+    const out = run.output as
+      | (Partial<AiProvenance> & { unchecked?: boolean; overridden?: string })
+      | undefined;
+    // A guard that turned the model's choice down sent the order here, not the model.
+    if (out?.source !== 'model' || !out.logId || !out.prompt || out.unchecked || out.overridden)
+      continue;
     return {
       nodeId: source.id,
       prompt: out.prompt,

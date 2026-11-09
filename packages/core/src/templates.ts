@@ -144,147 +144,169 @@ export function purchaseRequestFlow(): Flow {
     });
 }
 
+/**
+ * When a B2B order may go ahead without a person, checked in code rather than left to the models
+ * that read the customer's PO: a customer the sender didn't just name (none guessed from typed
+ * text, `CUSTOMER_MATCHED_BY`) and a priced total under 10,000 in the base currency. It guards the
+ * router's `auto_approve` and Assess's fast track alike.
+ */
+export const B2B_AUTO_APPROVE = {
+  and: [
+    { '!!': [{ var: 'order.customerId' }] },
+    { '!': [{ var: ['order.meta.customerMatchedBy', ''] }] },
+    { '<': [{ var: 'order.baseTotal' }, 10000] },
+  ],
+};
+
 /** Assess fast-tracks an order it is confident is routine; anything less certain goes to triage. */
 export function b2bOrderFlow(): Flow {
-  return new Builder()
-    .n('po_in', 'trigger.email_po', 'PO received')
-    .n('extract', 'ai.extract', 'Extract order')
-    .n('validate', 'commerce.validate', 'Validate')
-    .n('price', 'commerce.price', 'Contract pricing', { useContracts: true })
-    .n('promo', 'commerce.discount', 'Promotions')
-    .n('tax', 'commerce.tax', 'Tax', { rate: 0.0825 })
-    .n('credit', 'commerce.credit_check', 'Credit check')
-    .n('assess', 'ai.assess', 'Assess: routine?', {
-      questions: {
-        routine: {
-          type: 'noul',
-          instructions:
-            'Is this a routine repeat order from an established customer in good standing: SKUs they usually buy, normal quantities and a total under $10,000?',
+  return (
+    new Builder()
+      .n('po_in', 'trigger.email_po', 'PO received')
+      .n('extract', 'ai.extract', 'Extract order')
+      .n('validate', 'commerce.validate', 'Validate')
+      .n('price', 'commerce.price', 'Contract pricing', { useContracts: true })
+      .n('promo', 'commerce.discount', 'Promotions')
+      .n('tax', 'commerce.tax', 'Tax', { rate: 0.0825 })
+      .n('credit', 'commerce.credit_check', 'Credit check')
+      .n('assess', 'ai.assess', 'Assess: routine?', {
+        questions: {
+          routine: {
+            type: 'noul',
+            instructions:
+              'Is this a routine repeat order from an established customer in good standing: SKUs they usually buy, normal quantities and a total under $10,000?',
+          },
+          ambiguous: {
+            type: 'noul',
+            instructions:
+              'Is anything in the PO ambiguous or missing: lines that could not be matched, unclear quantities or delivery details?',
+          },
+          urgent: { type: 'noul', instructions: 'Is the customer asking for this order urgently?' },
         },
-        ambiguous: {
-          type: 'noul',
-          instructions:
-            'Is anything in the PO ambiguous or missing: lines that could not be matched, unclear quantities or delivery details?',
-        },
-        urgent: { type: 'noul', instructions: 'Is the customer asking for this order urgently?' },
-      },
-      branchOn: 'routine',
-      minConfidence: 0.6,
-      state: 'order_and_context',
-    })
-    .n('router', 'ai.router', 'Agent: triage', {
-      instructions:
-        'You triage B2B orders. Choose auto_approve for routine orders from customers in good standing; needs_approval for unusual quantities, new SKUs, big jumps versus their history or totals above $10,000; ask_customer if the PO is ambiguous or lines could not be matched.',
-      routes: ['auto_approve', 'needs_approval', 'ask_customer'],
-    })
-    .n('clarify', 'commerce.notify', 'Ask customer', {
-      to: 'customer',
-      subject: 'Question about {{ref}}',
-      body: '{{nodes.router.reason}}',
-    })
-    .n('reply', 'control.wait_event', 'Customer replies', {
-      event: 'customer.reply',
-      timeout: '3 days',
-    })
-    .n('approval', 'control.approval', 'Sales approval', {
-      // No customer in the title: the approvals inbox shows it beside each row, and an order from an
-      // unknown sender has none to show.
-      title: 'Approve B2B order {{order.id}}',
-      assignee: 'sales_ops',
-      timeout: '1 day',
-    })
-    .n('reserve', 'commerce.reserve_inventory', 'Reserve stock')
-    .n('invoice', 'commerce.invoice', 'Invoice', { terms: 'net_30' })
-    .n('ship', 'commerce.ship', 'Ship', { carrier: 'freight' })
-    .n('erp', 'commerce.erp_sync', 'Post to ERP')
-    .n('paid', 'control.wait_event', 'Payment received', {
-      event: 'payment.received',
-      timeout: '30 days',
-    })
-    .n('dunning', 'control.loop', 'Dunning', { while: true, maxIterations: 3 })
-    .n('remind', 'commerce.notify', 'Payment reminder', {
-      to: 'customer',
-      subject: 'Invoice for {{ref}} is overdue',
-    })
-    .n('paid_late', 'control.wait_event', 'Payment received', {
-      event: 'payment.received',
-      timeout: '7 days',
-    })
-    .n('collections', 'commerce.notify', 'Send to collections', {
-      to: 'team',
-      subject: '{{order.id}} unpaid after 3 reminders',
-    })
-    .n('done', 'control.end', 'Paid', { outcome: 'completed' })
-    .n('unpaid', 'control.end', 'Unpaid', { outcome: 'cancelled', reason: 'Sent to collections' })
-    .n('decline', 'commerce.notify', 'Decline order', {
-      to: 'customer',
-      subject: 'We could not accept {{ref}}',
-    })
-    .n('declined', 'control.end', 'Declined', { outcome: 'declined', reason: 'Not approved' })
-    .n('expire', 'commerce.notify', 'Decline order', {
-      to: 'customer',
-      subject: 'We could not accept {{ref}}',
-    })
-    .n('expired', 'control.end', 'No decision', {
-      outcome: 'declined',
-      reason: 'No approval decision in time',
-    })
-    .n('unanswered', 'commerce.notify', 'Decline order', {
-      to: 'customer',
-      subject: 'We could not accept {{ref}}',
-    })
-    .n('no_reply', 'control.end', 'No reply', {
-      outcome: 'declined',
-      reason: 'Customer did not reply in time',
-    })
-    .n('backorder', 'control.end', 'Out of stock', {
-      outcome: 'failed',
-      reason: 'Insufficient stock; reservations released',
-    })
-    .e('po_in', 'extract')
-    .e('extract', 'validate')
-    .e('validate', 'price')
-    .e('price', 'promo')
-    .e('promo', 'tax')
-    .e('tax', 'credit')
-    .e('credit.ok', 'assess')
-    .e('assess.yes', 'reserve')
-    .e('assess.no', 'router')
-    .e('assess.unsure', 'router')
-    .e('credit.over_limit', 'approval')
-    .e('router.auto_approve', 'reserve')
-    .e('router.needs_approval', 'approval')
-    .e('router.ask_customer', 'clarify')
-    .e('clarify', 'reply')
-    .e('reply.received', 'approval')
-    .e('reply.timeout', 'unanswered')
-    .e('approval.approved', 'reserve')
-    .e('approval.rejected', 'decline')
-    .e('approval.escalated', 'expire')
-    .e('decline', 'declined')
-    .e('expire', 'expired')
-    .e('unanswered', 'no_reply')
-    .e('reserve.ok', 'invoice')
-    .e('reserve.backorder', 'backorder')
-    .e('invoice', 'ship')
-    .e('ship', 'erp')
-    .e('erp', 'paid')
-    .e('paid.received', 'done')
-    .e('paid.timeout', 'dunning')
-    .e('dunning.body', 'remind')
-    .e('remind', 'paid_late')
-    .e('paid_late.received', 'done')
-    .e('paid_late.timeout', 'dunning', LOOP_INPUT)
-    .e('dunning.done', 'collections')
-    .e('collections', 'unpaid')
-    .build({
-      id: 'tpl-b2b-order',
-      name: 'B2B order',
-      description:
-        'Inbound PO by email: AI extraction, contract pricing, credit check, an assessment that fast-tracks confidently routine orders, an agent that triages the rest to auto-approve / approval / clarify, stock reservation, net-30 invoice, shipment and a dunning loop.',
-      model: 'b2b',
-      channels: ['email', 'edi', 'api', 'manual'],
-    });
+        branchOn: 'routine',
+        minConfidence: 0.6,
+        state: 'order_and_context',
+      })
+      .n('router', 'ai.router', 'Agent: triage', {
+        instructions:
+          'You triage B2B orders. Choose auto_approve for routine orders from customers in good standing; needs_approval for unusual quantities, new SKUs, big jumps versus their history or totals above $10,000; ask_customer if the PO is ambiguous or lines could not be matched.',
+        routes: ['auto_approve', 'needs_approval', 'ask_customer'],
+        // Checked in code, since the PO text the model reads is the customer's.
+        guards: { auto_approve: B2B_AUTO_APPROVE },
+      })
+      .n('clarify', 'commerce.notify', 'Ask customer', {
+        to: 'customer',
+        subject: 'Question about {{ref}}',
+        body: '{{nodes.router.reason}}',
+      })
+      .n('reply', 'control.wait_event', 'Customer replies', {
+        event: 'customer.reply',
+        timeout: '3 days',
+      })
+      .n('approval', 'control.approval', 'Sales approval', {
+        // No customer in the title: the approvals inbox shows it beside each row, and an order from an
+        // unknown sender has none to show.
+        title: 'Approve B2B order {{order.id}}',
+        assignee: 'sales_ops',
+        timeout: '1 day',
+      })
+      // Assess's fast track skips the router, so it gets the router's auto_approve check in code.
+      .n('fast_ok', 'control.condition', 'Fast track allowed?', { expression: B2B_AUTO_APPROVE })
+      .n('reserve', 'commerce.reserve_inventory', 'Reserve stock')
+      .n('invoice', 'commerce.invoice', 'Invoice', { terms: 'net_30' })
+      .n('ship', 'commerce.ship', 'Ship', { carrier: 'freight' })
+      .n('erp', 'commerce.erp_sync', 'Post to ERP')
+      .n('paid', 'control.wait_event', 'Payment received', {
+        event: 'payment.received',
+        timeout: '30 days',
+      })
+      .n('dunning', 'control.loop', 'Dunning', { while: true, maxIterations: 3 })
+      .n('remind', 'commerce.notify', 'Payment reminder', {
+        to: 'customer',
+        subject: 'Invoice for {{ref}} is overdue',
+      })
+      .n('paid_late', 'control.wait_event', 'Payment received', {
+        event: 'payment.received',
+        timeout: '7 days',
+      })
+      .n('collections', 'commerce.notify', 'Send to collections', {
+        to: 'team',
+        subject: '{{order.id}} unpaid after 3 reminders',
+      })
+      .n('done', 'control.end', 'Paid', { outcome: 'completed' })
+      .n('unpaid', 'control.end', 'Unpaid', { outcome: 'cancelled', reason: 'Sent to collections' })
+      .n('decline', 'commerce.notify', 'Decline order', {
+        to: 'customer',
+        subject: 'We could not accept {{ref}}',
+      })
+      .n('declined', 'control.end', 'Declined', { outcome: 'declined', reason: 'Not approved' })
+      .n('expire', 'commerce.notify', 'Decline order', {
+        to: 'customer',
+        subject: 'We could not accept {{ref}}',
+      })
+      .n('expired', 'control.end', 'No decision', {
+        outcome: 'declined',
+        reason: 'No approval decision in time',
+      })
+      .n('unanswered', 'commerce.notify', 'Decline order', {
+        to: 'customer',
+        subject: 'We could not accept {{ref}}',
+      })
+      .n('no_reply', 'control.end', 'No reply', {
+        outcome: 'declined',
+        reason: 'Customer did not reply in time',
+      })
+      .n('backorder', 'control.end', 'Out of stock', {
+        outcome: 'failed',
+        reason: 'Insufficient stock; reservations released',
+      })
+      .e('po_in', 'extract')
+      .e('extract', 'validate')
+      .e('validate', 'price')
+      .e('price', 'promo')
+      .e('promo', 'tax')
+      .e('tax', 'credit')
+      .e('credit.ok', 'assess')
+      .e('assess.yes', 'fast_ok')
+      .e('fast_ok.true', 'reserve')
+      .e('fast_ok.false', 'approval')
+      .e('assess.no', 'router')
+      .e('assess.unsure', 'router')
+      .e('credit.over_limit', 'approval')
+      .e('router.auto_approve', 'reserve')
+      .e('router.needs_approval', 'approval')
+      .e('router.ask_customer', 'clarify')
+      .e('clarify', 'reply')
+      .e('reply.received', 'approval')
+      .e('reply.timeout', 'unanswered')
+      .e('approval.approved', 'reserve')
+      .e('approval.rejected', 'decline')
+      .e('approval.escalated', 'expire')
+      .e('decline', 'declined')
+      .e('expire', 'expired')
+      .e('unanswered', 'no_reply')
+      .e('reserve.ok', 'invoice')
+      .e('reserve.backorder', 'backorder')
+      .e('invoice', 'ship')
+      .e('ship', 'erp')
+      .e('erp', 'paid')
+      .e('paid.received', 'done')
+      .e('paid.timeout', 'dunning')
+      .e('dunning.body', 'remind')
+      .e('remind', 'paid_late')
+      .e('paid_late.received', 'done')
+      .e('paid_late.timeout', 'dunning', LOOP_INPUT)
+      .e('dunning.done', 'collections')
+      .e('collections', 'unpaid')
+      .build({
+        id: 'tpl-b2b-order',
+        name: 'B2B order',
+        description:
+          'Inbound PO by email: AI extraction, contract pricing, credit check, an assessment that fast-tracks confidently routine orders, an agent that triages the rest to auto-approve / approval / clarify, stock reservation, net-30 invoice, shipment and a dunning loop.',
+        model: 'b2b',
+        channels: ['email', 'edi', 'api', 'manual'],
+      })
+  );
 }
 
 export function reorderFlow(): Flow {
