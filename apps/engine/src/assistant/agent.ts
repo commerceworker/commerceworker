@@ -16,7 +16,6 @@ import {
   type AssistantContext,
   type AssistantTool,
   atLeast,
-  DIRECT_CALL,
   fingerprintOf,
   flowGraphSchema,
   isAssistantTool,
@@ -40,6 +39,25 @@ import type { z } from 'zod';
 import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from '../principal';
 import { assistantBudgetSpent, finishTurn } from '../usage';
 import { answerStream } from './answer';
+import {
+  ALREADY_ANSWERED,
+  answerCard,
+  answeredOnly,
+  CARD_TTL_MS,
+  DIRECT,
+  type Direct,
+  declinedCards,
+  directKey,
+  findDirectCall,
+  heldBound,
+  idsOf,
+  kept,
+  lapseCards,
+  lookAgain,
+  SHOWN_CHANGED,
+  type Shown,
+  shownKey,
+} from './cards';
 import {
   type ActionInput,
   type ActionTool,
@@ -121,19 +139,9 @@ export class AssistantAgent extends AIChatAgent<Env> {
     await this.pruneShown();
     const key = shownKey(callId);
     const digest = await fingerprintOf({ name, input: input ?? {} });
-    const held = await this.ctx.storage.get<Shown>(key);
-    if (!held) {
-      await this.ctx.storage.put(key, { digest, bound, at: Date.now() } satisfies Shown);
-      return shown;
-    }
-    if (
-      held.stale ||
-      held.digest !== digest ||
-      JSON.stringify(held.bound) !== JSON.stringify(bound)
-    ) {
-      await this.ctx.storage.put(key, { ...held, stale: true } satisfies Shown);
-      return { ...shown, blocked: shown.blocked ?? SHOWN_CHANGED };
-    }
+    const look = lookAgain(await this.ctx.storage.get<Shown>(key), digest, bound, Date.now());
+    if (look.store) await this.ctx.storage.put(key, look.store);
+    if (look.blocked) return { ...shown, blocked: shown.blocked ?? SHOWN_CHANGED };
     return shown;
   }
 
@@ -146,54 +154,24 @@ export class AssistantAgent extends AIChatAgent<Env> {
     const key = shownKey(callId);
     const held = await this.ctx.storage.get<Shown>(key);
     await this.ctx.storage.delete(key);
-    const digest = await fingerprintOf({ name, input: input ?? {} });
-    return { bound: held && !held.stale && held.digest === digest ? held.bound : null };
+    return { bound: heldBound(held, await fingerprintOf({ name, input: input ?? {} })) };
   }
 
   /** Drops what declined cards held, and anything held for over a day. */
   private async pruneShown() {
-    const declined = this.messages.flatMap((m) =>
-      m.parts.flatMap((part) => {
-        const t = part as {
-          toolCallId?: string;
-          state?: string;
-          approval?: { approved?: boolean };
-        };
-        return t.toolCallId && (t.state === 'output-denied' || t.approval?.approved === false)
-          ? [shownKey(t.toolCallId)]
-          : [];
-      }),
-    );
     const old = [
       ...(await this.ctx.storage.list<Shown>({ prefix: 'shown:' })),
       ...(await this.ctx.storage.list<Direct>({ prefix: 'direct:' })),
     ]
-      .filter(([, v]) => Date.now() - (v.at ?? 0) > 86_400_000)
+      .filter(([, v]) => Date.now() - (v.at ?? 0) > CARD_TTL_MS)
       .map(([k]) => k);
-    const gone = [...new Set([...declined, ...old])];
+    const gone = [...new Set([...declinedCards(this.messages), ...old])];
     if (gone.length) await this.ctx.storage.delete(gone);
-    // A page's card left unanswered for a day is let go, as if declined: its input (a guest's
-    // address, a pasted PO) isn't kept past then, only its ids.
+    // A page's card left unanswered for a day is let go, as if declined (`lapseCards`).
     const lapsed = new Set(
       old.filter((k) => k.startsWith('direct:')).map((k) => k.slice('direct:'.length)),
     );
-    if (lapsed.size)
-      await this.persistMessages(
-        this.messages.map((m) => ({
-          ...m,
-          parts: m.parts.map((x) => {
-            const t = x as { toolCallId?: string; state?: string; input?: unknown };
-            if (!t.toolCallId || !lapsed.has(t.toolCallId) || t.state !== 'approval-requested')
-              return x;
-            return {
-              ...x,
-              input: idsOf(t.input),
-              state: 'output-denied',
-              approval: { id: t.toolCallId, approved: false },
-            } as UIMessage['parts'][number];
-          }),
-        })),
-      );
+    if (lapsed.size) await this.persistMessages(lapseCards(this.messages, lapsed));
   }
 
   /**
@@ -265,7 +243,7 @@ export class AssistantAgent extends AIChatAgent<Env> {
     this.resolving.add(callId);
     try {
       const p = await this.caller();
-      const found = this.directPart(callId);
+      const found = findDirectCall(this.messages, callId);
       const made = await this.ctx.storage.get<Direct>(directKey(callId));
       if (found?.part.state !== 'approval-requested' || !made) throw new Refused(ALREADY_ANSWERED);
       const { name } = found.part;
@@ -278,22 +256,8 @@ export class AssistantAgent extends AIChatAgent<Env> {
         throw new Refused(ALREADY_ANSWERED);
       const input = parsed.data as ToolInput<typeof name>;
       await this.ctx.storage.delete(directKey(callId));
-      const write = (part: Record<string, unknown>) =>
-        this.persistMessages(
-          this.messages.map((m) =>
-            m.id === found.message.id
-              ? {
-                  ...m,
-                  parts: m.parts.map((x) => {
-                    if ((x as { toolCallId?: string }).toolCallId !== callId) return x;
-                    // Answered, the card no longer states its input: only its ids stay stored.
-                    const { errorText: _e, output: _o, ...rest } = x as Record<string, unknown>;
-                    return { ...rest, input: idsOf(input), ...part } as UIMessage['parts'][number];
-                  }),
-                }
-              : m,
-          ),
-        );
+      const write = (answer: Record<string, unknown>) =>
+        this.persistMessages(answerCard(this.messages, found.message.id, callId, input, answer));
       if (approved !== true) {
         await this.shown(callId, name, input);
         await write({ state: 'output-denied', approval: { id: callId, approved: false } });
@@ -320,19 +284,6 @@ export class AssistantAgent extends AIChatAgent<Env> {
 
   /** Calls being answered now: an answer from a second tab is refused, not run twice. */
   private resolving = new Set<string>();
-
-  /** The tool call `act` made with this id, in the message it is in. */
-  private directPart(callId: string) {
-    for (const message of this.messages)
-      for (const part of message.parts) {
-        const t = part as { type: string; toolCallId?: string; state?: string; input?: unknown };
-        if (t.toolCallId !== callId || !t.type.startsWith('tool-')) continue;
-        const name = t.type.slice(5);
-        if (!isAssistantTool(name)) return null;
-        return { message, part: { name, input: t.input, state: t.state } };
-      }
-    return null;
-  }
 
   override async onChatMessage(
     _onFinish: Parameters<AIChatAgent<Env>['onChatMessage']>[0],
@@ -442,28 +393,8 @@ export class AssistantAgent extends AIChatAgent<Env> {
   }
 }
 
-/** What a confirm card's first look showed, kept per tool call. */
-type Shown = {
-  /** The tool and input it was shown for (`fingerprintOf`). */
-  digest: string;
-  bound: Record<string, unknown> | null;
-  at: number;
-  /** A later look saw something else: the card no longer holds. */
-  stale?: true;
-};
-
-const shownKey = (callId: string) => `shown:${callId}`;
-
 const connectionKey = (id: string) => `connection:${id}`;
 
-const SHOWN_CHANGED = 'This changed since the card was first shown. Ask again for a new card.';
-
-export const DIRECT = DIRECT_CALL;
-
-const ALREADY_ANSWERED = 'This was already answered.';
-
-/** What a stored call says went wrong: a refusal's own words, never an internal error's. */
-/** A message's text, as the person wrote it. */
 /** A message's text as the fixed rules read it (`lastUserText`), so Clef judges the call they build. */
 const textOf = (m: UIMessage) =>
   m.parts
@@ -471,51 +402,9 @@ const textOf = (m: UIMessage) =>
     .join(' ')
     .trim();
 
+/** What a stored call says went wrong: a refusal's own words, never an internal error's. */
 const errorLine = (err: unknown) =>
   err instanceof Refused ? err.message : 'That didn’t go through. Try again in a moment.';
-
-/** A confirm card `act` made, kept until it is answered. */
-type Direct = { name: AssistantTool; digest: string; at: number };
-
-const directKey = (callId: string) => `direct:${callId}`;
-
-/** A call's ids, all a page edit's line needs: cart text and addresses stay out of the store. */
-function idsOf(input: unknown): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries((input ?? {}) as Record<string, unknown>).filter(
-      (e): e is [string, string] => /Id$/.test(e[0]) && typeof e[1] === 'string',
-    ),
-  );
-}
-
-/** What a page edit's result keeps in the conversation: what it did and where, and counts. */
-function kept(output: unknown): Record<string, unknown> {
-  const o = (output ?? {}) as Record<string, unknown>;
-  const pick = ['done', 'href', 'id', 'status', 'applied', 'version', 'orderId', 'instanceId'];
-  const out = Object.fromEntries(pick.filter((k) => k in o).map((k) => [k, o[k]]));
-  if (Array.isArray(o.results))
-    out.results = o.results.map((r: Record<string, unknown>) => ({
-      orderId: r.orderId,
-      nodeId: r.nodeId,
-      ok: r.ok,
-      ...(r.error ? { error: r.error } : {}),
-    }));
-  return out;
-}
-
-/**
- * The conversation as the model reads it: a page's confirm card still waiting has no result yet
- * and isn't the model's to answer, so it is left out until the person answers it.
- */
-export function answeredOnly(messages: UIMessage[]): UIMessage[] {
-  return messages.flatMap((m) => {
-    const parts = m.parts.filter((x) => {
-      const t = x as { toolCallId?: string; state?: string };
-      return !(t.toolCallId?.startsWith(DIRECT) && !t.state?.startsWith('output-'));
-    });
-    return parts.some((x) => x.type !== 'step-start') ? [{ ...m, parts }] : [];
-  });
-}
 
 /** The page the person is on, as the panel sent it; anything malformed counts as the workspace. */
 export function readContext(raw: unknown): AssistantContext {
@@ -559,3 +448,6 @@ function systemPrompt(p: Principal, context: AssistantContext) {
     'A tool you don’t have is one their role can’t use; say which role can.',
   ].join('\n');
 }
+
+/** Kept for callers of the agent module (its tests). */
+export { answeredOnly, DIRECT } from './cards';
