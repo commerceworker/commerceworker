@@ -51,3 +51,32 @@ export function payoutAmounts(
   const commission = money((gross - refunded) * commissionPct);
   return { gross, refunded, commission, net: money(gross - refunded - commission) };
 }
+
+/** A seller's answer to their part, from a `seller.responded` event; null when it isn't one. */
+export function sellerResponseOf(raw: unknown): {
+  sellerId: string;
+  decision: 'accepted' | 'rejected';
+  reason?: string;
+} | null {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const decision = r.decision === 'accepted' || r.decision === 'rejected' ? r.decision : null;
+  if (typeof r.sellerId !== 'string' || !decision) return null;
+  return {
+    sellerId: r.sellerId,
+    decision,
+    ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
+  };
+}
+
+/**
+ * Where an order stands once its sellers have answered: still `pending` while any part is,
+ * `rejected` when none accepted, `accepted` when all did, else `partial` (some of each).
+ */
+export function sellerOutcome(
+  parts: readonly { status: string }[],
+): 'pending' | 'rejected' | 'accepted' | 'partial' {
+  if (parts.some((p) => p.status === 'pending')) return 'pending';
+  const accepted = parts.some((p) => p.status === 'accepted');
+  if (!accepted) return 'rejected';
+  return parts.some((p) => p.status === 'rejected') ? 'partial' : 'accepted';
+}

@@ -1,9 +1,10 @@
+import type { Order } from '@commerceworker/core';
 import { FIRST_PARTY } from '@commerceworker/core';
 import type { ProductRecord, SellerRecord } from '@commerceworker/ports/commerce';
 import { FixedClock } from '@commerceworker/test-kit';
 import { InMemoryMarketplaceStore, InMemoryPricingStore } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { schedulePayouts, splitBySeller } from '../src/commerce';
+import { answerSellerOrders, schedulePayouts, splitBySeller } from '../src/commerce';
 
 const product = (sku: string, sellerId: string | null): ProductRecord => ({
   sku,
@@ -110,5 +111,68 @@ describe('scheduling payouts', () => {
     ]);
     await schedulePayouts(p, { id: 'o3', total: 100 }, 'payout#1', 0);
     expect(await p.marketplace.payouts('o3')).toEqual(rows);
+  });
+});
+
+describe("recording sellers' answers", () => {
+  const order = (id: string) =>
+    ({
+      id,
+      currency: 'USD',
+      lines: [
+        { sku: 'A', qty: 1, unitPrice: 60 },
+        { sku: 'C', qty: 1, unitPrice: 30, sellerId: 'cove' },
+        { sku: 'F', qty: 1, unitPrice: 10 },
+      ],
+      subtotal: 100,
+      shipping: 5,
+      tax: 0,
+      total: 105,
+    }) as unknown as Order;
+  const opened = async (id: string) => {
+    const p = ports([seller('acme'), seller('cove')]);
+    await splitBySeller(p, order(id));
+    return p;
+  };
+
+  it('waits while a seller is still to answer, and refuses an answer it cannot read', async () => {
+    const p = await opened('o4');
+    const r = await answerSellerOrders(p, order('o4'), {
+      response: { sellerId: 'acme', decision: 'accepted' },
+    });
+    expect(r).toMatchObject({ ok: true, outcome: 'pending' });
+    expect(await answerSellerOrders(p, order('o4'), { response: { sellerId: 'cove' } })).toEqual({
+      ok: false,
+      error: 'seller.responded needs { sellerId, decision: "accepted" | "rejected" }',
+    });
+  });
+
+  it("keeps only the accepting sellers' lines on a partial accept, and re-totals", async () => {
+    const p = await opened('o5');
+    await answerSellerOrders(p, order('o5'), {
+      response: { sellerId: 'acme', decision: 'accepted' },
+    });
+    const r = await answerSellerOrders(p, order('o5'), {
+      response: { sellerId: 'cove', decision: 'rejected', reason: 'Out of stock' },
+    });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.outcome).toBe('partial');
+    expect(r.order?.lines.map((l) => l.sku)).toEqual(['A', 'F']);
+    expect(r.order).toMatchObject({ subtotal: 70, shipping: 5, total: 75 });
+    expect(r.parts.find((x) => x.sellerId === 'cove')).toMatchObject({
+      status: 'rejected',
+      reason: 'Out of stock',
+    });
+  });
+
+  it('rejects every part still pending when the wait expires', async () => {
+    const p = await opened('o6');
+    const r = await answerSellerOrders(p, order('o6'), { expire: 'No response' });
+    expect(r).toMatchObject({ ok: true, outcome: 'partial' });
+    // A replay changes nothing: the parts are no longer pending.
+    const again = await answerSellerOrders(p, order('o6'), {
+      response: { sellerId: 'acme', decision: 'accepted' },
+    });
+    expect(again).toMatchObject({ ok: true, outcome: 'partial' });
   });
 });

@@ -9,6 +9,8 @@
 
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
+  answerSellerOrders,
+  applyPromotions,
   bookReturnLabel,
   bookShipment,
   MissingExchangeRateError,
@@ -21,15 +23,12 @@ import {
 } from '@commerceworker/application/commerce';
 import {
   type AiProvenance,
-  type AppliedPromotion,
-  applyPromotion,
   assessBranch,
   assessQuestionsSchema,
   BASE_CURRENCY,
   billableKg,
   CUSTOMER_MATCHED_BY,
   checkAddress,
-  choosePromotions,
   computeTotals,
   customerTrusted,
   describeAnswers,
@@ -49,26 +48,22 @@ import {
   type Order,
   type OrderLine,
   PROVIDER_MAX_TAX_RATE,
-  type Promotion,
   pickOption,
   policyRulesSchema,
-  promoCodesOf,
-  promotionProblem,
   type RunContext,
   regionalTaxRate,
   renderDocument,
   SHIPPING_SELECTIONS,
   type ShippingSelection,
-  sellerOfLine,
   shippingConfigSchema,
   shipToCountry,
   stockLines,
   stringList,
   taxExemptNote,
   taxRegionsSchema,
+  threeWayMatch,
   toBase,
   truthy,
-  unknownPromotion,
 } from '@commerceworker/core';
 import * as ai from './ai';
 import * as billing from './billing';
@@ -238,77 +233,22 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.discount': async ({ env, ctx, config, stepKey, dryRun }) => {
-    const codes = promoCodesOf(ctx.order.meta);
-    if (!codes.length)
-      return { output: { applied: [], refused: [] }, summary: 'No promotion codes' };
-    const found = await pricingStore(env).promotionsByCode(codes);
-    // In the order the codes were given, so where a refusal sits says nothing about which exist.
-    const refused: { code: string; reason: string }[] = [];
-    const usable: Promotion[] = [];
-    for (const code of codes) {
-      const p = found.find((f) => f.code === code);
-      if (!p) {
-        refused.push({ code, reason: unknownPromotion(code) });
-        continue;
-      }
-      const redeemed = await pricingStore(env).redemptionsOf(
-        p.id,
-        ctx.order.id,
-        ctx.order.customerId,
-      );
-      const why = promotionProblem(p, {
-        now: ctx.now,
-        customerId: ctx.order.customerId,
-        currency: ctx.order.currency,
-        fxRate: ctx.order.fxRate,
-        lines: ctx.order.lines,
-        redeemed,
-      });
-      if (why) refused.push({ code: p.code, reason: why });
-      else usable.push(p);
-    }
-    const chosen = choosePromotions(usable, ctx.order.lines, {
-      fxRate: ctx.order.fxRate,
-      shipping: ctx.order.shipping ?? 0,
+    const r = await applyPromotions({ pricing: pricingStore(env) }, ctx.order, {
+      now: ctx.now,
       stack: config.stack === true,
+      stepKey,
+      dryRun: dryRun === true,
     });
-    for (const p of usable)
-      if (!chosen.includes(p))
-        refused.push({ code: p.code, reason: `${p.code} isn't combined with another code.` });
-    let lines = ctx.order.lines;
-    let shipping = ctx.order.shipping;
-    const applied: AppliedPromotion[] = [];
-    for (const p of chosen) {
-      const r = applyPromotion(p, lines, { fxRate: ctx.order.fxRate });
-      const amount = p.kind === 'free_shipping' ? (shipping ?? 0) : r.amount;
-      // The redemption is the order's once it holds it; a code used up meanwhile is refused.
-      const held =
-        dryRun ||
-        (await pricingStore(env).redeem({
-          promotion: p,
-          orderId: ctx.order.id,
-          customerId: ctx.order.customerId,
-          amount,
-          stepKey,
-        }));
-      if (!held) {
-        refused.push({ code: p.code, reason: `${p.code} has been used up.` });
-        continue;
-      }
-      lines = r.lines;
-      if (p.kind === 'free_shipping') shipping = 0;
-      applied.push({ id: p.id, code: p.code, kind: p.kind, amount });
-    }
-    const t = computeTotals({ ...ctx.order, lines, shipping });
-    const off = applied.reduce((s, a) => s + a.amount, 0);
+    if (!r.order) return { output: { applied: [], refused: [] }, summary: 'No promotion codes' };
+    const off = r.applied.reduce((s, a) => s + a.amount, 0);
     return {
-      order: { lines, ...t },
-      output: { applied, refused },
-      vars: { promotionsRefused: refused.map((r) => r.reason) },
-      summary: applied.length
-        ? `${applied.map((a) => a.code).join(', ')} · ${cash(off, ctx)} off`
-        : refused.length
-          ? refused.map((r) => r.reason).join(' ')
+      order: r.order,
+      output: { applied: r.applied, refused: r.refused },
+      vars: { promotionsRefused: r.refused.map((x) => x.reason) },
+      summary: r.applied.length
+        ? `${r.applied.map((a) => a.code).join(', ')} · ${cash(off, ctx)} off`
+        : r.refused.length
+          ? r.refused.map((x) => x.reason).join(' ')
           : 'No promotion codes',
     };
   },
@@ -716,11 +656,12 @@ export const EXECUTORS: Record<string, Exec> = {
       (ctx.vars.goods_received as { total?: number } | undefined)?.total ?? ctx.order.total;
     const invoiced =
       ctx.order.meta?.simulate === 'three_way_mismatch' ? ctx.order.total * 1.1 : ctx.order.total;
-    const tol = num(config.tolerance, 0.02);
-    const drift =
-      Math.max(Math.abs(received - ctx.order.total), Math.abs(invoiced - ctx.order.total)) /
-      Math.max(ctx.order.total, 1);
-    const match = drift <= tol;
+    const { drift, match } = threeWayMatch(
+      ctx.order.total,
+      received,
+      invoiced,
+      num(config.tolerance, 0.02),
+    );
     return {
       branches: [match ? 'match' : 'mismatch'],
       output: { received, invoiced, drift },
@@ -878,52 +819,35 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.seller_accept': async ({ env, ctx, config }) => {
-    if (str(config.decision, 'from_event') === 'expire_pending') {
-      await marketplaceStore(env).expire(ctx.order.id, 'No response');
-    } else {
-      const r = (ctx.vars.seller_responded ?? {}) as Record<string, unknown>;
-      const decision = r.decision === 'accepted' || r.decision === 'rejected' ? r.decision : null;
-      if (typeof r.sellerId !== 'string' || !decision)
-        throw new NonRetryableError(
-          'seller.responded needs { sellerId, decision: "accepted" | "rejected" }',
-        );
-      await marketplaceStore(env).decide(
-        ctx.order.id,
-        r.sellerId,
-        decision,
-        typeof r.reason === 'string' ? r.reason : undefined,
-      );
-    }
-    const parts = await marketplaceStore(env).parts(ctx.order.id);
-    const pending = parts.filter((p) => p.status === 'pending');
-    const accepted = parts.filter((p) => p.status === 'accepted');
-    const rejected = parts.filter((p) => p.status === 'rejected');
+    const res = await answerSellerOrders(
+      commercePorts(env),
+      ctx.order,
+      str(config.decision, 'from_event') === 'expire_pending'
+        ? { expire: 'No response' }
+        : { response: ctx.vars.seller_responded },
+    );
+    if (!res.ok) throw new NonRetryableError(res.error);
+    const { parts, outcome } = res;
     const output = { parts };
-    if (pending.length)
+    const of = (status: string) => parts.filter((p) => p.status === status);
+    if (outcome === 'pending')
       return {
         branches: ['pending'],
         output,
-        vars: { pendingSellers: pending.map((p) => p.sellerId) },
-        summary: `${pending.length} still to answer`,
+        vars: { pendingSellers: of('pending').map((p) => p.sellerId) },
+        summary: `${of('pending').length} still to answer`,
       };
-    if (!accepted.length) return { branches: ['rejected'], output, summary: 'No seller accepted' };
-    if (!rejected.length)
-      return { branches: ['accepted'], output, summary: `All ${accepted.length} accepted` };
-    // Keep only the lines of sellers that accepted, and re-total.
-    const keep = new Set(accepted.map((p) => p.sellerId));
-    const products = new Map(
-      (await pricingStore(env).products(ctx.order.lines.map((l) => l.sku))).map((p) => [p.sku, p]),
-    );
-    const lines = ctx.order.lines.filter((l) =>
-      keep.has(sellerOfLine(l, products.get(l.sku)?.sellerId)),
-    );
+    if (outcome === 'rejected')
+      return { branches: ['rejected'], output, summary: 'No seller accepted' };
+    if (outcome === 'accepted')
+      return { branches: ['accepted'], output, summary: `All ${of('accepted').length} accepted` };
+    const rejected = of('rejected');
     return {
       branches: ['partial'],
       output,
-      // Shipping stays as charged; tax re-applies at the rate the tax node used.
-      order: { lines, ...computeTotals({ ...ctx.order, lines }) },
+      order: res.order,
       vars: { rejectedSellers: rejected.map((p) => p.sellerId) },
-      summary: `${accepted.length} accepted, ${rejected.length} rejected (${rejected.map((p) => p.name).join(', ')})`,
+      summary: `${of('accepted').length} accepted, ${rejected.length} rejected (${rejected.map((p) => p.name).join(', ')})`,
     };
   },
 

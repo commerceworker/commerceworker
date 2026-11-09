@@ -1,14 +1,18 @@
 /**
- * The marketplace use-cases: split an order into one part per seller, and schedule what each
- * accepted seller is paid. The split and the payout amounts are core rules (`groupBySeller`,
+ * The marketplace use-cases: split an order into one part per seller, record what the sellers
+ * answer, and schedule what each accepted seller is paid. The split and the payout amounts are core rules (`groupBySeller`,
  * `payoutAmounts`); these gather what they need through the ports and record the result once.
  */
 import {
+  computeTotals,
   FIRST_PARTY,
   groupBySeller,
   linesSubtotal,
   type Order,
   payoutAmounts,
+  sellerOfLine,
+  sellerOutcome,
+  sellerResponseOf,
 } from '@commerceworker/core';
 import {
   type MarketplaceStore,
@@ -49,6 +53,48 @@ export async function splitBySeller(
     })),
   );
   return { ok: true, parts: await ports.marketplace.parts(order.id) };
+}
+
+export type SellerAnswers =
+  | { readonly ok: false; readonly error: string }
+  | {
+      readonly ok: true;
+      readonly outcome: 'pending' | 'rejected' | 'accepted' | 'partial';
+      readonly parts: SellerPart[];
+      /** On a partial accept: the order cut to the accepting sellers' lines, re-totalled. */
+      readonly order?: Pick<Order, 'lines'> & ReturnType<typeof computeTotals>;
+    };
+
+/**
+ * Records a seller's answer (a `seller.responded` event's data), or with `expire`, rejects every
+ * part still pending, then says where the order stands (`sellerOutcome`). On a partial accept the
+ * order keeps only the lines of sellers that accepted; shipping stays as charged and tax
+ * re-applies at the rate the tax node used. Only a pending part changes, so a replay is a no-op.
+ */
+export async function answerSellerOrders(
+  ports: { readonly pricing: PricingStore; readonly marketplace: MarketplaceStore },
+  order: Order,
+  answer: { readonly expire: string } | { readonly response: unknown },
+): Promise<SellerAnswers> {
+  if ('expire' in answer) await ports.marketplace.expire(order.id, answer.expire);
+  else {
+    const r = sellerResponseOf(answer.response);
+    if (!r)
+      return {
+        ok: false,
+        error: 'seller.responded needs { sellerId, decision: "accepted" | "rejected" }',
+      };
+    await ports.marketplace.decide(order.id, r.sellerId, r.decision, r.reason);
+  }
+  const parts = await ports.marketplace.parts(order.id);
+  const outcome = sellerOutcome(parts);
+  if (outcome !== 'partial') return { ok: true, outcome, parts };
+  const keep = new Set(parts.filter((p) => p.status === 'accepted').map((p) => p.sellerId));
+  const products = new Map(
+    (await ports.pricing.products(order.lines.map((l) => l.sku))).map((p) => [p.sku, p]),
+  );
+  const lines = order.lines.filter((l) => keep.has(sellerOfLine(l, products.get(l.sku)?.sellerId)));
+  return { ok: true, outcome, parts, order: { lines, ...computeTotals({ ...order, lines }) } };
 }
 
 /**

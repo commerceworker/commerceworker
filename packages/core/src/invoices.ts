@@ -57,3 +57,19 @@ export function invoiceItems(
   if (rest) items.push({ description: 'Adjustments', amount: rest });
   return items;
 }
+
+/**
+ * A three-way match on a purchase order: what was received and what the supplier invoiced, each
+ * against what was ordered. The drift is the larger of the two gaps as a share of the order (an
+ * order under 1 is measured against 1), and they match when it is within `tolerance`.
+ */
+export function threeWayMatch(
+  ordered: number,
+  received: number,
+  invoiced: number,
+  tolerance: number,
+): { drift: number; match: boolean } {
+  const drift =
+    Math.max(Math.abs(received - ordered), Math.abs(invoiced - ordered)) / Math.max(ordered, 1);
+  return { drift, match: drift <= tolerance };
+}
