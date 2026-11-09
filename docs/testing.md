@@ -4,7 +4,9 @@ What pnpm test runs in each package, how the engine runs real Workflows in worke
 
 `pnpm test` runs `turbo run test`, which runs `vitest run` in every package that has tests. The
 `test` task has no `dependsOn`, so a failing dependency never silently skips a package's tests.
-CI runs it after lint, type-check and build, then audits production dependencies
+CI runs it after lint, type-check and build, two test tasks at a time (`TURBO_CONCURRENCY: 2`: on the
+runner's 4 vCPUs, turbo's default of ten starved the catalog's Durable Object tests past their
+timeouts), then audits production dependencies
 (`.github/workflows/ci.yml`), each step running even when an earlier one failed. A separate
 `devices` job runs the web app's [device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit,
 and on a pull request a `commits` job lints each commit message against Conventional Commits
@@ -447,6 +449,7 @@ generated `apps/docs/src/styles/theme.css` is stale. Fix it by mirroring the `ap
 | `records.test.ts` | The Records page (`lib/records.server.ts`, over the in-memory order board): payments, invoices and payouts read as one money list newest first, in words (an authorization by its method and processor, a ref that is another row's id left out, an invoice by number and terms, a payout's gross and commission); holds say where they are held, a gone seller shows by id, a guest's order by their email; a search reaches every kind |
 | `flows.test.ts` | Flows (`lib/flows.server.ts`, over the in-memory flow store): the built-in templates are seeded once and listed published and unchanged, counted, with none archived; a flow reads dirty once its draft changes, with its versions newest first and its published graph; names, none for an unknown flow; each flow's steps in reading order (left to right, then top to bottom) from its published version |
 | `audit-trail.test.ts` | The audit trail (`lib/audit.server.ts`, over the in-memory audit log): each event is sealed onto the one before with its actor, address and detail, listed newest first by group, and logged as one `audit_event` line; a failed write never throws and logs `audit_write_failed`; the chain verifies from the start or after an event, refuses an unknown anchor, and finds a tampered event |
+| `sidebar.test.ts` | The sidebar as it was left (`lib/sidebar.ts`): read from the cookie `packages/ui`'s sidebar writes (`SIDEBAR_COOKIE_NAME`), open unless it says `false`, and not fooled by another cookie whose name ends the same |
 | `approvals.test.ts` | Approval context for a credit check: the order in its own currency with its USD equivalent, and limits, balances and the shortfall in USD; thresholds and budgets in words, the reason kept through an earlier approval; `rowContext` falling back to the approval's own title (its order id shown as the ref) and step label when the order has no live state, or no reason to give; `byUrgency` putting the soonest escalation first, then the longest wait, and orders with no live run last |
 | `demo.test.ts` | Demo mode is off unless `DEMO_MODE` is `"true"`; then it refuses changes on Team and Account (pages and `.data` requests) while they stay readable, closes `/oauth/authorize`, integrations and webhook subscriptions entirely, and leaves orders, flows, approvals and sign-out alone |
 | `new-order.test.ts` | The New order lines grammar (each spelling, no number as one; no SKU, zero or negative, two numbers and SKUs outside the catalog are issues, not guesses); a catalog click adds a row or one more; `summarizeFlow` names where a flow asks a person, what it waits for and what it undoes, and whether it reads a document or routes fulfillment |
