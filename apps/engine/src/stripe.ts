@@ -106,6 +106,15 @@ export type Invoice = {
   hosted_invoice_url: string | null;
   due_date: number | null;
   metadata: Record<string, string>;
+  /** Only with `expand[]=payments`: what paid the invoice (one InvoicePayment per payment). */
+  payments?: { data: InvoicePayment[] };
+};
+
+/** An invoice's payment. Since API 2025-03-31 an invoice names no PaymentIntent of its own. */
+export type InvoicePayment = {
+  status: string;
+  amount_paid: number | null;
+  payment: { type: string; payment_intent?: string | { id: string } };
 };
 
 export type InvoiceItem = {
@@ -206,6 +215,8 @@ export function stripeClient(secretKey: string) {
     invoices: {
       create: (params: StripeParams, key: string) => post<Invoice>('/v1/invoices', params, key),
       retrieve: (id: string) => request<Invoice>('GET', invoice(id)),
+      /** The invoice with its `payments` list, which Stripe returns only when expanded. */
+      withPayments: (id: string) => request<Invoice>('GET', invoice(id), { expand: ['payments'] }),
       finalize: (id: string, params: StripeParams, key: string) =>
         post<Invoice>(`${invoice(id)}/finalize`, params, key),
       send: (id: string, key: string) => post<Invoice>(`${invoice(id)}/send`, {}, key),

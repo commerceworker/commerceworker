@@ -84,6 +84,16 @@ function stripeInvoices(stripe: StripeClient): InvoiceProcessor {
     async status(id) {
       return (await stripe.invoices.retrieve(id).catch(rethrow)).status;
     },
+    async payments(id) {
+      const inv = await stripe.invoices.withPayments(id).catch(rethrow);
+      return (inv.payments?.data ?? []).flatMap((p) => {
+        const pi = p.payment.payment_intent;
+        const intentId = typeof pi === 'string' ? pi : pi?.id;
+        return p.status === 'paid' && p.payment.type === 'payment_intent' && intentId
+          ? [{ intentId, amount: p.amount_paid ?? 0 }]
+          : [];
+      });
+    },
   };
 }
 

@@ -58,11 +58,38 @@ export type LedgerPayment = {
   status: string;
   ref?: string | null;
   createdAt: number;
+  provider?: string | null;
+  /** The processor's id for it: a PaymentIntent, or for an invoice payment, maybe the invoice. */
+  externalId?: string | null;
 };
 
 /** Money captured or charged that stuck. */
 export const isPaid = (p: Pick<LedgerPayment, 'kind' | 'status'>) =>
   p.status === 'succeeded' && (p.kind === 'capture' || p.kind === 'charge');
+
+/**
+ * A Stripe invoice paid by the PaymentIntent its row names (`pi_…`). One recorded by the
+ * invoice's own id (`in_…`: paid in parts or partly out of band, or settled before the intent was
+ * recorded) names nothing a refund could reach.
+ */
+export const isInvoicePaidByIntent = (
+  p: Pick<LedgerPayment, 'kind' | 'status' | 'provider' | 'externalId'>,
+) =>
+  p.kind === 'invoice_payment' &&
+  p.status === 'succeeded' &&
+  p.provider === 'stripe' &&
+  (p.externalId ?? '').startsWith('pi_');
+
+/**
+ * The order's payments that hold money a refund can give back: its captures and charges, or, on
+ * an order paid only by invoice, its invoices paid by a PaymentIntent. An order with both (a
+ * capture "on terms" and the Stripe invoice that then collected it, say) counts only the capture,
+ * so the same money is never counted twice; its invoice is refunded in Stripe's dashboard.
+ */
+export function paidPayments<P extends LedgerPayment>(rows: readonly P[]): P[] {
+  const paid = rows.filter(isPaid);
+  return paid.length ? paid : rows.filter(isInvoicePaidByIntent);
+}
 
 /** A refund that went through. */
 export const isRefund = (p: Pick<LedgerPayment, 'kind' | 'status'>) =>
@@ -71,8 +98,8 @@ export const isRefund = (p: Pick<LedgerPayment, 'kind' | 'status'>) =>
 const total = (rows: readonly Pick<LedgerPayment, 'amount'>[]) =>
   rows.reduce((s, p) => s + p.amount, 0);
 
-/** Captured and charged on the order, before refunds. */
-export const paidTotal = (rows: readonly LedgerPayment[]) => money(total(rows.filter(isPaid)));
+/** Captured and charged on the order (or paid by invoice, see `paidPayments`), before refunds. */
+export const paidTotal = (rows: readonly LedgerPayment[]) => money(total(paidPayments(rows)));
 
 /** Refunded on the order so far. */
 export const refundedTotal = (rows: readonly LedgerPayment[]) =>
@@ -92,9 +119,9 @@ export function planRefund<P extends LedgerPayment>(
   rows: readonly P[],
   requested?: number,
 ): { payment: P; amount: number }[] {
-  const paid = rows
-    .filter(isPaid)
-    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+  const paid = paidPayments(rows).sort(
+    (a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id),
+  );
   const refunds = rows.filter(isRefund);
   const refundable = money(total(paid) - total(refunds));
   let left = money(Math.min(requested ?? refundable, refundable));

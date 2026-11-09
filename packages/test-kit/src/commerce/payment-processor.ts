@@ -17,7 +17,15 @@ type Intent = { -readonly [K in keyof ProcessorIntent]: ProcessorIntent[K] };
 
 /** Invoices at the fake processor: drafts, items, finalize, send, void and delete, by id. */
 export class FakeInvoiceProcessor implements InvoiceProcessor {
-  readonly invoices = new Map<string, { status: string; items: number[]; sent: boolean }>();
+  readonly invoices = new Map<
+    string,
+    {
+      status: string;
+      items: number[];
+      sent: boolean;
+      paidBy: { intentId: string; amount: number }[];
+    }
+  >();
   private readonly drafts = new Map<string, string>();
   private next = 0;
 
@@ -25,7 +33,7 @@ export class FakeInvoiceProcessor implements InvoiceProcessor {
     if (!this.drafts.has(key)) {
       const id = `in_${++this.next}`;
       this.drafts.set(key, id);
-      this.invoices.set(id, { status: 'draft', items: [], sent: false });
+      this.invoices.set(id, { status: 'draft', items: [], sent: false, paidBy: [] });
     }
     return this.drafts.get(key)!;
   }
@@ -66,6 +74,17 @@ export class FakeInvoiceProcessor implements InvoiceProcessor {
 
   async status(id: string) {
     return this.get(id).status;
+  }
+
+  async payments(id: string) {
+    return [...this.get(id).paidBy];
+  }
+
+  /** The customer pays the invoice: by these PaymentIntents (minor units), or none (out of band). */
+  pay(id: string, by: { intentId: string; amount: number }[]) {
+    const inv = this.get(id);
+    inv.status = 'paid';
+    inv.paidBy.push(...by);
   }
 
   private get(id: string) {

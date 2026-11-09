@@ -484,7 +484,7 @@ export class InMemoryOrderBoard implements OrderBoard {
     ).map(([d, ps]) => ({
       day: d,
       collected: ps
-        .filter((p) => p.kind === 'capture' || p.kind === 'charge')
+        .filter((p) => ['capture', 'charge', 'invoice_payment'].includes(p.kind))
         .reduce((t, p) => t + p.amount / rate(p.orderId), 0),
       refunded: ps
         .filter((p) => p.kind === 'refund')

@@ -531,12 +531,13 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
             .from(orders)
             .where(and(eq(orders.status, 'completed'), gte(orders.updatedAt, since)))
             .groupBy(sql`1`),
-          // Payments are in their order's currency; convert at the order's rate.
+          // Payments are in their order's currency; convert at the order's rate. Collected is
+          // money taken: captures, charges and paid invoices.
           d
             .select({
               day: dayOf(payments.createdAt).as('day'),
               collected:
-                sql<number>`coalesce(sum(case when ${payments.kind} in ('capture', 'charge') then ${payments.amount} / coalesce(${orders.fxRate}, 1) end), 0)`.mapWith(
+                sql<number>`coalesce(sum(case when ${payments.kind} in ('capture', 'charge', 'invoice_payment') then ${payments.amount} / coalesce(${orders.fxRate}, 1) end), 0)`.mapWith(
                   Number,
                 ),
               refunded:

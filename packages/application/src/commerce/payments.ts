@@ -11,11 +11,11 @@
  * ledger's totals are core rules (`planRefund`, `paidTotal`, `refundedTotal`).
  */
 import {
-  isPaid,
   isRefund,
   money,
   type Order,
   type PaymentSource,
+  paidPayments,
   paidTotal,
   paymentSource,
   planRefund,
@@ -445,7 +445,7 @@ export async function refund(
 ): Promise<PaymentResult> {
   const id = paymentRowId('rfd', order.id, stepKey);
   const rows = await ports.ledger.forOrder(order.id);
-  if (rows.some((p) => isPaid(p) && p.provider === 'stripe'))
+  if (paidPayments(rows).some((p) => p.provider === 'stripe'))
     return refundAcross(ports, order, id, rows, requested);
 
   const done = rows.find((p) => p.id === id);

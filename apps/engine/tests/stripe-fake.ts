@@ -49,6 +49,14 @@ export type FakeInvoice = {
   metadata: Record<string, string>;
   lines: { id: string; amount: number; description: string | null }[];
   sent: number;
+  /** The invoice's InvoicePayments, returned only with `expand[]=payments`, as Stripe does. */
+  payments: {
+    object: 'invoice_payment';
+    status: 'paid';
+    amount_paid: number;
+    currency: string;
+    payment: { type: 'payment_intent'; payment_intent: string };
+  }[];
 };
 
 export type StripeCall = {
@@ -179,7 +187,14 @@ export function installStripeFake() {
       code: 'resource_missing',
       message: `No such ${what}: '${id}'`,
     });
-  const invoiceView = (inv: FakeInvoice) => ({ ...inv }) as unknown as Json;
+  const invoiceView = (inv: FakeInvoice, expand: unknown = undefined) => {
+    const { payments, ...rest } = inv;
+    const expanded =
+      typeof expand === 'object' && expand !== null && Object.values(expand).includes('payments');
+    return (expanded
+      ? { ...rest, payments: { object: 'list', data: payments } }
+      : rest) as unknown as Json;
+  };
 
   function createInvoice(p: Form) {
     const customer = String(p.customer ?? '');
@@ -212,6 +227,7 @@ export function installStripeFake() {
       metadata: (p.metadata as Record<string, string>) ?? {},
       lines: [],
       sent: 0,
+      payments: [],
     };
     // Stripe's behavior before 2022-08-01: a new invoice swept up the customer's pending items.
     if (inv.pending_invoice_items_behavior === 'include')
@@ -251,10 +267,10 @@ export function installStripeFake() {
     return ok({ ...item, object: 'invoiceitem', invoice: inv.id, currency: inv.currency });
   }
 
-  function invoiceAction(method: string, id: string, action: string | undefined) {
+  function invoiceAction(method: string, id: string, action: string | undefined, p: Form = {}) {
     const inv = invoices.get(id);
     if (!inv) return missing('invoice', id);
-    if (method === 'GET' && !action) return ok(invoiceView(inv));
+    if (method === 'GET' && !action) return ok(invoiceView(inv, p.expand));
     if (method === 'DELETE' && !action) {
       if (inv.status !== 'draft') return invalid('You can only delete draft invoices.');
       invoices.delete(id);
@@ -286,7 +302,7 @@ export function installStripeFake() {
     if (method === 'POST' && path === '/v1/invoices') return createInvoice(p);
     if (method === 'POST' && path === '/v1/invoiceitems') return createInvoiceItem(p);
     const inv = /^\/v1\/invoices\/([^/]+)(?:\/(finalize|send|void))?$/.exec(path);
-    if (inv) return invoiceAction(method, decodeURIComponent(inv[1]!), inv[2]);
+    if (inv) return invoiceAction(method, decodeURIComponent(inv[1]!), inv[2], p);
     if (method === 'POST' && path === '/v1/customers') {
       const c = {
         id: nextId('cus'),
@@ -383,7 +399,8 @@ export function installStripeFake() {
         : typeof raw === 'string'
           ? raw
           : new TextDecoder().decode(await req.arrayBuffer());
-    const params = parseForm(body);
+    // A GET's parameters (`expand[]`) are in its query string.
+    const params = parseForm(req.method === 'GET' ? url.search.slice(1) : body);
     const key = req.headers.get('Idempotency-Key');
     calls.push({
       method: req.method,
@@ -467,10 +484,31 @@ export function installStripeFake() {
       });
       return r.json as unknown as FakeIntent;
     },
-    /** The customer pays an open invoice on its hosted page; returns Stripe's `invoice.paid` event. */
-    payInvoice(id: string) {
+    /**
+     * The customer pays an open invoice on its hosted page, by card: one succeeded PaymentIntent
+     * per part (one for the whole total unless `parts`, in minor units, say otherwise), each an
+     * InvoicePayment. Returns Stripe's `invoice.paid` event, whose invoice has no `payments`.
+     */
+    payInvoice(id: string, parts?: number[]) {
       const inv = invoices.get(id);
       if (inv?.status !== 'open') throw new Error(`Invoice ${id} is not open`);
+      for (const amount of parts ?? [inv.total]) {
+        const r = createIntent({
+          amount: String(amount),
+          currency: inv.currency,
+          confirm: 'true',
+          payment_method: 'pm_card_visa',
+          metadata: { invoice: id },
+        });
+        const pi = r.json as unknown as FakeIntent;
+        inv.payments.push({
+          object: 'invoice_payment',
+          status: 'paid',
+          amount_paid: amount,
+          currency: inv.currency,
+          payment: { type: 'payment_intent', payment_intent: pi.id },
+        });
+      }
       inv.status = 'paid';
       inv.amount_paid = inv.total;
       inv.amount_due = 0;

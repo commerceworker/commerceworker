@@ -298,8 +298,10 @@ describe('Stripe events', () => {
 
     // Settled once: one payment, one settlement, the balance back where it was.
     const pays = await db().select().from(payments).where(eq(payments.orderId, orderId));
-    expect(pays.map((p) => [p.kind, p.status, p.amount, p.externalId])).toEqual([
-      ['invoice_payment', 'succeeded', total, row!.externalId],
+    // Recorded by the PaymentIntent that paid the invoice, so a refund can reach it.
+    const intent = stripe.invoices.get(row!.externalId!)!.payments[0]!.payment.payment_intent;
+    expect(pays.map((p) => [p.kind, p.status, p.amount, p.externalId, p.ref])).toEqual([
+      ['invoice_payment', 'succeeded', total, intent, row!.id],
     ]);
     const ledger = await db()
       .select()
@@ -345,6 +347,44 @@ describe('Stripe events', () => {
     expect(r).toEqual({ outcome: 'handled', orderId: 'ord_inv_pi' });
     const [row] = await db().select().from(payments).where(eq(payments.orderId, 'ord_inv_pi'));
     expect(row!.status).toBe('voided');
+  });
+});
+
+describe('refunding a paid invoice', () => {
+  const opts = { terms: 'net_30', sendEmail: false, onAccount: false };
+
+  it('refunds the PaymentIntent that paid the invoice, once', async () => {
+    const { refund } = await import('../../src/payments');
+    const o = order(`ord_inv_rfd_${Date.now()}`);
+    const row = await issueStripeInvoice(env, o, 'invoice#1', opts);
+    await handleStripeEvent(env, stripe.payInvoice(row.externalId!) as PaymentEvent);
+    // Stripe lists the invoice's payments only when asked.
+    const asked = stripe.callsTo('GET', `/v1/invoices/${row.externalId}`).at(-1)!;
+    expect(asked.params).toMatchObject({ expand: { 0: 'payments' } });
+    const [paid] = await db().select().from(payments).where(eq(payments.orderId, o.id));
+    const intent = stripe.invoices.get(row.externalId!)!.payments[0]!.payment.payment_intent;
+    expect(paid).toMatchObject({ kind: 'invoice_payment', externalId: intent, ref: row.id });
+
+    const r = await refund(env, o, 'refund#1', 30);
+    expect(r).toMatchObject({ status: 'succeeded', amount: 30 });
+    expect(stripe.intents.get(intent)!.refunded).toBe(3000);
+    expect(await refund(env, o, 'refund#1', 30)).toMatchObject({ amount: 30 });
+    expect(stripe.callsTo('POST', '/v1/refunds')).toHaveLength(1);
+    // The rest of it, and no more.
+    expect(await refund(env, o, 'refund#2')).toMatchObject({ amount: 68.82 });
+    expect(stripe.intents.get(intent)!.refunded).toBe(9882);
+    expect(await refund(env, o, 'refund#3')).toMatchObject({ status: 'failed', amount: 0 });
+  });
+
+  it('leaves an invoice paid in parts to the Stripe Dashboard', async () => {
+    const { refund } = await import('../../src/payments');
+    const o = order(`ord_inv_parts_${Date.now()}`);
+    const row = await issueStripeInvoice(env, o, 'invoice#1', opts);
+    await handleStripeEvent(env, stripe.payInvoice(row.externalId!, [5000, 4882]) as PaymentEvent);
+    const [paid] = await db().select().from(payments).where(eq(payments.orderId, o.id));
+    expect(paid).toMatchObject({ kind: 'invoice_payment', externalId: row.externalId });
+    expect(await refund(env, o, 'refund#1')).toMatchObject({ status: 'failed', amount: 0 });
+    expect(stripe.callsTo('POST', '/v1/refunds')).toHaveLength(0);
   });
 });
 

@@ -82,9 +82,9 @@ step saved.
   the order ends, and the timeline says so. A flow that ends completed keeps its hold. In Stripe the PaymentIntent is canceled first and the payment marked
   `voided` only once Stripe confirms, so a void that fails is retried, not lost. A hold that was
   captured in the meantime stays captured.
-- **Refund** returns up to the requested amount of what was captured or charged and not yet
-  refunded. When the order was paid more than once (a subscription's renewals), the refund draws
-  on the newest payment first and makes one Stripe refund per payment it uses.
+- **Refund** returns up to the requested amount of what was captured, charged or paid by invoice
+  and not yet refunded. When the order was paid more than once (a subscription's renewals), the
+  refund draws on the newest payment first and makes one Stripe refund per payment it uses.
 
 ## Invoices paid through Stripe
 
@@ -101,6 +101,17 @@ When the customer pays, Stripe notifies CommerceWorker (see
 payment is recorded as `invoice_payment`, the amount comes off the customer's account balance if
 the invoice put it there, and the order receives `payment.received`, which a Wait-for-event node
 such as the B2B flow's "Payment received" is waiting for.
+
+The payment is recorded by the card payment that paid the invoice, so a Refund node can give it
+back like any other payment. That works when one card payment paid the whole invoice, which is
+how a customer pays on Stripe's hosted page, on an order paid only by invoice. Refund such an
+invoice through the flow, not in the Stripe Dashboard as well: CommerceWorker doesn't see a
+Dashboard refund, so the flow would try to give the money back a second time.
+
+The Refund node finds nothing to refund on an invoice paid in parts or partly outside Stripe, one
+paid before CommerceWorker recorded its card payment, or one on an order whose money was also
+captured or charged (say, captured on terms and then collected by the invoice, so the same money
+isn't counted twice). Refund those in the Stripe Dashboard.
 
 If the order fails or is cancelled, an unpaid Stripe invoice is voided and its account charge
 reversed. An invoice already paid is left alone and named in the rollback or cancel summary; return
