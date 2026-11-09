@@ -12,10 +12,11 @@ import {
   type ActionPreview,
   BASE_CURRENCY,
   boundText,
+  certificateVerifyProblem,
   type Principal,
   type PromotionKind,
   type RpcActor,
-  taxCertificateState,
+  type TaxCertificate,
 } from '@commerceworker/core';
 import { recordAudit } from '../audit';
 import {
@@ -214,7 +215,6 @@ export async function previewCertificate(
   const places = c.regions
     .map((r) => (r.region ? `${r.country}-${r.region}` : r.country))
     .join(', ');
-  const state = taxCertificateState(c, Date.now());
   return {
     title: `${change === 'verify' ? 'Verify' : 'Revoke'} certificate ${lastFour(c.number)} for ${boundText(who, 80) ?? i.customerId}`,
     href: `/customers/${i.customerId}`,
@@ -231,23 +231,26 @@ export async function previewCertificate(
             `Orders this customer starts from now are taxed again in ${places}`,
             'Orders already running keep the tax they were charged',
           ],
-    blocked:
-      roleBlock ??
-      (c.status === 'revoked'
-        ? change === 'verify'
-          ? 'The certificate was revoked; add a new one.'
-          : 'It is already revoked.'
-        : change === 'verify' && c.verifiedAt !== null
-          ? 'It is already verified.'
-          : change === 'verify' && state === 'expired'
-            ? 'The certificate has expired; add the renewed one.'
-            : change === 'verify' && p.kind !== 'user'
-              ? // An API token's id is its own, never its maker's: separation couldn't tell.
-                'A person verifies a certificate, signed in as themselves, not with an API token.'
-              : change === 'verify' && c.createdById === p.id && (await separated(env))
-                ? 'Someone other than whoever added the certificate must verify it.'
-                : undefined),
+    blocked: roleBlock ?? (await certificateBlock(env, p, change, c)),
   };
+}
+
+/** Why the card can't go ahead: core's rule for a verify, and a repeat of a revoke. */
+async function certificateBlock(
+  env: Env,
+  p: Principal,
+  change: 'verify' | 'revoke',
+  c: TaxCertificate,
+): Promise<string | undefined> {
+  if (change === 'revoke') return c.status === 'revoked' ? 'It is already revoked.' : undefined;
+  const problem = await certificateVerifyProblem(
+    c,
+    { id: p.id, person: p.kind === 'user' },
+    Date.now(),
+    () => separated(env),
+  );
+  if (!problem) return undefined;
+  return 'already' in problem ? 'It is already verified.' : problem.refuse;
 }
 
 export async function runCertificate(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CUSTOMER_MATCHED_BY,
+  certificateVerifyProblem,
   checkTaxCertificateInput,
   coversPlace,
   customerTrusted,
@@ -247,5 +248,55 @@ describe('a tax provider’s request', () => {
     const redacted = providerRequest({ personalData: 'redact' }, req);
     expect(redacted).toMatchObject({ input: { exemption: { regions: [{ country: 'US' }] } } });
     expect(JSON.stringify(redacted)).not.toContain('RS-1');
+  });
+});
+
+describe('verifying a certificate', () => {
+  const fresh = cert({ verifiedBy: null, verifiedAt: null });
+  const bo = { id: 'usr_bo', person: true };
+  const off = async () => false;
+  const on = async () => true;
+
+  it('lets a person other than its maker verify an active, unexpired certificate', async () => {
+    expect(await certificateVerifyProblem(fresh, bo, NOW, on)).toBeNull();
+    // Without separation, its maker may too.
+    expect(
+      await certificateVerifyProblem(fresh, { id: 'usr_ann', person: true }, NOW, off),
+    ).toBeNull();
+  });
+
+  it('refuses a revoked, expired, token or own certificate, and says when it is already verified', async () => {
+    expect(await certificateVerifyProblem(cert({ status: 'revoked' }), bo, NOW, on)).toEqual({
+      refuse: 'The certificate was revoked; add a new one.',
+    });
+    expect(await certificateVerifyProblem(cert(), bo, NOW, on)).toEqual({ already: true });
+    expect(await certificateVerifyProblem({ ...fresh, expiresAt: NOW - DAY }, bo, NOW, on)).toEqual(
+      {
+        refuse: 'The certificate has expired; add the renewed one.',
+      },
+    );
+    // An API token's id is its own: separation couldn't tell who added the certificate.
+    expect(await certificateVerifyProblem(fresh, { id: 'tok_1', person: false }, NOW, off)).toEqual(
+      {
+        refuse: 'A person verifies a certificate, signed in as themselves, not with an API token.',
+      },
+    );
+    expect(await certificateVerifyProblem(fresh, { id: 'usr_ann', person: true }, NOW, on)).toEqual(
+      {
+        refuse: 'Someone other than whoever added the certificate must verify it.',
+      },
+    );
+  });
+
+  it('asks about separation only when the maker is the one verifying', async () => {
+    let asked = 0;
+    const count = async () => {
+      asked++;
+      return true;
+    };
+    await certificateVerifyProblem(fresh, bo, NOW, count);
+    expect(asked).toBe(0);
+    await certificateVerifyProblem(fresh, { id: 'usr_ann', person: true }, NOW, count);
+    expect(asked).toBe(1);
   });
 });

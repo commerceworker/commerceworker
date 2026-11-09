@@ -1,7 +1,13 @@
-import { EMPTY_ORDER_STATE, type OrderState } from '@commerceworker/core';
+import { EMPTY_ORDER_STATE, type OrderState, subjectTarget } from '@commerceworker/core';
 import { InMemorySubjectStore, SUBJECT_FIXTURE } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { eraseDataSubject, exportDataSubject, type SubjectPorts } from '../src/commerce';
+import {
+  eraseDataSubject,
+  eraseIfErased,
+  eraseOrders,
+  exportDataSubject,
+  type SubjectPorts,
+} from '../src/commerce';
 
 const now = Date.UTC(2026, 10, 8);
 
@@ -92,5 +98,65 @@ describe('data subject requests', () => {
     expect(
       await p.subjects.orders(await p.subjects.subject('ada@example.com'), { limit: 10 }),
     ).toEqual([]);
+  });
+});
+
+describe('erasure after the fact', () => {
+  it("erases a cart that names someone already erased, and nobody else's", async () => {
+    const { p, cartCalls } = ports();
+    expect(await eraseIfErased(p, 'sc2_cart_new', 'ada@example.com')).toBe(false);
+    // The erasure's audit event, which the caller writes once the erasure is done.
+    const erased = {
+      ...p,
+      subjects: new InMemorySubjectStore({
+        ...SUBJECT_FIXTURE,
+        audit: [
+          {
+            id: 'aud_1',
+            action: 'personal_data.erased',
+            target: await subjectTarget('ada@example.com'),
+          },
+        ],
+      }),
+    };
+    expect(await eraseIfErased(erased, 'sc2_cart_new', 'ada@example.com')).toBe(true);
+    expect(cartCalls).toEqual(['erase sc2_cart_new']);
+    expect(await eraseIfErased(erased, 'sc2_cart_new', 'grace@example.com')).toBe(false);
+    expect(await eraseIfErased(erased, 'sc2_cart_new', '')).toBe(false);
+  });
+
+  it("erases finished orders' files and rows, skipping one that runs again", async () => {
+    const { p, deleted } = ports(new Set(['sc2_o_mail']));
+    const r = await eraseOrders(
+      p,
+      [
+        { id: 'sc2_o_acct', title: 'Ada’s order' },
+        { id: 'sc2_o_mail', title: 'By email' },
+      ],
+      ['Ada'],
+      now,
+    );
+    expect(r).toMatchObject({ orders: 1, documents: 1, refused: ['sc2_o_mail'] });
+    expect(deleted).toEqual(['orders/sc2_o_acct/']);
+  });
+
+  it("takes an order no agent holds off the subject's words by its indexed title", async () => {
+    const { p } = ports();
+    const unheld = {
+      ...p,
+      orders: { ...p.orders, erasePersonalData: async () => ({ held: false, title: '' }) },
+    };
+    const marked: unknown[] = [];
+    const store = p.subjects as InMemorySubjectStore;
+    const mark = store.markOrderErased.bind(store);
+    store.markOrderErased = async (id, set, at) => {
+      marked.push([id, set]);
+      return mark(id, set, at);
+    };
+    await eraseOrders(unheld, [{ id: 'sc2_o_acct', title: 'Ada’s order for Ada' }], ['Ada'], now);
+    const [[id, set]] = marked as [[string, { title: string; clearReason: boolean }]];
+    expect(id).toBe('sc2_o_acct');
+    expect(set.clearReason).toBe(true);
+    expect(set.title).not.toContain('Ada');
   });
 });
