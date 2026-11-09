@@ -79,3 +79,59 @@ export function parseFxCurrencies(raw: string | undefined): string[] {
     ),
   ];
 }
+
+/** Who set a currency's rate: the daily feed, or a person on the rates page or over MCP. */
+export const FX_SOURCES = ['ecb', 'person'] as const;
+export type FxSource = (typeof FX_SOURCES)[number];
+
+/**
+ * Whether the daily refresh writes over a rate a given source set. The feed is the reference, so
+ * it wins: a person's rate on a currency the deployment names in `fxCurrencies` holds until the
+ * next refresh (the cron runs once a day). A currency the registry doesn't name is never refreshed,
+ * so a person's rate on one holds until they change it. Flip `person` to keep their rates through a
+ * refresh; the tests state both sides.
+ */
+export const REFRESH_OVERWRITES: Record<FxSource, boolean> = { ecb: true, person: true };
+
+export const refreshMayWrite = (current: FxSource | undefined) =>
+  current === undefined || REFRESH_OVERWRITES[current];
+
+/**
+ * Bounds on a rate a person sets, in units per one base currency. Wide, since real rates run from
+ * about 0.3 (KWD) to tens of thousands (IRR); they refuse a slipped decimal point or a unit
+ * mix-up, not a bold quote.
+ */
+export const FX_RATE_BOUNDS = [1e-4, 1e6] as const;
+
+/** A change of this much (a fraction of the current rate) is flagged for the person to look at. */
+export const FX_LARGE_CHANGE = 0.1;
+
+/** How a new rate differs from the current one: the change as a percent, and whether it's large. */
+export function fxRateChange(current: number | null, next: number) {
+  if (current === null || !(current > 0)) return { percent: null, large: false };
+  const percent = ((next - current) / current) * 100;
+  return { percent, large: Math.abs(percent) / 100 >= FX_LARGE_CHANGE };
+}
+
+/**
+ * Why a rate can't be set, or null. The currency must be a three-letter code that isn't the base
+ * (its rate is always 1) and that the deployment uses (it has a rate) or allows (`fxCurrencies`);
+ * the rate a positive, finite number within `FX_RATE_BOUNDS`. A large change is not a problem:
+ * `fxRateChange` flags it for the confirm.
+ */
+export function fxRateProblem(
+  input: { currency: string; rate: number },
+  known: readonly string[],
+  base: string = BASE_CURRENCY,
+): string | null {
+  if (!/^[A-Z]{3}$/.test(input.currency))
+    return `${input.currency} is not a currency code: use three capital letters, like EUR.`;
+  if (input.currency === base)
+    return `${base} is the base currency: its rate is always 1, and every other rate is per one ${base}.`;
+  if (!known.includes(input.currency))
+    return `${input.currency} has no rate and the deployment doesn't name it, so no order uses it. Name it in the registry's fxCurrencies first.`;
+  const [lo, hi] = FX_RATE_BOUNDS;
+  if (!Number.isFinite(input.rate) || input.rate < lo || input.rate > hi)
+    return `A rate is a number from ${lo} to ${hi.toLocaleString('en-US')} units of ${input.currency} per one ${base}.`;
+  return null;
+}

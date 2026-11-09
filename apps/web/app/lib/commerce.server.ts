@@ -5,10 +5,11 @@
  * everything through `commerceData` (`orders.server.ts`), for their pickers.
  */
 
+import { listFxRates } from '@commerceworker/application/commerce';
 import type { BookList } from '@commerceworker/ports/commerce';
 import { GROUP_SIZE, LIST_SIZE, pageOf, pricesKey, storeKey } from './commerce-pages';
 import { currencies } from './orders.server';
-import { backOffice } from './wire.server';
+import { backOffice, pricingStore } from './wire.server';
 
 /** The URL key a list keeps its page under. */
 const keyOf = (l: BookList) =>
@@ -29,6 +30,11 @@ export async function commercePage(params: URLSearchParams) {
     stores: page.stores,
     pricing: { sources: page.sources, rates },
   };
+}
+
+/** Each currency's rate, when it was set and by whom, as the rates table shows them. */
+export async function fxRatesPage() {
+  return (await listFxRates({ pricing: pricingStore() })).rates;
 }
 
 export type CommercePage = Awaited<ReturnType<typeof commercePage>>;

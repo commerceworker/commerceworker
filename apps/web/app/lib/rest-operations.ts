@@ -34,6 +34,8 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'POST', path: '/flows/{flowId}/test', tool: 'test_flow' },
   { method: 'POST', path: '/flows/{flowId}/duplicate', tool: 'duplicate_flow' },
   { method: 'POST', path: '/flows/{flowId}/archive', tool: 'archive_flow' },
+  { method: 'GET', path: '/fx-rates', tool: 'list_fx_rates' },
+  { method: 'POST', path: '/fx-rates/{currency}', tool: 'set_fx_rate' },
   { method: 'POST', path: '/promotions', tool: 'create_promotion' },
   { method: 'POST', path: '/promotions/{promotionId}/status', tool: 'set_promotion_status' },
   {

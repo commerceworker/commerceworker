@@ -213,6 +213,7 @@ export function describePricingStoreContract(
             { currency: 'XTS', rate: 0 },
           ],
           1_000,
+          'ecb',
         ),
       ).toBe(2);
       expect(await s.fxRate('EUR')).toBe(0.9312);
@@ -220,11 +221,40 @@ export function describePricingStoreContract(
       expect(await s.fxRate('USD')).toBe(1);
       expect(await s.fxRate('XTS')).toBeNull();
       expect((await s.priceInputs([], 'GBP', undefined, false)).fxRate).toBe(0.781);
-      expect(await s.setFxRates([], 2_000)).toBe(0);
-      expect(await s.setFxRates([{ currency: 'CHF', rate: Number.POSITIVE_INFINITY }], 2_000)).toBe(
-        0,
-      );
+      expect(await s.setFxRates([], 2_000, 'ecb')).toBe(0);
+      expect(
+        await s.setFxRates([{ currency: 'CHF', rate: Number.POSITIVE_INFINITY }], 2_000, 'ecb'),
+      ).toBe(0);
       expect(await s.fxRate('CHF')).toBeNull();
+    });
+
+    it('records who set each rate and when, the base currency never among them', async () => {
+      const s = await store();
+      await s.setFxRates([{ currency: 'EUR', rate: 0.9 }], 4_000, 'ecb');
+      await s.setFxRates([{ currency: 'GBP', rate: 0.8 }], 5_000, 'person', 'ada@example.com');
+      const rows = await s.fxRateRows();
+      expect(rows.map((r) => r.currency)).not.toContain('USD');
+      expect(rows.find((r) => r.currency === 'EUR')).toEqual({
+        currency: 'EUR',
+        rate: 0.9,
+        updatedAt: 4_000,
+        source: 'ecb',
+        updatedBy: null,
+      });
+      expect(rows.find((r) => r.currency === 'GBP')).toEqual({
+        currency: 'GBP',
+        rate: 0.8,
+        updatedAt: 5_000,
+        source: 'person',
+        updatedBy: 'ada@example.com',
+      });
+      // A later write by the feed takes the person's name off the rate.
+      await s.setFxRates([{ currency: 'GBP', rate: 0.79 }], 6_000, 'ecb');
+      expect((await s.fxRateRows()).find((r) => r.currency === 'GBP')).toMatchObject({
+        rate: 0.79,
+        source: 'ecb',
+        updatedBy: null,
+      });
     });
 
     it('writes more rates than one statement can bind, all together', async () => {
@@ -234,7 +264,7 @@ export function describePricingStoreContract(
         currency: `Q${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}`,
         rate: i + 1,
       }));
-      expect(await s.setFxRates(many, 3_000)).toBe(40);
+      expect(await s.setFxRates(many, 3_000, 'ecb')).toBe(40);
       expect(await s.fxRate('QAA')).toBe(1);
       expect(await s.fxRate('QBN')).toBe(40);
     });

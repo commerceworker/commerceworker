@@ -235,6 +235,8 @@ The `publish_flow` and `test_flow` previews carry `bound: { draft }`, a `fingerp
 
 The web route `flows/:flowId/action` is gone, along with `saveFlow`, `publish`, `setArchived` and `parseFlow` in `flows.server.ts`.
 
+Exchange rates (`apps/engine/src/assistant/fx.ts`): `list_fx_rates` (operator) and `set_fx_rate` (admin, a confirm card, in `PERSON_CONFIRMS_TOOLS`) run `listFxRates`, `planFxRate` and `setFxRate` (`packages/application/src/commerce/fx-rates.ts`), the same code REST's `/api/v1/fx-rates` routes and the Commerce page's table reach through `EngineRpc.runOperation` and the assistant's `act`. The card shows the rate now, the new one and the change, and flags 10% or more (`fxRateChange`); `fxRateProblem` (core) blocks it. A person's rate (`source: person`) is overwritten by the next daily ECB refresh for a currency in `FX_CURRENCIES` (`REFRESH_OVERWRITES`).
+
 Promotions and tax certificates (`apps/engine/src/assistant/commerce.ts`): `create_promotion` (the
 Promotions form is checked by `promotionFrom` on the server first), `set_promotion_status`,
 `verify_tax_certificate` and `revoke_tax_certificate` are confirm cards. A certificate's card shows

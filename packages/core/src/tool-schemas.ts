@@ -11,6 +11,7 @@ import { assessQuestionsSchema } from './assess';
 import type { AssistantTool } from './assistant';
 import { AUDIT_GROUPS, type AuditGroup } from './audit';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
+import { FX_SOURCES } from './fx';
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
 import { pluginCasesSchema } from './plugins';
@@ -355,6 +356,11 @@ export const TOOL_INPUTS = {
   set_promotion_status: z.object({
     promotionId: z.string().max(60),
     status: z.enum(['active', 'paused']),
+  }),
+  list_fx_rates: z.object({}),
+  set_fx_rate: z.object({
+    currency: z.string().length(3).describe('ISO 4217 code in capitals, like EUR; never USD'),
+    rate: z.number().positive().describe('Units of the currency per one USD'),
   }),
   verify_tax_certificate: z.object({
     customerId: z.string().max(100),
@@ -779,6 +785,19 @@ export const TOOL_OUTPUTS = {
   }),
   set_ucp_settings: actionOutput,
   revoke_ucp_platform: actionOutput,
+  list_fx_rates: row({
+    base: z.string().describe('The base currency every rate is per one of'),
+    rates: z.array(
+      row({
+        currency: z.string(),
+        rate: z.number().nullable().describe('Null while the deployment names it but has no rate'),
+        updatedAt: z.number().nullable(),
+        source: z.enum(FX_SOURCES).nullable().describe('ecb is the daily refresh'),
+        updatedBy: z.string().nullable().describe('Who, for a person’s rate'),
+      }),
+    ),
+  }),
+  set_fx_rate: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
@@ -799,6 +818,8 @@ export const REST_OPERATION_TOOLS = [
   'archive_flow',
   'create_promotion',
   'set_promotion_status',
+  'list_fx_rates',
+  'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',
   'run_stock_review',

@@ -17,7 +17,14 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
 import { startOrder } from '../src/orders';
-import { auditLog, integrationStore, ucpStore, webhookOutbox, workspaceStore } from '../src/wire';
+import {
+  auditLog,
+  integrationStore,
+  pricingStore,
+  ucpStore,
+  webhookOutbox,
+  workspaceStore,
+} from '../src/wire';
 import { signed } from './principal';
 
 const state = async (id: string) => (await env.ORDER_AGENT.getByName(id).snapshot()) as OrderState;
@@ -286,7 +293,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(53);
+    expect(operator).toHaveLength(54);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -313,7 +320,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(73);
+    expect(admin).toHaveLength(75);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -747,6 +754,132 @@ describe('MCP', () => {
           })
         ).isError,
       ).toBe(true);
+    });
+  });
+
+  describe('exchange rates', () => {
+    const admin = person('admin', 'ann@example.com');
+    const operator = person('operator', 'ops@example.com');
+    const viewer = person('viewer', 'view@example.com');
+    const audited = async () =>
+      (
+        await createDb(env.DB)
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.action, 'fx.rate_set'))
+          .all()
+      ).map((e) => ({ target: e.target, actor: e.actor, detail: JSON.parse(e.detail ?? '{}') }));
+    // The test deployment names EUR, GBP and CAD (FX_CURRENCIES); EUR gets its rate here.
+    const seed = () =>
+      pricingStore(env).setFxRates([{ currency: 'EUR', rate: 0.92 }], 1_000, 'ecb');
+
+    async function confirm(args: Record<string, unknown>) {
+      const first = await call(admin, 'set_fx_rate', args);
+      expect(first.isError, first.content[0]?.text).toBeFalsy();
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(admin, 'set_fx_rate', { ...args, confirmation: code });
+      expect(done.isError, done.content[0]?.text).toBeFalsy();
+      expect((await call(admin, 'set_fx_rate', { ...args, confirmation: code })).isError).toBe(
+        true,
+      );
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+      };
+    }
+
+    it('lists them for an operator, setting one for an admin only', async () => {
+      for (const role of [operator, admin])
+        expect(
+          (await tools(role)).find((t) => t.name === 'list_fx_rates')?.annotations,
+        ).toMatchObject({
+          readOnlyHint: true,
+        });
+      expect((await tools(viewer)).map((t) => t.name)).not.toContain('list_fx_rates');
+      expect((await tools(operator)).map((t) => t.name)).not.toContain('set_fx_rate');
+      expect((await tools(admin)).find((t) => t.name === 'set_fx_rate')).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+        inputSchema: { properties: { currency: {}, rate: {}, confirmation: {} } },
+      });
+      expect(
+        await rpc(operator, 'tools/call', {
+          name: 'set_fx_rate',
+          arguments: { currency: 'EUR', rate: 1 },
+        }),
+      ).toMatchObject({ body: { error: { message: 'Tool set_fx_rate not found' } } });
+    });
+
+    it('previews the change, then sets the rate on the code and records who and how', async () => {
+      await seed();
+      const listed = await call(operator, 'list_fx_rates', {});
+      expect(listed.structuredContent).toMatchObject({ base: 'USD' });
+      const rows = listed.structuredContent!.rates as Record<string, unknown>[];
+      expect(rows.find((r) => r.currency === 'EUR')).toMatchObject({
+        rate: 0.92,
+        updatedAt: 1_000,
+        source: 'ecb',
+        updatedBy: null,
+      });
+      // Every currency the deployment names is listed, set or not.
+      expect(rows.map((r) => r.currency)).toEqual(expect.arrayContaining(['CAD', 'EUR', 'GBP']));
+      expect(rows.some((r) => r.currency === 'USD')).toBe(false);
+
+      const { preview } = await confirm({ currency: 'EUR', rate: 0.94 });
+      expect(preview.title).toBe('Set the EUR rate to 0.94 per USD');
+      const text = preview.consequences.join('\n');
+      expect(text).toContain('Now 0.92, then 0.94 EUR per 1 USD (+2.17%)');
+      expect(text).toContain('Orders already priced keep the rate they were priced at');
+      expect(text).toMatch(/next daily ECB refresh replaces it/);
+      expect(text).not.toMatch(/slipped decimal/);
+      expect(await pricingStore(env).fxRate('EUR')).toBe(0.94);
+      expect((await audited()).at(-1)).toEqual({
+        target: 'EUR',
+        actor: 'ann@example.com',
+        detail: { from: 0.92, to: 0.94, percent: 2.17, via: 'mcp', tool: 'set_fx_rate' },
+      });
+      const after = (await call(operator, 'list_fx_rates', {})).structuredContent!.rates as Record<
+        string,
+        unknown
+      >[];
+      expect(after.find((r) => r.currency === 'EUR')).toMatchObject({
+        rate: 0.94,
+        source: 'person',
+        updatedBy: 'ann@example.com',
+      });
+    });
+
+    it('flags a large change in the preview and the audit event', async () => {
+      await seed();
+      const { preview } = await confirm({ currency: 'EUR', rate: 9.2 });
+      expect(preview.consequences.join('\n')).toMatch(
+        /10% or more: check it is not a slipped decimal/,
+      );
+      expect((await audited()).at(-1)?.detail).toMatchObject({ large: true, to: 9.2 });
+      await seed();
+    });
+
+    it('blocks what fxRateProblem refuses at the preview, issuing no code', async () => {
+      await seed();
+      for (const [input, why] of [
+        [{ currency: 'USD', rate: 1 }, /base currency/],
+        [{ currency: 'JPY', rate: 150 }, /fxCurrencies/],
+        [{ currency: 'EUR', rate: 1e9 }, /units of EUR per one USD/],
+      ] as const) {
+        const r = await call(admin, 'set_fx_rate', input);
+        expect(r.isError, JSON.stringify(input)).toBe(true);
+        expect(r.content[0]!.text).toMatch(why);
+        expect(r.structuredContent?.confirmation).toBeUndefined();
+      }
+      // A code is for the rate it previewed.
+      const first = await call(admin, 'set_fx_rate', { currency: 'EUR', rate: 0.95 });
+      const swapped = await call(admin, 'set_fx_rate', {
+        currency: 'EUR',
+        rate: 0.5,
+        confirmation: first.structuredContent!.confirmation,
+      });
+      expect(swapped.isError).toBe(true);
+      expect(swapped.content[0]!.text).toMatch(/different action or input/);
+      expect(await pricingStore(env).fxRate('EUR')).toBe(0.92);
     });
   });
 

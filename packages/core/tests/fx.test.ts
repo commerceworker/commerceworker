@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { parseEcbRates, parseFxCurrencies, ratesPerBase } from '../src';
+import {
+  FX_LARGE_CHANGE,
+  fxRateChange,
+  fxRateProblem,
+  parseEcbRates,
+  parseFxCurrencies,
+  REFRESH_OVERWRITES,
+  ratesPerBase,
+  refreshMayWrite,
+} from '../src';
 
 // The shape the ECB publishes at ECB_DAILY_URL, trimmed to a few currencies.
 const ECB = `<?xml version="1.0" encoding="UTF-8"?>
@@ -72,5 +81,49 @@ describe('exchange rates from the ECB', () => {
   it('reads FX_CURRENCIES as distinct ISO codes, dropping anything else', () => {
     expect(parseFxCurrencies('EUR, gbp,EUR,,euro,CA')).toEqual(['EUR', 'GBP']);
     expect(parseFxCurrencies(undefined)).toEqual([]);
+  });
+});
+
+describe('a rate a person sets', () => {
+  const known = ['EUR', 'GBP'];
+  const ok = (currency: string, rate: number) => fxRateProblem({ currency, rate }, known);
+
+  it('takes a known currency and a rate within bounds', () => {
+    expect(ok('EUR', 0.93)).toBeNull();
+    expect(ok('GBP', 1e-4)).toBeNull();
+    expect(ok('GBP', 1e6)).toBeNull();
+  });
+
+  it('refuses the base currency, a bad code and a currency nobody uses', () => {
+    expect(ok('USD', 1)).toMatch(/base currency/);
+    expect(ok('eur', 1)).toMatch(/three capital letters/);
+    expect(ok('EURO', 1)).toMatch(/three capital letters/);
+    expect(ok('JPY', 150)).toMatch(/fxCurrencies/);
+    // The base stays refused even when a caller lists it as known.
+    expect(fxRateProblem({ currency: 'USD', rate: 1 }, ['USD'])).toMatch(/base currency/);
+  });
+
+  it('refuses a rate that is not a positive, finite number within bounds', () => {
+    for (const rate of [0, -0.5, Number.NaN, Number.POSITIVE_INFINITY, 9e-5, 1_000_001])
+      expect(ok('EUR', rate), String(rate)).toMatch(/units of EUR per one USD/);
+  });
+
+  it('measures the change from the current rate and flags a large one, never blocking it', () => {
+    expect(fxRateChange(0.92, 0.92)).toEqual({ percent: 0, large: false });
+    expect(fxRateChange(1, 1 + FX_LARGE_CHANGE / 2).large).toBe(false);
+    expect(fxRateChange(1, 1.1).large).toBe(true);
+    expect(fxRateChange(1, 0.5)).toEqual({ percent: -50, large: true });
+    // Nothing to compare with: no percent, no flag.
+    expect(fxRateChange(null, 5)).toEqual({ percent: null, large: false });
+    expect(ok('EUR', 92)).toBeNull();
+  });
+});
+
+describe('the daily refresh and a person’s rate', () => {
+  it('overwrites a person’s rate: the feed is the reference', () => {
+    expect(REFRESH_OVERWRITES).toEqual({ ecb: true, person: true });
+    expect(refreshMayWrite('person')).toBe(true);
+    expect(refreshMayWrite('ecb')).toBe(true);
+    expect(refreshMayWrite(undefined)).toBe(true);
   });
 });
