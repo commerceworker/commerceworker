@@ -217,7 +217,9 @@ describe('order actions over REST', () => {
       payload: { provider: 'stripe', paymentIntentId: 'pi_1' },
     });
     expect(forged.status).toBe(422);
-    expect((await forged.json()).error).toContain('provider, paymentIntentId');
+    expect(((await forged.json()) as { error: string }).error).toContain(
+      'provider, paymentIntentId',
+    );
     expect((await post('orders/ord_x/events', { event: 'return.requested' })).status).toBe(422);
     expect(engine.sendEvent).not.toHaveBeenCalled();
   });
