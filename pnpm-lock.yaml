@@ -903,6 +903,9 @@ importers:
       '@cloudflare/workers-oauth-provider':
         specifier: 'catalog:'
         version: 1.2.4
+      '@commerceworker/application':
+        specifier: workspace:*
+        version: link:../../packages/application
       '@commerceworker/core':
         specifier: workspace:*
         version: link:../../packages/core

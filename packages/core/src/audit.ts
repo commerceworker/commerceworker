@@ -99,6 +99,34 @@ export function auditRetentionDays(value: string | undefined): number {
   return Math.max(days, AUDIT_MIN_RETENTION_DAYS);
 }
 
+/** Filter groups, by action prefix. */
+export const AUDIT_GROUPS = {
+  auth: 'Sign-in',
+  team: 'Team',
+  token: 'API tokens',
+  scim: 'SCIM provisioning',
+  api: 'API access',
+  oauth: 'Connected apps',
+  integration: 'Integrations',
+  ucp: 'Agentic checkout',
+  order: 'Orders',
+  approval: 'Approvals',
+  cart: 'Carts',
+  flow: 'Flows',
+  webhook: 'Webhooks',
+  stock: 'Stock review',
+  promotion: 'Promotions',
+  tax_certificate: 'Tax certificates',
+  catalog: 'Catalog',
+  plugin: 'Plugins',
+  personal_data: 'Personal data',
+} as const;
+
+export type AuditGroup = keyof typeof AUDIT_GROUPS;
+
+export const isAuditGroup = (v: unknown): v is AuditGroup =>
+  typeof v === 'string' && v in AUDIT_GROUPS;
+
 /** The row an audit event is stored as. Pure: each app inserts it with its own database. */
 export function auditRow(
   id: string,

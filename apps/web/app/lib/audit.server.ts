@@ -8,13 +8,13 @@
  * archives and prunes old events. The vocabulary is `audit.ts`.
  */
 
+import { listAuditEvents, verifyAuditTrail } from '@commerceworker/application/commerce';
 import {
   type AuditActor,
   auditRow,
   newId,
   type Principal,
   sealAuditRow,
-  verifyAuditChain,
 } from '@commerceworker/core';
 import type { AuditAction, AuditGroup } from './audit';
 import { auditLog } from './wire.server';
@@ -40,39 +40,9 @@ export async function audit(
 
 export type AuditRow = Awaited<ReturnType<typeof listAudit>>[number];
 
-/**
- * Newest first, `limit` at a time; `before` pages back, `group` filters by action prefix. With
- * `after` (a `seq`), sealed events after it, oldest first: the cursor an export or a SIEM pulls by.
- */
-export async function listAudit(
+/** The audit use-cases (`listAuditEvents`, `verifyAuditTrail`) over the app's log. */
+export const listAudit = (
   f: { group?: AuditGroup; before?: number; after?: number; limit?: number } = {},
-) {
-  const rows = await auditLog().list({
-    group: f.group,
-    before: f.before,
-    after: f.after,
-    limit: Math.min(Math.max(f.limit ?? 100, 1), 500),
-  });
-  return rows.map((r) => ({
-    ...r,
-    detail: r.detail ? (JSON.parse(r.detail) as Record<string, unknown>) : null,
-  }));
-}
+) => listAuditEvents({ audit: auditLog() }, f);
 
-/** Sealed events checked per call; `next` continues from where one stopped. */
-const VERIFY_BATCH = 2000;
-
-/**
- * Checks the hash chain from just after `after` (a `seq`), or from the oldest event still kept
- * (pruned ones are in the R2 archive, which carries their hashes). `next` is set when there is
- * more to check.
- */
-export async function verifyAudit(after?: number) {
-  const anchor = after === undefined ? undefined : await auditLog().link(after);
-  if (after !== undefined && !anchor)
-    return { ok: false as const, checked: 0, brokenAt: after, reason: `no event ${after}` };
-  const rows = await auditLog().sealedAfter(after, VERIFY_BATCH);
-  const check = await verifyAuditChain(rows, anchor);
-  const next = check.ok && rows.length === VERIFY_BATCH ? check.last?.seq : undefined;
-  return { ...check, ...(next ? { next } : {}) };
-}
+export const verifyAudit = (after?: number) => verifyAuditTrail({ audit: auditLog() }, after);

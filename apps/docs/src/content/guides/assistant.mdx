@@ -88,7 +88,7 @@ after each reply, with links to each item:
 
 ## What it can read
 
-Every role can read. The tools are `needs_attention`, `find_orders` (by status, model, channel, customer,
+Every role can read what its role may. The tools are `needs_attention`, `find_orders` (by status, model, channel, customer,
 text, total, age, and the step each one waits at or stopped at), `get_order` (status, the step it
 waits at and since when, steps run, recent activity),
 `assess_order` (typed questions about one order, answered with a probability for every option; up to 4 images),
@@ -96,7 +96,7 @@ waits at and since when, steps run, recent activity),
 [cart's](/guides/carts/) lines with their ids, its price with shipping and tax, promotion codes,
 its ship-to and the shipping options on offer, the problems its price
 found, and why it can't be submitted yet), `list_flows` and `get_flow` (a saved
-draft with its validation problems). Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
+draft with its validation problems). An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) and webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), as the REST API shows them, never with a secret. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
 conversation: what it is doing while the reply streams, then what it found. An order's line names
 the step it waits at or stopped at, and opens that step on the order's graph; answers about an order
 say the same. A line for one cart, flow or assessment links to it too, and a reply that opened

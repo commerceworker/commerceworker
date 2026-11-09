@@ -1,5 +1,6 @@
 export * from './addresses';
 export * from './apply-promotions';
+export * from './audit-trail';
 export * from './compensate-order';
 export * from './invoices';
 export * from './payments';
@@ -14,3 +15,4 @@ export * from './shipping-labels';
 export * from './subjects';
 export * from './tax-certificates';
 export * from './tax-order';
+export * from './webhook-subscriptions';
