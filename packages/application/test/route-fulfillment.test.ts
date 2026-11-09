@@ -1,3 +1,4 @@
+import type { Order } from '@commerceworker/core';
 import type { ProductRecord, StoreLocation } from '@commerceworker/ports/commerce';
 import { FixedClock } from '@commerceworker/test-kit';
 import {
@@ -6,7 +7,7 @@ import {
   InMemoryPricingStore,
 } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { routeFulfillment } from '../src/commerce';
+import { handOverOrder, routeFulfillment } from '../src/commerce';
 
 const product = (sku: string, kind = 'physical'): ProductRecord => ({
   sku,
@@ -148,5 +149,22 @@ describe('routing fulfillment', () => {
       branches: ['digital'],
       method: null,
     });
+  });
+});
+
+describe('handing an order over', () => {
+  it('records a carry-out once and spends the stock the order held', async () => {
+    const p = ports();
+    const order = {
+      id: 'o_hand',
+      currency: 'USD',
+      lines: [{ sku: 'MUG', qty: 2 }],
+      fulfillment: { method: 'carry_out', locationId: 'central' },
+    } as unknown as Order;
+    await p.inventory.reserve(order, 'reserve#1');
+    expect(await handOverOrder(p, order, 'handover#1')).toEqual({ collected: 'carry_out' });
+    // A retry records nothing more and spends nothing twice.
+    expect(await handOverOrder(p, order, 'handover#1')).toEqual({ collected: 'carry_out' });
+    expect(await p.inventory.consume(order.id)).toBe(0);
   });
 });

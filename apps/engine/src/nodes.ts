@@ -13,6 +13,7 @@ import {
   applyPromotions,
   bookReturnLabel,
   bookShipment,
+  handOverOrder,
   MissingExchangeRateError,
   MissingLabelError,
   priceOrder,
@@ -703,9 +704,7 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.handover': async ({ env, ctx, stepKey }) => {
-    const r = await fulfillmentStore(env).handOver(ctx.order, stepKey);
-    // The goods left the store: the held stock is spent.
-    await inventoryStore(env).consume(ctx.order.id);
+    const r = await handOverOrder(commercePorts(env), ctx.order, stepKey);
     return { output: r, summary: r.collected === 'pickup' ? 'Collected' : 'Carried out' };
   },
 
