@@ -848,15 +848,20 @@ export const PAGE_ONLY_TOOLS: readonly AssistantTool[] = [
 export const isPageOnly = (name: AssistantTool) => PAGE_ONLY_TOOLS.includes(name);
 
 /**
- * Actions that change what buyers pay or owe in tax: a person always confirms them on a card (the
- * panel, MCP's confirmation, A2A chat's `{ confirm: true }`), never a typed A2A skill that runs
- * as composed.
+ * Actions that change what buyers pay or owe in tax, or who outside may reach the workspace: a
+ * person always confirms them on a card (the panel, MCP's confirmation, A2A chat's
+ * `{ confirm: true }`), never a typed A2A skill that runs as composed.
  */
 export const PERSON_CONFIRMS_TOOLS: readonly AssistantTool[] = [
   'create_promotion',
   'set_promotion_status',
   'verify_tax_certificate',
   'revoke_tax_certificate',
+  // Who outside may reach the workspace: a webhook's receiver, an integration, an AI platform.
+  'delete_webhook_subscription',
+  'revoke_integration',
+  'revoke_ucp_platform',
+  'set_ucp_settings',
   // Who may do what: only a person on the Team page decides it.
   'set_member_role',
   'set_approval_separation',
