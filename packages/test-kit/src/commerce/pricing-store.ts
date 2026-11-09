@@ -146,6 +146,20 @@ export class InMemoryPricingStore implements PricingStore {
     return this.fixture.fxRates?.find((f) => f.currency === currency)?.rate ?? null;
   }
 
+  async setFxRates(rates: readonly { currency: string; rate: number }[], _at: number) {
+    const rows = rates.filter(
+      (r) => r.currency !== BASE_CURRENCY && Number.isFinite(r.rate) && r.rate > 0,
+    );
+    const all = [...(this.fixture.fxRates ?? [])];
+    for (const r of rows) {
+      const i = all.findIndex((f) => f.currency === r.currency);
+      if (i >= 0) all[i] = { currency: r.currency, rate: r.rate };
+      else all.push({ currency: r.currency, rate: r.rate });
+    }
+    this.fixture.fxRates = all;
+    return rows.length;
+  }
+
   async priceInputs(
     skus: readonly string[],
     currency: string,

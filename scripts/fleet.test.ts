@@ -76,6 +76,11 @@ test('the engine config carries the deployment everywhere a name is account-wide
     renderEngine(base('engine'), { ...acme, aiGatewayLogs: true }).vars.AI_GATEWAY_LOGS,
     'true',
   );
+  assert.equal(c.vars.FX_CURRENCIES, '');
+  assert.equal(
+    renderEngine(base('engine'), { ...acme, fxCurrencies: ['EUR', 'GBP'] }).vars.FX_CURRENCIES,
+    'EUR,GBP',
+  );
   assert.deepEqual(c.vectorize, [
     { binding: 'PRODUCT_VECTORS', index_name: 'commerceworker-products-acme' },
   ]);
@@ -337,6 +342,13 @@ test('workflow AI nodes see personal data only where the registry says send', ()
   assert.throws(() => toDeployment({ ...acme, aiPersonalData: 'all' }), /aiPersonalData/);
   assert.equal(toDeployment(acme).aiGatewayLogs, false);
   assert.equal(toDeployment({ ...acme, aiGatewayLogs: true }).aiGatewayLogs, true);
+  assert.deepEqual(toDeployment(acme).fxCurrencies, []);
+  assert.deepEqual(toDeployment({ ...acme, fxCurrencies: ['EUR', 'GBP', 'EUR'] }).fxCurrencies, [
+    'EUR',
+    'GBP',
+  ]);
+  for (const bad of [['USD'], ['eur'], 'EUR', ['EURO']])
+    assert.throws(() => toDeployment({ ...acme, fxCurrencies: bad }), /fxCurrencies/);
 });
 
 test("a customer's personalDataRetentionDays sets the sweep's, at least 30 days", () => {

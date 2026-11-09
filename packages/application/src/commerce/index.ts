@@ -7,6 +7,7 @@ export * from './payments';
 export * from './price-order';
 export * from './principals';
 export * from './rate-shipping';
+export * from './refresh-fx-rates';
 export * from './retention';
 export * from './route-fulfillment';
 export * from './secrets';

@@ -11,6 +11,7 @@ import { A2A_PATH, handleA2A } from './a2a/route';
 import { routeAgents } from './agent-routes';
 
 import { receiveEmail } from './email';
+import { refreshRates } from './fx';
 import { handleMcp, MCP_PATH } from './mcp';
 import { reindexProducts } from './product-index';
 import { sweep } from './retention';
@@ -54,14 +55,30 @@ export default {
   },
 
   // `triggers.crons` in wrangler.jsonc: hourly, the product index catches up with `products`;
-  // daily, the retention sweep and another try at labels a provider couldn't void.
+  // daily, the retention sweep, another try at labels a provider couldn't void, and the exchange
+  // rates of the currencies the deployment sells in.
   async scheduled(controller, env) {
     if (controller.cron === REINDEX_CRON) {
       await reindexProducts(env);
       return;
     }
-    console.log('retention sweep', JSON.stringify(await sweep(env)));
-    console.log('label voids', JSON.stringify(await retryLabelVoids(commercePorts(env))));
+    // Each daily job runs whatever the others do, so one failing every day can't starve the rest;
+    // the invocation still fails afterwards, so the failure shows.
+    const jobs = {
+      'retention sweep': () => sweep(env),
+      'label voids': () => retryLabelVoids(commercePorts(env)),
+      'fx rates': () => refreshRates(env),
+    };
+    const failed: string[] = [];
+    for (const [name, run] of Object.entries(jobs)) {
+      try {
+        console.log(name, JSON.stringify(await run()));
+      } catch (err) {
+        console.error(name, 'failed', err);
+        failed.push(name);
+      }
+    }
+    if (failed.length) throw new Error(`Daily jobs failed: ${failed.join(', ')}`);
   },
 
   async email(message, env) {

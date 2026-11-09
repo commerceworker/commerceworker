@@ -202,6 +202,43 @@ export function describePricingStoreContract(
       expect(await s.fxRate('XTS')).toBeNull();
     });
 
+    it('sets and adds rates, never the base currency, and prices with them at once', async () => {
+      const s = await store();
+      expect(
+        await s.setFxRates(
+          [
+            { currency: 'EUR', rate: 0.9312 },
+            { currency: 'GBP', rate: 0.781 },
+            { currency: 'USD', rate: 2 },
+            { currency: 'XTS', rate: 0 },
+          ],
+          1_000,
+        ),
+      ).toBe(2);
+      expect(await s.fxRate('EUR')).toBe(0.9312);
+      expect(await s.fxRate('GBP')).toBe(0.781);
+      expect(await s.fxRate('USD')).toBe(1);
+      expect(await s.fxRate('XTS')).toBeNull();
+      expect((await s.priceInputs([], 'GBP', undefined, false)).fxRate).toBe(0.781);
+      expect(await s.setFxRates([], 2_000)).toBe(0);
+      expect(await s.setFxRates([{ currency: 'CHF', rate: Number.POSITIVE_INFINITY }], 2_000)).toBe(
+        0,
+      );
+      expect(await s.fxRate('CHF')).toBeNull();
+    });
+
+    it('writes more rates than one statement can bind, all together', async () => {
+      const s = await store();
+      // 40 currencies at three parameters each is past D1's 100 bound parameters a statement.
+      const many = Array.from({ length: 40 }, (_, i) => ({
+        currency: `Q${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}`,
+        rate: i + 1,
+      }));
+      expect(await s.setFxRates(many, 3_000)).toBe(40);
+      expect(await s.fxRate('QAA')).toBe(1);
+      expect(await s.fxRate('QBN')).toBe(40);
+    });
+
     it('reads what pricing an order needs together, as the separate reads answer', async () => {
       const s = await store();
       const skus = ['PC-SKU-1', 'PC-SKU-2', 'PC-NONE', 'PC-SKU-1'];

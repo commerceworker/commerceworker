@@ -102,6 +102,11 @@ export interface PricingStore {
   setPromotionStatus(id: string, status: Promotion['status']): Promise<void>;
   /** Units of `currency` per one base currency (1 for the base itself), or null when unknown. */
   fxRate(currency: string): Promise<number | null>;
+  /**
+   * Sets each currency's rate (units per one base currency), adding it when new, as of `at`. The
+   * base currency's rate is always 1 and is never written. Returns how many it wrote.
+   */
+  setFxRates(rates: readonly { currency: string; rate: number }[], at: number): Promise<number>;
   /** The price chain for a customer: contract prices become the contract source's entries. */
   pricingFor(customerId: string | undefined): Promise<PricingInputs>;
   /**
