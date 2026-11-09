@@ -48,6 +48,9 @@ deployment can have different budgets; ask your CommerceWorker contact if an int
 | `POST` | `/api/v1/carts/:id/ops` | One cart op, such as `{ op: "add", sku, qty }` | `{ cart }`, or `409 { error }` |
 | `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `cartVersion`, or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
 | `POST` | `/api/v1/carts/:id/cancel` | | `{ cart }`, or `409 { error }` |
+| `POST` | `/api/v1/customers/:id/tax-certificates/:certificateId/verify` | | `{ id, status, changed }`, or `409 { error }` |
+| `POST` | `/api/v1/customers/:id/tax-certificates/:certificateId/revoke` | | `{ id, status, changed }`, or `409 { error }` |
+| `POST` | `/api/v1/stock/review` | | `202 { instanceId }` |
 | `GET` | `/api/v1/audit-events?type=&before=&after=&limit=` | | `{ events }` (admin) |
 | `GET` | `/api/v1/audit-events/verify?after=` | | `{ ok, checked, last, next }` or `{ ok: false, brokenAt, reason }` (admin) |
 | `POST` | `/api/v1/data-subjects/export` | `{ email }` | A JSON file: `{ email, customers, orders, messages, inboundEmails, documents, carts, taxCertificates, addresses, truncated, teamMember }` (admin) |
@@ -273,6 +276,21 @@ different versions is `400`. The order is priced again by its flow when it runs,
 so its total can differ from the cart's quote if prices changed in between. The order is then read and acted
 on through the order routes. `POST /api/v1/carts/:id/cancel` ends a cart that hasn't ended
 (`409` otherwise).
+
+## Tax certificates
+
+`POST /api/v1/customers/:id/tax-certificates/:certificateId/verify` records that you checked a
+customer's exemption certificate with its issuer: orders placed from then on are exempt where it
+covers. `…/revoke` stops it exempting orders placed from then on; it stays on record, revoked.
+Both need Operator. A revoked or expired certificate can't be verified, and with
+[approval separation](/guides/team-and-roles/#approvals) on, whoever added a certificate can't
+verify it (`409`). Doing either again changes nothing and answers `changed: false`. Certificates
+are added from the customer's page.
+
+## Stock review
+
+`POST /api/v1/stock/review` runs the daily stock review now, reordering what is below its reorder
+point. It needs Operator and answers `202 { instanceId }`.
 
 ## Integrations
 
