@@ -112,8 +112,8 @@ contents it is refused (`422`).
 
 ### Results
 
-The request answers `200 { sender, results }` with one entry per transaction, so one bad PO doesn't
-hold back the rest:
+The request answers `200 { sender, results, functionalAck }` with one entry per transaction, so one
+bad PO doesn't hold back the rest:
 
 ```json
 {
@@ -122,9 +122,17 @@ hold back the rest:
     { "control": "0001", "poNumber": "NW-9001", "status": 201, "orderId": "ord_…", "flowId": "tpl-b2b-order" },
     { "control": "0002", "poNumber": "NW-9002", "status": 200, "orderId": "ord_…", "replayed": true },
     { "control": "0003", "status": 400, "error": "PO NW-9003 line 1 has no VP, SK, BP or IN part number" }
-  ]
+  ],
+  "functionalAck": "ISA*00*          *00*          *ZZ*COMMERCEWORKER *ZZ*NORTHWIND      *…~GS*FA*…~ST*997*0001~AK1*PO*1~AK2*850*0001~AK5*A~AK2*850*0002~AK5*A~AK2*850*0003~AK5*R*5~AK9*P*3*3*2~SE*10*0001~GE*1*1~IEA*1*…~"
 }
 ```
+
+`functionalAck` is the X12 997 for the interchange, for the provider to send back to the partner.
+It is addressed from the interchange's receiver to its sender, in the delimiters the interchange
+used, with one `ST*997` per functional group. Each PO is `AK5*A` when it started or had already
+started, and `AK5*R*5` otherwise. `AK9` is `A` when every PO in the group was taken, `R` when none
+was and `P` when some were. Its interchange and group control numbers repeat the ones received, so
+a resent interchange is acknowledged the same way.
 
 Each `status` is what the inbound start would return alone: `201`, `200` (a replay), `400`
 (unmappable, invalid or unsupported currency), `409` (flow not published) or `422` (same PO,
@@ -140,7 +148,9 @@ A transaction that isn't an 850 is reported in `results` with `status: 400`.
 
 ## Not covered
 
-- 997 functional acknowledgements are not generated; the response is the only receipt.
+- The 997 isn't sent anywhere by CommerceWorker: the provider relays `functionalAck`. It
+  acknowledges each PO as a whole; segment and element errors (`AK3`, `AK4`) aren't reported, and
+  an interchange refused outright (`400`, `403`) gets no 997 or TA1.
 - Transport: no AS2, SFTP or VAN connection. The provider posts over HTTPS.
 - Other X12 transactions (855, 856, 810) and other EDI standards.
 - Amazon and other marketplaces. [Marketplace](/guides/marketplace/) covers sellers inside

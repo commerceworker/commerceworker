@@ -21,7 +21,7 @@ CommerceWorker began as a renamed order engine codebase (P0, done). The phases b
 
 Open items in the order engine, unchanged from its original roadmap:
 
-- **More channel adapters.** Shopify orders and EDI X12 850 purchase orders are in. Still to come: Amazon (an SP-API notification consumer and order fetch), 997 functional acknowledgements for EDI, and AS2/SFTP transport so partners can send without a provider in between.
+- **More channel adapters.** Shopify orders and EDI X12 850 purchase orders are in. The 850 answer carries its 997 functional acknowledgement for the provider to relay. Still to come: Amazon (an SP-API notification consumer and order fetch), and AS2/SFTP transport so partners can send (and receive their 997) without a provider in between.
 - **Exchange rates people can manage.** Production has a rate for USD only, and the Commerce page lists rates without editing them, so another currency needs a row inserted into `fx_rates` by hand. A rate editor for operators, or a daily job that fetches rates from a provider, would let orders in EUR, GBP or CAD through.
 - **Smaller live updates on the order page.** Every OrderAgent `setState` broadcasts the whole state, the static `flow` graph and a 400-entry timeline included, four to six times per node. Sending the flow once and coalescing a node's reports into one update would cut socket traffic, but it changes the Workflow-to-agent reports and the state the order page reads, so it needs its own change.
 - **Release approval.** Production deploys run in the `production` GitHub environment. Adding a required reviewer there would hold each merge to `main` until someone approves its deploy.

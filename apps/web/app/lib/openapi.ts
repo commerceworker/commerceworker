@@ -559,7 +559,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'EDI X12 850 purchase orders (operator)',
           description:
-            'A raw X12 interchange of one or more 850 transactions from a trading partner listed in EDI_PARTNERS (ISA sender id → customer). Each PO starts at most once (key `order:edi:<sender>:<PO>`); the response lists the outcome per transaction.',
+            'A raw X12 interchange of one or more 850 transactions from a trading partner listed in EDI_PARTNERS (ISA sender id → customer). Each PO starts at most once (key `order:edi:<sender>:<PO>`); the response lists the outcome per transaction, and `functionalAck` is the 997 to send back to the partner: AK5 `A` for each PO that started (or already had), `R` for one that couldn’t be taken.',
           requestBody: {
             required: true,
             content: {
@@ -570,7 +570,7 @@ export function openApiDocument(serverUrl: string) {
           responses: {
             ...errors,
             '200': ok(
-              '`{ sender, results: [{ control, poNumber?, status, orderId?, flowId?, replayed?, error? }] }`',
+              '`{ sender, results: [{ control, poNumber?, status, orderId?, flowId?, replayed?, error? }], functionalAck }`, where `functionalAck` is the X12 997 text',
             ),
             '400': ok('Not a valid X12 interchange', '#/components/schemas/Error'),
             '403': ok(

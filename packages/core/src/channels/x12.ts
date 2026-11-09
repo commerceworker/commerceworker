@@ -1,15 +1,48 @@
 /**
  * EDI X12 850 purchase orders as inbound orders. Pure: `parseX12` splits an interchange into its
- * transactions using the delimiters its ISA header declares, and `x12850ToInbound` maps one 850 onto
- * an inbound order for the trading partner's customer. Transport (AS2, SFTP, a VAN) and 997
- * acknowledgements are out of scope; a partner's provider posts the raw X12 to the API.
+ * transactions using the delimiters its ISA header declares, `x12850ToInbound` maps one 850 onto
+ * an inbound order for the trading partner's customer, and `x12FunctionalAck` writes the 997 that
+ * acknowledges what was taken. Transport (AS2, SFTP, a VAN) is out of scope; a partner's provider
+ * posts the raw X12 to the API and relays the 997 from its answer.
  */
 
 import type { ChannelResult } from './shopify';
 
 export type X12Segment = { id: string; el: string[] };
-export type X12Transaction = { type: string; control: string; segments: X12Segment[] };
-export type X12Interchange = { sender: string; receiver: string; transactions: X12Transaction[] };
+/** One transaction set (ST to SE); `group` is its functional group's control number (GS06). */
+export type X12Transaction = {
+  type: string;
+  control: string;
+  group: string;
+  segments: X12Segment[];
+};
+/** A functional group's GS header: GS01, GS02, GS03, GS06 and GS08. */
+export type X12Group = {
+  functionalId: string;
+  sender: string;
+  receiver: string;
+  control: string;
+  version: string;
+};
+/** What a reply needs from the ISA header: its parties, control number, version and delimiters. */
+export type X12Envelope = {
+  senderQualifier: string;
+  receiverQualifier: string;
+  control: string;
+  version: string;
+  usage: string;
+  repetition: string;
+  element: string;
+  component: string;
+  terminator: string;
+};
+export type X12Interchange = {
+  sender: string;
+  receiver: string;
+  envelope: X12Envelope;
+  groups: X12Group[];
+  transactions: X12Transaction[];
+};
 
 export type X12Parse = { ok: true; interchange: X12Interchange } | { ok: false; error: string };
 
@@ -36,11 +69,25 @@ export function parseX12(text: string): X12Parse {
     });
   const isa = segments[0]!;
   const transactions: X12Transaction[] = [];
+  const groups: X12Group[] = [];
   let open: X12Transaction | null = null;
   for (const seg of segments) {
-    if (seg.id === 'ST') {
+    if (seg.id === 'GS')
+      groups.push({
+        functionalId: seg.el[0] ?? '',
+        sender: seg.el[1] ?? '',
+        receiver: seg.el[2] ?? '',
+        control: seg.el[5] ?? '',
+        version: seg.el[7] ?? '',
+      });
+    else if (seg.id === 'ST') {
       if (open) return { ok: false, error: `ST ${open.control} has no SE before the next ST` };
-      open = { type: seg.el[0] ?? '', control: seg.el[1] ?? '', segments: [] };
+      open = {
+        type: seg.el[0] ?? '',
+        control: seg.el[1] ?? '',
+        group: groups.at(-1)?.control ?? '',
+        segments: [],
+      };
     } else if (seg.id === 'SE') {
       if (!open) return { ok: false, error: 'SE without an ST' };
       // SE01 counts the segments from ST to SE inclusive.
@@ -58,8 +105,105 @@ export function parseX12(text: string): X12Parse {
   if (!transactions.length) return { ok: false, error: 'The interchange has no transactions' };
   return {
     ok: true,
-    interchange: { sender: isa.el[5] ?? '', receiver: isa.el[7] ?? '', transactions },
+    interchange: {
+      sender: isa.el[5] ?? '',
+      receiver: isa.el[7] ?? '',
+      envelope: {
+        senderQualifier: isa.el[4] ?? '',
+        receiverQualifier: isa.el[6] ?? '',
+        control: isa.el[12] ?? '',
+        version: isa.el[11] ?? '',
+        usage: isa.el[14] ?? '',
+        repetition: isa.el[10] ?? '',
+        element,
+        component: raw[104]!,
+        terminator,
+      },
+      groups,
+      transactions,
+    },
   };
+}
+
+/** How one transaction set was taken: accepted (an order started, or one already started) or not. */
+export type X12TransactionAck = { control: string; accepted: boolean };
+
+/**
+ * The 997 functional acknowledgement for an interchange we received, back to its sender with the
+ * parties swapped and the same delimiters: one ST*997 per functional group, an AK2/AK5 per
+ * transaction set (`A` accepted, `R` rejected with code 5, "one or more segments in error"), and
+ * an AK9 that is `A` when all were accepted, `R` when none were and `P` otherwise. The interchange
+ * and group control numbers repeat the received ones, so a resent interchange is acknowledged the
+ * same way; `now` dates it.
+ */
+export function x12FunctionalAck(
+  interchange: X12Interchange,
+  acks: readonly X12TransactionAck[],
+  now: Date,
+): string {
+  const { envelope: e } = interchange;
+  const el = e.element;
+  const seg = (...parts: string[]) => parts.join(el);
+  const pad = (s: string, n: number) => s.slice(0, n).padEnd(n, ' ');
+  const iso = now.toISOString();
+  const yymmdd = iso.slice(2, 4) + iso.slice(5, 7) + iso.slice(8, 10);
+  const ccyymmdd = iso.slice(0, 4) + iso.slice(5, 7) + iso.slice(8, 10);
+  const hhmm = iso.slice(11, 13) + iso.slice(14, 16);
+  const accepted = new Map(acks.map((a) => [a.control, a.accepted]));
+  const control = pad(e.control.replace(/\D/g, '').padStart(9, '0'), 9);
+
+  const out: string[] = [
+    seg(
+      'ISA',
+      '00',
+      pad('', 10),
+      '00',
+      pad('', 10),
+      pad(e.receiverQualifier, 2),
+      pad(interchange.receiver, 15),
+      pad(e.senderQualifier, 2),
+      pad(interchange.sender, 15),
+      yymmdd,
+      hhmm,
+      e.repetition || 'U',
+      e.version || '00401',
+      control,
+      '0',
+      e.usage || 'P',
+      e.component,
+    ),
+  ];
+  const groups = interchange.groups.length
+    ? interchange.groups
+    : [{ functionalId: 'PO', sender: '', receiver: '', control: '1', version: '004010' }];
+  for (const [i, g] of groups.entries()) {
+    const txs = interchange.transactions.filter((t) => t.group === g.control);
+    const taken = txs.filter((t) => accepted.get(t.control) === true).length;
+    const body = [
+      seg('AK1', g.functionalId, g.control),
+      ...txs.flatMap((t) => {
+        const ok = accepted.get(t.control) === true;
+        return [seg('AK2', t.type, t.control), ok ? seg('AK5', 'A') : seg('AK5', 'R', '5')];
+      }),
+      seg(
+        'AK9',
+        taken === txs.length ? 'A' : taken === 0 ? 'R' : 'P',
+        String(txs.length),
+        String(txs.length),
+        String(taken),
+      ),
+    ];
+    const st = String(i + 1).padStart(4, '0');
+    out.push(
+      seg('GS', 'FA', g.receiver, g.sender, ccyymmdd, hhmm, g.control, 'X', g.version || '004010'),
+      seg('ST', '997', st),
+      ...body,
+      seg('SE', String(body.length + 2), st),
+      seg('GE', '1', g.control),
+    );
+  }
+  out.push(seg('IEA', String(groups.length), control));
+  return out.join(e.terminator) + e.terminator;
 }
 
 /** Part-number qualifiers in a PO1, in the order they are trusted as CommerceWorker's SKU. */

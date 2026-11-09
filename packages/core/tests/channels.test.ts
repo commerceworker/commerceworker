@@ -6,6 +6,7 @@ import {
   type ShopifyOrder,
   shopifyToInbound,
   verifyShopifyHmac,
+  x12FunctionalAck,
   x12850ToInbound,
 } from '../src';
 import shopify from './fixtures/shopify-order.json';
@@ -187,6 +188,7 @@ describe('X12 850', () => {
     const tx = (segs: string[]) => ({
       type: '850',
       control: '1',
+      group: '1',
       segments: segs.map((s) => {
         const [id, ...el] = s.split('*');
         return { id: id!, el };
@@ -204,5 +206,111 @@ describe('X12 850', () => {
       ok: false,
       error: expect.stringMatching(/no VP, SK, BP or IN/),
     });
+  });
+});
+
+describe('X12 997', () => {
+  const lines = ['PO1*1*120*EA*21.50**VP*WID-100', 'PO1*2*40*EA***BP*GSK-010'];
+  const now = new Date(Date.UTC(2026, 10, 9, 14, 5));
+  const segs = (x: string, term = '~', el = '*') =>
+    x
+      .split(term)
+      .filter(Boolean)
+      .map((s) => s.split(el));
+
+  it('keeps the envelope a reply needs: parties, control number, version, delimiters and groups', () => {
+    const p = parseX12(interchange('*', '~', [po850('*', '~', '0001', 'NW-1', lines)]));
+    if (!p.ok) throw new Error(p.error);
+    expect(p.interchange.envelope).toEqual({
+      senderQualifier: 'ZZ',
+      receiverQualifier: 'ZZ',
+      control: '000000001',
+      version: '00401',
+      usage: 'P',
+      repetition: 'U',
+      element: '*',
+      component: '>',
+      terminator: '~',
+    });
+    expect(p.interchange.groups).toEqual([
+      {
+        functionalId: 'PO',
+        sender: 'NORTHWIND',
+        receiver: 'COMMERCEWORKER',
+        control: '1',
+        version: '004010',
+      },
+    ]);
+    expect(p.interchange.transactions.map((t) => t.group)).toEqual(['1']);
+  });
+
+  it('acknowledges each PO back to its sender: A, R, and a group that is A, P or R', () => {
+    const p = parseX12(
+      interchange('*', '~', [
+        po850('*', '~', '0001', 'NW-1', lines),
+        po850('*', '~', '0002', 'NW-2', lines),
+      ]),
+    );
+    if (!p.ok) throw new Error(p.error);
+    const ack = x12FunctionalAck(
+      p.interchange,
+      [
+        { control: '0001', accepted: true },
+        { control: '0002', accepted: false },
+      ],
+      now,
+    );
+    const s = segs(ack);
+    // The ISA is fixed width and swaps the parties.
+    expect(ack.indexOf('~')).toBe(105);
+    expect(s[0]!.slice(5, 9)).toEqual(['ZZ', 'COMMERCEWORKER ', 'ZZ', 'NORTHWIND      ']);
+    expect(s[0]!.slice(9, 11)).toEqual(['261109', '1405']);
+    expect(s[0]![13]).toBe('000000001');
+    expect(s.slice(1).map((x) => x.join('*'))).toEqual([
+      'GS*FA*COMMERCEWORKER*NORTHWIND*20261109*1405*1*X*004010',
+      'ST*997*0001',
+      'AK1*PO*1',
+      'AK2*850*0001',
+      'AK5*A',
+      'AK2*850*0002',
+      'AK5*R*5',
+      'AK9*P*2*2*1',
+      'SE*8*0001',
+      'GE*1*1',
+      'IEA*1*000000001',
+    ]);
+    // It parses as an interchange itself, its SE count right.
+    const back = parseX12(ack);
+    expect(back.ok && back.interchange.transactions.map((t) => [t.type, t.control])).toEqual([
+      ['997', '0001'],
+    ]);
+    const all = (accepted: boolean) =>
+      segs(
+        x12FunctionalAck(
+          p.interchange,
+          ['0001', '0002'].map((control) => ({ control, accepted })),
+          now,
+        ),
+      ).find((x) => x[0] === 'AK9')!;
+    expect(all(true).join('*')).toBe('AK9*A*2*2*2');
+    expect(all(false).join('*')).toBe('AK9*R*2*2*0');
+  });
+
+  it('answers in the delimiters the interchange came in', () => {
+    const p = parseX12(
+      interchange('|', '\n', [
+        po850(
+          '|',
+          '\n',
+          '0001',
+          'NW-1',
+          lines.map((l) => l.replaceAll('*', '|')),
+        ),
+      ]),
+    );
+    if (!p.ok) throw new Error(p.error);
+    const ack = x12FunctionalAck(p.interchange, [{ control: '0001', accepted: true }], now);
+    expect(ack).toContain('\nAK5|A\n');
+    expect(parseX12(ack).ok).toBe(true);
   });
 });

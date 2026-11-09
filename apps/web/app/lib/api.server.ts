@@ -102,6 +102,7 @@ import {
   verificationSecrets,
   verifyShopifyHmac,
   verifyWebhook,
+  x12FunctionalAck,
   x12850ToInbound,
 } from '@commerceworker/core';
 import type { z } from 'zod';
@@ -1026,7 +1027,13 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
   const results: Awaited<ReturnType<typeof one>>[] = [];
   for (let i = 0; i < transactions.length; i += EDI_CONCURRENCY)
     results.push(...(await Promise.all(transactions.slice(i, i + EDI_CONCURRENCY).map(one))));
-  return json({ sender, results });
+  // The 997 the partner's provider relays back: a PO that started, or had already, is accepted.
+  const functionalAck = x12FunctionalAck(
+    parsed.interchange,
+    results.map((r) => ({ control: r.control, accepted: r.status >= 200 && r.status < 300 })),
+    new Date(),
+  );
+  return json({ sender, results, functionalAck });
 }
 
 /**
