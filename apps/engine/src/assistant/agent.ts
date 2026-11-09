@@ -22,6 +22,8 @@ import {
   isPageOnly,
   type Principal,
   type ProxiedPrincipal,
+  TOOL_INPUTS,
+  type ToolInput,
 } from '@commerceworker/core';
 import type { Connection, ConnectionContext } from 'agents';
 import { callable, getCurrentAgent } from 'agents';
@@ -69,7 +71,7 @@ import {
 } from './data';
 import { assistantModel, heuristicModel, type ModelSource } from './model';
 import { routeQuestion } from './routing';
-import { ACTION_TOOLS, runTool, TOOL_INPUTS, type ToolInput } from './tools';
+import { ACTION_TOOLS, runTool } from './tools';
 
 export class AssistantAgent extends AIChatAgent<Env> {
   override maxPersistedMessages = 200;

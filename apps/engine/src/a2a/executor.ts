@@ -38,6 +38,8 @@ import {
   type Principal,
   ROLE_LABELS,
   startOrderSchema,
+  TOOL_INPUTS,
+  type ToolInput,
 } from '@commerceworker/core';
 import { generateText, type ModelMessage, stepCountIs, type ToolSet, tool } from 'ai';
 import type { z } from 'zod';
@@ -50,7 +52,7 @@ import {
   snapshot,
 } from '../assistant/data';
 import { assistantModel, type ModelSource } from '../assistant/model';
-import { isActionTool, runTool, TOOL_INPUTS, type ToolInput } from '../assistant/tools';
+import { isActionTool, runTool } from '../assistant/tools';
 import { recordAudit } from '../audit';
 import { fromOutside, startOrderOnce } from '../orders';
 import { assistantBudgetSpent, finishTurn } from '../usage';

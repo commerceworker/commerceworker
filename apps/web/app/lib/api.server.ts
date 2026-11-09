@@ -20,6 +20,10 @@
  *                                               (409 not ready or ended, 412 changed since that version)
  *   POST /api/v1/carts/:id/cancel               (409 ended)
  *
+ *   POST /api/v1/customers/:id/tax-certificates/:certificateId/verify   (409 refused)
+ *   POST /api/v1/customers/:id/tax-certificates/:certificateId/revoke   (409 refused)
+ *   POST /api/v1/stock/review                   run the stock review now  (202 { instanceId })
+ *
  *   GET    /api/v1/audit-events                 ?type=…&before=<ms>&limit=  newest first; ?after=<seq> oldest first (admin)
  *   GET    /api/v1/audit-events/verify          ?after=<seq>  checks the hash chain (admin)
  *
@@ -77,6 +81,7 @@ import {
   type InboundOrder,
   inboundFingerprint,
   inboundOrderSchema,
+  PERSON_VERIFIES,
   PLUGIN_BUNDLE_MAX_BYTES,
   PLUGIN_ID_RE,
   type Principal,
@@ -288,6 +293,19 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
       return json({ error: 'Not found' }, 404);
     }
     if (parts[0] === 'carts') return await handleCarts(request, caller, parts, body, need);
+    if (parts[0] === 'customers' && parts[2] === 'tax-certificates' && parts.length === 5)
+      return await handleCertificate(request, caller, parts, need);
+    if (parts[0] === 'stock' && parts[1] === 'review' && parts.length === 2) {
+      if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
+      const denied = need('operator');
+      if (denied) return denied;
+      const { instanceId } = await engine().runReplenish();
+      await audit(request, 'stock.review_run', {
+        actor: caller,
+        detail: { instanceId, via: 'api' },
+      });
+      return json({ instanceId }, 202);
+    }
     if (parts[0] !== 'orders') return json({ error: 'Not found' }, 404);
 
     if (parts.length === 1) {
@@ -543,9 +561,16 @@ async function handleCarts(
     const match = ifMatchVersion(request.headers.get('if-match'));
     if (match === 'invalid')
       return json({ error: 'If-Match must be the cart’s ETag, its version in quotes' }, 400);
-    if (match !== undefined && b.data.version !== undefined && match !== b.data.version)
+    if (
+      b.data.version !== undefined &&
+      b.data.cartVersion !== undefined &&
+      b.data.version !== b.data.cartVersion
+    )
+      return json({ error: 'version and cartVersion name different versions' }, 400);
+    const named = b.data.version ?? b.data.cartVersion;
+    if (match !== undefined && named !== undefined && match !== named)
       return json({ error: 'If-Match and version name different versions' }, 400);
-    const version = match ?? b.data.version;
+    const version = match ?? named;
     const r = await engine().submitCart(id, actor, version);
     if (!r.ok && r.error === CART_CHANGED_SINCE_CONFIRM)
       return json({ error: `The cart has changed since version ${version}; read it again` }, 412);
@@ -1021,3 +1046,48 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
     results.push(...(await Promise.all(transactions.slice(i, i + EDI_CONCURRENCY).map(one))));
   return json({ sender, results });
 }
+
+/**
+ * POST /api/v1/customers/:id/tax-certificates/:certificateId/(verify|revoke): MCP's
+ * verify_tax_certificate and revoke_tax_certificate. The engine holds the rules (an active
+ * certificate only; with approval separation on, not whoever added it); a repeat changes nothing.
+ */
+async function handleCertificate(
+  request: Request,
+  caller: Principal,
+  parts: string[],
+  need: (min: Role) => Response | null,
+): Promise<Response> {
+  const [, customerId, , certificateId, verb] = parts as [string, string, string, string, string];
+  if (request.method !== 'POST' || (verb !== 'verify' && verb !== 'revoke'))
+    return json({ error: 'Not found' }, 404);
+  const denied = need('operator');
+  if (denied) return denied;
+  if (!ID_RE.test(customerId) || !ID_RE.test(certificateId))
+    return json({ error: 'Not found' }, 404);
+  // As over MCP: only a person signed in as themselves verifies, never an API token.
+  if (verb === 'verify' && caller.kind !== 'user') return json({ error: PERSON_VERIFIES }, 403);
+  const actor = await signedActor(
+    { kind: 'staff', id: caller.id, name: caller.name, role: caller.role },
+    `tax-certificates:${customerId}`,
+  );
+  const r =
+    verb === 'verify'
+      ? await engine().verifyTaxCertificate(customerId, certificateId, actor)
+      : await engine().revokeTaxCertificate(customerId, certificateId, actor);
+  if (!r.ok) return json({ error: r.error }, 409);
+  if (r.value.changed)
+    await audit(
+      request,
+      verb === 'verify' ? 'tax_certificate.verified' : 'tax_certificate.revoked',
+      {
+        actor: caller,
+        target: customerId,
+        detail: { certificate: certificateId, via: 'api' },
+      },
+    );
+  return json({ id: certificateId, status: r.value.certificate.status, changed: r.value.changed });
+}
+
+/** A customer or certificate id as the engine mints them. */
+const ID_RE = /^[\w-]{1,100}$/;
