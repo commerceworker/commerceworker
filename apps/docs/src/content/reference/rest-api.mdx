@@ -48,9 +48,6 @@ deployment can have different budgets; ask your CommerceWorker contact if an int
 | `POST` | `/api/v1/carts/:id/ops` | One cart op, such as `{ op: "add", sku, qty }` | `{ cart }`, or `409 { error }` |
 | `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `cartVersion`, or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
 | `POST` | `/api/v1/carts/:id/cancel` | | `{ cart }`, or `409 { error }` |
-| `POST` | `/api/v1/customers/:id/tax-certificates/:certificateId/verify` | | `{ id, status, changed }`, or `409 { error }` |
-| `POST` | `/api/v1/customers/:id/tax-certificates/:certificateId/revoke` | | `{ id, status, changed }`, or `409 { error }` |
-| `POST` | `/api/v1/stock/review` | | `202 { instanceId }` |
 | `GET` | `/api/v1/audit-events?type=&before=&after=&limit=` | | `{ events }` (admin) |
 | `GET` | `/api/v1/audit-events/verify?after=` | | `{ ok, checked, last, next }` or `{ ok: false, brokenAt, reason }` (admin) |
 | `POST` | `/api/v1/data-subjects/export` | `{ email }` | A JSON file: `{ email, customers, orders, messages, inboundEmails, documents, carts, taxCertificates, addresses, truncated, teamMember }` (admin) |
@@ -277,20 +274,29 @@ so its total can differ from the cart's quote if prices changed in between. The 
 on through the order routes. `POST /api/v1/carts/:id/cancel` ends a cart that hasn't ended
 (`409` otherwise).
 
-## Tax certificates
+## Workspace operations
 
-`POST /api/v1/customers/:id/tax-certificates/:certificateId/verify` records that you checked a
-customer's exemption certificate with its issuer: orders placed from then on are exempt where it
-covers. `…/revoke` stops it exempting orders placed from then on; it stays on record, revoked.
-Both need Operator. Verifying needs a person signed in as themselves, never an API token (`403`), as over MCP. A revoked or expired certificate can't be verified, and with
-[approval separation](/guides/team-and-roles/#approvals) on, whoever added a certificate can't
-verify it (`409`). Doing either again changes nothing and answers `changed: false`. Certificates
-are added from the customer's page.
+The same operations an AI agent can call over MCP are also REST routes, and they run the same way:
+the same role, the same checks against the order, flow or record as it stands, the same
+refusals, and the same audit trail (recorded as `via: api`). Each route's path names what it acts
+on, and its JSON body gives the rest of the tool's input. Among them:
 
-## Stock review
+| Method | Path | Does |
+|---|---|---|
+| `GET` | `/api/v1/attention` | What is waiting on people |
+| `POST` | `/api/v1/orders/:orderId/restart` | Starts a fresh order like it: same customer, lines and fulfilment, on its flow's current version |
+| `POST` | `/api/v1/approvals/decide` | `{ decision, note?, approvals: [{ orderId, nodeId }] }`: decides several at once |
+| `GET` | `/api/v1/flows/:flowId` | A flow's published graph |
+| `POST` | `/api/v1/flows/:flowId/publish` | Publishes the flow's draft |
+| `POST` | `/api/v1/promotions` | Creates a promotion code |
+| `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
+| `POST` | `/api/v1/stock/review` | Runs the stock review now |
 
-`POST /api/v1/stock/review` runs the daily stock review now, reordering what is below its reorder
-point. It needs Operator and answers `202 { instanceId }`.
+The [API explorer](/api/) lists every one, with its body. An operation answers `200` with what it
+did or found, `400` for a body its tool doesn't take, `403` when your role is too low, and `409`
+when it is refused: for example, verifying a certificate needs a person signed in as themselves,
+never an API token, as over MCP. Send an `Idempotency-Key` header and an order an operation starts
+is started once for it.
 
 ## Integrations
 

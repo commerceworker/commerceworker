@@ -57,8 +57,7 @@ const trailOf = (p: Principal, tool: AssistantTool, opts: { via: Channel; direct
 import { draftPlugin } from './plugin-draft';
 import { draftProductContent } from './product-draft';
 
-const auditVia = (via: Channel): AuditVia =>
-  via === 'MCP' ? 'mcp' : via === 'A2A' ? 'a2a' : 'assistant';
+const auditVia = (via: Channel): AuditVia => AUDIT_CHANNEL[via];
 
 export { RESERVED_EVENT_FIELDS } from '@commerceworker/core';
 

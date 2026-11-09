@@ -4,6 +4,7 @@
  */
 
 import {
+  ASSISTANT_TOOLS,
   BASE_CURRENCY,
   CART_EVENTS,
   CART_STATUSES,
@@ -17,6 +18,7 @@ import {
   OUTBOUND_EVENTS,
   orderInputSchema,
   pluginBundleFileSchema,
+  ROLE_LABELS,
   startOrderSchema,
   ucpSettingsSchema,
 } from '@commerceworker/core';
@@ -45,8 +47,8 @@ import {
   submitCartInput,
   subscriptionInput,
 } from './api-schemas';
-
 import { AUDIT_GROUPS } from './audit';
+import { operationBody, pathFields, REST_OPERATIONS } from './rest-operations';
 
 const schema = (s: z.ZodType) => z.toJSONSchema(s, { io: 'input', unrepresentable: 'any' });
 const body = (s: z.ZodType) => ({
@@ -68,13 +70,6 @@ const errors = {
 };
 const orderId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
 const cartId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
-const customerId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
-const certificateId = {
-  name: 'certificateId',
-  in: 'path',
-  required: true,
-  schema: { type: 'string' },
-};
 const cart = (description: string) => ({
   description,
   content: {
@@ -199,6 +194,44 @@ function orderSchema() {
   };
 }
 
+/** REST_OPERATIONS, each documented from its tool: role, title, description and input. */
+function operationPaths() {
+  const paths: Record<string, Record<string, unknown>> = {};
+  for (const op of REST_OPERATIONS) {
+    const tool = ASSISTANT_TOOLS[op.tool];
+    const route = `/api/v1${op.path}`;
+    paths[route] ??= {};
+    paths[route][op.method.toLowerCase()] = {
+      summary: `${tool.title} (${ROLE_LABELS[tool.role]})`,
+      description: `${tool.description} Runs as MCP's \`${op.tool}\` does: the same role, checks and refusals.`,
+      ...(pathFields(op).length
+        ? {
+            parameters: pathFields(op).map((name) => ({
+              name,
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+            })),
+          }
+        : {}),
+      ...(op.method === 'POST' ? { requestBody: body(operationBody(op)) } : {}),
+      responses: {
+        '200': ok('What the operation did or found'),
+        '403': ok(
+          'The caller’s role is too low, or only a person may do it',
+          '#/components/schemas/Error',
+        ),
+        '409': ok(
+          'Refused: the order, flow or record can’t do that now',
+          '#/components/schemas/Error',
+        ),
+        ...errors,
+      },
+    };
+  }
+  return paths;
+}
+
 export function openApiDocument(serverUrl: string) {
   return {
     openapi: '3.1.0',
@@ -211,6 +244,7 @@ export function openApiDocument(serverUrl: string) {
     servers: [{ url: serverUrl }],
     security: [{ bearer: [] }],
     paths: {
+      ...operationPaths(),
       '/api/v1/flows': {
         get: { summary: 'List flows', responses: { '200': ok('Flows'), ...errors } },
       },
@@ -430,40 +464,6 @@ export function openApiDocument(serverUrl: string) {
             '409': ok('The cart has already ended', '#/components/schemas/Error'),
             ...errors,
           },
-        },
-      },
-      '/api/v1/customers/{id}/tax-certificates/{certificateId}/verify': {
-        post: {
-          summary: 'Verify a tax exemption certificate (operator)',
-          description:
-            'Records that you checked the certificate with its issuer: orders placed from now are exempt where it covers. Only a person signed in as themselves verifies; an API token is `403`. Refused (`409`) for a revoked or expired certificate and, with approval separation on, to whoever added it. Verifying again changes nothing (`changed: false`). MCP: `verify_tax_certificate`.',
-          parameters: [customerId, certificateId],
-          responses: {
-            '200': ok('`{ id, status, changed }`'),
-            '409': ok('Refused', '#/components/schemas/Error'),
-            ...errors,
-          },
-        },
-      },
-      '/api/v1/customers/{id}/tax-certificates/{certificateId}/revoke': {
-        post: {
-          summary: 'Revoke a tax exemption certificate (operator)',
-          description:
-            'Stops the certificate exempting orders placed from now; it stays on record, revoked. Revoking again changes nothing (`changed: false`). MCP: `revoke_tax_certificate`.',
-          parameters: [customerId, certificateId],
-          responses: {
-            '200': ok('`{ id, status, changed }`'),
-            '409': ok('Refused', '#/components/schemas/Error'),
-            ...errors,
-          },
-        },
-      },
-      '/api/v1/stock/review': {
-        post: {
-          summary: 'Run the stock review now (operator)',
-          description:
-            'Starts the daily stock review (reorders below each product’s reorder point) now. MCP: `run_stock_review`.',
-          responses: { '202': ok('`{ instanceId }`'), ...errors },
         },
       },
       '/api/v1/webhooks/events': {
