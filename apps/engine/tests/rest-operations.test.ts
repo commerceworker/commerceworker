@@ -69,6 +69,14 @@ describe('running a workspace tool for the REST API', () => {
     expect((bad as { error: string }).error).toMatch(/^status:/);
   });
 
+  it('reads the stock list for a viewer, and bounds what reaches the model', async () => {
+    const r = await run('find_products', { belowReorder: false }, staff('viewer'));
+    expect(r).toMatchObject({ ok: true });
+    const long = await run('draft_plugin', { instruction: 'x'.repeat(4001) }, staff('admin'));
+    expect(long).toMatchObject({ ok: false, status: 400 });
+    expect((long as { error: string }).error).toMatch(/^instruction:/);
+  });
+
   it('runs only the tools REST offers: not the page’s, the panel’s, or a flow’s publish', async () => {
     for (const [tool, input] of [
       ['set_member_role', { userId: 'usr_x', role: 'admin' }],

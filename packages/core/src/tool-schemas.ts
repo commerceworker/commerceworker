@@ -38,6 +38,9 @@ import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './retur
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
 
+/** The longest instruction a tool hands the model (a flow change, a plugin's rule). */
+export const MODEL_INSTRUCTION_MAX = 4000;
+
 /** The longest reason a cancel carries. */
 export const MAX_CANCEL_REASON = 500;
 
@@ -91,7 +94,7 @@ export const TOOL_INPUTS = {
       .describe("Up to 4 images: the order's R2 document keys, https or data URLs"),
   }),
   find_products: z.object({
-    q: z.string().optional().describe('SKU or name'),
+    q: z.string().max(200).optional().describe('SKU or name'),
     belowReorder: z.boolean().optional().describe('Only SKUs at or below their reorder point'),
   }),
   list_carts: z.object({
@@ -101,13 +104,19 @@ export const TOOL_INPUTS = {
   get_cart: z.object({ cartId }),
   list_flows: z.object({}),
   get_flow: z.object({ flowId: z.string() }),
-  propose_flow_change: z.object({ flowId: z.string(), instruction: z.string() }),
+  propose_flow_change: z.object({
+    flowId: z.string().max(60),
+    instruction: z.string().min(1).max(MODEL_INSTRUCTION_MAX),
+  }),
   draft_plugin: z.object({
     instruction: z
       .string()
+      .min(1)
+      .max(MODEL_INSTRUCTION_MAX)
       .describe('The rule in plain words, e.g. “hold orders over $5,000 shipping outside the US”'),
     pluginId: z
       .string()
+      .max(100)
       .optional()
       .describe('A plugin the assistant drafted (ai-…), to revise as its next version'),
   }),
@@ -733,6 +742,10 @@ export const REST_OPERATION_TOOLS = [
   'verify_tax_certificate',
   'revoke_tax_certificate',
   'run_stock_review',
+  'find_products',
+  'assess_order',
+  'propose_flow_change',
+  'draft_plugin',
 ] as const satisfies readonly AssistantTool[];
 export type RestOperationTool = (typeof REST_OPERATION_TOOLS)[number];
 

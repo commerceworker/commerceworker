@@ -106,14 +106,6 @@ const REST_ONLY: Record<string, Why> = {
 
 /** Tools MCP offers with no REST route, and why. */
 const MCP_ONLY: Partial<Record<AssistantTool, Why>> = {
-  assess_order: {
-    gap: 'Asks the model questions about an order; REST could return the same answers',
-  },
-  find_products: {
-    gap: 'The stock list (SKUs, reorder points); REST reads products through the catalog',
-  },
-  propose_flow_change: { gap: 'Asks the model for a change to a flow, as a draft to review' },
-  draft_plugin: { gap: 'Asks the model for a logic plugin, as a draft to review' },
   publish_flow: { gap: 'Held to the draft its caller saw over MCP; REST can’t name the draft yet' },
   test_flow: { gap: 'Publishes too, so it waits on the same draft binding as publish_flow' },
   approve_plugin: { design: 'Needs a step-up, which only a person’s session in the app can give' },
@@ -173,4 +165,4 @@ describe('every operation is on both transports, or says why not', () => {
 });
 
 /** The gaps open today: the admin routes (webhooks, integrations, UCP) and six model-backed tools. */
-const GAPS_OPEN = 12;
+const GAPS_OPEN = 8;

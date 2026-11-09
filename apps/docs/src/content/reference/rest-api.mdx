@@ -279,7 +279,7 @@ on through the order routes. `POST /api/v1/carts/:id/cancel` ends a cart that ha
 The same operations an AI agent can call over MCP are also REST routes, and they run the same way:
 the same role, the same checks against the order, flow or record as it stands, the same
 refusals, and the same audit trail (recorded as `via: api`). Each route's path names what it acts
-on, and its JSON body gives the rest of the tool's input. Among them:
+on, and its JSON body (or, for a `GET`, its query string) gives the rest of the tool's input. Among them:
 
 | Method | Path | Does |
 |---|---|---|
@@ -290,6 +290,10 @@ on, and its JSON body gives the rest of the tool's input. Among them:
 | `POST` | `/api/v1/promotions` | Creates a promotion code |
 | `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
 | `POST` | `/api/v1/stock/review` | Runs the stock review now |
+| `GET` | `/api/v1/stock?q=&belowReorder=` | The stock list: SKUs, stock and reorder points |
+| `POST` | `/api/v1/orders/:orderId/assess` | `{ questions, images? }`: asks the model questions about an order |
+| `POST` | `/api/v1/flows/:flowId/propose` | `{ instruction }`: a change to the flow, drafted for review |
+| `POST` | `/api/v1/plugin-drafts` | `{ instruction, pluginId? }`: a logic plugin drafted for review (admin) |
 
 The [API explorer](/api/) lists every one, with its body. An operation answers `200` with what it
 did or found, `400` for a body its tool doesn't take, `403` when your role is too low, and `409`

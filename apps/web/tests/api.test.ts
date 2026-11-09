@@ -990,6 +990,17 @@ describe('operations REST runs as MCP does', () => {
     });
   });
 
+  it("reads a GET's query as the tool's types, and leaves out what the tool doesn't take", async () => {
+    run.mockResolvedValueOnce({ ok: true, value: { products: [] } });
+    const res = await handleApi(
+      new Request('https://app.test/api/v1/stock?q=123&belowReorder=true&nope=1'),
+      viewer,
+    );
+    expect(res.status).toBe(200);
+    const [tool, input] = run.mock.calls.at(-1)!;
+    expect([tool, input]).toEqual(['find_products', { q: '123', belowReorder: true }]);
+  });
+
   it("answers the engine's refusal, holds the tool's role, and leaves other paths alone", async () => {
     run.mockResolvedValueOnce({ ok: false, error: 'A person verifies a certificate…' });
     expect((await post('customers/cus_1/tax-certificates/txc_1/verify', {})).status).toBe(409);

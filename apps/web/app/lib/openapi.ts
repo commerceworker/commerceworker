@@ -197,6 +197,20 @@ function orderSchema() {
   };
 }
 
+/** A GET operation's query parameters: its tool's input less its path's fields. */
+function queryParameters(op: (typeof REST_OPERATIONS)[number]) {
+  const j = schema(operationBody(op)) as {
+    properties?: Record<string, Record<string, unknown>>;
+    required?: string[];
+  };
+  return Object.entries(j.properties ?? {}).map(([name, s]) => ({
+    name,
+    in: 'query',
+    required: (j.required ?? []).includes(name),
+    schema: s,
+  }));
+}
+
 /** REST_OPERATIONS, each documented from its tool: role, title, description and input. */
 function operationPaths() {
   const paths: Record<string, Record<string, unknown>> = {};
@@ -207,14 +221,18 @@ function operationPaths() {
     paths[route][op.method.toLowerCase()] = {
       summary: `${tool.title} (${ROLE_LABELS[tool.role]})`,
       description: `${tool.description} Runs as MCP's \`${op.tool}\` does: the same role, checks and refusals.`,
-      ...(pathFields(op).length
+      ...(pathFields(op).length || op.method === 'GET'
         ? {
-            parameters: pathFields(op).map((name) => ({
-              name,
-              in: 'path',
-              required: true,
-              schema: { type: 'string' },
-            })),
+            parameters: [
+              ...pathFields(op).map((name) => ({
+                name,
+                in: 'path',
+                required: true,
+                schema: { type: 'string' },
+              })),
+              // A GET takes the rest of its tool's input as query parameters.
+              ...(op.method === 'GET' ? queryParameters(op) : []),
+            ],
           }
         : {}),
       ...(op.method === 'POST' ? { requestBody: body(operationBody(op)) } : {}),

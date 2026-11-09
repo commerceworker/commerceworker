@@ -14,7 +14,7 @@ import {
   type RestOperationTool,
   TOOL_INPUTS,
 } from '@commerceworker/core';
-import type { z } from 'zod';
+import { z } from 'zod';
 
 export type RestOperation = {
   readonly method: 'GET' | 'POST';
@@ -45,6 +45,10 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
     tool: 'revoke_tax_certificate',
   },
   { method: 'POST', path: '/stock/review', tool: 'run_stock_review' },
+  { method: 'GET', path: '/stock', tool: 'find_products' },
+  { method: 'POST', path: '/orders/{orderId}/assess', tool: 'assess_order' },
+  { method: 'POST', path: '/flows/{flowId}/propose', tool: 'propose_flow_change' },
+  { method: 'POST', path: '/plugin-drafts', tool: 'draft_plugin' },
 ];
 
 const segments = (path: string) => path.split('/').filter(Boolean);
@@ -89,3 +93,33 @@ export function operationBody(op: RestOperation): z.ZodObject {
 export const offeredOverRest = (tool: AssistantTool) => !isPageOnly(tool) && !isPanelOnly(tool);
 
 export const operationRole = (op: RestOperation) => ASSISTANT_TOOLS[op.tool].role;
+
+/**
+ * A GET's input from its query string, each value read as the tool's field types it (`true` and
+ * `false` for a boolean, a number for a number), so `?belowReorder=true` is the boolean MCP takes.
+ * A field the tool doesn't take is left out; the tool's schema checks the rest.
+ */
+export function queryInput(op: RestOperation, params: URLSearchParams): Record<string, unknown> {
+  const props =
+    (
+      z.toJSONSchema(operationBody(op), { io: 'input', unrepresentable: 'any' }) as {
+        properties?: Record<string, { type?: string }>;
+      }
+    ).properties ?? {};
+  const input: Record<string, unknown> = {};
+  for (const [name, value] of params) {
+    const type = props[name]?.type;
+    if (!type) continue;
+    input[name] =
+      type === 'boolean'
+        ? value === 'true'
+          ? true
+          : value === 'false'
+            ? false
+            : value
+        : type === 'number' || type === 'integer'
+          ? Number(value)
+          : value;
+  }
+  return input;
+}
