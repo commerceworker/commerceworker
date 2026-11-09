@@ -107,7 +107,13 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
 
   async sendEvent(orderId: string, event: string, payload?: Record<string, unknown>) {
     if (!(await this.snapshot(orderId))) return { delivered: false, notFound: true as const };
-    return this.agent(orderId).deliver(event, payload ?? {});
+    // Held until a step waits for it when none does yet (`held: true`).
+    const r = await this.agent(orderId).deliver(event, payload ?? {}, { hold: true });
+    if (r.delivered)
+      return 'duplicate' in r
+        ? { delivered: true, duplicate: true as const }
+        : { delivered: true, nodeId: r.nodeId };
+    return 'held' in r && r.held ? { delivered: false, held: true as const } : { delivered: false };
   }
 
   paymentEvent(event: PaymentEvent) {

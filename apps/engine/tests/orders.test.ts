@@ -1483,6 +1483,185 @@ describe('omnichannel and point of sale', () => {
   });
 });
 
+describe('the order inbox', () => {
+  const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
+    id,
+    type,
+    label: id,
+    config,
+    position: { x: 0, y: 0 },
+  });
+  const edge = (source: string, target: string, sourceHandle: string | null = null) => ({
+    id: `${source}.${sourceHandle ?? 'out'}-${target}`,
+    source,
+    target,
+    sourceHandle,
+    targetHandle: null,
+  });
+
+  beforeAll(async () => {
+    // A person approves first; only then does the order wait for the goods.
+    await publishFlow(db(), {
+      id: 'test-inbox',
+      name: 'Approve, then wait for goods',
+      description: '',
+      model: 'b2b',
+      channels: [],
+      nodes: [
+        node('start', 'trigger.manual'),
+        node('approval', 'control.approval', { title: 'Go ahead?', assignee: 'ops' }),
+        node('goods', 'control.wait_event', { event: 'goods.received' }),
+        node('done', 'control.end', { outcome: 'completed', reason: 'Goods in' }),
+        node('no', 'control.end', { outcome: 'declined', reason: 'Not approved' }),
+        node('late', 'control.end', { outcome: 'cancelled', reason: 'No goods' }),
+      ],
+      edges: [
+        edge('start', 'approval'),
+        edge('approval', 'goods', 'approved'),
+        edge('approval', 'no', 'rejected'),
+        edge('approval', 'no', 'escalated'),
+        edge('goods', 'done', 'received'),
+        edge('goods', 'late', 'timeout'),
+      ],
+    });
+  });
+
+  beforeAll(async () => {
+    // Goods twice, a person's approval between: a resend of the first mustn't count as the second.
+    await publishFlow(db(), {
+      id: 'test-inbox-twice',
+      name: 'Goods, approval, goods again',
+      description: '',
+      model: 'b2b',
+      channels: [],
+      nodes: [
+        node('start', 'trigger.manual'),
+        node('first', 'control.wait_event', { event: 'goods.received' }),
+        node('approval', 'control.approval', { title: 'More?', assignee: 'ops' }),
+        node('second', 'control.wait_event', { event: 'goods.received' }),
+        node('done', 'control.end', { outcome: 'completed', reason: 'Both in' }),
+        node('stop', 'control.end', { outcome: 'cancelled', reason: 'Stopped' }),
+      ],
+      edges: [
+        edge('start', 'first'),
+        edge('first', 'approval', 'received'),
+        edge('first', 'stop', 'timeout'),
+        edge('approval', 'second', 'approved'),
+        edge('approval', 'stop', 'rejected'),
+        edge('approval', 'stop', 'escalated'),
+        edge('second', 'done', 'received'),
+        edge('second', 'stop', 'timeout'),
+      ],
+    });
+  });
+
+  it('takes a resend of a delivered event as a duplicate, not a new one for a later step', async () => {
+    await introspect();
+    const { orderId } = await startOrder(env, {
+      flowId: 'test-inbox-twice',
+      input: input({ model: 'b2b', customerId: 'cus_contoso' }),
+    });
+    await waitingOn(orderId, (s) => s.waits.some((w) => w.event === 'goods.received'), 'first');
+    const hold = { hold: true };
+    expect(await agent(orderId).deliver('goods.received', { box: 1 }, hold)).toMatchObject({
+      delivered: true,
+    });
+    await waitingOn(orderId, (s) => s.waits.some((w) => w.kind === 'approval'), 'the approval');
+    // The sender never heard back and sends box 1 again (its keys in another order, too).
+    expect(await agent(orderId).deliver('goods.received', { box: 1 }, hold)).toEqual({
+      delivered: true,
+      duplicate: true,
+    });
+    expect(await agent(orderId).deliver('goods.received', { box: 2 }, hold)).toEqual({
+      delivered: false,
+      held: true,
+    });
+    await agent(orderId).decide('approval', 'approved', 'ops');
+    const done = await settled(orderId);
+    expect([done.status, done.reason]).toEqual(['completed', 'Both in']);
+    expect(done.nodes.second!.output).toMatchObject({ box: 2 });
+  });
+
+  it('gives a retried open the event it already took, and the next wait the next one', async () => {
+    const orderId = await begin();
+    const hold = { hold: true };
+    await agent(orderId).deliver('goods.received', { box: 'a' }, hold);
+    await agent(orderId).deliver('goods.received', { box: 'b' }, hold);
+    // A wait whose open is retried: it takes box a both times, never box b.
+    const wait = {
+      nodeId: 'elsewhere',
+      eventType: 'event-retried-open',
+      kind: 'event' as const,
+      title: 'Waiting for goods.received',
+      event: 'goods.received',
+      since: Date.now(),
+    };
+    await agent(orderId).openWait(wait);
+    await agent(orderId).openWait(wait);
+    await agent(orderId).closeWait(wait.eventType, 'received', {});
+    // The flow's own wait gets box b.
+    await agent(orderId).decide('approval', 'approved', 'ops');
+    const done = await settled(orderId);
+    expect(done.status).toBe('completed');
+    expect(done.vars).toMatchObject({ goods_received: { box: 'b' } });
+  });
+
+  const begin = async (fresh = true) => {
+    if (fresh) await introspect();
+    const { orderId } = await startOrder(env, {
+      flowId: 'test-inbox',
+      input: input({ model: 'b2b', customerId: 'cus_contoso' }),
+    });
+    await waitingOn(orderId, (s) => s.waits.some((w) => w.kind === 'approval'), 'the approval');
+    return orderId;
+  };
+
+  it('holds an event that comes before its wait, and gives it to the wait when it opens', async () => {
+    const orderId = await begin();
+    const hold = { hold: true };
+    expect(await agent(orderId).deliver('goods.received', { dock: '4' }, hold)).toEqual({
+      delivered: false,
+      held: true,
+    });
+    // A resend is the same event, held once.
+    expect(await agent(orderId).deliver('goods.received', { dock: '4' }, hold)).toEqual({
+      delivered: false,
+      held: true,
+    });
+    // An event no step of this flow waits for is refused, as before.
+    expect(await agent(orderId).deliver('payment.received', {}, hold)).toEqual({
+      delivered: false,
+    });
+    await agent(orderId).decide('approval', 'approved', 'ops');
+    const done = await settled(orderId);
+    expect([done.status, done.reason]).toEqual(['completed', 'Goods in']);
+    expect(done.nodes.goods!.branches).toEqual(['received']);
+    expect(done.vars).toMatchObject({ goods_received: { dock: '4' } });
+    const took = done.timeline.filter((t) => /took goods\.received, held since/.test(t.message));
+    expect(took).toHaveLength(1);
+  });
+
+  it('holds nothing unless the sender asks, and nothing once the order has ended', async () => {
+    const orderId = await begin();
+    expect(await agent(orderId).deliver('goods.received', {})).toEqual({ delivered: false });
+    await agent(orderId).decide('approval', 'approved', 'ops');
+    await waitingOn(
+      orderId,
+      (s) => s.waits.some((w) => w.event === 'goods.received'),
+      'the goods wait',
+    );
+    expect((await state(orderId)).status).toBe('waiting');
+
+    const ended = await begin(false);
+    await agent(ended).deliver('goods.received', { dock: '9' }, { hold: true });
+    await agent(ended).decide('approval', 'rejected', 'ops');
+    expect((await settled(ended)).status).toBe('declined');
+    expect(await agent(ended).deliver('goods.received', {}, { hold: true })).toEqual({
+      delivered: false,
+    });
+  });
+});
+
 describe('address validation', () => {
   const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
     id,

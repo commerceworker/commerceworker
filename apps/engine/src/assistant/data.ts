@@ -19,6 +19,7 @@ import {
   type Flow,
   type FlowGraph,
   type FlowProposal,
+  flowAwaits,
   flowGraphSchema,
   flowReadsGoodsBack,
   graphDiff,
@@ -501,6 +502,11 @@ export async function previewAction<T extends ActionTool>(
         const { id, s } = await loadOrder(env, i.orderId);
         const w = s.waits.find((x) => x.kind === 'event' && x.event === i.event);
         const next = w ? nextStep(s, w.nodeId) : null;
+        // Nothing waits yet, but a step of its flow will: held until then, as over REST.
+        const holds =
+          !w &&
+          !TERMINAL_ORDER_STATUSES.includes(s.status) &&
+          flowAwaits(await orderAgent(env, id).getFlow(), i.event);
         // This card can't say what the request refunds; `record_return`'s does.
         if (i.event === 'return.requested')
           return {
@@ -522,10 +528,12 @@ export async function previewAction<T extends ActionTool>(
                     `With ${boundText(k, 60) ?? '?'}: “${boundText(String(v), 120) ?? ''}”`,
                 ),
               ]
-            : [],
+            : holds
+              ? [`Held on the order until a step waits for ${i.event}, then given to it`]
+              : [],
           blocked:
             roleBlock ??
-            (w
+            (w || holds
               ? undefined
               : `Nothing on this order is waiting for ${i.event}.${
                   s.waits.length
@@ -813,23 +821,28 @@ export async function runAction<T extends ActionTool>(
       if (i.event === 'return.requested') throw new Refused(RETURN_BY_RECORD);
       const { id } = await loadOrder(env, i.orderId);
       // Its source and `by` last: the payload never names who or what delivered it.
-      const r = await orderAgent(env, id).deliver(i.event, {
-        ...i.payload,
-        source: AUDIT_CHANNEL[channel],
-        by,
-      });
-      if (!r.delivered) throw new Refused(`Nothing on ${orderRef(id)} was waiting for ${i.event}.`);
+      const r = await orderAgent(env, id).deliver(
+        i.event,
+        { ...i.payload, source: AUDIT_CHANNEL[channel], by },
+        { hold: true },
+      );
+      const held = !r.delivered && 'held' in r && r.held === true;
+      if (!r.delivered && !held)
+        throw new Refused(`Nothing on ${orderRef(id)} was waiting for ${i.event}.`);
       await recordAudit(env, 'order.event_delivered', {
         actor: p,
         target: id,
         detail: {
           event: i.event,
-          nodeId: r.nodeId,
+          ...(held ? { held: true } : { nodeId: 'nodeId' in r ? r.nodeId : undefined }),
           ...(i.payload ? { payload: boundPayload(i.payload) } : {}),
           ...trail,
         },
       });
-      return { done: preview.title, href: preview.href };
+      return {
+        done: held ? `Held ${i.event} on ${orderRef(id)} until a step waits for it` : preview.title,
+        href: preview.href,
+      };
     }
     case 'record_return': {
       const i = input as ActionInput['record_return'];

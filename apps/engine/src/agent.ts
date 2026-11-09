@@ -13,10 +13,15 @@ import {
   decisionProblem,
   EMPTY_ORDER_STATE,
   eraseOrderState,
+  eventDigest,
   eventProblem,
   eventWait,
   type FlowVersion,
+  flowAwaits,
   foldReport,
+  type HeldEvent,
+  heldFor,
+  holdProblem,
   type NodeRun,
   newId,
   type Order,
@@ -93,6 +98,11 @@ export class OrderAgent extends Agent<Env, State> {
     this.sql`CREATE TABLE IF NOT EXISTS a2a_watch_state (id INTEGER PRIMARY KEY, key TEXT)`;
     this
       .sql`CREATE TABLE IF NOT EXISTS ucp_sync (id INTEGER PRIMARY KEY, digest TEXT, pending INTEGER NOT NULL DEFAULT 0, released INTEGER NOT NULL DEFAULT 0)`;
+    // Events that arrived before a step waited for them (`holdProblem` in core).
+    this
+      .sql`CREATE TABLE IF NOT EXISTS order_inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, payload TEXT NOT NULL, at INTEGER NOT NULL, taken_by TEXT)`;
+    // What the order's waits were given (`eventDigest`), so a resend isn't held for a later pass.
+    this.sql`CREATE TABLE IF NOT EXISTS order_delivered (digest TEXT PRIMARY KEY)`;
     this.tablesReady = true;
     // An order begun while the flow and the whole timeline were kept in state: move them out.
     const s = this.state;
@@ -116,6 +126,72 @@ export class OrderAgent extends Agent<Env, State> {
     return this.sql<{ entry: string }>`SELECT entry FROM order_timeline ORDER BY seq`.map(
       (r) => JSON.parse(r.entry) as TimelineEntry,
     );
+  }
+
+  /** The events this order holds, oldest first. */
+  private inbox(): HeldEvent[] {
+    this.tables();
+    return this.sql<{
+      id: number;
+      event: string;
+      payload: string;
+      at: number;
+      taken_by: string | null;
+    }>`SELECT id, event, payload, at, taken_by FROM order_inbox ORDER BY at, id`.map((r) => ({
+      id: r.id,
+      event: r.event,
+      at: r.at,
+      takenBy: r.taken_by,
+      payload: JSON.parse(r.payload) as Record<string, unknown>,
+    }));
+  }
+
+  /** What this order's waits have been given, by `eventDigest`. */
+  private delivered(): Set<string> {
+    this.tables();
+    return new Set(
+      this.sql<{ digest: string }>`SELECT digest FROM order_delivered`.map((r) => r.digest),
+    );
+  }
+
+  private rememberDelivered(event: string, payload: Record<string, unknown>) {
+    this
+      .sql`INSERT OR IGNORE INTO order_delivered (digest) VALUES (${eventDigest(event, payload)})`;
+  }
+
+  /** Empties the inbox and what it remembers: the order takes no more events. */
+  private forgetEvents() {
+    this.tables();
+    this.sql`DELETE FROM order_inbox`;
+    this.sql`DELETE FROM order_delivered`;
+  }
+
+  /**
+   * Gives a wait that just opened the event held for it, if any. The Workflow keeps an event sent
+   * before its `waitForEvent` and hands it over there. The row is marked as this wait's before the
+   * send (synchronously, so no other delivery can slip in), and goes when the wait closes: a
+   * retried open resends the same event, never the next one, and a send that failed is tried
+   * again by the step's retry.
+   */
+  private async deliverHeld(w: PendingWait) {
+    if (w.kind !== 'event' || !this.state.instanceId) return;
+    const held = heldFor(this.inbox(), w);
+    if (!held) return;
+    this.sql`UPDATE order_inbox SET taken_by = ${w.eventType} WHERE id = ${held.id}`;
+    const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
+    await instance.sendEvent({
+      type: w.eventType,
+      payload: { ...held.payload, event: held.event, at: held.at },
+    });
+    this.rememberDelivered(held.event, held.payload);
+    this.patch({
+      timeline: this.log({
+        nodeId: w.nodeId,
+        kind: 'event',
+        message: `${this.stepLabel(w.nodeId)}: took ${held.event}, held since ${new Date(held.at).toISOString()}`,
+        key: `held:${held.id}`,
+      }),
+    });
   }
 
   private flowCache: FlowVersion | null | undefined;
@@ -188,6 +264,8 @@ export class OrderAgent extends Agent<Env, State> {
     if (!TERMINAL_ORDER_STATUSES.includes(this.state.status)) return null;
     const erased = eraseOrderState(this.fullState(), terms);
     this.sql`DELETE FROM order_timeline`;
+    // Held events carry what their senders sent; a finished order has none left, but make sure.
+    this.forgetEvents();
     for (const e of erased.timeline) this.appendTimeline(e);
     this.setState({
       ...erased,
@@ -238,6 +316,8 @@ export class OrderAgent extends Agent<Env, State> {
     if (folded.finished) await this.recordRun(folded.finished.id, folded.finished.run);
 
     if (folded.statusChanged || r.order) await this.syncIndex();
+    // A finished order takes no more events: what it held goes.
+    if (folded.statusChanged && TERMINAL_ORDER_STATUSES.includes(next.status)) this.forgetEvents();
     // A failed order rolls back inside the Workflow; poll it until it settles to record the outcome.
     if (folded.statusChanged && next.status === 'failed')
       await this.schedule(5, 'checkInstance', { attempt: 0 });
@@ -263,7 +343,7 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   async openWait(w: PendingWait) {
-    if (this.state.waits.some((x) => x.eventType === w.eventType)) return;
+    if (this.state.waits.some((x) => x.eventType === w.eventType)) return this.deliverHeld(w);
     if (w.kind === 'approval' && this.state.orderId) {
       await this.records().openApproval({
         id: newId('apr'),
@@ -295,10 +375,14 @@ export class OrderAgent extends Agent<Env, State> {
       }),
     });
     await this.syncIndex();
+    await this.deliverHeld(w);
   }
 
   async closeWait(eventType: string, outcome: string, payload: Record<string, unknown>) {
     const w = this.state.waits.find((x) => x.eventType === eventType);
+    // A held event this wait took is spent once it closes.
+    this.tables();
+    this.sql`DELETE FROM order_inbox WHERE taken_by = ${eventType}`;
     if (w?.kind === 'approval' && this.state.orderId) {
       await this.records().decideApproval(this.state.orderId, eventType, {
         status: outcome,
@@ -500,12 +584,17 @@ export class OrderAgent extends Agent<Env, State> {
    * back, since that sends a flow straight to its refund.
    */
   @callable()
-  async deliver(event: string, payload: Record<string, unknown> = {}) {
+  async deliver(
+    event: string,
+    payload: Record<string, unknown> = {},
+    options: { hold?: boolean } = {},
+  ) {
+    const hold = options?.hold === true;
     if (payload && typeof payload === 'object' && 'goodsBack' in payload) {
       const { goodsBack: _dropped, ...rest } = payload;
-      return this.deliverEvent(event, rest);
+      return this.deliverEvent(event, rest, hold);
     }
-    return this.deliverEvent(event, payload);
+    return this.deliverEvent(event, payload, hold);
   }
 
   /**
@@ -516,15 +605,56 @@ export class OrderAgent extends Agent<Env, State> {
     return this.deliverEvent('return.requested', { ...request, ...meta });
   }
 
-  private async deliverEvent(event: string, payload: Record<string, unknown>) {
+  /**
+   * With `hold`, an event no step waits for yet is held on the order (see `holdProblem`) and given
+   * to the step that waits for it when it opens: `{ delivered: false, held: true }`.
+   */
+  private async deliverEvent(event: string, payload: Record<string, unknown>, hold = false) {
     const caller = await this.authorize('operator');
     // The payload lands in the order's variables, every broadcast and the next generation.
     const invalid = eventProblem(event, payload);
     if (invalid) throw new Error(invalid);
-    const w = eventWait(this.state.waits, event);
-    if (!w || !this.state.instanceId) return { delivered: false };
+    const inbox = this.inbox();
+    const open = eventWait(this.state.waits, event);
+    // A wait being given a held event is spoken for: another event for it is held, not sent.
+    const w = open && !inbox.some((h) => h.takenBy === open.eventType) ? open : undefined;
+    if (!w || !this.state.instanceId) {
+      if (!hold || !this.state.instanceId) return { delivered: false };
+      const refused = holdProblem(
+        inbox,
+        {
+          running: !TERMINAL_ORDER_STATUSES.includes(this.state.status),
+          flowAwaits: flowAwaits(this.pinnedFlow(), event),
+          delivered: this.delivered(),
+        },
+        event,
+        payload,
+      );
+      if (refused === 'already held') return { delivered: false, held: true };
+      // A resend of one a wait already took: taken, so the sender stops.
+      if (refused === 'already delivered') return { delivered: true, duplicate: true };
+      if (refused) return { delivered: false };
+      const at = Date.now();
+      this
+        .sql`INSERT INTO order_inbox (event, payload, at) VALUES (${event}, ${JSON.stringify(payload)}, ${at})`;
+      this.patch({
+        timeline: this.log({
+          kind: 'event',
+          message: `${event} held until a step waits for it`,
+          key: `hold:${event}:${at}`,
+        }),
+      });
+      if (caller)
+        await recordAudit(this.env, 'order.event_delivered', {
+          actor: caller,
+          target: this.state.orderId,
+          detail: { event, held: true, via: 'app' },
+        });
+      return { delivered: false, held: true };
+    }
     const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
     await instance.sendEvent({ type: w.eventType, payload: { ...payload, event, at: Date.now() } });
+    this.rememberDelivered(event, payload);
     if (caller)
       await recordAudit(this.env, 'order.event_delivered', {
         actor: caller,
@@ -570,6 +700,8 @@ export class OrderAgent extends Agent<Env, State> {
     if (this.state.orderId) {
       await this.records().cancelApprovals(this.state.orderId);
     }
+    // A cancelled order takes no more events: what it held goes.
+    this.forgetEvents();
     this.patch({
       status: 'cancelled',
       reason,

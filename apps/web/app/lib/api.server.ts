@@ -366,11 +366,13 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
         by: caller.name,
       });
       if (res.notFound) return json({ error: 'Not found' }, 404);
-      if (res.delivered)
+      if (res.delivered || res.held)
         await audit(request, 'order.event_delivered', {
           actor: caller,
           target: orderId,
-          detail: { event: b.data.event, nodeId: res.nodeId, via: 'api' },
+          detail: res.held
+            ? { event: b.data.event, held: true, via: 'api' }
+            : { event: b.data.event, nodeId: res.nodeId, via: 'api' },
         });
       return json(res);
     }
@@ -786,8 +788,9 @@ async function readSigned(
 }
 
 /**
- * Signed business events from external systems, within their integration's scope. Answers 409
- * when no node is waiting for the event yet, so a sender's retry policy delivers it later.
+ * Signed business events from external systems, within their integration's scope. An event no
+ * step waits for yet is held on the order until one does (202); 409 only when the order won't wait
+ * for it (its flow has no such step, or it holds all it can), so a sender's retry may still land.
  */
 export async function handleSignedEvent(request: Request): Promise<Response> {
   const signed = await readSigned(request);
@@ -806,7 +809,8 @@ export async function handleSignedEvent(request: Request): Promise<Response> {
   const refused = deliveredEventProblem(parsed.event, parsed.payload);
   if (refused) return json({ error: refused }, 422);
   // Claim the signature first, so a replay of this exact request (even a concurrent one) delivers
-  // nothing. The claim is dropped unless the event was delivered, so a sender may retry a 409.
+  // nothing. The claim is dropped unless the event was delivered or held, so a sender may retry a
+  // 409.
   const receipt = `event:${signed.integration.id}:${signed.signature}`;
   if (!(await claimReceipt(receipt))) return json({ delivered: true, duplicate: true });
   let delivered = false;
@@ -816,15 +820,17 @@ export async function handleSignedEvent(request: Request): Promise<Response> {
       source: 'webhook',
       by: integrationActor(signed.integration).name,
     });
-    delivered = !!res.delivered;
+    delivered = !!res.delivered || !!res.held;
     if (res.notFound) return json({ error: 'Not found' }, 404);
     if (delivered)
       await audit(request, 'order.event_delivered', {
         actor: integrationActor(signed.integration),
         target: parsed.orderId,
-        detail: { event: parsed.event, nodeId: res.nodeId, via: 'webhook' },
+        detail: res.held
+          ? { event: parsed.event, held: true, via: 'webhook' }
+          : { event: parsed.event, nodeId: res.nodeId, via: 'webhook' },
       });
-    return json(res, res.delivered ? 200 : 409);
+    return json(res, res.delivered ? 200 : res.held ? 202 : 409);
   } catch (err) {
     return failure(err);
   } finally {

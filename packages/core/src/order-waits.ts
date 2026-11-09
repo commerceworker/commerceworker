@@ -76,3 +76,82 @@ export function deliveredEventProblem(
     return `payload can't set ${reserved.join(', ')}: the delivery records who sent it`;
   return null;
 }
+
+// ── The order's inbox ──
+// An event that arrives before its wait opens (an invoice paid before the flow waits for the
+// payment, a second seller answering while the acceptance loop is between passes) is held on the
+// order and given to the wait when it opens, instead of being refused and left to the sender to
+// try again.
+
+/** At most this many events are held on one order. */
+export const MAX_HELD_EVENTS = 20;
+
+/**
+ * An event the order holds until a step waits for it. `at` is when it arrived; `takenBy` is the
+ * wait (its event type) it was given to, set before the send so a retried open resends the same
+ * one, and kept until that wait closes.
+ */
+export type HeldEvent = {
+  id: number;
+  event: string;
+  payload: Record<string, unknown>;
+  at: number;
+  takenBy?: string | null;
+};
+
+const stable = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map(stable)
+    : v && typeof v === 'object'
+      ? Object.fromEntries(
+          Object.keys(v as Record<string, unknown>)
+            .sort()
+            .map((k) => [k, stable((v as Record<string, unknown>)[k])]),
+        )
+      : v;
+
+/** An event and its payload as one string, whatever the order of the payload's keys. */
+export const eventDigest = (event: string, payload: Record<string, unknown>) =>
+  `${event}\n${JSON.stringify(stable(payload))}`;
+
+/** Whether the flow has a Wait-for-event step listening for `event`, so holding it can help. */
+export function flowAwaits(
+  flow: { nodes: readonly { type: string; config?: Record<string, unknown> }[] } | null,
+  event: string,
+): boolean {
+  return !!flow?.nodes.some((n) => n.type === 'control.wait_event' && n.config?.event === event);
+}
+
+/**
+ * Why an event can't be held, or null. Only on an order still running whose flow waits for it,
+ * at most `MAX_HELD_EVENTS`. An event identical to one already held, or to one already delivered
+ * (`delivered`, by `eventDigest`), is a resend, not another: so a sender retrying after a lost
+ * answer can't feed the next pass of a loop the same response twice. Identical events count once.
+ */
+export function holdProblem(
+  held: readonly HeldEvent[],
+  order: { running: boolean; flowAwaits: boolean; delivered?: ReadonlySet<string> },
+  event: string,
+  payload: Record<string, unknown>,
+): 'already held' | 'already delivered' | string | null {
+  if (!order.running) return 'the order has finished';
+  if (!order.flowAwaits) return `no step of this order's flow waits for ${event}`;
+  const digest = eventDigest(event, payload);
+  if (order.delivered?.has(digest)) return 'already delivered';
+  if (held.some((h) => eventDigest(h.event, h.payload) === digest)) return 'already held';
+  if (held.length >= MAX_HELD_EVENTS) return `the order already holds ${MAX_HELD_EVENTS} events`;
+  return null;
+}
+
+/**
+ * The held event a wait that just opened takes: the one it already took (a retried open), else the
+ * oldest held for its event that no other wait has taken.
+ */
+export function heldFor(held: readonly HeldEvent[], wait: PendingWait): HeldEvent | undefined {
+  if (wait.kind !== 'event') return undefined;
+  const mine = held.find((h) => h.takenBy === wait.eventType);
+  if (mine) return mine;
+  return [...held]
+    .sort((a, b) => a.at - b.at || a.id - b.id)
+    .find((h) => h.event === wait.event && !h.takenBy);
+}

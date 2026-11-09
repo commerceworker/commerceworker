@@ -117,7 +117,7 @@ the same methods over RPC.
 | Method | Behaviour |
 |---|---|
 | `decide(nodeId, decision, by = 'operator', note?, deciderId?)` | First checks separation of duties: `separationRefusal` (`apps/engine/src/separation.ts`) reads `approval_separation` and `orders.started_by` and throws `OWN_ORDER_REFUSAL` when `ownOrderRefusal` (core) says the decider started the order. `deciderId` comes from RPC callers (the REST route, the order action, the assistant); on a socket it is the signed-in caller's id. Without one (no principal), nothing is checked. Then finds the approval wait for `nodeId` (throws if none) and sends its event type to the instance with `{ decision, by, note }` |
-| `deliver(event, payload = {})` | Finds the event wait for `event`. If none is open, returns `{ delivered: false }`; otherwise sends `{ ...payload, event, at }` and returns `{ delivered: true, nodeId }` |
+| `deliver(event, payload = {}, { hold })` | Finds the event wait for `event`. If one is open, sends `{ ...payload, event, at }` and returns `{ delivered: true, nodeId }`. If none is and `hold` is set, holds it in the `order_inbox` table when `holdProblem` (core) allows: the order is running and its pinned flow has a `control.wait_event` for it, at most `MAX_HELD_EVENTS` (20), a repeat counting once. That returns `{ delivered: false, held: true }`. Otherwise `{ delivered: false }`. The engine RPC (REST and signed events), Stripe events and MCP's `deliver_event` pass `hold`; the order page's socket doesn't |
 | `cancel(reason = 'Cancelled by operator')` | See below. Returns `{ ok: false }` for an order that has already ended |
 | `erasePersonalData(terms)` | Not `@callable()`; RPC only, from `eraseDataSubject`. Returns `null` while the order has not ended (a status outside `TERMINAL_ORDER_STATUSES`), `{ held: false, title: '' }` for an agent that never held an order, otherwise replaces the state, with its whole timeline, with `eraseOrderState(state, terms)` (core), runs `syncIndex` and returns `{ held: true, title }` |
 | `getFlow()` | The pinned `FlowVersion`, which the synced state leaves out. Needs `viewer` on a socket |
@@ -178,11 +178,21 @@ once. `deliver` records only when an event wait was open. Writing never throws.
 Readonly connections (`shouldConnectionBeReadonly`) aren't used: they would also block the agent's
 own state writes.
 
-`deliver` returning `delivered: false` is what lets `POST /api/v1/webhooks/events` answer `409`
-until a node is waiting for the event. Stripe events take the same path from inside the engine:
-`handleStripeEvent` (`apps/engine/src/payment-events.ts`, behind `EngineRpc.paymentEvent`) calls
-`deliver` for `payment.received` and `payment.disputed`, and answers `retry` (the web app's `409`)
-when nothing waits yet and the order hasn't ended.
+`openWait` gives the wait that just opened the event held for it (`heldFor`): the one it already
+took on a replayed open, else the oldest untaken one. The row's `taken_by` is set to the wait's
+event type before `sendEvent` (synchronously, so a direct `deliver` meanwhile is held rather than
+sent to a wait already spoken for), and the row goes in `closeWait`. Workflows keeps an event sent
+before its `waitForEvent` and hands it over there. A failed send fails the `:open` attempt, and the
+step's retry sends the same event. Every event a wait is given is remembered in `order_delivered`
+(`eventDigest`), so a resend of one isn't held for a later step: `deliver` answers
+`{ delivered: true, duplicate: true }`. Ending, cancelling or erasing the order empties both tables.
+
+`POST /api/v1/webhooks/events` answers `202` for a held event (its receipt kept, so a resend is a
+duplicate) and `409` only for `delivered: false`. Stripe events take the same path from inside
+the engine: `handleStripeEvent` (`apps/engine/src/payment-events.ts`, behind
+`EngineRpc.paymentEvent`) calls `deliver` with `hold` for `payment.received` and
+`payment.disputed`, answers `handled` for a held one, and `retry` (the web app's `409`) only when the
+order won't hold it and hasn't ended.
 
 ## Cancel
 

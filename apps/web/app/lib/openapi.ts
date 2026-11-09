@@ -318,7 +318,9 @@ export function openApiDocument(serverUrl: string) {
           parameters: [orderId],
           requestBody: body(orderEventInput),
           responses: {
-            '200': ok('{ delivered, nodeId? }; delivered is false when nothing is waiting for it'),
+            '200': ok(
+              '{ delivered, held?, nodeId? }; with nothing waiting yet, held is true when the order holds it until a step of its flow waits for it, and delivered is false when it won’t',
+            ),
             ...errors,
           },
         },
@@ -486,7 +488,10 @@ export function openApiDocument(serverUrl: string) {
           requestBody: body(eventSchema),
           responses: {
             '200': ok('Delivered'),
-            '409': ok('No node is waiting for this event yet; retry later'),
+            '202': ok('Held on the order until a step of its flow waits for it; no need to resend'),
+            '409': ok(
+              'The order won’t wait for this event (its flow has no such step, or it already holds as many as it can); retry later',
+            ),
             ...errors,
           },
         },

@@ -232,6 +232,9 @@ describe('order actions over REST', () => {
     const early = await post('orders/ord_x/events', { event: 'payment.received' });
     expect(early.status).toBe(200);
     expect(await early.json()).toEqual({ delivered: false });
+    engine.sendEvent.mockResolvedValueOnce({ delivered: false, held: true });
+    const held = await post('orders/ord_x/events', { event: 'goods.received' });
+    expect(await held.json()).toEqual({ delivered: false, held: true });
   });
 });
 
@@ -563,6 +566,18 @@ describe('signed events', () => {
     const replay = await send(raw, signature);
     expect(await replay.json()).toEqual({ delivered: true, duplicate: true });
     expect(engine.sendEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers 202 for an event the order holds, and takes a resend as the same delivery', async () => {
+    const raw = JSON.stringify({ orderId: 'ord_x', event: 'payment.received' });
+    const signature = await sign(raw);
+    engine.sendEvent.mockResolvedValueOnce({ delivered: false, held: true });
+    const held = await send(raw, signature);
+    expect(held.status).toBe(202);
+    expect(await held.json()).toEqual({ delivered: false, held: true });
+    // Held counts as taken: the sender's resend isn't delivered or held a second time.
+    expect(await (await send(raw, signature)).json()).toEqual({ delivered: true, duplicate: true });
+    expect(engine.sendEvent).toHaveBeenCalledTimes(1);
   });
 
   it('stamps the integration on a signed event, and refuses one naming its source', async () => {
