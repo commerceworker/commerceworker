@@ -89,7 +89,8 @@ Migrations carry no demo data from `0027` on, so a fresh or production database 
 the price sources and the `USD` rate. The demo data lives in `packages/db/seed/0001_demo.sql` (`INSERT OR IGNORE`).
 `pnpm db:seed:local` loads it into the local D1 after `pnpm db:migrate:local`, and the engine tests load it after
 the migrations. Without it only `USD` orders are accepted; any other currency gets the `400` unsupported-currency
-error until its rate is added to `fx_rates`.
+error until the deployment names it in `fxCurrencies` (the next daily refresh adds its rate) or its rate
+is added to `fx_rates`.
 
 ## Flows
 
@@ -144,7 +145,7 @@ writes embeds its step key.
 | `payouts` | One row per order, seller and payout step: `gross`, `commission`, `refunded`, `net`; `status` is `scheduled`, `reversed` or `paid` |
 | `contract_prices` | Negotiated prices, primary key `(customer_id, sku)`: the pricing chain's contract source |
 | `price_sources` | The pricing chain: `id` (`price_book`, `contract`, `volume`), `label`, `priority` (lowest runs first), `stop_processing`, `active`. See [Pricing chain](https://docs.commerceworker.com/reference/expressions/#pricing-chain) |
-| `fx_rates` | Units of each `currency` per one USD (`BASE_CURRENCY` in `@commerceworker/core`), with `updated_at`. `USD` is the only row in a migrated database; the demo seed adds EUR 0.92, GBP 0.79 and CAD 1.37. No UI edits them yet (the Commerce page lists them), so add a rate with SQL. See [Currency](https://docs.commerceworker.com/reference/expressions/#currency) |
+| `fx_rates` | Units of each `currency` per one USD (`BASE_CURRENCY` in `@commerceworker/core`), with `updated_at`. `USD` is the only row in a migrated database; the demo seed adds EUR 0.92, GBP 0.79 and CAD 1.37. The engine's daily cron refreshes the currencies the deployment's registry names in `fxCurrencies` from the ECB's reference rates, adding a row for one it hadn't (`refreshFxRates`, through `PricingStore.setFxRates`). No UI edits them yet (the Commerce page lists them). See [Currency](https://docs.commerceworker.com/reference/expressions/#currency) |
 | `price_rules` | Price-book and volume entries: `source_id`, `name`, optional scope (`sku`, `customer_id`, `customer_tier`, `min_qty`, `starts_at`, `ends_at`), and a fixed `price` or `discount_pct` off list |
 | `locations` | Stores that hold their own stock: `name`, `kind` (`store`), `postal_code`, `latitude` and `longitude` (nullable; for shipping from the nearest store), `pickup` (customers can collect there) and `ships` (it can fulfil shipped orders). Seeded: `loc_soho` and `loc_mission`, both pickup and ships. See [Fulfillment](https://docs.commerceworker.com/guides/fulfillment/) |
 | `location_stock` | A store's stock per SKU, primary key `(location_id, sku)`: `stock` and `reserved` |

@@ -193,6 +193,11 @@ export type Deployment = {
   /** Whether the AI Gateway keeps request logs (prompts and responses). Default false. */
   aiGatewayLogs: boolean;
   /**
+   * Currencies the deployment sells in besides the base (USD), whose exchange rates the engine's
+   * daily cron refreshes from the ECB. Default none.
+   */
+  fxCurrencies: string[];
+  /**
    * The customer's OpenID Connect identity provider for single sign-on: its issuer (https, as its
    * discovery document names it) and this deployment's client id. The client secret is the
    * environment's OIDC_CLIENT_SECRET; the redirect URI to register is https://<domain>/login/sso/callback.
@@ -385,6 +390,16 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     throw new Error(`${file}: aiPersonalData must be "redact" or "send"`);
   if (raw.aiGatewayLogs !== undefined && typeof raw.aiGatewayLogs !== 'boolean')
     throw new Error(`${file}: aiGatewayLogs must be true or false`);
+  const fx = raw.fxCurrencies;
+  if (
+    fx !== undefined &&
+    (!Array.isArray(fx) ||
+      fx.length > 40 ||
+      fx.some((c) => typeof c !== 'string' || !/^[A-Z]{3}$/.test(c) || c === 'USD'))
+  )
+    throw new Error(
+      `${file}: fxCurrencies must be a list of ISO 4217 codes such as "EUR", other than USD`,
+    );
   const tokens = raw.assistantDailyTokens;
   if (tokens !== undefined && (!Number.isInteger(tokens) || (tokens as number) < 0))
     throw new Error(`${file}: assistantDailyTokens must be a whole number (0 for no limit)`);
@@ -595,6 +610,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     logRetentionDays: (logDays ?? personal ?? LOG_RETENTION_DAYS) as number,
     aiPersonalData: raw.aiPersonalData === 'send' ? 'send' : 'redact',
     aiGatewayLogs: raw.aiGatewayLogs === true,
+    fxCurrencies: [...new Set((raw.fxCurrencies as string[] | undefined) ?? [])],
     ...(sso
       ? {
           sso: {
@@ -1002,6 +1018,7 @@ export function renderEngine(base: Config, d: Deployment): Config {
     ...config.vars,
     AI_GATEWAY_ID: names(d).aiGateway,
     AI_GATEWAY_LOGS: String(d.aiGatewayLogs),
+    FX_CURRENCIES: d.fxCurrencies.join(','),
   };
   // The app's own origin (for links the engine hands out, an external cart's start link) and the
   // hosts it serves, which an external cart must never post back to.

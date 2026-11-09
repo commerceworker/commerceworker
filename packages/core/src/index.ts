@@ -20,6 +20,7 @@ export * from './encryption';
 export * from './erasure';
 export * from './extract-catalog';
 export * from './fulfillment';
+export * from './fx';
 export * from './graph';
 export * from './health';
 export * from './integrations';

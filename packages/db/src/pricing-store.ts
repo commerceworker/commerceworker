@@ -285,6 +285,32 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
       return row?.rate ?? null;
     },
 
+    async setFxRates(rates, at) {
+      const rows = rates.filter(
+        (r) => r.currency !== BASE_CURRENCY && Number.isFinite(r.rate) && r.rate > 0,
+      );
+      if (!rows.length) return 0;
+      // Three bound parameters a row, so at most 33 rows a statement (D1 allows 100); the
+      // statements go in one batch, so the rates change together or not at all.
+      const writes = [];
+      for (let i = 0; i < rows.length; i += 33)
+        writes.push(
+          db
+            .insert(fxRates)
+            .values(
+              rows
+                .slice(i, i + 33)
+                .map((r) => ({ currency: r.currency, rate: r.rate, updatedAt: at })),
+            )
+            .onConflictDoUpdate({
+              target: fxRates.currency,
+              set: { rate: sql`excluded.rate`, updatedAt: sql`excluded.updated_at` },
+            }),
+        );
+      await db.batch(writes as unknown as Parameters<typeof db.batch>[0]);
+      return rows.length;
+    },
+
     async pricingFor(customerId) {
       const [sources, rules, contracts, customer] = await db.batch(chainReads(customerId));
       return chainOf(sources, rules, contracts, customer[0]);

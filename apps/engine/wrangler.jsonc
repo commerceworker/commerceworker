@@ -115,6 +115,9 @@
     "AI_GATEWAY_LOGS": "true",
     // "live" calls Workers AI; "mock" uses deterministic heuristics (tests, offline dev).
     "AI_MODE": "live",
+    // Currencies whose rates the daily cron refreshes from the ECB, comma-separated (the registry's
+    // fxCurrencies). Empty refreshes none.
+    "FX_CURRENCIES": "",
     // Divides every wait and timeout. "1" is real time; local dev overrides it to "1440" (a day
     // becomes a minute) in apps/web/vite.config.ts.
     "TIME_SCALE": "1",

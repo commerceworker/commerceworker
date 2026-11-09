@@ -24,7 +24,8 @@ pnpm run deploy                                # catalog, then catalog-edge, the
 ```
 
 Production has no demo data (migration `0027` removed it and `packages/db/seed` is never applied remotely), so the
-dashboard's demo scenarios are hidden and only `USD` orders are accepted until an exchange rate is added to `fx_rates`.
+dashboard's demo scenarios are hidden and only `USD` orders are accepted until the registry names another currency in
+`fxCurrencies` ([Operations](operations.md)); the engine's next daily refresh then adds its exchange rate.
 
 `provision.sh` records the database id (`d1Id`) and the catalog's KV namespace id (`catalogKvId`) in
 `deployments/commerceworker.jsonc`; put the first in the `d1_databases` entry of both the engine's and the web
