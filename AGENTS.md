@@ -42,6 +42,7 @@ pnpm lint                    # turbo → biome check
 pnpm check-types             # turbo → tsc --noEmit (web runs react-router typegen first)
 pnpm test:fleet              # deployments/ registry and the configs scripts/fleet.ts renders
 pnpm test:toolkit            # .claude/ toolkit: skill/agent lint and hook tests (see .claude/README.md)
+pnpm commitlint --from origin/main  # commit messages since main: Conventional Commits, `type(scope): subject`
 pnpm --filter @commerceworker/<pkg> test     # one package's tests
 pnpm --filter @commerceworker/web e2e        # device tests: WebKit as iPhone, iPad and desktop (offline dev server; E2E_PORT=… beside another worktree)
 pnpm turbo run lint check-types test --filter='...[origin/main]'  # what changed since main, plus dependents

@@ -245,6 +245,8 @@ names the request.
   They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on the
   push a merge makes: the pull request already ran them. The `changes` job also skips them for a
   pull request that only touches `docs/`, `apps/docs/`, `.claude/` or top-level Markdown.
+- **commits** (pull requests only): commitlint (`commitlint.config.ts`) over every commit the pull
+  request adds, which must follow Conventional Commits (`type(scope): subject`).
 - **release** (push to `main` only): needs only `verify`, so deploys do not wait for `devices`. It
   dispatches `release.yml` in the private `commerceworker/fleet` repository with the commit sha, using
   the repository secret `FLEET_DISPATCH_TOKEN` (a fine-grained token with Actions write on that

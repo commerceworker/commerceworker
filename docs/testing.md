@@ -6,7 +6,9 @@ What pnpm test runs in each package, how the engine runs real Workflows in worke
 `test` task has no `dependsOn`, so a failing dependency never silently skips a package's tests.
 CI runs it after lint, type-check and build, then audits production dependencies
 (`.github/workflows/ci.yml`), each step running even when an earlier one failed. A separate
-`devices` job runs the web app's [device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit.
+`devices` job runs the web app's [device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit,
+and on a pull request a `commits` job lints each commit message against Conventional Commits
+(`commitlint.config.ts`).
 
 | Package | Environment | Config |
 |---|---|---|

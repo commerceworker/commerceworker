@@ -227,6 +227,7 @@ pnpm lint            # Biome
 pnpm check-types     # tsc --noEmit (web runs react-router typegen first)
 pnpm test:fleet      # the deployment registry and the configs rendered from it
 pnpm test:toolkit    # the .claude/ toolkit: skill and agent lint, hook tests
+pnpm commitlint --from origin/main  # this branch's commit messages (Conventional Commits)
 
 pnpm --filter @commerceworker/core test                        # one package
 pnpm --filter @commerceworker/engine exec vitest run --project engine tests/ucp.test.ts  # one file
