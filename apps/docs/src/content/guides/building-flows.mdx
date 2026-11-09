@@ -161,8 +161,10 @@ The [expressions reference](/reference/expressions/) has the operators and the p
 ## Retries and timeouts
 
 Each commerce, AI, Condition and Set node runs as one durable step. Its retry limit is the node's
-`retries`, else the node type's default (`commerce.charge` has `0`), else `3`, with a 5-second
-exponential backoff. An AI node whose model call fails uses these retries before it falls back
+`retries`, else `3`, with a 5-second exponential backoff. A payment step retried after Stripe was
+unavailable reuses its idempotency key, so it never charges twice
+([Payments](/guides/payments/#retries-never-pay-twice)); a declined card takes the node's
+`declined` or `failed` branch without retrying. An AI node whose model call fails uses these retries before it falls back
 to its heuristic on the last attempt ([AI nodes](/guides/ai/)). Its timeout is the node's
 `timeout`, else `"5 minutes"`. Approval,
 Wait-for-event and Wait nodes don't use these; their waits have their own `timeout` field.

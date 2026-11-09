@@ -503,7 +503,8 @@ export const NODE_SPECS = [
     icon: 'Repeat',
     fields: [],
     outputs: ['ok', 'failed'],
-    retries: 0,
+    // The default retries: a Stripe outage is retried with the step's own idempotency key, so a
+    // retry can't charge twice; a decline takes `failed` without retrying.
   }),
   node({
     type: 'commerce.refund',

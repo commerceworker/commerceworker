@@ -63,7 +63,7 @@ Nodes that run inside one step are `EXECUTORS` in `apps/engine/src/nodes.ts`. Th
 configured with:
 
 - `retries`: `{ limit, delay: '5 seconds', backoff: 'exponential' }`, where `limit` is the node's
-  `retries`, else the catalog's `retries`, else 3 (`commerce.charge` sets 0).
+  `retries`, else the catalog's `retries`, else 3.
 - `timeout`: the node's `timeout`, else `'5 minutes'`.
 
 An executor returns a `NodeResult`: `branches`, `output`, `summary`, and optional `order` and

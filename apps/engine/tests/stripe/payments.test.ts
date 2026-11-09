@@ -1,7 +1,7 @@
 import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import type { Order, OrderInput, OrderState } from '@commerceworker/core';
-import { createDb, customers, payments } from '@commerceworker/db';
+import { createDb, customers, payments, publishFlow } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../../src/flows';
@@ -331,6 +331,101 @@ describe('refund', () => {
     expect(await refund(env, o, 'refund#2')).toEqual(rest);
     expect(stripe.callsTo('POST', '/v1/refunds')).toHaveLength(calls);
     expect(await refund(env, o, 'refund#3')).toMatchObject({ status: 'failed', amount: 0 });
+  });
+});
+
+describe('charge retries', () => {
+  const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
+    id,
+    type,
+    label: id,
+    config,
+    position: { x: 0, y: 0 },
+  });
+  const edge = (source: string, target: string, sourceHandle: string | null = null) => ({
+    id: `${source}.${sourceHandle ?? 'out'}-${target}`,
+    source,
+    target,
+    sourceHandle,
+    targetHandle: null,
+  });
+
+  beforeAll(async () => {
+    await publishFlow(db(), {
+      id: 'test-charge-retries',
+      name: 'Verify then charge',
+      description: '',
+      model: 'subscription',
+      channels: [],
+      nodes: [
+        node('start', 'trigger.manual'),
+        node('price', 'commerce.price', { useContracts: false }),
+        node('verify', 'commerce.authorize_payment', { method: 'card', purpose: 'verify' }),
+        node('charge', 'commerce.charge'),
+        node('paid', 'control.end', { outcome: 'completed', reason: 'Charged' }),
+        node('unpaid', 'control.end', { outcome: 'declined', reason: 'Charge failed' }),
+      ],
+      edges: [
+        edge('start', 'price'),
+        edge('price', 'verify'),
+        edge('verify', 'charge', 'ok'),
+        edge('charge', 'paid', 'ok'),
+        edge('charge', 'unpaid', 'failed'),
+      ],
+    });
+  });
+
+  const INTENTS = /^\/v1\/payment_intents$/;
+  const isCharge = (p: Record<string, unknown>) =>
+    String((p.metadata as Record<string, unknown> | undefined)?.step ?? '').startsWith('charge');
+  const failCharges = (n: number) => {
+    for (let i = 0; i < n; i++) stripe.failNext(INTENTS, isCharge);
+  };
+  const run = async (meta: Record<string, unknown> = {}) => {
+    await introspect();
+    const { orderId } = await startOrder(env, {
+      flowId: 'test-charge-retries',
+      input: input({
+        model: 'subscription',
+        customerId: 'cus_ada',
+        lines: [{ sku: 'SUB-BOX', qty: 1 }],
+        meta,
+      }),
+    });
+    const done = await settled(orderId);
+    const calls = stripe.callsTo('POST', INTENTS).filter((c) => isCharge(c.params));
+    const charges = (await rows(orderId)).filter((r) => r.kind === 'charge');
+    return { done, calls, charges };
+  };
+
+  it('retries a Stripe outage with the same key and charges once', async () => {
+    failCharges(2);
+    const { done, calls, charges } = await run();
+    expect([done.status, done.reason]).toEqual(['completed', 'Charged']);
+    expect(calls).toHaveLength(3);
+    expect(new Set(calls.map((c) => c.idempotencyKey)).size).toBe(1);
+    expect(charges.map((r) => r.status)).toEqual(['succeeded']);
+    const charged = [...stripe.intents.values()].filter((pi) =>
+      pi.metadata.step?.startsWith('charge'),
+    );
+    expect(charged.map((pi) => pi.status)).toEqual(['succeeded']);
+  });
+
+  it('fails the order, charging nothing, when the outage outlasts the retries', async () => {
+    failCharges(4);
+    const { done, calls, charges } = await run();
+    expect(done.status).toBe('failed');
+    expect(done.nodes.charge!.status).toBe('failed');
+    expect(done.nodes.unpaid!.status).not.toBe('succeeded');
+    expect(calls).toHaveLength(4);
+    expect(charges).toEqual([]);
+  });
+
+  it('takes the failed branch on a decline without retrying', async () => {
+    const { done, calls, charges } = await run({ simulate: 'charge_fail' });
+    expect([done.status, done.reason]).toEqual(['declined', 'Charge failed']);
+    expect(calls).toHaveLength(1);
+    expect(charges.map((r) => r.status)).toEqual(['failed']);
   });
 });
 
