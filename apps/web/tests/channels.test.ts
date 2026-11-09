@@ -141,7 +141,14 @@ describe('EDI 850', () => {
       .mockResolvedValueOnce({ orderId: 'ord_b', replayed: true });
     const res = await postEdi(x12('NORTHWIND', [tx('0001', 'NW-1'), tx('0002', 'NW-2')]));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { functionalAck: string };
+    // The 997 back to the partner: both POs taken, the started one and the one already started.
+    expect(body.functionalAck).toMatch(/^ISA\*/);
+    expect(body.functionalAck).toContain(
+      '~AK1*PO*1~AK2*850*0001~AK5*A~AK2*850*0002~AK5*A~AK9*A*2*2*2~',
+    );
+    expect(body).toEqual({
+      functionalAck: body.functionalAck,
       sender: 'NORTHWIND',
       results: [
         {
@@ -158,6 +165,15 @@ describe('EDI 850', () => {
       idempotencyKey: 'order:edi:NORTHWIND:NW-1',
       input: { model: 'b2b', channel: 'edi', customerId: 'cus_northwind' },
     });
+  });
+
+  it('acknowledges a PO it couldn’t take as rejected', async () => {
+    startOrderOnce.mockResolvedValueOnce({ orderId: 'ord_c' });
+    const noPo = ['ST*850*0002', 'PO1*1*1*EA*1**VP*WID-100', 'CTT*1', 'SE*4*0002'].join('~');
+    const res = await postEdi(x12('NORTHWIND', [tx('0001', 'NW-3'), noPo]));
+    const body = (await res.json()) as { results: { status: number }[]; functionalAck: string };
+    expect(body.results.map((r) => r.status)).toEqual([201, 400]);
+    expect(body.functionalAck).toContain('~AK2*850*0001~AK5*A~AK2*850*0002~AK5*R*5~AK9*P*2*2*1~');
   });
 
   it('refuses unknown partners, bad X12 and callers below operator', async () => {
