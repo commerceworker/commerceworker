@@ -98,8 +98,8 @@ export function installStripeFake() {
   const calls: StripeCall[] = [];
   /** Paths whose next request is processed but whose response is lost (a network error). */
   const dropAfter: RegExp[] = [];
-  /** Paths whose next request fails with a 500 before Stripe does anything. */
-  const failBefore: RegExp[] = [];
+  /** Requests (by path, and optionally params) whose next match fails with a 500 before Stripe does anything. */
+  const failBefore: { path: RegExp; when?: (params: Form) => boolean }[] = [];
   const nextId = (prefix: string) => `${prefix}_fake${(++seq).toString().padStart(6, '0')}`;
 
   const error = (status: number, e: Json) => ({ status, json: { error: e } });
@@ -399,7 +399,9 @@ export function installStripeFake() {
         headers: { 'Content-Type': 'application/json' },
       });
 
-    const fail = failBefore.findIndex((re) => re.test(url.pathname));
+    const fail = failBefore.findIndex(
+      (f) => f.path.test(url.pathname) && (!f.when || f.when(params)),
+    );
     if (fail >= 0) {
       failBefore.splice(fail, 1);
       return reply(error(500, { type: 'api_error', message: 'Something went wrong on our end' }));
@@ -446,9 +448,12 @@ export function installStripeFake() {
     loseNextResponse(path: RegExp) {
       dropAfter.push(path);
     },
-    /** The next request to a matching path fails with a 500, untouched. */
-    failNext(path: RegExp) {
-      failBefore.push(path);
+    /**
+     * The next request to a matching path (and, with `when`, matching params) fails with a 500,
+     * untouched. Call it again to fail more than one.
+     */
+    failNext(path: RegExp, when?: (params: Form) => boolean) {
+      failBefore.push({ path, when });
     },
     /** A PaymentIntent made elsewhere (a checkout), authorized and waiting for capture. */
     authorizedIntent(amount: number, currency = 'usd', metadata: Record<string, string> = {}) {

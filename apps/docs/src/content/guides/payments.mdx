@@ -114,7 +114,10 @@ built for Stripe still runs; nothing will pay it, so deliver `payment.received` 
 Every call to Stripe carries an idempotency key made from the order and the step (its step name,
 plus the generation after a continue-as-new). When Stripe is unavailable or the response is lost,
 the step retries with the same key and Stripe returns its first answer, so a retried authorize
-creates one PaymentIntent and a retried refund refunds once. A request Stripe refuses outright,
+creates one PaymentIntent, a retried renewal charge charges once and a retried refund refunds
+once. A declined card isn't retried: the step takes its `declined` or `failed` branch. An outage
+that outlasts the step's retries fails the order, rather than taking that branch, since Stripe may
+have charged before the response was lost. A request Stripe refuses outright,
 such as a PaymentIntent that doesn't exist, fails the step without retrying.
 
 ## Testing against Stripe
