@@ -1,5 +1,5 @@
 import type { Cart, Principal } from '@commerceworker/core';
-import { DEV_PRINCIPAL_KEY, verifyRpcActor } from '@commerceworker/core';
+import { DEV_PRINCIPAL_KEY, operationCall, verifyRpcActor } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const engine = {
@@ -40,9 +40,7 @@ const engine = {
   changeCart: vi.fn(),
   submitCart: vi.fn(),
   cancelCart: vi.fn(),
-  verifyTaxCertificate: vi.fn(),
-  revokeTaxCertificate: vi.fn(),
-  runReplenish: vi.fn(async () => ({ instanceId: 'rep_1' })),
+  runOperation: vi.fn(),
 };
 
 /** The signed webhooks already taken, in memory: claimed on delivery, given back on failure. */
@@ -918,70 +916,76 @@ describe('installing plugins over REST', () => {
   });
 });
 
-describe('what MCP could do and REST now can', () => {
+describe('operations REST runs as MCP does', () => {
   const viewer: Principal = { ...operator, id: 'tok_v', role: 'viewer' };
-  const cert = 'customers/cus_1/tax-certificates/txc_1';
-  const change = (status: string, changed: boolean) => ({
-    ok: true,
-    value: { certificate: { id: 'txc_1', status }, changed },
-  });
-
-  beforeEach(() => audit.mockClear());
-
   const person: Principal = {
     kind: 'user',
     id: 'usr_1',
     name: 'ann@example.com',
     role: 'operator',
   };
+  const run = engine.runOperation;
 
-  it('verifies a certificate as the person, signed for that customer, and audits it once', async () => {
-    engine.verifyTaxCertificate.mockResolvedValueOnce(change('active', true));
-    const res = await post(`${cert}/verify`, {}, person);
+  beforeEach(() => run.mockReset());
+
+  it("runs the route's tool with the path's fields over the body's, signed for that operation", async () => {
+    run.mockResolvedValueOnce({ ok: true, value: { done: 'Restarted the order' } });
+    const res = await post('orders/ord_1/restart', { orderId: 'ord_other' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id: 'txc_1', status: 'active', changed: true });
-    const [customerId, id, signed] = engine.verifyTaxCertificate.mock.calls.at(-1)!;
-    expect([customerId, id]).toEqual(['cus_1', 'txc_1']);
-    expect(await actorOf(signed, 'tax-certificates:cus_1')).toMatchObject({
+    expect(await res.json()).toEqual({ done: 'Restarted the order' });
+    const [tool, input, signed, key] = run.mock.calls.at(-1)!;
+    expect([tool, input, key]).toEqual(['restart_order', { orderId: 'ord_1' }, undefined]);
+    expect(
+      await actorOf(signed, await operationCall('restart_order', { orderId: 'ord_1' })),
+    ).toEqual({
       kind: 'staff',
-      id: 'usr_1',
+      id: 'tok_1',
+      name: 'ops@example.com',
+      role: 'operator',
     });
-    expect(audit).toHaveBeenCalledWith(
-      expect.anything(),
-      'tax_certificate.verified',
-      expect.objectContaining({ target: 'cus_1' }),
+  });
+
+  it('says a person is acting only for a signed-in person, and passes the Idempotency-Key', async () => {
+    run.mockResolvedValue({ ok: true, value: {} });
+    await handleApi(
+      new Request('https://app.test/api/v1/customers/cus_1/tax-certificates/txc_1/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'k-1' },
+        body: '{}',
+      }),
+      person,
     );
-    // A repeat changes nothing and records nothing.
-    audit.mockClear();
-    engine.verifyTaxCertificate.mockResolvedValueOnce(change('active', false));
-    await post(`${cert}/verify`, {}, person);
-    expect(audit).not.toHaveBeenCalled();
+    const [tool, input, signed, key] = run.mock.calls.at(-1)!;
+    expect([tool, input, key]).toEqual([
+      'verify_tax_certificate',
+      { customerId: 'cus_1', certificateId: 'txc_1' },
+      'k-1',
+    ]);
+    expect(
+      await actorOf(
+        signed,
+        await operationCall('verify_tax_certificate', {
+          customerId: 'cus_1',
+          certificateId: 'txc_1',
+        }),
+      ),
+    ).toMatchObject({
+      id: 'usr_1',
+      person: true,
+    });
   });
 
-  it('never lets an API token verify a certificate, as over MCP; a token may revoke', async () => {
-    engine.verifyTaxCertificate.mockClear();
-    const res = await post(`${cert}/verify`, {});
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as { error: string }).error).toMatch(/not with an API token/);
-    expect(engine.verifyTaxCertificate).not.toHaveBeenCalled();
-    engine.revokeTaxCertificate.mockResolvedValueOnce(change('revoked', true));
-    expect((await post(`${cert}/revoke`, {})).status).toBe(200);
-  });
-
-  it("answers the engine's refusal, and refuses a viewer", async () => {
-    engine.revokeTaxCertificate.mockResolvedValueOnce({ ok: false, error: 'No such certificate.' });
-    const res = await post(`${cert}/revoke`, {});
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'No such certificate.' });
-    expect((await post(`${cert}/verify`, {}, viewer)).status).toBe(403);
-    expect((await post(`${cert}/approve`, {})).status).toBe(404);
-  });
-
-  it('runs the stock review for an operator', async () => {
-    const res = await post('stock/review', {});
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ instanceId: 'rep_1' });
-    expect(audit).toHaveBeenCalledWith(expect.anything(), 'stock.review_run', expect.anything());
+  it("answers the engine's refusal, holds the tool's role, and leaves other paths alone", async () => {
+    run.mockResolvedValueOnce({ ok: false, error: 'A person verifies a certificate…' });
+    expect((await post('customers/cus_1/tax-certificates/txc_1/verify', {})).status).toBe(409);
+    run.mockResolvedValueOnce({ ok: false, status: 400, error: 'status: Invalid option' });
+    expect((await post('promotions/pr_1/status', { status: 'gone' })).status).toBe(400);
     expect((await post('stock/review', {}, viewer)).status).toBe(403);
+    run.mockResolvedValueOnce({ ok: true, value: { approvals: [] } });
+    expect((await handleApi(new Request('https://app.test/api/v1/attention'), viewer)).status).toBe(
+      200,
+    );
+    expect((await post('customers/cus_1/tax-certificates/txc_1/approve', {})).status).toBe(404);
+    expect(run).toHaveBeenCalledTimes(3);
   });
 });

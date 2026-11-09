@@ -360,7 +360,8 @@ export async function verifySsoLink(
  * methods (plugin installs, data subjects) still trust their caller: only the web app holds it.
  */
 export type RpcActor =
-  | { kind: 'staff'; id: string; name: string; role: Role }
+  /** `person`: a person signed in as themselves, not an API token (some actions need one). */
+  | { kind: 'staff'; id: string; name: string; role: Role; person?: true }
   | { kind: 'guest'; id: string; name: string };
 
 /** An `RpcActor` signed for one call (`signRpcActor`), as `EngineRpc` takes it. */
@@ -388,10 +389,18 @@ export async function verifyRpcActor(
   // Anything but the string a1 envelope (an actor object from an older web app) is refused.
   if (typeof signed !== 'string') return null;
   const body = await unseal(secrets, ACTOR_VERSION, signed, call, now);
-  const a = body?.a as Partial<{ kind: string; id: string; name: string; role: Role }> | undefined;
+  const a = body?.a as
+    | Partial<{ kind: string; id: string; name: string; role: Role; person: unknown }>
+    | undefined;
   if (!a || typeof a.id !== 'string' || typeof a.name !== 'string') return null;
   if (a.kind === 'staff' && isRole(a.role))
-    return { kind: 'staff', id: a.id, name: a.name, role: a.role };
+    return {
+      kind: 'staff',
+      id: a.id,
+      name: a.name,
+      role: a.role,
+      ...(a.person === true ? { person: true as const } : {}),
+    };
   if (a.kind === 'guest') return { kind: 'guest', id: a.id, name: a.name };
   return null;
 }

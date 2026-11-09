@@ -78,8 +78,11 @@ export function requireRole(p: Principal, tool: AssistantTool) {
   if (!atLeast(p.role, min)) throw new Refused(`This needs the ${ROLE_LABELS[min]} role.`);
 }
 
-/** Where a tool call came from: the workspace assistant, an MCP client or an A2A agent. */
-export type Channel = 'assistant' | 'MCP' | 'A2A';
+/**
+ * Where a tool call came from: the workspace assistant, an MCP client, an A2A agent, or the REST
+ * API (`EngineApi.runOperation`).
+ */
+export type Channel = 'assistant' | 'MCP' | 'A2A' | 'API';
 
 /**
  * How a confirmed action reached `runAction`: with what the person's confirm was held to (the
@@ -96,6 +99,7 @@ export const AUDIT_CHANNEL: Record<Channel, AuditVia> = {
   assistant: 'assistant',
   MCP: 'mcp',
   A2A: 'a2a',
+  API: 'api',
 };
 
 export function money(n: number | null | undefined, currency = BASE_CURRENCY) {

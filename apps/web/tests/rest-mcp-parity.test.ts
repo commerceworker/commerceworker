@@ -4,7 +4,7 @@
  * allowed only where it is listed here with why; a field one side gains is a failure until the
  * other takes it too, or it is listed.
  */
-import { cartOpSchema, TOOL_INPUTS } from '@commerceworker/core';
+import { cartOpSchema, REST_OPERATION_TOOLS, TOOL_INPUTS } from '@commerceworker/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -14,6 +14,13 @@ import {
   orderEventInput,
   submitCartInput,
 } from '../app/lib/api-schemas';
+import { openApiDocument } from '../app/lib/openapi';
+import {
+  offeredOverRest,
+  operationBody,
+  pathFields,
+  REST_OPERATIONS,
+} from '../app/lib/rest-operations';
 
 type Json = Record<string, unknown>;
 /** A schema as a client sees it, without the descriptions MCP adds for a model. */
@@ -77,20 +84,6 @@ const PAIRS: {
     path: ['cartId'],
     differs: { version: 'REST’s name for cartVersion, matching the cart’s ETag; both are taken' },
   },
-  // Operations whose every field REST reads from the path.
-  {
-    rest: 'POST /customers/{id}/tax-certificates/{certificateId}/verify',
-    tool: 'verify_tax_certificate',
-    body: z.object({}),
-    path: ['customerId', 'certificateId'],
-  },
-  {
-    rest: 'POST /customers/{id}/tax-certificates/{certificateId}/revoke',
-    tool: 'revoke_tax_certificate',
-    body: z.object({}),
-    path: ['customerId', 'certificateId'],
-  },
-  { rest: 'POST /stock/review', tool: 'run_stock_review', body: z.object({}), path: [] },
 ];
 
 describe('REST and MCP take each operation alike', () => {
@@ -121,5 +114,41 @@ describe('REST and MCP take each operation alike', () => {
   it('a REST cart op is one of change_cart’s ops', () => {
     const ops = shape(TOOL_INPUTS.change_cart) as { properties: { ops: { items: Json } } };
     expect(shape(cartOpSchema)).toEqual(ops.properties.ops.items);
+  });
+});
+
+describe('REST operations run their MCP tool', () => {
+  const doc = openApiDocument('https://app.test') as {
+    paths: Record<string, Record<string, Json>>;
+  };
+
+  for (const op of REST_OPERATIONS)
+    it(`${op.method} ${op.path} ↔ ${op.tool}`, () => {
+      expect(offeredOverRest(op.tool), `${op.tool} is the page's or panel's alone`).toBe(true);
+      const tool = props(TOOL_INPUTS[op.tool]);
+      for (const f of pathFields(op))
+        expect(Object.keys(tool.properties), `{${f}} isn't a field of ${op.tool}`).toContain(f);
+      // The body is the tool's input less the path's fields, so the two can't drift apart.
+      const body = props(operationBody(op));
+      for (const [f, schema] of Object.entries(body.properties))
+        expect(schema).toEqual(tool.properties[f]);
+      expect(Object.keys(body.properties).length + pathFields(op).length).toBe(
+        Object.keys(tool.properties).length,
+      );
+      expect(
+        doc.paths[`/api/v1${op.path}`]?.[op.method.toLowerCase()],
+        'not in the OpenAPI document',
+      ).toBeDefined();
+    });
+
+  it('routes exactly the tools the engine runs for REST, and no others', () => {
+    expect([...new Set(REST_OPERATIONS.map((o) => o.tool))].sort()).toEqual(
+      [...REST_OPERATION_TOOLS].sort(),
+    );
+  });
+
+  it('names each operation once', () => {
+    const keys = REST_OPERATIONS.map((o) => `${o.method} ${o.path}`);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

@@ -6,6 +6,7 @@
  * read them too.
  */
 import { z } from 'zod';
+import { fingerprintOf } from './api';
 import { assessQuestionsSchema } from './assess';
 import type { AssistantTool } from './assistant';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
@@ -527,3 +528,39 @@ export const TOOL_OUTPUTS = {
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
 } satisfies Record<AssistantTool, z.ZodObject>;
+
+/**
+ * The workspace tools the REST API may run (`EngineRpc.runOperation`), checked by the engine as
+ * well as the web app's route table. Not a flow's publish or test: over MCP those are held to the
+ * draft the person saw, and REST has no way yet to name it.
+ */
+export const REST_OPERATION_TOOLS = [
+  'needs_attention',
+  'restart_order',
+  'decide_approvals',
+  'get_flow',
+  'create_flow',
+  'duplicate_flow',
+  'archive_flow',
+  'create_promotion',
+  'set_promotion_status',
+  'verify_tax_certificate',
+  'revoke_tax_certificate',
+  'run_stock_review',
+] as const satisfies readonly AssistantTool[];
+export type RestOperationTool = (typeof REST_OPERATION_TOOLS)[number];
+
+export const isRestOperationTool = (name: string): name is RestOperationTool =>
+  (REST_OPERATION_TOOLS as readonly string[]).includes(name);
+
+/** Why a token can't run a tool a person always confirms (`PERSON_CONFIRMS_TOOLS`). */
+export const PERSON_CONFIRMS =
+  'A person signed in as themselves does this, never an API token: it changes what buyers pay or owe.';
+
+/**
+ * The call a REST operation's actor is signed for: the tool and exactly the input it was signed
+ * with, so a signed actor works for that one call and nothing else.
+ */
+export async function operationCall(tool: string, input: unknown): Promise<string> {
+  return `operation:${tool}:${await fingerprintOf(input ?? {})}`;
+}

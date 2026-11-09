@@ -266,6 +266,19 @@ export interface EngineRpc {
    * and intake log. Refused while any of their orders is still running.
    */
   eraseDataSubject(email: string): Promise<ErasureResult>;
+  /**
+   * Runs a workspace tool (`ASSISTANT_TOOLS`) for the REST API exactly as MCP runs it: its role,
+   * an action's live preview and refusals, any step-up, and the audit trail (`via: api`). `actor`
+   * is staff signed for `operation:<name>`; `input` is checked against `TOOL_INPUTS[name]`. A tool
+   * only the page or the panel offers is refused, as it is over MCP. `key`, unique to the request
+   * (an `Idempotency-Key`), makes an order it starts start once.
+   */
+  runOperation(
+    name: string,
+    input: unknown,
+    actor: SignedActor,
+    key?: string,
+  ): Promise<Refusable<unknown> & { status?: 400 | 403 | 404 }>;
   /** Runs the stock review now (normally a daily cron on the Replenish Workflow). */
   runReplenish(): Promise<{ instanceId: string }>;
   /**

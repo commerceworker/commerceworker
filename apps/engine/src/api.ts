@@ -14,9 +14,14 @@ import {
   type EngineRpc,
   HEALTH_WRITE_PATH,
   healthReport,
+  isRestOperationTool,
   type OrderState,
+  operationCall,
   type PaymentEvent,
+  PERSON_CONFIRMS,
+  PERSON_CONFIRMS_TOOLS,
   type PluginCase,
+  type Principal,
   parseMailboxes,
   pluginBinding,
   runHealthChecks,
@@ -24,15 +29,19 @@ import {
   type StartOrderInput,
   type StartOrderOnceInput,
   type TaxCertificateInput,
+  TOOL_INPUTS,
+  type ToolInput,
   UCP_PATH,
   verifyHealthCheck,
 } from '@commerceworker/core';
 import type { ProductDraftRequest } from '@commerceworker/core/product';
+import type { z } from 'zod';
 import { A2A_PATH, a2aCaller, handleA2A } from './a2a/route';
 import { routeAgents } from './agent-routes';
 import { copilot } from './ai';
 import { Refused } from './assistant/data';
 import { draftProductContent } from './assistant/product-draft';
+import { runTool } from './assistant/tools';
 import {
   cancelCart,
   cartSnapshot,
@@ -179,6 +188,44 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
     ])
       configs += await a2aAgent(this.env, name).dropPushes();
     return { configs };
+  }
+
+  async runOperation(name: string, input: unknown, signed: SignedActor, key?: string) {
+    // Only what REST offers: the web app's table is not the only allowlist.
+    if (!isRestOperationTool(name))
+      return { ok: false as const, status: 404 as const, error: 'No such operation.' };
+    const actor = await rpcActor(this.env, signed, await operationCall(name, input));
+    if (actor?.kind !== 'staff') return { ...UNSIGNED, status: 403 as const };
+    // What a person always confirms over MCP (prices, tax), a token never does over REST.
+    if (PERSON_CONFIRMS_TOOLS.includes(name) && !actor.person)
+      return { ok: false as const, status: 403 as const, error: PERSON_CONFIRMS };
+    const parsed = (TOOL_INPUTS[name] as z.ZodObject).safeParse(input ?? {});
+    if (!parsed.success)
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: parsed.error.issues
+          .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
+          .join('; '),
+      };
+    // A person signed in, or an API token: some actions (verifying a certificate) take only a person.
+    const p: Principal = {
+      kind: actor.person ? 'user' : 'token',
+      id: actor.id,
+      name: actor.name,
+      role: actor.role,
+    };
+    try {
+      const value = await runTool(this.env, p, name, parsed.data as ToolInput<typeof name>, {
+        via: 'API',
+        confirmed: 'direct',
+        ...(key ? { key: `api:${actor.id}:${key}` } : {}),
+      });
+      return { ok: true as const, value };
+    } catch (err) {
+      if (err instanceof Refused) return { ok: false as const, error: err.message };
+      throw err;
+    }
   }
 
   async runReplenish() {

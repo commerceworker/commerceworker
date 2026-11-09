@@ -20,9 +20,7 @@
  *                                               (409 not ready or ended, 412 changed since that version)
  *   POST /api/v1/carts/:id/cancel               (409 ended)
  *
- *   POST /api/v1/customers/:id/tax-certificates/:certificateId/verify   (409 refused)
- *   POST /api/v1/customers/:id/tax-certificates/:certificateId/revoke   (409 refused)
- *   POST /api/v1/stock/review                   run the stock review now  (202 { instanceId })
+ *   REST_OPERATIONS (./rest-operations.ts)      a workspace tool each, run as MCP runs it
  *
  *   GET    /api/v1/audit-events                 ?type=…&before=<ms>&limit=  newest first; ?after=<seq> oldest first (admin)
  *   GET    /api/v1/audit-events/verify          ?after=<seq>  checks the hash chain (admin)
@@ -81,7 +79,7 @@ import {
   type InboundOrder,
   inboundFingerprint,
   inboundOrderSchema,
-  PERSON_VERIFIES,
+  operationCall,
   PLUGIN_BUNDLE_MAX_BYTES,
   PLUGIN_ID_RE,
   type Principal,
@@ -120,7 +118,7 @@ import {
 } from './api-schemas';
 import { isAuditGroup } from './audit';
 import { audit, listAudit, verifyAudit } from './audit.server';
-import { actor, forbidden } from './auth.server';
+import { actor, actor as actorName, forbidden } from './auth.server';
 import { BodyTooLarge, MAX_EDI_BYTES, readText, tooLarge } from './body';
 import { isCartStatus, listCarts } from './carts.server';
 import { handleCatalog } from './catalog-api.server';
@@ -143,6 +141,7 @@ import { pluginAction, uploadBundle } from './plugin-installs.server';
 import { pluginStatuses } from './plugins.server';
 import { decider, signedActor } from './principal.server';
 import { overBudget } from './rate-limit';
+import { matchOperation, operationRole } from './rest-operations';
 import {
   addPlatform,
   checkoutFlowRefusal,
@@ -293,19 +292,8 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
       return json({ error: 'Not found' }, 404);
     }
     if (parts[0] === 'carts') return await handleCarts(request, caller, parts, body, need);
-    if (parts[0] === 'customers' && parts[2] === 'tax-certificates' && parts.length === 5)
-      return await handleCertificate(request, caller, parts, need);
-    if (parts[0] === 'stock' && parts[1] === 'review' && parts.length === 2) {
-      if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
-      const denied = need('operator');
-      if (denied) return denied;
-      const { instanceId } = await engine().runReplenish();
-      await audit(request, 'stock.review_run', {
-        actor: caller,
-        detail: { instanceId, via: 'api' },
-      });
-      return json({ instanceId }, 202);
-    }
+    const operation = matchOperation(request.method, parts);
+    if (operation) return await runRestOperation(request, caller, operation, body, need);
     if (parts[0] !== 'orders') return json({ error: 'Not found' }, 404);
 
     if (parts.length === 1) {
@@ -1048,46 +1036,34 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
 }
 
 /**
- * POST /api/v1/customers/:id/tax-certificates/:certificateId/(verify|revoke): MCP's
- * verify_tax_certificate and revoke_tax_certificate. The engine holds the rules (an active
- * certificate only; with approval separation on, not whoever added it); a repeat changes nothing.
+ * A route in REST_OPERATIONS (./rest-operations.ts): its tool run by the engine exactly as MCP runs
+ * it, as the caller (a person signed in, or an API token), signed for that one operation. The
+ * engine writes the audit trail. An `Idempotency-Key` makes an order it starts start once.
  */
-async function handleCertificate(
+async function runRestOperation(
   request: Request,
   caller: Principal,
-  parts: string[],
+  { op, fromPath }: NonNullable<ReturnType<typeof matchOperation>>,
+  body: () => Promise<unknown>,
   need: (min: Role) => Response | null,
 ): Promise<Response> {
-  const [, customerId, , certificateId, verb] = parts as [string, string, string, string, string];
-  if (request.method !== 'POST' || (verb !== 'verify' && verb !== 'revoke'))
-    return json({ error: 'Not found' }, 404);
-  const denied = need('operator');
+  const denied = need(operationRole(op));
   if (denied) return denied;
-  if (!ID_RE.test(customerId) || !ID_RE.test(certificateId))
-    return json({ error: 'Not found' }, 404);
-  // As over MCP: only a person signed in as themselves verifies, never an API token.
-  if (verb === 'verify' && caller.kind !== 'user') return json({ error: PERSON_VERIFIES }, 403);
+  const given = op.method === 'POST' ? await body() : {};
+  const input = { ...(given && typeof given === 'object' ? given : {}), ...fromPath };
+  // Signed for this tool and exactly this input; named as the audit trail names the caller.
   const actor = await signedActor(
-    { kind: 'staff', id: caller.id, name: caller.name, role: caller.role },
-    `tax-certificates:${customerId}`,
+    {
+      kind: 'staff',
+      id: caller.id,
+      name: actorName(caller),
+      role: caller.role,
+      ...(caller.kind === 'user' ? { person: true as const } : {}),
+    },
+    await operationCall(op.tool, input),
   );
-  const r =
-    verb === 'verify'
-      ? await engine().verifyTaxCertificate(customerId, certificateId, actor)
-      : await engine().revokeTaxCertificate(customerId, certificateId, actor);
-  if (!r.ok) return json({ error: r.error }, 409);
-  if (r.value.changed)
-    await audit(
-      request,
-      verb === 'verify' ? 'tax_certificate.verified' : 'tax_certificate.revoked',
-      {
-        actor: caller,
-        target: customerId,
-        detail: { certificate: certificateId, via: 'api' },
-      },
-    );
-  return json({ id: certificateId, status: r.value.certificate.status, changed: r.value.changed });
+  const key = request.headers.get('idempotency-key')?.slice(0, 200) || undefined;
+  const r = await engine().runOperation(op.tool, input, actor, key);
+  if (r.ok) return json(r.value);
+  return json({ error: r.error }, r.status ?? 409);
 }
-
-/** A customer or certificate id as the engine mints them. */
-const ID_RE = /^[\w-]{1,100}$/;
