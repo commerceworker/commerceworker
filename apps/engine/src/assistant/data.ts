@@ -331,6 +331,8 @@ export async function getFlow(env: Env, flowId: string) {
     ),
     errors: errors.map((e) => e.message),
     warnings: warnings.map((e) => e.message),
+    // What a publish or test over REST names, so it publishes this draft and no later one.
+    draft: await draftHash(flow),
   };
 }
 

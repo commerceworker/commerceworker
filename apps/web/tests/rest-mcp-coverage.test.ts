@@ -106,8 +106,6 @@ const REST_ONLY: Record<string, Why> = {
 
 /** Tools MCP offers with no REST route, and why. */
 const MCP_ONLY: Partial<Record<AssistantTool, Why>> = {
-  publish_flow: { gap: 'Held to the draft its caller saw over MCP; REST can’t name the draft yet' },
-  test_flow: { gap: 'Publishes too, so it waits on the same draft binding as publish_flow' },
   approve_plugin: { design: 'Needs a step-up, which only a person’s session in the app can give' },
   rollback_plugin: { design: 'Needs a step-up, which only a person’s session in the app can give' },
   uninstall_plugin: {
@@ -165,4 +163,4 @@ describe('every operation is on both transports, or says why not', () => {
 });
 
 /** The gaps open today: the admin routes (webhooks, integrations, UCP) and six model-backed tools. */
-const GAPS_OPEN = 8;
+const GAPS_OPEN = 6;

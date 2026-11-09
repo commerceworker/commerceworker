@@ -30,6 +30,8 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'POST', path: '/approvals/decide', tool: 'decide_approvals' },
   { method: 'GET', path: '/flows/{flowId}', tool: 'get_flow' },
   { method: 'POST', path: '/flows/new', tool: 'create_flow' },
+  { method: 'POST', path: '/flows/{flowId}/publish', tool: 'publish_flow' },
+  { method: 'POST', path: '/flows/{flowId}/test', tool: 'test_flow' },
   { method: 'POST', path: '/flows/{flowId}/duplicate', tool: 'duplicate_flow' },
   { method: 'POST', path: '/flows/{flowId}/archive', tool: 'archive_flow' },
   { method: 'POST', path: '/promotions', tool: 'create_promotion' },

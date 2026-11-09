@@ -38,6 +38,17 @@ import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './retur
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
 
+/**
+ * The flow draft a publish or test is held to: `get_flow`'s `draft`. Over REST it is required (a
+ * publish names the draft its caller read); over MCP the confirmation holds the draft the preview
+ * showed.
+ */
+const DRAFT_FIELD = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/)
+  .optional()
+  .describe("get_flow's draft: refused if the flow's draft has changed since");
+
 /** The longest instruction a tool hands the model (a flow change, a plugin's rule). */
 export const MODEL_INSTRUCTION_MAX = 4000;
 
@@ -234,7 +245,7 @@ export const TOOL_INPUTS = {
       .optional()
       .describe('The cart version you read (get_cart); refused if the cart has changed since'),
   }),
-  publish_flow: z.object({ flowId: z.string() }),
+  publish_flow: z.object({ flowId: z.string().max(60), draft: DRAFT_FIELD }),
   run_stock_review: z.object({}),
   start_order: z.object({
     flowId: z.string().max(100).describe('A published flow (list_flows)'),
@@ -294,7 +305,7 @@ export const TOOL_INPUTS = {
     flowId: z.string().max(60),
     archived: z.boolean().describe('false restores it'),
   }),
-  test_flow: z.object({ flowId: z.string().max(60) }),
+  test_flow: z.object({ flowId: z.string().max(60), draft: DRAFT_FIELD }),
   stage_product_edits: catalogEditsInput,
   accept_product_drafts: z.object({ key: productKey }),
   discard_product_edits: catalogDiscardInput.extend({ what: z.enum(['staged', 'drafts']) }),
@@ -523,6 +534,7 @@ export const TOOL_OUTPUTS = {
     connections: z.array(z.string()),
     errors: z.array(z.string()),
     warnings: z.array(z.string()),
+    draft: z.string().describe('The draft’s fingerprint: name it to publish or test this draft'),
   }),
   propose_flow_change: row({
     flowId: z.string(),
@@ -726,8 +738,8 @@ export const TOOL_OUTPUTS = {
 
 /**
  * The workspace tools the REST API may run (`EngineRpc.runOperation`), checked by the engine as
- * well as the web app's route table. Not a flow's publish or test: over MCP those are held to the
- * draft the person saw, and REST has no way yet to name it.
+ * well as the web app's route table. A flow's publish and test name the draft their caller read
+ * (`DRAFT_BOUND_TOOLS`).
  */
 export const REST_OPERATION_TOOLS = [
   'needs_attention',
@@ -746,7 +758,16 @@ export const REST_OPERATION_TOOLS = [
   'assess_order',
   'propose_flow_change',
   'draft_plugin',
+  'publish_flow',
+  'test_flow',
 ] as const satisfies readonly AssistantTool[];
+
+/** REST operations held to the flow draft their caller read (`draft`, from `get_flow`). */
+export const DRAFT_BOUND_TOOLS: readonly RestOperationTool[] = ['publish_flow', 'test_flow'];
+
+/** Why a publish or test over REST needs `draft`. */
+export const NAME_THE_DRAFT =
+  "Name the draft you read: send get_flow's draft, so a later edit isn't published in its place.";
 export type RestOperationTool = (typeof REST_OPERATION_TOOLS)[number];
 
 export const isRestOperationTool = (name: string): name is RestOperationTool =>
