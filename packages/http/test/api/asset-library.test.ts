@@ -6,6 +6,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -33,7 +34,7 @@ const scope = { spaceId: 's1', environmentId: 'main' };
 
 function makeApp() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   return { app, ctx: wired.ctx };
 }
 

@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { snapshotBody } from '../../src/api/validation';
@@ -35,7 +36,7 @@ let wired: InMemoryWired;
 beforeEach(async () => {
   wired = wire(config);
   const { ctx, rag, blob, ai } = wired;
-  app = createApp(ctx, config, rag, blob, ai);
+  app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   await app.request(`${MAIN}/content-types`, {
     method: 'POST',
     headers: admin,

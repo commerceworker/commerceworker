@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -37,7 +38,7 @@ async function gql(app: ReturnType<typeof createApp>, query: string) {
 describe('GraphQL Delivery (generated from content types)', () => {
   it('serves a generated schema and resolves published content', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
 
     // Author + publish an article via the Management API.
     await app.request(`${M}/content-types`, {
@@ -110,7 +111,7 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
   it('never serves one principal the resolvers of another (cache is principal-free)', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json' };
 
     await app.request(`${M}/content-types`, {
@@ -212,7 +213,7 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
   it('requires the delivery scope', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const res = await app.request('/delivery/s1/main/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }, // no token
@@ -223,7 +224,7 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
   it('rejects an over-deep query', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     // Nest __typename well past MAX_GQL_DEPTH (12) using aliased introspection.
     let q = '__typename';
     for (let i = 0; i < 20; i++) q = `__type(name: "Query") { ${q} }`;
@@ -236,7 +237,7 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
   it('serves GraphiQL from pinned, integrity-checked assets', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const html = await (await app.request('/graphiql/s1/main')).text();
     const assets = [...html.matchAll(/(?:src|href)="(https:[^"]+)"/g)].map((m) => m[1] as string);
     expect(assets.length).toBe(4);
@@ -247,7 +248,7 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
   it('keeps a hostile space or environment name inside the GraphiQL script', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const html = await (
       await app.request('/graphiql/s1/%3C%2Fscript%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E')
     ).text();
@@ -257,7 +258,7 @@ describe('GraphQL Delivery (generated from content types)', () => {
 
   it('sets baseline security headers', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const res = await app.request('/health');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('x-frame-options')).toBe('DENY');

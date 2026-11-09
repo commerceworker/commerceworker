@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { FakeImageTransformer, FakeMediaPathSigner } from '@commerceworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -44,6 +45,7 @@ function makeApp(opts: { media?: boolean; onWire?: (w: ReturnType<typeof wire>) 
     rag,
     blob,
     ai,
+    inMemoryEdge(),
   );
 }
 

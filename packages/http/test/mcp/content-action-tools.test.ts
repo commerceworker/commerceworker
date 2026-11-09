@@ -14,6 +14,7 @@ import {
   updateEntry,
 } from '@commerceworker/application';
 import { type ContentTypeGrant, type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FakeBlobStore,
   FakePasswordHasher,
@@ -47,6 +48,7 @@ async function setup() {
     passwords: new FakePasswordHasher(),
   };
   const deps: McpDeps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { type AppContext, createSpace } from '@commerceworker/application';
 import { type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { RemoteFetcher } from '@commerceworker/ports';
 import {
   FixedClock,
@@ -51,6 +52,7 @@ async function setup(remoteFetcher?: RemoteFetcher) {
     ids: new SequenceIdGenerator('e'),
   };
   const deps: McpDeps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
@@ -121,21 +123,5 @@ describe('embed_resolve (MCP), on the same use-case as POST …/embeds/resolve',
       expect(result.isError).toBe(true);
     }
     expect(remote.calls).toEqual([]);
-  });
-
-  it('refuses, rather than failing obscurely, on a deployment with no fetcher', async () => {
-    const client = await connect(await setup(), writer);
-    const result = (await client.callTool({
-      name: 'embed_resolve',
-      arguments: { url: VIDEO, space: SPACE },
-    })) as ToolResult;
-    // A validation failure, not the internal-error mask a TypeError would become.
-    expect(result.isError).toBe(true);
-    expect(JSON.parse(text(result))).toMatchObject({
-      error: {
-        code: 'validation_failed',
-        issues: [{ field: 'url', message: 'This deployment cannot fetch embed metadata' }],
-      },
-    });
   });
 });

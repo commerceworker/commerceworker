@@ -1,5 +1,6 @@
 import type { PluginManifest } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -41,7 +42,7 @@ let ctx: ReturnType<typeof wire>['ctx'];
 beforeEach(() => {
   const wired = wire(config);
   ctx = wired.ctx;
-  app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
 });
 
 const send = (method: string, path: string, body?: unknown, headers = admin) =>

@@ -4,6 +4,7 @@
  * actually writes (not a fake's idea of them).
  */
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   createManagementClient,
   isAssetInUse,
@@ -35,7 +36,7 @@ const config: ApiConfig = testConfig({
 
 function client(token = 'cma'): ManagementClient {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   return createManagementClient({
     baseUrl: '',
     space: 's1',

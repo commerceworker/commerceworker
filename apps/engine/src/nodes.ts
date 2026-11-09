@@ -19,6 +19,7 @@ import {
   routeFulfillment,
   schedulePayouts,
   splitBySeller,
+  taxOrder,
   voidShipmentLabels,
 } from '@commerceworker/application/commerce';
 import {
@@ -30,12 +31,11 @@ import {
   CUSTOMER_MATCHED_BY,
   checkAddress,
   computeTotals,
-  customerTrusted,
+  creditCheck,
   describeAnswers,
   durationMs,
   evaluate,
   evaluatePolicy,
-  exemptingCertificate,
   type FlowNode,
   FULFILLMENT_METHOD_LABELS,
   type FulfillmentMethod,
@@ -51,7 +51,6 @@ import {
   pickOption,
   policyRulesSchema,
   type RunContext,
-  regionalTaxRate,
   renderDocument,
   SHIPPING_SELECTIONS,
   type ShippingSelection,
@@ -73,7 +72,6 @@ import { refundedAmount } from './payments';
 import { extractCatalog } from './product-index';
 import { provide } from './providers';
 import { physicalLines, quoteShipping } from './shipping-rates';
-import { customerTaxCertificates } from './tax-certificates';
 import {
   balanceStore,
   commercePorts,
@@ -84,6 +82,7 @@ import {
   messageStore,
   pricingStore,
   shippingStore,
+  taxCertificateStore,
 } from './wire';
 import { plural, varsSummary } from './words';
 
@@ -351,66 +350,35 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.tax': async ({ env, ctx, config, node, stepKey, dryRun }) => {
-    const taxShipping = config.includeShipping !== false;
     const by = providerOf(config);
     const regions = taxRegionsSchema.safeParse(config.regions ?? []);
-    const shipTo = checkAddress(ctx.order.meta?.shipTo).address;
-    const country = shipToCountry(ctx.order);
-    // The customer's certificate in force where the order ships when the order was placed (the
-    // run's `now`, not the clock): verifying, revoking or expiry later doesn't change this order.
-    // With no ship-to country, none; nor for a customer matched from what a buyer typed.
-    const cert =
-      config.exemptions !== false && customerTrusted(ctx.order)
-        ? exemptingCertificate(
-            await customerTaxCertificates(env, ctx.order.customerId),
-            country,
-            shipTo?.region,
-            ctx.now,
-          )
-        : null;
-    // A provider is told of the certificate and decides what it exempts; built in, it exempts all.
-    let exempted = !!cert && !by;
-    let rate = exempted
-      ? 0
-      : regionalTaxRate(
-          regions.success ? regions.data : [],
-          country,
-          shipTo?.region,
-          num(config.rate, 0.08),
-        );
-    if (by) {
-      // What computeTotals will tax: the lines' subtotal and rounded shipping, not stored totals.
-      const { subtotal, shipping } = computeTotals({ ...ctx.order, taxRate: 0 });
-      const answer = await provide(env, by, {
-        surface: 'tax',
-        op: 'calculate',
-        nodeId: node.id,
-        stepKey,
-        orderId: ctx.order.id,
-        config,
-        order: ctx.order,
-        input: {
-          subtotal,
-          shipping,
-          includeShipping: taxShipping,
-          currency: ctx.order.currency,
-          ...(cert ? { exemption: { certificate: cert.number, regions: cert.regions } } : {}),
-        },
-      });
-      const { amount } = answer;
-      // Only the provider can say its amount reflects the certificate.
-      exempted = !!cert && answer.exempted === true;
-      // Kept as the rate it works out to, so later nodes that recompute totals keep the same tax.
-      const taxable = subtotal + (taxShipping ? shipping : 0);
-      if (amount > 0 && taxable <= 0)
-        throw new NonRetryableError(`Tax provider “${by}” charged tax on nothing taxable`);
-      if (amount > taxable * PROVIDER_MAX_TAX_RATE)
-        throw new NonRetryableError(
-          `Tax provider “${by}” charged ${cash(amount, ctx)}, over ${PROVIDER_MAX_TAX_RATE * 100}% of ${cash(taxable, ctx)} taxable`,
-        );
-      rate = taxable > 0 ? amount / taxable : 0;
-    }
-    const t = computeTotals({ ...ctx.order, taxRate: rate, taxShipping });
+    const r = await taxOrder({ certificates: taxCertificateStore(env) }, ctx.order, {
+      now: ctx.now,
+      exemptions: config.exemptions !== false,
+      includeShipping: config.includeShipping !== false,
+      regions: regions.success ? regions.data : [],
+      fallbackRate: num(config.rate, 0.08),
+      provider: by
+        ? (input) =>
+            provide(env, by, {
+              surface: 'tax',
+              op: 'calculate',
+              nodeId: node.id,
+              stepKey,
+              orderId: ctx.order.id,
+              config,
+              order: ctx.order,
+              input,
+            })
+        : undefined,
+    });
+    if (!r.ok)
+      throw new NonRetryableError(
+        r.problem === 'untaxable'
+          ? `Tax provider “${by}” charged tax on nothing taxable`
+          : `Tax provider “${by}” charged ${cash(r.amount, ctx)}, over ${PROVIDER_MAX_TAX_RATE * 100}% of ${cash(r.taxable, ctx)} taxable`,
+      );
+    const { rate, taxShipping, totals: t, certificate: cert, exempted } = r;
     // An order keeps the certificate's id, not its number, which names the business and would
     // outlive the customer's erasure in step outputs; a quote (never stored as a step) shows it.
     const exemption = cert
@@ -446,25 +414,27 @@ export const EXECUTORS: Record<string, Exec> = {
 
   'commerce.credit_check': async ({ env, ctx, config }) => {
     const c = await pricingStore(env).customer(ctx.order.customerId);
-    if (c?.kind !== 'business') {
-      const branch = str(config.noAccount, 'over_limit') === 'ok' ? 'ok' : 'over_limit';
+    const r = creditCheck(c, ctx.order, {
+      noAccount: str(config.noAccount, 'over_limit') === 'ok' ? 'ok' : 'over_limit',
+    });
+    if (!r.account || !c)
       return {
-        branches: [branch],
+        branches: [r.ok ? 'ok' : 'over_limit'],
         summary: c ? `No credit account (${c.kind})` : 'Guest checkout (no credit account)',
         output: { available: 0 },
       };
-    }
-    // Limits and balances are in the base currency; compare the order there too.
-    const available = money(c.creditLimit - c.balance);
-    const total = ctx.order.baseTotal ?? toBase(ctx.order.total, ctx.order.fxRate);
-    const ok = total <= available;
     const local = (n: number) => cash(fromBase(n, ctx.order.fxRate), ctx);
     return {
-      branches: [ok ? 'ok' : 'over_limit'],
-      output: { limit: c.creditLimit, balance: c.balance, available, currency: BASE_CURRENCY },
-      summary: ok
-        ? `Within credit (${local(available)} available)`
-        : `Over limit by ${local(total - available)}`,
+      branches: [r.ok ? 'ok' : 'over_limit'],
+      output: {
+        limit: c.creditLimit,
+        balance: c.balance,
+        available: r.available,
+        currency: BASE_CURRENCY,
+      },
+      summary: r.ok
+        ? `Within credit (${local(r.available)} available)`
+        : `Over limit by ${local(r.over)}`,
     };
   },
 
@@ -545,38 +515,24 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.invoice': async ({ env, ctx, config, stepKey }) => {
-    const terms = str(config.terms, 'due_on_receipt');
-    const days = billing.TERM_DAYS[terms] ?? 30;
-    const due = new Date(ctx.now + days * 86_400_000).toISOString().slice(0, 10);
-    const key = await documentStore(env).put(
-      ctx.order.id,
-      'invoice',
-      `${stepKey.replace('#', '-')}.html`,
-      renderDocument(`Invoice ${ctx.order.id}`, ctx.order, ctx.now, { Terms: terms, Due: due }),
+    const {
+      key,
+      terms,
+      due,
+      onAccount: owed,
+      issued,
+    } = await billing.invoiceOrder(
+      env,
+      ctx.order,
+      stepKey,
+      {
+        terms: str(config.terms, 'due_on_receipt'),
+        processor: config.provider === 'stripe',
+        sendEmail: config.sendEmail !== false,
+        onAccount: config.onAccount !== false,
+      },
+      ctx.now,
     );
-    // Only an unpaid invoice to a business customer is owed on account; a paid order, a consumer
-    // or a guest has nothing outstanding.
-    const customer = await pricingStore(env).customer(ctx.order.customerId);
-    const owed =
-      config.onAccount !== false &&
-      customer?.kind === 'business' &&
-      (await cx.paidAmount(env, ctx.order.id)) < ctx.order.total;
-    // Issued before the account is charged, so a step that fails here leaves no charge behind.
-    const issued =
-      config.provider === 'stripe'
-        ? await billing.issueStripeInvoice(env, ctx.order, stepKey, {
-            terms,
-            sendEmail: config.sendEmail !== false,
-            onAccount: owed,
-          })
-        : null;
-    if (owed)
-      await balanceStore(env).charge({
-        orderId: ctx.order.id,
-        stepKey,
-        customerId: customer.id,
-        amount: toBase(ctx.order.total, ctx.order.fxRate),
-      });
     const stripe = issued
       ? {
           invoiceId: issued.externalId,

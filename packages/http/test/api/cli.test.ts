@@ -12,6 +12,7 @@ import { addMember, createRole, createSpace } from '@commerceworker/application'
 import { EXIT, type Io, run } from '@commerceworker/cli';
 import { SCOPES } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { principalTarget, signPrincipal } from '@commerceworker/security/principal';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -33,7 +34,7 @@ const PERSON = { sub: 'usr_ada', email: 'ada@example.com', name: 'Ada', role: 'm
 
 async function boot() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   await createSpace(wired.ctx, { spaceId: 's1', name: 'One', defaultLocale: 'en-US' }).catch(
     () => {},
   );

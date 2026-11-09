@@ -1,21 +1,21 @@
-import {
-  handleMediaRequest,
-  keyFromMediaPath,
-  type MediaUrlSigner,
-  type R2BucketLike,
-} from '@commerceworker/adapters/blob-r2';
-import { type ImagesBindingLike, transformImage } from '@commerceworker/adapters/images-cf';
-import { verifyStreamWebhook } from '@commerceworker/adapters/video-stream';
 import { type AppContext, refreshVideoAsset } from '@commerceworker/application';
 import { NotFoundError } from '@commerceworker/domain';
 import { Hono } from 'hono';
 
+/** What `@commerceworker/platform/media`'s `mediaAdapters` binds. */
+export interface MediaAdapters {
+  readonly transfer?: (request: Request) => Promise<Response>;
+  readonly keyFromPath: (pathname: string) => string | null;
+  readonly verifyStreamNotice?: (
+    signature: string | null,
+    raw: string,
+  ) => Promise<{ videoId: string; meta: Readonly<Record<string, string>> } | null>;
+}
+
 export interface MediaRouteDeps {
   readonly ctx: AppContext;
-  readonly bucket?: R2BucketLike;
-  readonly signer?: MediaUrlSigner;
-  readonly images?: ImagesBindingLike;
-  readonly streamWebhookSecret?: string;
+  /** Bound at the composition root (`@commerceworker/platform/media`). */
+  readonly media: MediaAdapters;
   /**
    * Called with the key and etag of each upload the signed PUT stored, to start its ingest. R2's
    * own notification starts it too where notifications exist (not in local development); the
@@ -24,8 +24,6 @@ export interface MediaRouteDeps {
    * logged, never the upload's.
    */
   readonly onUploaded?: (key: string, etag?: string) => Promise<void>;
-  /** Injected for tests; seconds since the epoch. */
-  readonly now?: () => number;
 }
 
 /**
@@ -42,32 +40,16 @@ export interface MediaRouteDeps {
  */
 export function mediaRoutes(deps: MediaRouteDeps): Hono {
   const app = new Hono();
-  const { bucket, signer } = deps;
+  const { transfer, keyFromPath, verifyStreamNotice } = deps.media;
 
-  if (bucket && signer) {
+  if (transfer) {
     app.on(['GET', 'HEAD', 'PUT'], '/media/*', async (c) => {
-      const res = await handleMediaRequest(c.req.raw, {
-        bucket,
-        signer,
-        ...(deps.now ? { now: deps.now } : {}),
-        ...(deps.images
-          ? {
-              transform: (object, params, request) =>
-                transformImage(
-                  deps.images as ImagesBindingLike,
-                  object.body,
-                  object.httpMetadata?.contentType ?? '',
-                  params,
-                  request.headers.get('accept'),
-                ),
-            }
-          : {}),
-      });
+      const res = await transfer(c.req.raw);
       // A multipart part (`upload=` in the signed URL) is not a file yet: completing the upload
       // starts its ingest.
       const part = new URL(c.req.url).searchParams.has('upload');
       if (c.req.method === 'PUT' && res.ok && deps.onUploaded && !part) {
-        const key = keyFromMediaPath(new URL(c.req.url).pathname);
+        const key = keyFromPath(new URL(c.req.url).pathname);
         if (key) {
           const etag = res.headers.get('etag') ?? undefined;
           await deps.onUploaded(key, etag).catch((err: unknown) => {
@@ -79,16 +61,10 @@ export function mediaRoutes(deps: MediaRouteDeps): Hono {
     });
   }
 
-  if (deps.streamWebhookSecret) {
-    const secret = deps.streamWebhookSecret;
+  if (verifyStreamNotice) {
     app.post('/webhooks/stream', async (c) => {
       const raw = await c.req.text();
-      const notice = await verifyStreamWebhook(
-        secret,
-        c.req.header('webhook-signature') ?? null,
-        raw,
-        deps.now ? { nowSeconds: deps.now() } : {},
-      );
+      const notice = await verifyStreamNotice(c.req.header('webhook-signature') ?? null, raw);
       if (!notice) return c.text('invalid signature', 401);
       const { assetId, spaceId, environmentId } = notice.meta;
       // Not ours (uploaded outside commerceworker): acknowledge so Stream stops retrying.

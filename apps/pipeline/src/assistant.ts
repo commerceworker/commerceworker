@@ -14,10 +14,9 @@ import {
   type PersonRefused,
   type SocketClaims,
 } from '@commerceworker/http/assistant/agent';
-import { wireEdge } from '@commerceworker/platform/wire';
+import { wireEdge, wirePeople } from '@commerceworker/platform/wire';
 import { sendReviewDecision } from '@commerceworker/platform/workflows';
 import { isRole, sessionIdleMs } from '@commerceworker/security/roles';
-import { anyPeople, authDbOf, personNow } from '@commerceworker/store/auth';
 
 export class AssistantAgent extends AssistantAgentBase {
   protected override wire(): AssistantWiring {
@@ -37,12 +36,15 @@ export class AssistantAgent extends AssistantAgentBase {
         moderateBeforePublish: wired.config.moderateBeforePublish,
         accessPolicy: WEB_SIGN_IN,
         remoteFetcher: wired.remoteFetcher,
+        importSources: wired.importSources,
+        spaceExportReader: wired.spaceExportReader,
         signalReview: env.AGENT_WF
           ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
           : undefined,
         ...(wired.workflowEngine ? { workflowEngine: wired.workflowEngine } : {}),
         workflowNodes: wired.workflowNodes,
       },
+      model: wired.assistantModel,
       close: () => wired.close(),
     };
   }
@@ -55,22 +57,21 @@ export class AssistantAgent extends AssistantAgentBase {
    * account gone or disabled ends the conversation.
    */
   protected override async personNow(claims: SocketClaims): Promise<PersonNow | PersonRefused> {
-    const d1 = this.env.DB;
+    const people = wirePeople(this.env);
     if (claims.sub === 'local') {
-      const open = !d1 || !(await anyPeople(authDbOf(d1)));
+      const open = !people || !(await people.anyPeople());
       return open ? { name: 'local', email: '', role: claims.role } : { refused: 'session' };
     }
-    if (!d1 || !claims.sid) return { refused: 'session' };
-    const db = authDbOf(d1);
+    if (!people || !claims.sid) return { refused: 'session' };
     const now = Date.now();
-    const row = await personNow(db, { sub: claims.sub, sid: claims.sid }, now);
+    const row = await people.personNow({ sub: claims.sub, sid: claims.sid }, now);
     if (row && isRole(row.role)) {
       if (row.seenAt !== undefined && now - row.seenAt > sessionIdleMs(row.role))
         return { refused: 'session' };
       return { name: row.name, email: row.email, role: row.role };
     }
     // Why not: their session, or them?
-    return (await personNow(db, { sub: claims.sub }, now))
+    return (await people.personNow({ sub: claims.sub }, now))
       ? { refused: 'session' }
       : { refused: 'person' };
   }

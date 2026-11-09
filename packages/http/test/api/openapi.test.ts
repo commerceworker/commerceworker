@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { scalarBundleUrl } from '../../src/api/docs/openapi';
@@ -22,7 +23,7 @@ const config: ApiConfig = testConfig({
 
 function makeApp() {
   const { ctx, rag, blob, ai, bus } = wire(config);
-  return createApp(ctx, config, rag, blob, ai, bus);
+  return createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus);
 }
 
 describe('OpenAPI spec + docs UI', () => {
@@ -128,7 +129,7 @@ describe('OpenAPI spec + docs UI', () => {
 
   it('spec reflects ROLE gating (delivery-only deployment has no management paths)', async () => {
     const { ctx, rag, blob, ai, bus } = wire({ ...config, role: 'delivery' });
-    const app = createApp(ctx, { ...config, role: 'delivery' }, rag, blob, ai, bus);
+    const app = createApp(ctx, { ...config, role: 'delivery' }, rag, blob, ai, inMemoryEdge(), bus);
     const res = await app.request('/openapi.json');
     const spec = (await res.json()) as { paths: Record<string, unknown> };
     const paths = Object.keys(spec.paths);

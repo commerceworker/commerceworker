@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { InMemorySearchIndex } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -28,7 +29,14 @@ function build(searchIndex?: InMemorySearchIndex) {
   const { ctx, rag, blob, ai } = wire(config);
   return {
     ctx,
-    app: createApp(ctx, config, searchIndex ? { ...rag, searchIndex } : rag, blob, ai),
+    app: createApp(
+      ctx,
+      config,
+      searchIndex ? { ...rag, searchIndex } : rag,
+      blob,
+      ai,
+      inMemoryEdge(),
+    ),
   };
 }
 

@@ -15,6 +15,7 @@ import {
   SETUP_SCOPE,
   SETUP_TOOLS,
 } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -45,6 +46,7 @@ function makeDeps(): McpDeps {
   };
   const ai = new StubAIProvider(() => ({}));
   return {
+    ...inMemoryEdge(),
     ctx,
     ai,
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

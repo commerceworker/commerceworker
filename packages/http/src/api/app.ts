@@ -1,6 +1,3 @@
-import { createRemoteFetcher } from '@commerceworker/adapters/http-effects';
-import { createSpaceExportReader } from '@commerceworker/adapters/import-space-export';
-import { structuredImportSources } from '@commerceworker/adapters/import-structured';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import {
   type AppContext,
@@ -52,6 +49,8 @@ export function createApp(
   rag: RagDeps,
   blob: BlobStore,
   ai: AIProvider,
+  /** The import and fetch adapters the composition root bound (`wireEdge`, `platform/in-memory`). */
+  edge: Pick<AuthDeps, 'importSources' | 'spaceExportReader' | 'remoteFetcher'>,
   bus: EventBus = noopBus,
   rateLimiter?: AuthRateLimit,
   signalReview?: AuthDeps['signalReview'],
@@ -171,13 +170,11 @@ export function createApp(
     // run in-process; the durable Cloudflare Workflows path serves the queue
     // consumer's on-publish runs (AGENT_RUNTIME=cloudflare-workflows).
     agents: new InProcessAgentRuntime(makeActivities({ ctx, ai })),
-    // Pure parsers with nothing to configure, so they are always available;
-    // a source that needed credentials or a network would be env-gated here.
-    importSources: structuredImportSources(),
-    spaceExportReader: createSpaceExportReader(),
+    importSources: edge.importSources,
+    spaceExportReader: edge.spaceExportReader,
     // Downloading a plugin package is a fetch like any other, bounded and
     // redirect-refusing; the policy that decides *whether* is config, not code.
-    remoteFetcher: createRemoteFetcher(),
+    remoteFetcher: edge.remoteFetcher,
     pluginSources: config.pluginSources ?? {},
     rateLimiter,
     signalReview,

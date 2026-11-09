@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -63,7 +64,7 @@ const event = {
 
 function setup() {
   const { ctx, rag, blob, ai } = wire(config);
-  const app = createApp(ctx, config, rag, blob, ai);
+  const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   const send = (path: string, method: string, body?: unknown) =>
     app.request(path, { method, headers: cma, body: body ? JSON.stringify(body) : undefined });
   return { send, ctx };

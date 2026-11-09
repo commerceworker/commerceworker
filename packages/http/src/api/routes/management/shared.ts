@@ -94,12 +94,12 @@ export function expectedVersionOf(c: Context<AuthVars>): { expectedVersion?: num
  * ids, and the list is short enough to just show them.
  */
 export function importSourceOr400(
-  sources: Readonly<Record<string, ImportSource>> | undefined,
+  sources: Readonly<Record<string, ImportSource>>,
   id: string,
 ): ImportSource {
-  const found = sources?.[id];
+  const found = sources[id];
   if (found) return found;
-  const known = Object.keys(sources ?? {});
+  const known = Object.keys(sources);
   throw new ValidationError([
     {
       field: 'source',

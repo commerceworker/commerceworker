@@ -7,10 +7,11 @@
   "exports": {
     "./asset-ingest": "./src/asset-ingest.ts",
     "./asset-zip": "./src/asset-zip.ts",
+    "./assistant-model": "./src/assistant-model.ts",
     "./auth-rate-limit": "./src/auth-rate-limit.ts",
     "./config": "./src/config.ts",
-    "./dead-letters": "./src/dead-letters.ts",
     "./data-key": "./src/data-key.ts",
+    "./dead-letters": "./src/dead-letters.ts",
     "./do/cost-guard": "./src/do/cost-guard.ts",
     "./do/live-access": "./src/do/live-access.ts",
     "./do/live-hub": "./src/do/live-hub.ts",
@@ -20,6 +21,7 @@
     "./env": "./src/env.ts",
     "./ids": "./src/ids.ts",
     "./in-memory": "./src/in-memory.ts",
+    "./media": "./src/media.ts",
     "./messages": "./src/messages.ts",
     "./metrics": "./src/metrics.ts",
     "./purge": "./src/purge.ts",
@@ -39,7 +41,9 @@
     "@commerceworker/ports": "workspace:*",
     "@commerceworker/redaction": "workspace:*",
     "@commerceworker/security": "workspace:*",
-    "@commerceworker/test-kit": "workspace:*"
+    "@commerceworker/test-kit": "workspace:*",
+    "agents": "catalog:",
+    "ai": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",

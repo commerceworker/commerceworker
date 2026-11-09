@@ -1,5 +1,6 @@
 import { type AuthRateLimit, clientIp } from '@commerceworker/platform/auth-rate-limit';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -41,7 +42,7 @@ function fakeLimiter(blocked = false) {
 
 function makeApp(limiter: AuthRateLimit) {
   const { ctx, rag, blob, ai, bus } = wire(config);
-  return createApp(ctx, config, rag, blob, ai, bus, limiter);
+  return createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus, limiter);
 }
 
 describe('injected auth rate limiter (distributed seam)', () => {

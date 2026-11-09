@@ -1,4 +1,3 @@
-import { structuredImportSources } from '@commerceworker/adapters/import-structured';
 import { authenticate, secureTokenEqual } from '@commerceworker/application';
 import {
   bearerChallenge,
@@ -25,13 +24,7 @@ const ADMIN: Principal = { spaceId: '*', kind: 'admin', scopes: [...scopesForKin
  * a hashed API key, or an OAuth access token; the request is then served by
  * the shared handler in ./http.ts (tools in ./server.ts, skills in ./skills.ts).
  */
-export function mcpRoutes(given: McpDeps, oauth?: { issuer: string; resource: string }): Hono {
-  // The structured import parsers (JSON, CSV, WXR) are pure and need no configuration, so MCP
-  // gets them by default exactly as the HTTP API does (createApp). Left to each caller, the api
-  // Worker's wiring omitted them and `import_*` answered "no import sources" in production.
-  const deps: McpDeps = given.importSources
-    ? given
-    : { ...given, importSources: structuredImportSources() };
+export function mcpRoutes(deps: McpDeps, oauth?: { issuer: string; resource: string }): Hono {
   const app = new Hono();
 
   // RFC 9728: an MCP client that finds the resource before the authorization

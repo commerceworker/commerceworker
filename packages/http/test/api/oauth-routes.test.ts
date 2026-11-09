@@ -1,6 +1,7 @@
 import { addMember, createRole, createSpace, updateMember } from '@commerceworker/application';
 import { SCOPES } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { principalTarget, signPrincipal } from '@commerceworker/security/principal';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -40,7 +41,7 @@ type App = ReturnType<typeof createApp>;
  */
 function makeApp() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const request = app.request.bind(app);
   app.request = (async (input: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
@@ -187,6 +188,7 @@ describe('OAuth discovery metadata', () => {
       wired.rag,
       wired.blob,
       wired.ai,
+      inMemoryEdge(),
     );
     expect((await app.request('/.well-known/oauth-authorization-server')).status).toBe(404);
     expect((await app.request('/oauth/token', { method: 'POST' })).status).toBe(404);

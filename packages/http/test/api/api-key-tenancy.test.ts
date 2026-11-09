@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -33,7 +34,7 @@ describe('api-key minting cannot be rebound to another space', () => {
 
   beforeEach(async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     // A second space to attempt to escalate into.
     await app.request('/spaces', {
       method: 'POST',
@@ -101,7 +102,7 @@ describe('deleting an environment stays within the caller’s space and role', (
 
   beforeEach(async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     await app.request('/spaces', {
       method: 'POST',
       headers: admin,
@@ -172,7 +173,7 @@ describe('entry counts stay within the caller’s space and scope', () => {
 
   beforeEach(async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     await app.request('/spaces', {
       method: 'POST',
       headers: admin,

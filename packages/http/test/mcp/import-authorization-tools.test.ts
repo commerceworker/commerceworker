@@ -19,6 +19,7 @@ import {
   rolePresetDefinition,
   SCOPES,
 } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { ImportSource } from '@commerceworker/ports';
 import {
   FakeBlobStore,
@@ -79,6 +80,7 @@ beforeEach(async () => {
     ids: new SequenceIdGenerator('m'),
   };
   deps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

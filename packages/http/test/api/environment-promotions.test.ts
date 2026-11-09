@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app.js';
 import { testConfig } from './config.js';
@@ -28,7 +29,7 @@ let entryId: string;
 
 beforeEach(async () => {
   const { ctx, rag, blob, ai } = wire(config);
-  app = createApp(ctx, config, rag, blob, ai);
+  app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   await app.request('/spaces/s1/environments', {
     method: 'POST',
     headers: admin,

@@ -6,6 +6,7 @@ import {
 } from '@commerceworker/application';
 import { isWebhookSendRequest } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { type InMemoryContentStore, RecordingWebhookSender } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -54,7 +55,7 @@ describe('webhooks under an environment', () => {
 
   beforeEach(async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     await createEnvironment(ctx, 's1', 'staging');
     await setEnvironmentAlias(ctx, 's1', 'prod', 'staging');
   });
@@ -170,7 +171,7 @@ describe('webhook tests and resends', () => {
   beforeEach(async () => {
     const wired = wire(config);
     ctx = wired.ctx;
-    app = createApp(ctx, config, wired.rag, wired.blob, wired.ai);
+    app = createApp(ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
     consumed = (ctx.store as InMemoryContentStore).allOutbox().length;
   });
 

@@ -1,6 +1,7 @@
 import { assetBulkChunkRunner, runBulkChunk } from '@commerceworker/application';
 import type { BulkChunkDueEvent } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { FakeBlobStore, InMemoryContentStore } from '@commerceworker/test-kit';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -41,7 +42,7 @@ async function json<T>(res: Response): Promise<T> {
 
 function makeApp() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   return { app, ctx: wired.ctx, blob: wired.blob as FakeBlobStore };
 }
 

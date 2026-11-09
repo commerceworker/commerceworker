@@ -14,6 +14,7 @@ import {
 } from '@commerceworker/application';
 import { type Principal, SCOPES, WorkflowBuilder } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { StubAIProvider } from '@commerceworker/test-kit';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -61,6 +62,7 @@ describe('release and workflow list summaries', () => {
     wired = wire(config);
     ctx = wired.ctx;
     deps = {
+      ...inMemoryEdge(),
       ctx,
       ai: wired.ai,
       rag: wired.rag,
@@ -124,7 +126,7 @@ describe('release and workflow list summaries', () => {
   }
 
   async function http(path: string) {
-    const app = createApp(ctx, config, wired.rag, wired.blob, wired.ai, wired.bus);
+    const app = createApp(ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge(), wired.bus);
     const res = await app.request(`/spaces/${SPACE}/environments/main${path}`, {
       headers: { Authorization: 'Bearer cpa' },
     });

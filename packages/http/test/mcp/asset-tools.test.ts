@@ -16,6 +16,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import { type Principal, SCOPES } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FakeAssetIngestQueue,
   FakeBlobStore,
@@ -47,6 +48,7 @@ async function setup() {
     ids: new SequenceIdGenerator('m'),
   };
   const deps: McpDeps = {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },
@@ -590,8 +592,9 @@ describe('single-asset tools (MCP), on the same use-cases, scopes and serializer
 
   async function both() {
     const wired = wire(config);
-    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
     const deps: McpDeps = {
+      ...inMemoryEdge(),
       // A video host and the ingest queue, for the tools that need them; REST's reads don't.
       ctx: { ...wired.ctx, video: new FakeVideoHost() },
       assetIngest: new FakeAssetIngestQueue(),

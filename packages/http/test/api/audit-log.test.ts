@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { AuditEntry } from '@commerceworker/ports';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -51,7 +52,7 @@ describe('GET /spaces/:space/audit-log', () => {
 
   beforeEach(async () => {
     wired = wire(config);
-    app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+    app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
     for (let n = 0; n < 6; n++) await wired.ctx.store.audit.append(row(n));
     await wired.ctx.store.audit.append(row(9, { spaceId: 's2', actor: 'usr_ada' }));
   });

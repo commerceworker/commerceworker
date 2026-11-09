@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -43,7 +44,7 @@ let app: ReturnType<typeof createApp>;
 
 beforeEach(async () => {
   const wired = wire(config);
-  app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const res = await send('POST', '/spaces/s1/plugins', {
     manifest: MANIFEST,
     bundle: 'export class Plugin {}',

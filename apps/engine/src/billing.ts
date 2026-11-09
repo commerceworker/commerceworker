@@ -10,7 +10,7 @@ import * as uc from '@commerceworker/application/commerce';
 import type { Order } from '@commerceworker/core';
 import { type InvoiceRecord, InvoiceRefusedError } from '@commerceworker/ports/commerce';
 import { paymentMode } from './payments';
-import { balanceStore, invoiceStore, paymentLedger } from './wire';
+import { balanceStore, documentStore, invoiceStore, paymentLedger, pricingStore } from './wire';
 
 export { type InvoiceTerms, TERM_DAYS } from '@commerceworker/core';
 
@@ -37,6 +37,29 @@ export const issueStripeInvoice = (
   stepKey: string,
   opts: { terms: string; sendEmail: boolean; onAccount: boolean },
 ) => settled(uc.issueInvoice(ports(env), order, stepKey, opts, Date.now()));
+
+/** `commerce.invoice`: files, issues and charges the order's invoice (`invoiceOrder`). */
+export const invoiceOrder = (
+  env: Env,
+  order: Order,
+  stepKey: string,
+  opts: { terms: string; processor: boolean; sendEmail: boolean; onAccount: boolean },
+  now: number,
+) =>
+  settled(
+    uc.invoiceOrder(
+      {
+        ...ports(env),
+        documents: documentStore(env),
+        pricing: pricingStore(env),
+        balances: balanceStore(env),
+      },
+      order,
+      stepKey,
+      opts,
+      now,
+    ),
+  );
 
 export const voidInvoices = (env: Env, orderId: string) =>
   settled(uc.voidInvoices(ports(env), orderId));

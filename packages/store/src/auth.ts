@@ -4,6 +4,7 @@
  * without the content store.
  */
 
+import type { PeopleDirectory } from '@commerceworker/ports';
 import { and, desc, eq, gt, isNotNull, isNull, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
 import * as authSchema from './auth-schema';
@@ -117,4 +118,13 @@ export async function personNow(
 /** Whether anyone has an account yet: before then, local development runs open (as `local`). */
 export async function anyPeople(db: AuthDb): Promise<boolean> {
   return Boolean(await db.select({ id: users.id }).from(users).limit(1).get());
+}
+
+/** The {@link PeopleDirectory} port over a D1 binding's auth tables, bound in `wireEdge`. */
+export function createPeopleDirectory(d1: D1Database): PeopleDirectory {
+  const db = authDbOf(d1);
+  return {
+    personNow: (who, now) => personNow(db, who, now),
+    anyPeople: () => anyPeople(db),
+  };
 }

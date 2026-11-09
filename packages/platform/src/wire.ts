@@ -18,6 +18,7 @@ import { createCfEmailSender } from '@commerceworker/adapters/email-cf';
 import { createRemoteFetcher, createWebhookSender } from '@commerceworker/adapters/http-effects';
 import { createCfImageProbe, createCfImageTransformer } from '@commerceworker/adapters/images-cf';
 import { createSpaceExportReader } from '@commerceworker/adapters/import-space-export';
+import { structuredImportSources } from '@commerceworker/adapters/import-structured';
 import { createWorkerLoaderRuntime } from '@commerceworker/adapters/plugins-cf-loader';
 import { createAssetIngestQueue, createCfQueueProducer } from '@commerceworker/adapters/queue-cf';
 import { createKvDevVectorStore } from '@commerceworker/adapters/vector-kv-dev';
@@ -61,8 +62,10 @@ import type {
   EventBus,
   GenerateRequest,
   IdGenerator,
+  ImportSource,
   MediaPathSigner,
   PasswordHasher,
+  PeopleDirectory,
   Queue as QueuePort,
   RemoteFetcher,
   SecretSealer,
@@ -73,6 +76,7 @@ import type {
 } from '@commerceworker/ports';
 import { pbkdf2PasswordHasher } from '@commerceworker/security/credentials';
 import { createD1Store } from '@commerceworker/store';
+import { createPeopleDirectory } from '@commerceworker/store/auth';
 import {
   FakeBlobStore,
   InMemoryContentStore,
@@ -84,6 +88,7 @@ import {
 } from '@commerceworker/test-kit';
 import { CloudflareAssetIngestStarter } from './asset-ingest';
 import { CloudflareAssetZipStarter } from './asset-zip';
+import { type AssistantLlm, makeAssistantModel } from './assistant-model';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
 import { doCostGuardFromEnv } from './do/cost-guard';
@@ -143,6 +148,15 @@ export interface EdgeWired {
   readonly remoteFetcher: RemoteFetcher;
   /** Reads the JSON space export format, for MCP's space export tools. A pure parser. */
   readonly spaceExportReader: SpaceExportReader;
+  /** Readers for external content formats, by source id (the structured parsers: JSON, CSV, WXR). */
+  readonly importSources: Readonly<Record<string, ImportSource>>;
+  /**
+   * The assistant's Workers AI model for one person; absent under AI_MODE=mock or with no AI
+   * binding, where the assistant answers with its own mock.
+   */
+  readonly assistantModel?: (personId: string) => Promise<AssistantLlm>;
+  /** The admin's people and sessions in the shared D1; absent without a D1 binding. */
+  readonly people?: PeopleDirectory;
   /** True when backed by D1 vs the in-memory demo store. */
   readonly persistent: boolean;
   /**
@@ -292,6 +306,8 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
       baseCtx;
 
   const email = makeEmail(env);
+  const assistantModel = makeAssistantModel(env);
+  const people = wirePeople(env);
   const workflowEngine = makeWorkflowEngine(env);
   return {
     ctx,
@@ -301,6 +317,9 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     ...(workflowEngine ? { workflowEngine } : {}),
     remoteFetcher: createRemoteFetcher(),
     spaceExportReader: createSpaceExportReader(),
+    importSources: structuredImportSources(),
+    ...(assistantModel ? { assistantModel } : {}),
+    ...(people ? { people } : {}),
     workflowNodes: {
       ai,
       decisions,
@@ -330,6 +349,14 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     bookmark: () => session?.getBookmark() ?? undefined,
     close: async () => {},
   };
+}
+
+/**
+ * The admin's people and sessions in the shared D1, for a Worker that checks who is behind a
+ * socket on each message (the assistant) and needs none of the rest of {@link wireEdge}.
+ */
+export function wirePeople(env: Pick<EdgeEnv, 'DB'>): PeopleDirectory | undefined {
+  return env.DB ? createPeopleDirectory(env.DB) : undefined;
 }
 
 /** Share-link passwords: PBKDF2-SHA256, the admin's own scheme (no pepper: the api has none). */

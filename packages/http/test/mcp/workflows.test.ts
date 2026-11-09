@@ -12,6 +12,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import { type Principal, SCOPES, WorkflowBuilder } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import {
   FixedClock,
   InMemoryContentStore,
@@ -71,6 +72,7 @@ describe('MCP workflow tools', () => {
     };
     harness = makeTestWorkflowEngine(ctx);
     deps = {
+      ...inMemoryEdge(),
       ctx,
       ai: new StubAIProvider(() => ({})),
       rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

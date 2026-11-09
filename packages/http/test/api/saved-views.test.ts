@@ -9,6 +9,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import type { FieldDefinition } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { principalTarget, signPrincipal } from '@commerceworker/security/principal';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -58,7 +59,7 @@ describe('saved views over HTTP', () => {
     const wired = wire(config);
     const { rag, blob, ai } = wired;
     ctx = wired.ctx;
-    app = createApp(ctx, config, rag, blob, ai);
+    app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     await createContentType(ctx, SYSTEM_CALLER, scope, {
       apiId: 'staff',
       name: 'Staff',

@@ -1471,6 +1471,12 @@ importers:
       '@commerceworker/test-kit':
         specifier: workspace:*
         version: link:../test-kit
+      agents:
+        specifier: 'catalog:'
+        version: 0.32.0(@ai-sdk/provider@4.0.35)(@ai-sdk/react@4.0.163(react@19.3.0)(zod@4.6.7))(@babel/core@8.0.7)(@babel/runtime@7.29.10)(@modelcontextprotocol/client@2.4.0)(@modelcontextprotocol/server@2.4.0)(ai@7.0.159(zod@4.6.7))(react@19.3.0)(rolldown@1.2.13)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(zod@4.6.7)
+      ai:
+        specifier: 'catalog:'
+        version: 7.0.159(zod@4.6.7)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: 'catalog:'

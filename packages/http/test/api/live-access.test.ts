@@ -1,5 +1,6 @@
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { LIVE_ACCESS_HEADER, liveHubName } from '@commerceworker/platform/do/live-access';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { createApiHasher } from '../../src/api/auth';
@@ -29,7 +30,7 @@ const admin = { Authorization: 'Bearer admin', 'Content-Type': 'application/json
 async function setup() {
   const wired = wire(config);
   const { ctx, rag, blob, ai, bus } = wired;
-  const app = createApp(ctx, config, rag, blob, ai, bus);
+  const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge(), bus);
   const forwarded: { hub: string; request: Request }[] = [];
   const ns = {
     idFromName: (name: string) => name,
@@ -42,6 +43,7 @@ async function setup() {
   } as unknown as DurableObjectNamespace;
   const live = liveRoutes(
     {
+      ...inMemoryEdge(),
       ctx,
       hasher: createApiHasher(config.tokenPepper),
       adminToken: '',

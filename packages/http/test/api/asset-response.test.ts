@@ -6,6 +6,7 @@
  * was asked for) without a 500.
  */
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { SERVER_ONLY_ASSET_FIELDS } from '../../src/api/asset-response';
@@ -27,7 +28,7 @@ const cma = { Authorization: 'Bearer cma', 'Content-Type': 'application/json' };
 
 function makeApp() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const send = async (method: string, path: string, body?: unknown) => {
     const res = await app.request(`${M}${path}`, {
       method,

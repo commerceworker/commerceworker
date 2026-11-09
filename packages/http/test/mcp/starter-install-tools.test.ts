@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { type AppContext, createSpace, dispatchEvent } from '@commerceworker/application';
 import { type DomainEvent, type Principal, scopesForKind } from '@commerceworker/domain';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { starterChunkRunner } from '@commerceworker/seed';
 import {
   FakeBlobStore,
@@ -44,6 +45,7 @@ function makeDeps(demoStarters: boolean): McpDeps & { ctx: AppContext } {
     ids: new SequenceIdGenerator('m'),
   };
   return {
+    ...inMemoryEdge(),
     ctx,
     ai: new StubAIProvider(() => ({})),
     rag: { embeddings: new LocalEmbeddingsProvider(8), vectors: new InMemoryVectorStore() },

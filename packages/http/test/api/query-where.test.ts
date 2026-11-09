@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createDeliveryClient } from '@commerceworker/sdk-core';
 import { createManagementClient } from '@commerceworker/sdk-management';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -42,7 +43,7 @@ type App = ReturnType<typeof createApp>;
 
 async function seed(): Promise<App> {
   const { ctx, rag, blob, ai } = wire(config);
-  const app = createApp(ctx, config, rag, blob, ai);
+  const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
   const post = (path: string, body: unknown) =>
     app.request(path, { method: 'POST', headers: admin, body: JSON.stringify(body) });
   await post(`${M}/content-types`, {

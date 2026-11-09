@@ -66,3 +66,35 @@ test('the web app reaches D1 only through its composition root', () => {
 test('the web composition root does bind the D1 adapters', () => {
   assert.match(readFileSync(WEB_ROOT, 'utf8'), D1_ADAPTERS);
 });
+
+// The HTTP surface (packages/http) is a library: it takes its adapters as deps and binds none.
+// `wireEdge` and `platform/in-memory` build the import sources, the space export reader, the
+// remote fetcher and the assistant's model, and `platform/media` the media routes' R2 transfers,
+// Images transforms and Stream webhook check; the Workers' entries pass them in.
+const HTTP = 'packages/http/src';
+const ADAPTERS = /from '@commerceworker\/adapters(?:\/[\w-]+)?'/;
+
+test('packages/http binds no adapters', () => {
+  const binding = files(HTTP).filter((f) => ADAPTERS.test(readFileSync(f, 'utf8')));
+  assert.deepEqual(
+    binding,
+    [],
+    `Take the adapter as a dep, bound in packages/platform/src/wire.ts:\n${binding.join('\n')}`,
+  );
+});
+
+// The pipeline Worker's files reach D1 and the in-memory fakes only through `wireEdge`: no D1
+// store factory (`@commerceworker/store`, its `/auth` tables included) and no test-kit in
+// production code. Its entry (src/index.ts) may bind the outbound-effects adapter it hands the
+// consumers.
+const PIPELINE = 'apps/pipeline/src';
+const PIPELINE_BINDS = /from '@commerceworker\/(?:store(?:\/[\w-]+)?|test-kit)'|\.DB\b/;
+
+test('the pipeline reaches stores only through wireEdge', () => {
+  const reaching = files(PIPELINE).filter((f) => PIPELINE_BINDS.test(readFileSync(f, 'utf8')));
+  assert.deepEqual(
+    reaching,
+    [],
+    `Take the store or port from wireEdge (packages/platform/src/wire.ts):\n${reaching.join('\n')}`,
+  );
+});

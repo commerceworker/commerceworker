@@ -1,4 +1,5 @@
 import { loadConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { principalTarget, signPrincipal } from '@commerceworker/security/principal';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -31,9 +32,21 @@ describe('invitations over HTTP', () => {
   let app: ReturnType<typeof createApp>;
   beforeEach(() => {
     const { ctx, rag, blob, ai } = wire(config);
-    app = createApp(ctx, config, rag, blob, ai, undefined, undefined, undefined, undefined, {
-      inviteOrigin: ORIGIN,
-    });
+    app = createApp(
+      ctx,
+      config,
+      rag,
+      blob,
+      ai,
+      inMemoryEdge(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        inviteOrigin: ORIGIN,
+      },
+    );
   });
 
   const post = (path: string, body: unknown, headers: Record<string, string> = admin) =>

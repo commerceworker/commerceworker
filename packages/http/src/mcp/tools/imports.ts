@@ -18,9 +18,9 @@ export function registerImportTools(server: McpServer, t: ToolContext): void {
     ...(args.sourceOptions ? { sourceOptions: args.sourceOptions as Record<string, unknown> } : {}),
   });
   const importSource = (id: string) => {
-    const found = deps.importSources?.[id];
+    const found = deps.importSources[id];
     if (!found) {
-      const known = Object.keys(deps.importSources ?? {}).join(', ') || 'none';
+      const known = Object.keys(deps.importSources).join(', ') || 'none';
       throw new Error(`Unknown import source "${id}". Available: ${known}`);
     }
     return found;
@@ -33,8 +33,7 @@ export function registerImportTools(server: McpServer, t: ToolContext): void {
       inputSchema: toolSchema('import_sources', () => z.object({})),
       annotations: { readOnlyHint: true },
     },
-    async () =>
-      ok(Object.values(deps.importSources ?? {}).map((s) => ({ id: s.id, name: s.name }))),
+    async () => ok(Object.values(deps.importSources).map((s) => ({ id: s.id, name: s.name }))),
   );
 
   server.registerTool(

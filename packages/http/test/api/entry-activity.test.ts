@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { type Principal, SCOPES } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import type { AuditEntry } from '@commerceworker/ports';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -68,6 +69,7 @@ describe('an entry’s activity, over REST and MCP', () => {
   };
   const connect = async (principal: Principal) => {
     const deps = {
+      ...inMemoryEdge(),
       ctx: wired.ctx,
       ai: wired.ai,
       rag: wired.rag,
@@ -103,7 +105,7 @@ describe('an entry’s activity, over REST and MCP', () => {
 
   beforeEach(async () => {
     wired = wire(config);
-    app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, wired.bus);
+    app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge(), wired.bus);
     expect(
       (
         await rest('POST', '/content-types', {

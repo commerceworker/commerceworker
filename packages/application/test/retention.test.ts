@@ -5,8 +5,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHIVE_BATCH,
   archiveAudit,
+  expireAddresses,
   expirePersonalData,
   indexCartBuyers,
+  pruneExpired,
   purgeEndedCarts,
 } from '../src/commerce';
 
@@ -106,5 +108,37 @@ describe('the retention sweep', () => {
       refused: [],
     }));
     expect(r).toEqual({ orders: 1, refused: [] });
+  });
+
+  it('prunes each table past its own retention, keeping pending deliveries and ordered checkouts', async () => {
+    const retention = new InMemoryRetentionStore({
+      rows: [
+        { table: 'sessions', id: 's_old', at: now - 1 },
+        { table: 'sessions', id: 's_live', at: now + 1 },
+        { table: 'webhookDeliveries', id: 'w_old', at: now - 91 * DAY },
+        { table: 'webhookDeliveries', id: 'w_pending', at: now - 91 * DAY, pending: true },
+        { table: 'nodeRuns', id: 'n_recent', at: now - 10 * DAY },
+        { table: 'abandonedCheckouts', id: 'c_old', at: now - 400 * DAY },
+        { table: 'abandonedCheckouts', id: 'c_ordered', at: now - 400 * DAY, orderId: 'o1' },
+      ],
+    });
+    expect(await pruneExpired({ retention }, now, RETENTION)).toMatchObject({
+      sessions: 1,
+      webhookDeliveries: 1,
+      nodeRuns: 0,
+      abandonedCheckouts: 1,
+    });
+  });
+
+  it('deletes addresses last used more than the given days ago', async () => {
+    const retention = new InMemoryRetentionStore({
+      addresses: [
+        { id: 'a_old', customerId: 'c1', lastUsedAt: now - 31 * DAY },
+        { id: 'a_edge', customerId: 'c1', lastUsedAt: now - 30 * DAY },
+        { id: 'a_new', customerId: 'c2', lastUsedAt: now - DAY },
+      ],
+    });
+    expect(await expireAddresses({ retention }, now, 30)).toBe(1);
+    expect(await expireAddresses({ retention }, now, 30)).toBe(0);
   });
 });

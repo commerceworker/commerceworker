@@ -5,6 +5,7 @@ import {
   SYSTEM_CALLER,
 } from '@commerceworker/application';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createManagementClient } from '@commerceworker/sdk-management';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -18,7 +19,7 @@ const scope = { spaceId: 's1', environmentId: 'main' };
 describe('saved views through the SDK', () => {
   it('saves, runs, changes and deletes a shared view', async () => {
     const wired = wire(config);
-    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+    const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
     await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
       apiId: 'note',
       name: 'Note',

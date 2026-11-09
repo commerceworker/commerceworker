@@ -7,6 +7,7 @@ import {
 } from '@commerceworker/application';
 import type { FieldDefinition } from '@commerceworker/domain';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createDeliveryClient } from '@commerceworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -45,7 +46,7 @@ async function json<T>(res: Response): Promise<T> {
 /** Published `article` (/blog/{slug}, with a Seo field) and `author` (/people/{slug}, without). */
 async function setup() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   await createContentType(wired.ctx, SYSTEM_CALLER, scope, {
     apiId: 'article',
     name: 'Article',

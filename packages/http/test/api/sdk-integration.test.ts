@@ -1,4 +1,5 @@
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { createDeliveryClient } from '@commerceworker/sdk-core';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
@@ -29,7 +30,7 @@ const json = (token: string, body?: unknown) => ({
 describe('@commerceworker/sdk-core against the live Delivery API (in-process)', () => {
   it('reads published content authored via the Management API', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const M = '/spaces/s1/environments/main';
 
     // Author + publish via the Management API (CMA key).
@@ -80,7 +81,7 @@ describe('@commerceworker/sdk-core against the live Delivery API (in-process)', 
 
   it('SDK with an invalid token surfaces a 401 DeliveryError', async () => {
     const { ctx, rag, blob, ai } = wire(config);
-    const app = createApp(ctx, config, rag, blob, ai);
+    const app = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
     const client = createDeliveryClient({
       baseUrl: '',
       space: 's1',

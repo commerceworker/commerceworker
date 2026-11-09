@@ -12,19 +12,94 @@
  * Order matters: the draft is created first, excluding pending items, and each item is attached
  * to it by id; then it is finalized and, if asked, sent.
  */
-import { invoiceDue, invoiceDueAt, invoiceItems, type Order } from '@commerceworker/core';
+import {
+  invoiceDue,
+  invoiceDueAt,
+  invoiceItems,
+  type Order,
+  owedOnAccount,
+  renderDocument,
+  toBase,
+} from '@commerceworker/core';
 import {
   type BalanceStore,
   balanceEntryId,
+  type DocumentStore,
   type InvoiceRecord,
   InvoiceRefusedError,
   type InvoiceStore,
+  type PricingStore,
 } from '@commerceworker/ports/commerce';
-import { ensureProcessorCustomer, type PaymentPorts, paymentRowId } from './payments';
+import { ensureProcessorCustomer, type PaymentPorts, paidAmount, paymentRowId } from './payments';
 
 export type InvoicePorts = PaymentPorts & { readonly invoices: InvoiceStore };
 
 const DAY = 86_400_000;
+
+export type InvoiceOrderPorts = InvoicePorts & {
+  readonly documents: DocumentStore;
+  readonly pricing: PricingStore;
+  readonly balances: BalanceStore;
+};
+
+export type OrderInvoice = {
+  /** The rendered invoice's document key. */
+  key: string;
+  terms: string;
+  /** The due date, `YYYY-MM-DD` (UTC): core's `invoiceDueAt`, as the recorded invoice has it. */
+  due: string;
+  onAccount: boolean;
+  /** The processor's invoice, when the node issues through it. */
+  issued: InvoiceRecord | null;
+};
+
+/**
+ * Invoices an order (`commerce.invoice`): renders and files the invoice, issues it through the card
+ * processor when asked, and charges the customer's account when it is owed on account
+ * (`owedOnAccount`). Issued before the account is charged, so a step that fails there leaves no
+ * charge behind. Keyed by the step: a retry files, issues and charges nothing more.
+ */
+export async function invoiceOrder(
+  ports: InvoiceOrderPorts,
+  order: Order,
+  stepKey: string,
+  opts: { terms: string; processor: boolean; sendEmail: boolean; onAccount: boolean },
+  now: number,
+): Promise<OrderInvoice> {
+  const due = new Date(invoiceDueAt(opts.terms, now)).toISOString().slice(0, 10);
+  const key = await ports.documents.put(
+    order.id,
+    'invoice',
+    `${stepKey.replace('#', '-')}.html`,
+    renderDocument(`Invoice ${order.id}`, order, now, { Terms: opts.terms, Due: due }),
+  );
+  const customer = await ports.pricing.customer(order.customerId);
+  const owed =
+    !!customer &&
+    owedOnAccount({
+      onAccount: opts.onAccount,
+      customerKind: customer.kind,
+      paid: await paidAmount(ports, order.id),
+      total: order.total,
+    });
+  const issued = opts.processor
+    ? await issueInvoice(
+        ports,
+        order,
+        stepKey,
+        { terms: opts.terms, sendEmail: opts.sendEmail, onAccount: owed },
+        now,
+      )
+    : null;
+  if (owed && customer)
+    await ports.balances.charge({
+      orderId: order.id,
+      stepKey,
+      customerId: customer.id,
+      amount: toBase(order.total, order.fxRate),
+    });
+  return { key, terms: opts.terms, due, onAccount: owed, issued };
+}
 
 /**
  * Issues the order's invoice once per step: the processor customer (the account's, or one created

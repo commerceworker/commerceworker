@@ -7,6 +7,7 @@ import {
   setEntryMetadata,
 } from '@commerceworker/application';
 import type { ApiConfig } from '@commerceworker/platform/config';
+import { inMemoryEdge } from '@commerceworker/platform/in-memory';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/api/app';
 import { testConfig } from './config';
@@ -40,7 +41,7 @@ async function json<T>(res: Response): Promise<T> {
 /** An app with a `story` and a `memo` type and one published entry of each carrying `tagId`. */
 async function setup() {
   const wired = wire(config);
-  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai);
+  const app = createApp(wired.ctx, config, wired.rag, wired.blob, wired.ai, inMemoryEdge());
   const ctx = wired.ctx;
   const send = (
     method: string,

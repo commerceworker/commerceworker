@@ -18,6 +18,7 @@ import { mediaRoutes } from '@commerceworker/http/routes/media';
 import { mountsRole } from '@commerceworker/platform/config';
 import { createDoRateLimiter } from '@commerceworker/platform/do/rate-limiter';
 import { type EdgeEnv, withJurisdiction } from '@commerceworker/platform/env';
+import { mediaAdapters } from '@commerceworker/platform/media';
 import { makeMetrics } from '@commerceworker/platform/metrics';
 import { type EdgeWired, wireEdge } from '@commerceworker/platform/wire';
 import { sendReviewDecision } from '@commerceworker/platform/workflows';
@@ -48,10 +49,12 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
     '/',
     mediaRoutes({
       ctx: wired.ctx,
-      bucket: env.MEDIA_BUCKET,
-      signer: wired.mediaSigner,
-      images: env.IMAGES,
-      streamWebhookSecret: env.STREAM ? env.STREAM_WEBHOOK_SECRET : undefined,
+      media: mediaAdapters({
+        bucket: env.MEDIA_BUCKET,
+        signer: wired.mediaSigner,
+        images: env.IMAGES,
+        streamWebhookSecret: env.STREAM ? env.STREAM_WEBHOOK_SECRET : undefined,
+      }),
       // A completed upload starts its ingest (local dev has no R2 notifications to do it).
       ...(assetIngest
         ? { onUploaded: (key: string, etag?: string) => assetIngest.objectCreated(key, etag) }
@@ -76,6 +79,9 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       blob: wired.blob,
       ai: wired.ai,
       bus: wired.bus,
+      importSources: wired.importSources,
+      spaceExportReader: wired.spaceExportReader,
+      remoteFetcher: wired.remoteFetcher,
       agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
       rateLimiter,
     };
@@ -109,7 +115,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
         : {}),
       // Bounded and redirect-refusing, as the HTTP API's: embed_resolve fetches with it.
       remoteFetcher: wired.remoteFetcher,
-      // The space export tools read with it, as the HTTP API's routes do.
+      // The import tools' readers and the space export reader, as the HTTP API's routes use.
+      importSources: wired.importSources,
       spaceExportReader: wired.spaceExportReader,
       signalReview: env.AGENT_WF
         ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
@@ -136,6 +143,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       wired.rag,
       wired.blob,
       wired.ai,
+      wired,
       wired.bus,
       rateLimiter,
       // Review decisions reach the durable watcher as Workflow events.

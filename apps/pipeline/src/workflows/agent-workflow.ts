@@ -13,27 +13,19 @@ import {
   repurposeWorkflow,
   reviewWorkflow,
 } from '@commerceworker/agent-runtime/workflows';
-import {
-  type AppContext,
-  assertNoFakeAdapters,
-  type FakeAdapterBinding,
-  withSealedSecrets,
-} from '@commerceworker/application';
+import type { AppContext } from '@commerceworker/application';
+
 import type { Scope } from '@commerceworker/domain';
-import { sealerFromEnv } from '@commerceworker/platform/data-key';
 import { doAgentCostGuardFromEnv } from '@commerceworker/platform/do/cost-guard';
 import { type EdgeEnv, withJurisdiction } from '@commerceworker/platform/env';
-import { newId } from '@commerceworker/platform/ids';
 import { makeMetrics } from '@commerceworker/platform/metrics';
-import { aiContextFromEnv, makeAI, makeDecisions } from '@commerceworker/platform/wire';
+import { wireEdge } from '@commerceworker/platform/wire';
 import {
   type AgentWfParams,
   REVIEW_DECISION_EVENT,
   reviewInstanceId,
 } from '@commerceworker/platform/workflows';
-import type { AIProvider, ContentStore, IdGenerator } from '@commerceworker/ports';
-import { createD1Store } from '@commerceworker/store';
-import { InMemoryContentStore } from '@commerceworker/test-kit';
+import type { AIProvider } from '@commerceworker/ports';
 
 const workflows = {
   enrich: enrichWorkflow,
@@ -105,42 +97,17 @@ export class AgentWorkflow extends WorkflowEntrypoint<EdgeEnv, AgentWfParams> {
     const run = isMapped ? workflows[workflow] : undefined;
     if (isMapped && !run) throw new Error(`unknown agent workflow "${workflow}"`);
 
-    // Durable runs need the shared database: without DB this store is a fresh empty in-memory
-    // one (the demo store lives in the fetch isolate), so demo deployments keep AGENT_RUNTIME
-    // unset and run agents in-process. Agent steps write, so reads start at the primary.
-    const persistent = Boolean(this.env.DB);
-    // Sealed like wireEdge's store (same DATA_KEY policy): workflow
-    // activities read webhooks through the same repos as the API.
-    const store: ContentStore = withSealedSecrets(
-      this.env.DB
-        ? createD1Store(this.env.DB.withSession('first-primary'))
-        : (new InMemoryContentStore() as ContentStore),
-      sealerFromEnv(this.env, persistent),
-    );
-    // Same fail-closed policy as wireEdge: a durable run against the real
-    // database must not persist StubAIProvider placeholders. Workflow
-    // invocations don't pass through wireEdge, so the guard is repeated here.
-    const fakes: FakeAdapterBinding[] = [];
-    const ai: AIProvider = makeAI(this.env, fakes);
-    const decisions = makeDecisions(this.env, fakes);
-    const aiContext = aiContextFromEnv(this.env, fakes);
-    assertNoFakeAdapters({
-      persistent,
-      allowFakeAdapters: this.env.ALLOW_FAKE_ADAPTERS,
-      fakes,
-    });
-    const ids: IdGenerator = { newId: () => newId() };
+    // The same wiring as the API (D1 at the primary, since agent steps write; sealed secrets; the
+    // fail-closed guard against dev fakes behind a durable run). Without DB it is the in-memory
+    // demo store, so demo deployments keep AGENT_RUNTIME unset and run agents in-process.
+    const wired = wireEdge(this.env);
     // Durable runs meter against the background agent window (`agent:` DO
     // prefix, AI_AGENT_* ceilings when set) — previously unmetered.
-    const costGuard = doAgentCostGuardFromEnv(withJurisdiction(this.env));
     const ctx: AppContext = {
-      store,
-      clock: { now: () => new Date() },
-      ids,
-      costGuard,
-      decisions,
-      ai: aiContext,
+      ...wired.ctx,
+      costGuard: doAgentCostGuardFromEnv(withJurisdiction(this.env)),
     };
+    const ai: AIProvider = wired.ai;
 
     try {
       // Wrapped in a step: un-stepped side effects re-execute on replay. The
