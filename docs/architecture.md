@@ -1109,7 +1109,15 @@ since API 2022-08-01: customer, a draft with `pending_invoice_items_behavior=exc
 finalize, then send; each call keyed from the invoice row id (`inv_…`, `inv_…_item_<n>`,
 `inv_…_finalize`, `inv_…_send`). `settleInvoice` marks the invoice paid, records the
 `invoice_payment` and settles the account charge in one D1 batch; `handleStripeEvent`
-(`apps/engine/src/payment-events.ts`) calls it for `invoice.paid`.
+(`apps/engine/src/payment-events.ts`) calls it for `invoice.paid`. Live, it first asks the
+processor what paid the invoice (`InvoiceProcessor.payments`: `GET /v1/invoices/:id` with
+`expand[]=payments`, since API 2025-03-31 an invoice names no PaymentIntent of its own). When one
+PaymentIntent paid the whole amount, the row's `external_id` is that `pi_…`. Core's `paidPayments`
+counts it on an order with no capture or charge (`isInvoicePaidByIntent`), so `commerce.refund`
+refunds it through `POST /v1/refunds`; an order with both counts only the capture or charge, so
+money is never counted twice. Otherwise (parts, out of band, or a row from before) the row keeps
+the invoice's `in_…`, which nothing counts. A failed lookup never holds up settling: the payment is
+recorded by the invoice and the rest goes ahead.
 
 Two rules hold for every connector:
 

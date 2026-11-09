@@ -20,11 +20,13 @@ import {
   owedOnAccount,
   renderDocument,
   toBase,
+  toMinor,
 } from '@commerceworker/core';
 import {
   type BalanceStore,
   balanceEntryId,
   type DocumentStore,
+  type InvoiceProcessor,
   type InvoiceRecord,
   InvoiceRefusedError,
   type InvoiceStore,
@@ -219,23 +221,48 @@ export async function voidInvoices(ports: InvoicePorts, orderId: string) {
  * `invoice_payment` recorded; then the account charge it made comes off the customer's balance
  * (unless a rollback already reversed it), so a redelivered event settles a charge a crash left
  * open. Idempotent. Returns null for an invoice CommerceWorker didn't issue.
+ *
+ * With the processor at hand (a live Stripe invoice), the payment is recorded by the PaymentIntent
+ * that paid it, so `commerce.refund` can refund it like any other payment. That needs exactly one
+ * PaymentIntent paying the whole amount; an invoice paid in parts, or partly outside the
+ * processor, is recorded by the invoice's id as before and refunded in the processor's dashboard.
  */
 export async function settleInvoice(
-  ports: { readonly invoices: InvoiceStore; readonly balances: BalanceStore },
+  ports: {
+    readonly invoices: InvoiceStore;
+    readonly balances: BalanceStore;
+    readonly processor?: InvoiceProcessor;
+  },
   externalId: string,
   amountPaid?: number,
 ) {
   const row = await ports.invoices.findByExternalId(externalId);
   if (!row) return null;
+  const amount = amountPaid ?? row.amount;
+  // Settling never waits on this lookup: if the processor can't say what paid, the payment is
+  // recorded by the invoice (refunded in its dashboard), and the invoice, the account charge and
+  // `payment.received` go ahead.
+  let paidBy: { intentId: string; amount: number }[] = [];
+  if (row.provider === 'stripe' && ports.processor)
+    try {
+      paidBy = await ports.processor.payments(externalId);
+    } catch (err) {
+      console.warn('invoice payments lookup failed; recorded by the invoice', externalId, err);
+    }
+  const [only] = paidBy;
+  const intent =
+    paidBy.length === 1 && only && only.amount === toMinor(amount, row.currency)
+      ? only.intentId
+      : undefined;
   const settled = await ports.invoices.markPaid(row.id, {
     id: paymentRowId('ipay', row.id),
     orderId: row.orderId,
     kind: 'invoice_payment',
-    amount: amountPaid ?? row.amount,
+    amount,
     status: 'succeeded',
     ref: row.id,
     provider: row.provider,
-    externalId,
+    externalId: intent ?? externalId,
     currency: row.currency,
   });
   if (row.balanceEntryId) await ports.balances.settle(row.balanceEntryId);

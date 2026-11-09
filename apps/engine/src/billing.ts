@@ -64,9 +64,16 @@ export const invoiceOrder = (
 export const voidInvoices = (env: Env, orderId: string) =>
   settled(uc.voidInvoices(ports(env), orderId));
 
-export const settleInvoice = (env: Env, externalId: string, amountPaid?: number) =>
-  uc.settleInvoice(
-    { invoices: invoiceStore(env), balances: balanceStore(env) },
+export const settleInvoice = (env: Env, externalId: string, amountPaid?: number) => {
+  // Live, the invoice is Stripe's: ask it which PaymentIntent paid, so a refund can reach it.
+  const mode = paymentMode(env);
+  return uc.settleInvoice(
+    {
+      invoices: invoiceStore(env),
+      balances: balanceStore(env),
+      processor: mode.live() ? mode.processor().invoices : undefined,
+    },
     externalId,
     amountPaid,
   );
+};

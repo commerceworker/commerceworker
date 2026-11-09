@@ -6,7 +6,7 @@ import {
   InMemoryPaymentLedger,
   paymentModeFor,
 } from '@commerceworker/test-kit/commerce';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { issueInvoice, settleInvoice, voidInvoices } from '../src/commerce';
 
 let tick = 0;
@@ -67,6 +67,7 @@ describe('invoices', () => {
       status: 'open',
       items: [10000, 1000, 800],
       sent: true,
+      paidBy: [],
     });
     expect(await issueInvoice(p, order('o2'), 'invoice#1', opts, NOW + 1)).toEqual(row);
     expect(fake.invoices.invoices.get('in_1')?.items).toHaveLength(3);
@@ -89,6 +90,61 @@ describe('invoices', () => {
       ['invoice_payment', 118],
     ]);
     expect(await settleInvoice(p, 'in_elsewhere')).toBeNull();
+  });
+
+  it('records the PaymentIntent that paid the invoice, so a refund can reach it', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const settle = (id: string) => settleInvoice({ ...p, processor: fake.invoices }, id);
+    const paidOnce = await issueInvoice(p, order('o5'), 'invoice#1', opts, NOW);
+    fake.invoices.pay(paidOnce.externalId!, [{ intentId: 'pi_whole', amount: 11800 }]);
+    await settle(paidOnce.externalId!);
+    expect((await p.ledger.forOrder('o5')).map((x) => [x.kind, x.externalId, x.ref])).toEqual([
+      ['invoice_payment', 'pi_whole', paidOnce.id],
+    ]);
+    // In parts, partly outside the processor, or without the processor at hand: by the invoice.
+    const cases: [string, { intentId: string; amount: number }[] | null][] = [
+      [
+        'o6',
+        [
+          { intentId: 'pi_a', amount: 5000 },
+          { intentId: 'pi_b', amount: 6800 },
+        ],
+      ],
+      ['o7', [{ intentId: 'pi_part', amount: 5000 }]],
+      ['o8', []],
+      ['o9', null],
+    ];
+    for (const [id, by] of cases) {
+      const row = await issueInvoice(p, order(id), 'invoice#1', opts, NOW);
+      if (by) fake.invoices.pay(row.externalId!, by);
+      await (by ? settle(row.externalId!) : settleInvoice(p, row.externalId!));
+      expect((await p.ledger.forOrder(id)).map((x) => x.externalId)).toEqual([row.externalId]);
+    }
+  });
+
+  it("settles by the invoice when the processor can't say what paid it", async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const row = await issueInvoice(p, order('o10'), 'invoice#1', { ...opts, onAccount: true }, NOW);
+    await p.balances.charge({
+      orderId: 'o10',
+      stepKey: 'invoice#1',
+      customerId: 'ada',
+      amount: 118,
+    });
+    const down = Object.assign(Object.create(fake.invoices), {
+      payments: async () => {
+        throw new Error('Stripe is down');
+      },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await settleInvoice({ ...p, processor: down }, row.externalId!)).toMatchObject({
+      settled: true,
+    });
+    warn.mockRestore();
+    expect((await p.ledger.forOrder('o10')).map((x) => x.externalId)).toEqual([row.externalId]);
+    expect(await p.balances.balance('ada')).toBe(0);
   });
 
   it('voids unpaid invoices at the processor and leaves a paid one', async () => {

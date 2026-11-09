@@ -656,6 +656,7 @@ export function describeOrderBoardContract(
               pay('ob_p4', 'ob_c1', 'capture', 999, D(21), 'failed'),
               pay('ob_p5', 'ob_c1', 'authorization:card', 100, D(21)),
               pay('ob_p6', 'ob_gone', 'capture', 7, D(21)),
+              pay('ob_p7', 'ob_gone', 'invoice_payment', 20, D(21)),
             ],
             runs: [
               ...[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((ms) =>
@@ -684,10 +685,11 @@ export function describeOrderBoardContract(
           { day: '2026-10-20', total: 125 },
           { day: '2026-10-21', total: 30 },
         ]);
-        // A payment without its order counts at rate 1; a failed one and an authorization not at all.
+        // A payment without its order counts at rate 1; a paid invoice counts as collected; a
+        // failed payment and an authorization not at all.
         expect(byDay(p.money)).toEqual([
           { day: '2026-10-20', collected: 125, refunded: 0 },
-          { day: '2026-10-21', collected: 7, refunded: 10 },
+          { day: '2026-10-21', collected: 27, refunded: 10 },
         ]);
         expect(
           byDay(p.endings)

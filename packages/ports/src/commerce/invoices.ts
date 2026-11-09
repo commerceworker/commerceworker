@@ -126,4 +126,9 @@ export interface InvoiceProcessor {
   delete(id: string): Promise<void>;
   /** Where the processor has the invoice now: draft, open, paid, uncollectible or void. */
   status(id: string): Promise<string>;
+  /**
+   * The processor's payments that paid the invoice, each by the id a refund names it by (a
+   * PaymentIntent), in minor units. Payments made outside the processor aren't listed.
+   */
+  payments(id: string): Promise<{ intentId: string; amount: number }[]>;
 }
