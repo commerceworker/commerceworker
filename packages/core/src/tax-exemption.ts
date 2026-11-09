@@ -198,6 +198,10 @@ export function taxCertificateState(
   return 'active';
 }
 
+/** Why a token can't verify a certificate: a person checks it with the issuer. */
+export const PERSON_VERIFIES =
+  'A person verifies a certificate, signed in as themselves, not with an API token.';
+
 /**
  * Why `by` can't verify the certificate at `now`, `{ already: true }` when it is verified (nothing
  * to do), or null. A person verifies, signed in as themselves: an API token's id is its own, never
@@ -217,7 +221,7 @@ export async function certificateVerifyProblem(
     return { refuse: 'The certificate has expired; add the renewed one.' };
   if (!by.person)
     return {
-      refuse: 'A person verifies a certificate, signed in as themselves, not with an API token.',
+      refuse: PERSON_VERIFIES,
     };
   if (c.createdById === by.id && (await separated()))
     return { refuse: 'Someone other than whoever added the certificate must verify it.' };

@@ -436,7 +436,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'Verify a tax exemption certificate (operator)',
           description:
-            'Records that you checked the certificate with its issuer: orders placed from now are exempt where it covers. Refused (`409`) for a revoked or expired certificate and, with approval separation on, to whoever added it. Verifying again changes nothing (`changed: false`). MCP: `verify_tax_certificate`.',
+            'Records that you checked the certificate with its issuer: orders placed from now are exempt where it covers. Only a person signed in as themselves verifies; an API token is `403`. Refused (`409`) for a revoked or expired certificate and, with approval separation on, to whoever added it. Verifying again changes nothing (`changed: false`). MCP: `verify_tax_certificate`.',
           parameters: [customerId, certificateId],
           responses: {
             '200': ok('`{ id, status, changed }`'),

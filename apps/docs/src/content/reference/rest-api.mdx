@@ -282,7 +282,7 @@ on through the order routes. `POST /api/v1/carts/:id/cancel` ends a cart that ha
 `POST /api/v1/customers/:id/tax-certificates/:certificateId/verify` records that you checked a
 customer's exemption certificate with its issuer: orders placed from then on are exempt where it
 covers. `…/revoke` stops it exempting orders placed from then on; it stays on record, revoked.
-Both need Operator. A revoked or expired certificate can't be verified, and with
+Both need Operator. Verifying needs a person signed in as themselves, never an API token (`403`), as over MCP. A revoked or expired certificate can't be verified, and with
 [approval separation](/guides/team-and-roles/#approvals) on, whoever added a certificate can't
 verify it (`409`). Doing either again changes nothing and answers `changed: false`. Certificates
 are added from the customer's page.

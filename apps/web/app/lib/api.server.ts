@@ -81,6 +81,7 @@ import {
   type InboundOrder,
   inboundFingerprint,
   inboundOrderSchema,
+  PERSON_VERIFIES,
   PLUGIN_BUNDLE_MAX_BYTES,
   PLUGIN_ID_RE,
   type Principal,
@@ -1064,6 +1065,8 @@ async function handleCertificate(
   if (denied) return denied;
   if (!ID_RE.test(customerId) || !ID_RE.test(certificateId))
     return json({ error: 'Not found' }, 404);
+  // As over MCP: only a person signed in as themselves verifies, never an API token.
+  if (verb === 'verify' && caller.kind !== 'user') return json({ error: PERSON_VERIFIES }, 403);
   const actor = await signedActor(
     { kind: 'staff', id: caller.id, name: caller.name, role: caller.role },
     `tax-certificates:${customerId}`,

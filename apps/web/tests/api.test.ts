@@ -928,16 +928,23 @@ describe('what MCP could do and REST now can', () => {
 
   beforeEach(() => audit.mockClear());
 
-  it('verifies a certificate as the caller, signed for that customer, and audits it once', async () => {
+  const person: Principal = {
+    kind: 'user',
+    id: 'usr_1',
+    name: 'ann@example.com',
+    role: 'operator',
+  };
+
+  it('verifies a certificate as the person, signed for that customer, and audits it once', async () => {
     engine.verifyTaxCertificate.mockResolvedValueOnce(change('active', true));
-    const res = await post(`${cert}/verify`, {});
+    const res = await post(`${cert}/verify`, {}, person);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: 'txc_1', status: 'active', changed: true });
     const [customerId, id, signed] = engine.verifyTaxCertificate.mock.calls.at(-1)!;
     expect([customerId, id]).toEqual(['cus_1', 'txc_1']);
     expect(await actorOf(signed, 'tax-certificates:cus_1')).toMatchObject({
       kind: 'staff',
-      id: 'tok_1',
+      id: 'usr_1',
     });
     expect(audit).toHaveBeenCalledWith(
       expect.anything(),
@@ -947,8 +954,18 @@ describe('what MCP could do and REST now can', () => {
     // A repeat changes nothing and records nothing.
     audit.mockClear();
     engine.verifyTaxCertificate.mockResolvedValueOnce(change('active', false));
-    await post(`${cert}/verify`, {});
+    await post(`${cert}/verify`, {}, person);
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('never lets an API token verify a certificate, as over MCP; a token may revoke', async () => {
+    engine.verifyTaxCertificate.mockClear();
+    const res = await post(`${cert}/verify`, {});
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toMatch(/not with an API token/);
+    expect(engine.verifyTaxCertificate).not.toHaveBeenCalled();
+    engine.revokeTaxCertificate.mockResolvedValueOnce(change('revoked', true));
+    expect((await post(`${cert}/revoke`, {})).status).toBe(200);
   });
 
   it("answers the engine's refusal, and refuses a viewer", async () => {
