@@ -49,6 +49,10 @@ jobs:
       - name: Test
         if: ${{ !cancelled() }}
         run: pnpm test
+        # Two test tasks at a time, not turbo's ten: on the runner's 4 vCPUs, ten workerd pools at
+        # once starved the catalog's Durable Object tests past their timeouts.
+        env:
+          TURBO_CONCURRENCY: 2
 
       # The registry in deployments/ and the configs rendered from it.
       - name: Test fleet
