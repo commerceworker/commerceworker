@@ -9,17 +9,6 @@ import {
   payloadFits,
   WEBHOOK_URL_RULE,
 } from '@commerceworker/core';
-import {
-  categorySchema,
-  channelSchema,
-  EDIT_SOURCES,
-  fieldRefSchema as fieldRef,
-  MAX_DRAFT_FIELDS,
-  PRODUCT_DRAFT_INSTRUCTION_MAX,
-  productInputSchema,
-  productTypeSchema,
-  TEXT_MAX,
-} from '@commerceworker/core/product';
 import { z } from 'zod';
 
 const payload = z
@@ -92,88 +81,4 @@ export const platformInput = z.object({
     .url()
     .max(500)
     .refine((u) => u.startsWith('https://'), 'The profile must be served over https'),
-});
-
-// The product catalog (/api/v1/catalog). Shapes only: the catalog checks products against their
-// product types, which the web app doesn't hold.
-export const catalogProductsInput = z.object({
-  products: z.array(productInputSchema).min(1).max(500),
-  /** Purge cached copies now (rationed) instead of within the minute; for takedowns and fixes. */
-  urgent: z.boolean().optional(),
-});
-
-export const catalogDeleteInput = z.object({
-  keys: z.array(z.string().min(1).max(128)).min(1).max(500),
-  urgent: z.boolean().optional(),
-});
-
-export const catalogCategoriesDeleteInput = z.object({
-  codes: z.array(z.string().min(1).max(128)).min(1).max(500),
-});
-
-export const catalogCategoriesInput = z.object({
-  categories: z.array(categorySchema).min(1).max(500),
-});
-
-export { channelSchema as catalogChannelInput, productTypeSchema as catalogTypeInput };
-
-// The product editor (/api/v1/catalog/edits, /drafts). Shapes only: the catalog checks each edit
-// against the product and its type and answers per edit.
-const productKey = z.string().min(1).max(128);
-const editTarget = {
-  key: productKey,
-  ref: fieldRef,
-  /** `assistant` when a person accepts an assistant draft. */
-  source: z.enum(EDIT_SOURCES).optional(),
-};
-
-export const catalogEditsInput = z.object({
-  edits: z
-    .array(
-      z.discriminatedUnion('op', [
-        z.object({
-          ...editTarget,
-          op: z.literal('set'),
-          value: z.string().max(TEXT_MAX).nullable(),
-        }),
-        z.object({ ...editTarget, op: z.literal('clear') }),
-      ]),
-    )
-    .min(1)
-    .max(500),
-});
-
-/** Staged edits or drafts to drop: one field's, or without `ref` all of a product's. */
-export const catalogDiscardInput = z.object({
-  items: z
-    .array(z.object({ key: productKey, ref: fieldRef.optional() }))
-    .min(1)
-    .max(500),
-});
-
-export const catalogPublishInput = z.object({
-  keys: z.array(productKey).min(1).max(500),
-  /** Sending it again answers the first result and publishes nothing twice. */
-  requestId: z.string().min(1).max(128).optional(),
-  urgent: z.boolean().optional(),
-});
-
-export const catalogDraftsInput = z.object({
-  drafts: z
-    .array(
-      z.object({
-        key: productKey,
-        ref: fieldRef,
-        value: z.string().min(1).max(TEXT_MAX),
-        model: z.string().min(1).max(200).optional(),
-      }),
-    )
-    .min(1)
-    .max(500),
-});
-
-/** POST /api/v1/catalog/products/:key/draft: what the assistant drafts (its gaps when no fields). */
-export const catalogDraftContentInput = z.object({
-  fields: z.array(fieldRef).min(1).max(MAX_DRAFT_FIELDS).optional(),
-  instruction: z.string().max(PRODUCT_DRAFT_INSTRUCTION_MAX).optional(),
 });

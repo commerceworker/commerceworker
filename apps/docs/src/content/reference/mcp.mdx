@@ -105,7 +105,7 @@ An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order
 `publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`,
 `verify_tax_certificate`, `revoke_tax_certificate`, the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
-`uninstall_plugin`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart` and `test_flow`) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
+`uninstall_plugin`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
 
 ### Clients that ask their person
@@ -164,6 +164,7 @@ Annotations also tell a client when to confirm:
 | Reads and `propose_flow_change` | `readOnlyHint: true` |
 | `draft_plugin`, `draft_product_content`, `create_cart`, `change_cart`, `create_flow`, `duplicate_flow`, `archive_flow` | save a draft (nothing runs until an admin approves the plugin, someone publishes the product's drafts or submits the cart): not read-only, not destructive, not idempotent |
 | `decide_approval`, `decide_approvals`, `cancel_order`, `submit_cart`, `publish_flow`, `publish_catalog`, `uninstall_plugin` | `destructiveHint: true`; all but `publish_flow` are also `idempotentHint: true` |
+| The [catalog's writes](#catalog-writes) that go live or take something down, and `discard_product_edits` | `destructiveHint: true` |
 | `deliver_event`, `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow`, `create_promotion`, `set_promotion_status`, `verify_tax_certificate`, `revoke_tax_certificate`, `set_member_role`, `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin` | writes, not destructive |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
@@ -194,9 +195,40 @@ per column and gap kind, with the latest and the running feed) and `catalog_boar
 column's products, a page at a time: `limit` 1 to 100, 50 unset, and the `cursor` the last page
 returned; `kind` narrows the gaps column). A product, alias, sheet or feed the catalog doesn't have
 is a tool error, where REST answers `404`. `find_products` is not one of these: it reads the stock
-list. Their annotations are `readOnlyHint: true`. Changing the catalog (staging, publishing, feeds,
-types, channels, categories) stays on REST and the Catalog page, apart from `draft_product_content`
-and `publish_catalog`.
+list. Their annotations are `readOnlyHint: true`.
+
+## Catalog writes
+
+An operator can also change the catalog, with tools that mirror the REST API's catalog writes: the
+same bounds (500 items a call), roles and audit entries, which record the call as made over MCP.
+`draft_product_content` and `publish_catalog` are covered above. Writing products, categories or a
+feed changes the live catalog at once (each stored product publishes within the minute), not a
+draft, so those confirm like publishing does.
+
+| Tool | Role | Confirms | What it does |
+|---|---|---|---|
+| `put_catalog_type` | operator | no | Adds a product type, or its next version (additive only). Nothing is published until products use it. |
+| `put_catalog_channel` | operator | no | Adds or changes a channel; a changed currency or locale list reaches published pages on the next reindex. |
+| `stage_product_edits` | operator | no | Stages edits to products' fields. Nothing is live until `publish_catalog`. |
+| `discard_product_edits` | operator | no | Drops staged edits or the assistant's drafts (`what`), for one field or a whole product. |
+| `put_catalog_products` | operator | yes | Creates or updates up to 500 products. The preview names the keys and says it writes live. |
+| `delete_catalog_products` | operator | yes | Deletes up to 500 products. The preview says how many exist; it is refused when none do. |
+| `put_catalog_categories` | operator | yes | Writes up to 500 categories and republishes the category tree. |
+| `delete_catalog_categories` | operator | yes | Removes categories. Refused up front for an unknown code or a child left behind; the catalog refuses while products are in one. |
+| `delete_catalog_type` | operator | yes | Removes every version of a type. Refused up front for an unknown type; the catalog refuses while a product uses it. |
+| `start_catalog_feed` | operator | yes | Imports a CSV or NDJSON file given as text (`content`, up to 256 KiB; larger files stream over REST). The preview shows the format, rows and size. |
+| `cancel_catalog_feed` | operator | yes | Stops a feed that hasn't finished; refused up front for one that has. |
+| `delete_catalog_channel` | admin | yes | Takes down everything published in a channel. The preview names its currency and locales. |
+| `reindex_catalog` | admin | yes | Republishes every product. |
+| `rebuild_catalog_gaps` | admin | yes | Recounts every product's content gaps. |
+
+A write the catalog refuses when it runs (a type still in use, a type version that removes
+something) is a tool error carrying the catalog's reasons, where REST answers `409` or `400`.
+Everything that confirms is `destructiveHint: true`, apart from `reindex_catalog` and
+`rebuild_catalog_gaps`; `discard_product_edits` is too, since it drops work a person staged. Storing
+a caller's own drafts (`POST /api/v1/catalog/drafts`) stays on REST: over MCP the assistant writes
+drafts with `draft_product_content`, and a person's own text is staged as an edit. Accepting a draft
+stays the Catalog page's button.
 
 ## Carts
 

@@ -9,6 +9,8 @@ import {
   sealAuditRow,
 } from '@commerceworker/core';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
+import { auditEvents, createDb } from '@commerceworker/db';
+import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
@@ -137,6 +139,20 @@ const CATALOG_READS = [
   'catalog_board_column',
 ];
 
+const tools = async (p: Principal) =>
+  (
+    (await rpc(p, 'tools/list')).body as {
+      result: {
+        tools: {
+          name: string;
+          annotations?: Record<string, unknown>;
+          inputSchema?: Record<string, unknown>;
+          outputSchema?: Record<string, unknown>;
+        }[];
+      };
+    }
+  ).result.tools;
+
 const call = async (
   p: Principal,
   name: string,
@@ -232,9 +248,6 @@ describe('MCP', () => {
   });
 
   it('lists only the tools the role can use, with hints', async () => {
-    const tools = async (p: Principal) =>
-      ((await rpc(p, 'tools/list')).body as { result: { tools: Record<string, unknown>[] } }).result
-        .tools;
     const viewer = await tools(person('viewer', 'vic@example.com'));
     expect(viewer.map((t) => t.name).sort()).toEqual([
       'assess_order',
@@ -271,7 +284,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(42);
+    expect(operator).toHaveLength(53);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -298,7 +311,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(53);
+    expect(admin).toHaveLength(67);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -522,6 +535,505 @@ describe('MCP', () => {
         );
       expect(asked.listFeeds).toHaveLength(1);
       expect(asked.listBoard).toHaveLength(1);
+    });
+  });
+
+  describe('catalog writes', () => {
+    const ref = { field: 'title', locale: 'en' };
+    const feed = (id: string, state: string, name = `${id}.csv`) => ({
+      id,
+      name,
+      format: 'csv',
+      state,
+      by: 'ops',
+      createdAt: 1,
+      rows: 100,
+      parts: 4,
+      partsDone: 1,
+      created: 0,
+      updated: 0,
+      unchanged: 0,
+      rejected: 0,
+      errors: [],
+    });
+    const product = {
+      key: 'tee',
+      type: 'apparel',
+      title: { en: 'Tee' },
+      variants: [{ sku: 'TEE-1' }],
+    };
+
+    /** A catalog that answers like the real one, noting every call that writes. */
+    function fakeCatalog() {
+      const calls: [string, unknown[]][] = [];
+      const note =
+        <A extends unknown[], R>(name: string, fn: (...a: A) => Promise<R>) =>
+        async (...a: A): Promise<R> => {
+          calls.push([name, a]);
+          return fn(...a);
+        };
+      const fake: Partial<ProductCatalogRpc> = {
+        getProduct: async (k) => (k === 'tee' ? (product as never) : null),
+        listTypes: async () =>
+          [
+            { code: 'apparel', version: 3 },
+            { code: 'used', version: 1 },
+          ] as never,
+        listChannels: async () =>
+          [{ code: 'web', name: 'Web', currency: 'USD', locales: ['en', 'fr'] }] as never,
+        listCategories: async () =>
+          [
+            { code: 'tops', parent: null },
+            { code: 'polos', parent: 'tops' },
+          ] as never,
+        feedStatus: async (id) =>
+          id === 'fd_run'
+            ? (feed(id, 'applying') as never)
+            : id === 'fd_done'
+              ? (feed(id, 'done') as never)
+              : null,
+        putProducts: note('putProducts', async (items) =>
+          items.map((i) => ({ key: i.key, status: 'created' as const })),
+        ),
+        deleteProducts: note('deleteProducts', async (keys) =>
+          keys.map((key) => ({ key, status: 'deleted' as const })),
+        ),
+        putType: note('putType', async (t) =>
+          t.code === 'bad'
+            ? { ok: false as const, issues: ['a new version may only add'] }
+            : { ok: true as const, type: { code: t.code, version: 4 } as never },
+        ),
+        deleteType: note('deleteType', async (code) =>
+          code === 'used'
+            ? { ok: false as const, issues: ['3 products use it'] }
+            : { ok: true as const, code, versions: 3 },
+        ),
+        putChannel: note('putChannel', async (c) => ({ ok: true as const, channel: c })),
+        deleteChannel: note('deleteChannel', async (code) => ({
+          ok: true as const,
+          code,
+          unpublished: 7,
+        })),
+        putCategories: note('putCategories', async (cs) => ({
+          ok: true as const,
+          categories: cs as never,
+        })),
+        deleteCategories: note('deleteCategories', async (codes) => ({
+          ok: true as const,
+          deleted: codes,
+        })),
+        startFeed: note('startFeed', async (body, opts) => {
+          // The file arrives as a stream, as REST sends it.
+          const text = await new Response(body).text();
+          calls.push(['startFeed:body', [text]]);
+          return feed('fd_new', 'queued', opts.name) as never;
+        }),
+        cancelFeed: note('cancelFeed', async (id) => feed(id, 'cancelled') as never),
+        reindex: note('reindex', async () => ({ queued: 12 })),
+        rebuildGaps: note('rebuildGaps', async () => ({ products: 9 })),
+        stageEdits: note('stageEdits', async (edits) =>
+          edits.map((e) => ({ key: e.key, ref: e.ref, ok: true as const })),
+        ),
+        discardStaged: note('discardStaged', async (items) => ({ discarded: items.length })),
+        discardDrafts: note('discardDrafts', async (items) => ({ discarded: items.length * 2 })),
+      };
+      return { fake, calls };
+    }
+
+    const audited = async (action: string) =>
+      (
+        await createDb(env.DB)
+          .select()
+          .from(auditEvents)
+          .where(and(eq(auditEvents.action, action)))
+          .all()
+      ).map((e) => ({ target: e.target, actor: e.actor, detail: JSON.parse(e.detail ?? '{}') }));
+
+    const op = person('operator', 'ops@example.com');
+    const admin = person('admin', 'ann@example.com');
+    const writes = async (p: Principal) =>
+      (await tools(p)).filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name);
+
+    it('offers each write to its role with honest hints', async () => {
+      const operator = await tools(op);
+      const adminTools = await tools(admin);
+      const direct = [
+        'put_catalog_type',
+        'put_catalog_channel',
+        'stage_product_edits',
+        'discard_product_edits',
+      ];
+      const confirmed = [
+        'put_catalog_products',
+        'delete_catalog_products',
+        'delete_catalog_type',
+        'put_catalog_categories',
+        'delete_catalog_categories',
+        'start_catalog_feed',
+        'cancel_catalog_feed',
+      ];
+      const adminOnly = ['delete_catalog_channel', 'reindex_catalog', 'rebuild_catalog_gaps'];
+      for (const name of [...direct, ...confirmed]) {
+        expect(
+          operator.find((t) => t.name === name),
+          name,
+        ).toBeDefined();
+        expect(await writes(op)).toContain(name);
+      }
+      for (const name of adminOnly) {
+        expect(
+          operator.find((t) => t.name === name),
+          `${name} for an operator`,
+        ).toBeUndefined();
+        expect(
+          adminTools.find((t) => t.name === name),
+          name,
+        ).toBeDefined();
+      }
+      // What takes something down or goes live is marked destructive; the rest of the writes aren't.
+      for (const name of [
+        'put_catalog_products',
+        'delete_catalog_products',
+        'delete_catalog_type',
+        'delete_catalog_channel',
+        'put_catalog_categories',
+        'delete_catalog_categories',
+        'start_catalog_feed',
+        'cancel_catalog_feed',
+        'discard_product_edits',
+      ])
+        expect(adminTools.find((t) => t.name === name)?.annotations, name).toMatchObject({
+          readOnlyHint: false,
+          destructiveHint: true,
+          openWorldHint: false,
+        });
+      for (const name of ['put_catalog_type', 'put_catalog_channel', 'stage_product_edits'])
+        expect(adminTools.find((t) => t.name === name)?.annotations, name).toMatchObject({
+          readOnlyHint: false,
+          destructiveHint: false,
+        });
+      expect(adminTools.find((t) => t.name === 'reindex_catalog')?.annotations).toMatchObject({
+        destructiveHint: false,
+        idempotentHint: true,
+      });
+      // A confirmed one carries the code; a direct one doesn't.
+      expect(operator.find((t) => t.name === 'delete_catalog_products')).toMatchObject({
+        inputSchema: { properties: { keys: {}, confirmation: {} } },
+      });
+      expect(operator.find((t) => t.name === 'put_catalog_type')?.inputSchema).not.toMatchObject({
+        properties: { confirmation: {} },
+      });
+      // Not the page's: accepting a draft stays its own button.
+      expect(operator.find((t) => t.name === 'accept_product_drafts')).toBeUndefined();
+      // A viewer has none of them, and a call to one is refused as an unknown tool.
+      const viewer = person('viewer', 'vic@example.com');
+      for (const name of [...direct, ...confirmed, ...adminOnly]) {
+        expect(await rpc(viewer, 'tools/call', { name, arguments: {} }), name).toMatchObject({
+          body: { error: { message: `Tool ${name} not found` } },
+        });
+      }
+      for (const name of adminOnly)
+        expect(await rpc(op, 'tools/call', { name, arguments: {} }), name).toMatchObject({
+          body: { error: { message: `Tool ${name} not found` } },
+        });
+    });
+
+    it('saves types and channels, stages and discards edits at once, audited as MCP', async () => {
+      const { fake, calls } = fakeCatalog();
+      await withEnv({ ...env, CATALOG: fake }, async () => {
+        const type = await call(op, 'put_catalog_type', {
+          code: 'apparel',
+          version: 4,
+          attributes: [],
+        });
+        expect(type.isError).toBeFalsy();
+        expect(type.structuredContent).toMatchObject({ type: { code: 'apparel', version: 4 } });
+        const refusedType = await call(op, 'put_catalog_type', {
+          code: 'bad',
+          version: 2,
+          attributes: [],
+        });
+        expect(refusedType.isError).toBe(true);
+        expect(refusedType.content[0]!.text).toBe('Type refused: a new version may only add');
+
+        const channel = {
+          code: 'web',
+          name: 'Web',
+          currency: 'USD',
+          locales: ['en'],
+          defaultLocale: 'en',
+        };
+        expect((await call(op, 'put_catalog_channel', channel)).structuredContent).toMatchObject({
+          channel: { code: 'web' },
+        });
+
+        const staged = await call(op, 'stage_product_edits', {
+          edits: [
+            { key: 'tee', ref, op: 'set', value: 'Tee', source: 'assistant' },
+            { key: 'tee', ref: { field: 'description', locale: 'en' }, op: 'clear' },
+          ],
+        });
+        expect(staged.structuredContent).toMatchObject({ done: 'Staged 2 of 2 edits' });
+        expect(
+          (await call(op, 'discard_product_edits', { what: 'staged', items: [{ key: 'tee' }] }))
+            .structuredContent,
+        ).toMatchObject({ discarded: 1 });
+        expect(
+          (
+            await call(op, 'discard_product_edits', {
+              what: 'drafts',
+              items: [{ key: 'tee', ref }],
+            })
+          ).structuredContent,
+        ).toMatchObject({ discarded: 2 });
+        // REST's bound on a bulk write, before the catalog is asked.
+        const many = Array.from({ length: 501 }, () => ({ key: 'tee', ref, op: 'clear' }));
+        expect((await call(op, 'stage_product_edits', { edits: many })).isError).toBe(true);
+        expect(calls.map(([n]) => n)).toEqual([
+          'putType',
+          'putType',
+          'putChannel',
+          'stageEdits',
+          'discardStaged',
+          'discardDrafts',
+        ]);
+        // The catalog is told who: the person's email, as REST does.
+        expect(calls[0]![1][1]).toBe('ops@example.com');
+      });
+      // The same audit actions as REST, with the MCP trail where REST has `via: 'api'`.
+      expect((await audited('catalog.type_saved')).at(-1)).toMatchObject({
+        target: 'apparel',
+        detail: { version: 4, via: 'mcp', tool: 'put_catalog_type' },
+      });
+      expect((await audited('catalog.channel_saved')).at(-1)).toMatchObject({
+        target: 'web',
+        detail: { via: 'mcp', tool: 'put_catalog_channel' },
+      });
+      expect((await audited('catalog.edits_staged')).at(-1)?.detail).toMatchObject({
+        staged: 2,
+        refused: 0,
+        products: 1,
+        fromDrafts: 1,
+        via: 'mcp',
+      });
+      expect((await audited('catalog.edits_discarded')).at(-1)?.detail).toMatchObject({
+        discarded: 1,
+        via: 'mcp',
+      });
+      expect((await audited('catalog.drafts_discarded')).at(-1)?.detail).toMatchObject({
+        discarded: 2,
+        via: 'mcp',
+      });
+    });
+
+    /** Previews, then confirms with the code: the catalog is called once, after. */
+    async function confirmWith(
+      p: Principal,
+      name: string,
+      args: Record<string, unknown>,
+      calls: [string, unknown[]][],
+    ) {
+      const before = calls.length;
+      const first = await call(p, name, args);
+      expect(first.isError, `${name} preview`).toBeFalsy();
+      expect(first.structuredContent, name).toMatchObject({
+        preview: { title: expect.any(String), consequences: expect.any(Array) },
+        confirmation: expect.stringMatching(/^cfm_[0-9a-f]{32}$/),
+      });
+      // Nothing was written by the preview.
+      expect(
+        calls.slice(before).filter(([n]) => !n.startsWith('startFeed:')),
+        `${name} wrote before it was confirmed`,
+      ).toEqual([]);
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(p, name, { ...args, confirmation: code });
+      expect(done.isError, `${name}: ${done.content[0]?.text}`).toBeFalsy();
+      // Once.
+      expect((await call(p, name, { ...args, confirmation: code })).isError, `${name} twice`).toBe(
+        true,
+      );
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+      };
+    }
+
+    it('previews and confirms every write that goes live or takes something down', async () => {
+      const { fake, calls } = fakeCatalog();
+      await withEnv({ ...env, CATALOG: fake }, async () => {
+        const put = await confirmWith(
+          op,
+          'put_catalog_products',
+          { products: [product], urgent: true },
+          calls,
+        );
+        expect(put.preview.consequences.join('\n')).toMatch(/live catalog.*within the minute/);
+        expect(put.preview.consequences.join('\n')).toMatch(/rationed/);
+        expect(put.done).toMatchObject({ results: [{ key: 'tee', status: 'created' }] });
+
+        const del = await confirmWith(
+          op,
+          'delete_catalog_products',
+          { keys: ['tee', 'gone'] },
+          calls,
+        );
+        expect(del.preview.title).toBe('Delete 2 products');
+        expect(del.preview.consequences).toContain('1 of 2 exist; the rest are skipped');
+        expect(del.done).toMatchObject({ done: 'Deleted 2 of 2' });
+
+        const type = await confirmWith(op, 'delete_catalog_type', { code: 'apparel' }, calls);
+        expect(type.preview.consequences.join('\n')).toMatch(/latest is v3/);
+        expect(type.preview.consequences.join('\n')).toMatch(/while any product uses it/);
+
+        const cats = await confirmWith(
+          op,
+          'put_catalog_categories',
+          { categories: [{ code: 'bottoms', name: { en: 'Bottoms' } }] },
+          calls,
+        );
+        expect(cats.preview.consequences.join('\n')).toMatch(/republished live/);
+        await confirmWith(op, 'delete_catalog_categories', { codes: ['tops', 'polos'] }, calls);
+
+        const started = await confirmWith(
+          op,
+          'start_catalog_feed',
+          { format: 'csv', name: 'spring.csv', content: 'key,title\ntee,Tee\nhat,Hat\n' },
+          calls,
+        );
+        expect(started.preview.consequences.join('\n')).toMatch(/about 2 rows/);
+        expect(started.done).toMatchObject({ feed: { id: 'fd_new', name: 'spring.csv' } });
+        expect(calls.find(([n]) => n === 'startFeed:body')![1]).toEqual([
+          'key,title\ntee,Tee\nhat,Hat\n',
+        ]);
+
+        const cancelled = await confirmWith(op, 'cancel_catalog_feed', { feedId: 'fd_run' }, calls);
+        expect(cancelled.preview.consequences.join('\n')).toMatch(/1 of 4 parts applied/);
+
+        const channel = await confirmWith(admin, 'delete_catalog_channel', { code: 'web' }, calls);
+        expect(channel.preview.consequences.join('\n')).toMatch(/Takes down everything published/);
+        expect(channel.preview.consequences[0]).toBe('Web · USD · en, fr');
+        await confirmWith(admin, 'reindex_catalog', {}, calls);
+        await confirmWith(admin, 'rebuild_catalog_gaps', {}, calls);
+
+        expect(calls.map(([n]) => n).filter((n) => !n.startsWith('startFeed:'))).toEqual([
+          'putProducts',
+          'deleteProducts',
+          'deleteType',
+          'putCategories',
+          'deleteCategories',
+          'startFeed',
+          'cancelFeed',
+          'deleteChannel',
+          'reindex',
+          'rebuildGaps',
+        ]);
+        // Urgent reached the catalog; the delete named every key.
+        expect(calls[0]![1][1]).toEqual({ by: 'ops@example.com', urgent: true });
+        expect(calls[1]![1][0]).toEqual(['tee', 'gone']);
+      });
+      // Each is in the audit log under REST's action, with the MCP trail.
+      expect((await audited('catalog.products_written')).at(-1)?.detail).toMatchObject({
+        created: 1,
+        urgent: true,
+        via: 'mcp',
+        tool: 'put_catalog_products',
+      });
+      expect((await audited('catalog.products_deleted')).at(-1)?.detail).toMatchObject({
+        deleted: 2,
+        via: 'mcp',
+      });
+      expect((await audited('catalog.type_deleted')).at(-1)).toMatchObject({
+        target: 'apparel',
+        detail: { versions: 3, via: 'mcp' },
+      });
+      expect((await audited('catalog.categories_saved')).at(-1)?.detail).toMatchObject({
+        count: 1,
+      });
+      expect((await audited('catalog.categories_deleted')).at(-1)?.detail).toMatchObject({
+        codes: ['tops', 'polos'],
+      });
+      expect((await audited('catalog.feed_started')).at(-1)).toMatchObject({
+        target: 'fd_new',
+        detail: { name: 'spring.csv', format: 'csv', via: 'mcp' },
+      });
+      expect((await audited('catalog.feed_cancelled')).at(-1)).toMatchObject({
+        target: 'fd_run',
+        detail: { via: 'mcp' },
+      });
+      expect((await audited('catalog.channel_deleted')).at(-1)).toMatchObject({
+        target: 'web',
+        detail: { unpublished: 7, via: 'mcp' },
+      });
+      expect((await audited('catalog.reindexed')).at(-1)?.detail).toMatchObject({ queued: 12 });
+      expect((await audited('catalog.gaps_rebuilt')).at(-1)?.detail).toMatchObject({ products: 9 });
+    });
+
+    it('refuses a confirm for another input, and nothing the catalog would refuse reaches it', async () => {
+      const { fake, calls } = fakeCatalog();
+      await withEnv({ ...env, CATALOG: fake }, async () => {
+        const args = { keys: ['tee'] };
+        const first = await call(op, 'delete_catalog_products', args);
+        const code = first.structuredContent!.confirmation as string;
+        // A code is for the input it previewed: more keys is a different delete.
+        const wider = await call(op, 'delete_catalog_products', {
+          keys: ['tee', 'hat'],
+          confirmation: code,
+        });
+        expect(wider.isError).toBe(true);
+        expect(wider.content[0]!.text).toMatch(/different action or input/);
+        expect(calls).toEqual([]);
+
+        // Refused up front, with no code issued.
+        for (const [name, input, why] of [
+          ['delete_catalog_products', { keys: ['nope'] }, 'None of these products exist.'],
+          ['delete_catalog_type', { code: 'nope' }, 'The catalog has no product type nope.'],
+          ['cancel_catalog_feed', { feedId: 'fd_done' }, 'The feed has already finished (done).'],
+          ['cancel_catalog_feed', { feedId: 'fd_x' }, 'The catalog has no feed fd_x.'],
+          [
+            'start_catalog_feed',
+            { format: 'csv', content: 'key,title\n' },
+            'The file has no rows.',
+          ],
+          [
+            'delete_catalog_categories',
+            { codes: ['tops'] },
+            'polos is a child of a category in this set, so it would be left without its parent. Delete them too, or move them first.',
+          ],
+          ['delete_catalog_categories', { codes: ['nope'] }, 'The catalog has no category nope.'],
+        ] as const) {
+          const r = await call(op, name, input);
+          expect(r.isError, name).toBe(true);
+          expect(r.content[0]!.text, name).toBe(why);
+        }
+        const noChannel = await call(admin, 'delete_catalog_channel', { code: 'nope' });
+        expect(noChannel.content[0]!.text).toBe('The catalog has no channel nope.');
+
+        // What the catalog refuses only when it runs comes back as a refusal, with its reasons.
+        const inUse = await call(op, 'delete_catalog_type', { code: 'used' });
+        const used = await call(op, 'delete_catalog_type', {
+          code: 'used',
+          confirmation: inUse.structuredContent!.confirmation,
+        });
+        expect(used.isError).toBe(true);
+        expect(used.content[0]!.text).toBe('The type is in use: 3 products use it');
+        expect((await audited('catalog.type_deleted')).some((e) => e.target === 'used')).toBe(
+          false,
+        );
+
+        // The bounds REST holds: 500 products, a feed's text.
+        const tooMany = Array.from({ length: 501 }, () => product);
+        expect((await call(op, 'put_catalog_products', { products: tooMany })).isError).toBe(true);
+        expect((await call(op, 'put_catalog_products', { products: [] })).isError).toBe(true);
+        expect(
+          (
+            await call(op, 'start_catalog_feed', {
+              format: 'csv',
+              content: 'x'.repeat(256 * 1024 + 1),
+            })
+          ).isError,
+        ).toBe(true);
+        expect(calls.filter(([n]) => n !== 'deleteType')).toEqual([]);
+      });
     });
   });
 

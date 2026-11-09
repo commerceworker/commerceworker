@@ -60,6 +60,12 @@ import {
 import { previewCancelCart, previewSubmit, runCancelCart, runSubmit } from './carts';
 import { previewPublishCatalog, runPublishCatalog } from './catalog';
 import {
+  type CatalogWrite,
+  type CatalogWriteTool,
+  previewCatalogWrite,
+  runCatalogWrite,
+} from './catalog-writes';
+import {
   type PromotionInput,
   previewCertificate,
   previewCreatePromotion,
@@ -411,7 +417,7 @@ export type ActionInput = {
   set_promotion_status: { promotionId: string; status: 'active' | 'paused' };
   verify_tax_certificate: { customerId: string; certificateId: string };
   revoke_tax_certificate: { customerId: string; certificateId: string };
-};
+} & CatalogWrite;
 export type ActionTool = keyof ActionInput;
 
 /** The approval wait a decision is for: the one named, or the only one open. */
@@ -627,6 +633,22 @@ export async function previewAction<T extends ActionTool>(
           p,
           tool === 'verify_tax_certificate' ? 'verify' : 'revoke',
           input as ActionInput['verify_tax_certificate'],
+          roleBlock,
+        );
+      case 'put_catalog_products':
+      case 'delete_catalog_products':
+      case 'delete_catalog_type':
+      case 'delete_catalog_channel':
+      case 'put_catalog_categories':
+      case 'delete_catalog_categories':
+      case 'start_catalog_feed':
+      case 'cancel_catalog_feed':
+      case 'reindex_catalog':
+      case 'rebuild_catalog_gaps':
+        return await previewCatalogWrite(
+          env,
+          tool,
+          input as CatalogWrite[CatalogWriteTool],
           roleBlock,
         );
       case 'publish_catalog':
@@ -878,6 +900,17 @@ export async function runAction<T extends ActionTool>(
         input as ActionInput['verify_tax_certificate'],
         trail,
       );
+    case 'put_catalog_products':
+    case 'delete_catalog_products':
+    case 'delete_catalog_type':
+    case 'delete_catalog_channel':
+    case 'put_catalog_categories':
+    case 'delete_catalog_categories':
+    case 'start_catalog_feed':
+    case 'cancel_catalog_feed':
+    case 'reindex_catalog':
+    case 'rebuild_catalog_gaps':
+      return runCatalogWrite(env, p, tool, input as CatalogWrite[CatalogWriteTool], trail);
     case 'publish_catalog':
       return runPublishCatalog(
         env,

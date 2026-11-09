@@ -82,8 +82,8 @@ shown, one after another. A card opens the product's sheet (`?product=<key>`,
 `components/catalog/sheet.tsx`): every editable field in every locale side by side, each marked from
 feed, edited here, draft, staged, conflict or missing, opened on the field that put it on the board.
 Writes go through the assistant (`useCatalogAction` in `components/catalog/use-action.ts` calls
-`act`). Staging, accepting and discarding are page-only tools (`stage_product_edits`,
-`accept_product_drafts`, `discard_product_edits`) that run at once. Publishing is `publish_catalog`,
+`act`). Staging and discarding (`stage_product_edits`, `discard_product_edits`) run at once, from the page
+and over MCP; accepting a draft is a page-only tool (`accept_product_drafts`). Publishing is `publish_catalog`,
 which stops at a confirm card listing each product's staged fields. The card is held to those edits
 (`bound.staged`): a confirm held to other edits, or to nothing (a card never shown, or marked stale
 since), is refused. Only a typed A2A call, which its caller composed, is not held. The card's call

@@ -36,22 +36,6 @@ import { atLeast, type Principal, type Role } from '@commerceworker/core';
 import {
   BOARD_COLUMNS,
   type BoardColumn,
-  FEED_FORMATS,
-  FEEDS_LIMIT,
-  type FeedFormat,
-  GAP_KINDS,
-  type GapKind,
-  readBoard,
-  readCategories,
-  readChannels,
-  readFeed,
-  readFeeds,
-  readProduct,
-  readProductByAlias,
-  readProductSheet,
-  readProductTypes,
-} from '@commerceworker/core/product';
-import {
   catalogCategoriesDeleteInput,
   catalogCategoriesInput,
   catalogChannelInput,
@@ -63,7 +47,25 @@ import {
   catalogProductsInput,
   catalogPublishInput,
   catalogTypeInput,
-} from './api-schemas';
+  editsStaged,
+  FEED_FORMATS,
+  FEEDS_LIMIT,
+  type FeedFormat,
+  feedName,
+  GAP_KINDS,
+  type GapKind,
+  productsDeleted,
+  productsWritten,
+  readBoard,
+  readCategories,
+  readChannels,
+  readFeed,
+  readFeeds,
+  readProduct,
+  readProductByAlias,
+  readProductSheet,
+  readProductTypes,
+} from '@commerceworker/core/product';
 import { actorName, audit } from './audit.server';
 import { forbidden } from './auth.server';
 import { readText } from './body';
@@ -159,17 +161,9 @@ export async function handleCatalog(
       const parsed = catalogProductsInput.safeParse(await readJson(request, MAX_PRODUCTS_BYTES));
       if (!parsed.success) return invalid('products', parsed.error.issues);
       const results = await c.putProducts(parsed.data.products, { by, urgent: parsed.data.urgent });
-      const count = (s: string) => results.filter((r) => r.status === s).length;
       await audit(request, 'catalog.products_written', {
         actor: caller,
-        detail: {
-          created: count('created'),
-          updated: count('updated'),
-          unchanged: count('unchanged'),
-          rejected: count('rejected'),
-          urgent: parsed.data.urgent ?? false,
-          via: 'api',
-        },
+        detail: { ...productsWritten(results, parsed.data.urgent), via: 'api' },
       });
       return json({ results });
     }
@@ -181,7 +175,7 @@ export async function handleCatalog(
       const results = await c.deleteProducts(parsed.data.keys, { by, urgent: parsed.data.urgent });
       await audit(request, 'catalog.products_deleted', {
         actor: caller,
-        detail: { deleted: results.filter((r) => r.status === 'deleted').length, via: 'api' },
+        detail: { ...productsDeleted(results), via: 'api' },
       });
       return json({ results });
     }
@@ -321,7 +315,7 @@ export async function handleCatalog(
       if (!format || !FEED_FORMATS.includes(format))
         return json({ error: `format must be ${FEED_FORMATS.join(' or ')}` }, 400);
       if (!request.body) return json({ error: 'The feed file is the request body' }, 400);
-      const name = (q.get('name') ?? `feed.${format}`).slice(0, 200);
+      const name = feedName(q.get('name'), format);
       // Streamed to the catalog as it arrives: a feed of any size never sits in this Worker.
       const started = c.startFeed(request.body, { name, format, by });
       // The catalog finishes starting a stored feed even if this caller goes, so it's audited
@@ -381,17 +375,9 @@ export async function handleCatalog(
       const parsed = catalogEditsInput.safeParse(await readJson(request));
       if (!parsed.success) return invalid('edits', parsed.error.issues);
       const results = await c.stageEdits(parsed.data.edits, by);
-      const staged = results.filter((r) => r.ok);
       await audit(request, 'catalog.edits_staged', {
         actor: caller,
-        detail: {
-          staged: staged.length,
-          refused: results.length - staged.length,
-          products: new Set(staged.map((r) => r.key)).size,
-          fromDrafts: parsed.data.edits.filter((e, i) => e.source === 'assistant' && results[i]?.ok)
-            .length,
-          via: 'api',
-        },
+        detail: { ...editsStaged(parsed.data.edits, results), via: 'api' },
       });
       return json({ results });
     }

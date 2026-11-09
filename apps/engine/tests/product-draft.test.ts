@@ -496,15 +496,15 @@ describe('catalog edits through the assistant', () => {
     return { rpc, staged, published };
   }
 
-  it('stages and accepts only from the page, and publishes what its card listed', async () => {
+  it('accepts drafts only from the page, and publishes what its card listed', async () => {
     const p = tee();
     const { rpc, published } = editable(p);
     const e = withCatalog(rpc);
     const direct = { via: 'assistant' as const, direct: true };
 
-    // A model or MCP client never stages: it drafts, and a person accepts.
+    // A model or MCP client drafts, and a person accepts: only the page's button does.
     await expect(
-      runTool(e, ada, 'stage_product_edits', { edits: [] }, { via: 'MCP' }),
+      runTool(e, ada, 'accept_product_drafts', { key: p.key }, { via: 'MCP' }),
     ).rejects.toThrow('This runs only from its page.');
 
     const nothing = await previewAction(e, ada, 'publish_catalog', { keys: [p.key] });

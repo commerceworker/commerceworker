@@ -46,6 +46,22 @@ const TWINS: Record<string, AssistantTool> = {
   'GET /api/v1/catalog/feeds/{id}': 'get_catalog_feed',
   'GET /api/v1/catalog/board': 'catalog_board',
   'GET /api/v1/catalog/board/{column}': 'catalog_board_column',
+  'POST /api/v1/catalog/products': 'put_catalog_products',
+  'POST /api/v1/catalog/products/delete': 'delete_catalog_products',
+  'POST /api/v1/catalog/types': 'put_catalog_type',
+  'DELETE /api/v1/catalog/types/{code}': 'delete_catalog_type',
+  'POST /api/v1/catalog/channels': 'put_catalog_channel',
+  'DELETE /api/v1/catalog/channels/{code}': 'delete_catalog_channel',
+  'POST /api/v1/catalog/categories': 'put_catalog_categories',
+  'POST /api/v1/catalog/categories/delete': 'delete_catalog_categories',
+  'POST /api/v1/catalog/feeds': 'start_catalog_feed',
+  'POST /api/v1/catalog/feeds/{id}/cancel': 'cancel_catalog_feed',
+  'POST /api/v1/catalog/reindex': 'reindex_catalog',
+  'POST /api/v1/catalog/gaps/rebuild': 'rebuild_catalog_gaps',
+  'POST /api/v1/catalog/edits': 'stage_product_edits',
+  // One tool drops either: `what` names staged edits or drafts.
+  'POST /api/v1/catalog/edits/discard': 'discard_product_edits',
+  'POST /api/v1/catalog/drafts/discard': 'discard_product_edits',
 };
 
 const SIGNED = {
@@ -56,12 +72,13 @@ const CREDENTIALS = {
   design:
     'Issues or rotates a credential shown once; given only to a person in the app or a token they hold',
 };
-const CATALOG = {
-  gap: 'The catalog’s admin surface: MCP has its reads, finding products, drafting content and publishing so far',
-};
 
 /** REST operations with no tool, and why. */
 const REST_ONLY: Record<string, Why> = {
+  'POST /api/v1/catalog/drafts': {
+    design:
+      'Stores drafts a caller wrote; over MCP the assistant writes them (draft_product_content), and a caller’s own text is staged as an edit',
+  },
   'POST /api/v1/webhooks/events': SIGNED,
   'POST /api/v1/webhooks/orders': SIGNED,
   'POST /api/v1/webhooks/stripe': SIGNED,
@@ -86,7 +103,6 @@ const REST_ONLY: Record<string, Why> = {
   'POST /api/v1/ucp/platforms': CREDENTIALS,
   'DELETE /api/v1/ucp/platforms/{id}': { gap: 'Revoking a UCP platform (admin)' },
 };
-const CATALOG_PREFIX = 'catalog/';
 
 /** Tools MCP offers with no REST route, and why. */
 const MCP_ONLY: Partial<Record<AssistantTool, Why>> = {
@@ -123,10 +139,7 @@ const mcpTools = (Object.keys(ASSISTANT_TOOLS) as AssistantTool[]).filter(
 
 describe('every operation is on both transports, or says why not', () => {
   it('accounts for every REST operation', () => {
-    const loose = restOps.filter(
-      (op) =>
-        !routed.has(op) && !(op in REST_ONLY) && !op.split(' ')[1]!.includes(`/${CATALOG_PREFIX}`),
-    );
+    const loose = restOps.filter((op) => !routed.has(op) && !(op in REST_ONLY));
     expect(loose, 'REST operations with no tool and no reason').toEqual([]);
   });
 
@@ -151,17 +164,13 @@ describe('every operation is on both transports, or says why not', () => {
   });
 
   it('counts what is left to close', () => {
-    const gaps = [
-      ...Object.values(REST_ONLY),
-      ...Object.values(MCP_ONLY),
-      ...restOps
-        .filter((op) => op.includes(`/${CATALOG_PREFIX}`) && !routed.has(op))
-        .map(() => CATALOG),
-    ].filter((w) => 'gap' in w);
+    const gaps = [...Object.values(REST_ONLY), ...Object.values(MCP_ONLY)].filter(
+      (w) => 'gap' in w,
+    );
     // Exactly: closing a gap lowers it, and a new one-sided operation must say why here.
     expect(gaps.length).toBe(GAPS_OPEN);
   });
 });
 
-/** The gaps open today (the catalog's admin routes are most of them). */
-const GAPS_OPEN = 28;
+/** The gaps open today: the admin routes (webhooks, integrations, UCP) and six model-backed tools. */
+const GAPS_OPEN = 12;

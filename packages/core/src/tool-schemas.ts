@@ -14,14 +14,24 @@ import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from 
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
 import { pluginCasesSchema } from './plugins';
-import { BOARD_COLUMNS, EDIT_SOURCES } from './product/api';
+import { BOARD_COLUMNS } from './product/api';
 import {
   fieldRefSchema,
   GAP_KINDS,
   MAX_DRAFT_FIELDS,
   PRODUCT_DRAFT_INSTRUCTION_MAX,
-  TEXT_MAX,
 } from './product/content';
+import {
+  catalogCategoriesDeleteInput,
+  catalogCategoriesInput,
+  catalogChannelInput,
+  catalogDeleteInput,
+  catalogDiscardInput,
+  catalogEditsInput,
+  catalogFeedInput,
+  catalogProductsInput,
+  catalogTypeInput,
+} from './product/inputs';
 import { BOARD_PAGE_LIMIT, FEEDS_LIMIT } from './product/reads';
 import { PROMOTION_KINDS } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
@@ -50,6 +60,7 @@ const F = OPERATION_FIELDS;
 const orderId = z.string().describe('The order id (ord_…) or its #reference, e.g. #k3x9q2');
 const cartId = z.string().max(100).describe('The cart id (cart_…)');
 const productKey = z.string().min(1).max(128).describe('The product key');
+const catalogCode = z.string().min(1).max(128);
 
 /** Each tool's input. Built once per isolate. */
 
@@ -275,36 +286,21 @@ export const TOOL_INPUTS = {
     archived: z.boolean().describe('false restores it'),
   }),
   test_flow: z.object({ flowId: z.string().max(60) }),
-  stage_product_edits: z.object({
-    edits: z
-      .array(
-        z.discriminatedUnion('op', [
-          z.object({
-            key: productKey,
-            ref: fieldRefSchema,
-            source: z.enum(EDIT_SOURCES).optional(),
-            op: z.literal('set'),
-            value: z.string().max(TEXT_MAX).nullable(),
-          }),
-          z.object({
-            key: productKey,
-            ref: fieldRefSchema,
-            source: z.enum(EDIT_SOURCES).optional(),
-            op: z.literal('clear'),
-          }),
-        ]),
-      )
-      .min(1)
-      .max(500),
-  }),
+  stage_product_edits: catalogEditsInput,
   accept_product_drafts: z.object({ key: productKey }),
-  discard_product_edits: z.object({
-    what: z.enum(['staged', 'drafts']),
-    items: z
-      .array(z.object({ key: productKey, ref: fieldRefSchema.optional() }))
-      .min(1)
-      .max(500),
-  }),
+  discard_product_edits: catalogDiscardInput.extend({ what: z.enum(['staged', 'drafts']) }),
+  put_catalog_products: catalogProductsInput,
+  delete_catalog_products: catalogDeleteInput,
+  put_catalog_type: catalogTypeInput,
+  delete_catalog_type: z.object({ code: catalogCode }),
+  put_catalog_channel: catalogChannelInput,
+  delete_catalog_channel: z.object({ code: catalogCode }),
+  put_catalog_categories: catalogCategoriesInput,
+  delete_catalog_categories: catalogCategoriesDeleteInput,
+  start_catalog_feed: catalogFeedInput,
+  cancel_catalog_feed: z.object({ feedId: z.string().min(1).max(100) }),
+  reindex_catalog: z.object({}),
+  rebuild_catalog_gaps: z.object({}),
   create_promotion: z.object({
     // As a cart reads it (`normalizePromoCode`), so the code made is the code buyers enter.
     code: z
@@ -624,6 +620,22 @@ export const TOOL_OUTPUTS = {
   accept_product_drafts: row({ done: z.string(), href: z.string(), results: z.array(row({})) }),
   discard_product_edits: row({ done: z.string(), href: z.string(), discarded: z.number() }),
   publish_catalog: actionOutput.extend({ results: z.array(row({})).optional() }),
+  put_catalog_products: actionOutput.extend({ results: z.array(row({})).optional() }),
+  delete_catalog_products: actionOutput.extend({ results: z.array(row({})).optional() }),
+  put_catalog_type: row({ done: z.string(), href: z.string(), type: row({ code: z.string() }) }),
+  delete_catalog_type: actionOutput,
+  put_catalog_channel: row({
+    done: z.string(),
+    href: z.string(),
+    channel: row({ code: z.string() }),
+  }),
+  delete_catalog_channel: actionOutput,
+  put_catalog_categories: actionOutput.extend({ categories: z.array(row({})).optional() }),
+  delete_catalog_categories: actionOutput,
+  start_catalog_feed: actionOutput.extend({ feed: feedOutput.optional() }),
+  cancel_catalog_feed: actionOutput.extend({ feed: feedOutput.optional() }),
+  reindex_catalog: actionOutput,
+  rebuild_catalog_gaps: actionOutput,
   create_promotion: actionOutput,
   set_member_role: actionOutput,
   set_approval_separation: actionOutput,
