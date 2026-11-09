@@ -275,25 +275,25 @@ describe('Stripe events', () => {
       stripe: { invoiceId: row!.externalId, hostedUrl: row!.hostedUrl },
     });
 
-    // Paid before anything waits for the payment: settled, and Stripe is asked to retry.
+    // Paid before anything waits for the payment: settled, and the event held on the order until
+    // its "Payment received" step waits, so Stripe needn't send it again.
     const paid = stripe.payInvoice(row!.externalId!) as PaymentEvent;
-    expect(await handleStripeEvent(env, paid)).toMatchObject({ outcome: 'retry', orderId });
-    expect(await db().select().from(paymentEvents).where(eq(paymentEvents.id, paid.id))).toEqual(
-      [],
-    );
+    expect(await handleStripeEvent(env, paid)).toMatchObject({ outcome: 'handled', orderId });
+    expect(
+      await db().select().from(paymentEvents).where(eq(paymentEvents.id, paid.id)),
+    ).toHaveLength(1);
     expect((await invoiceRows(orderId))[0]!.status).toBe('paid');
     expect(await balanceOf('cus_northwind')).toBeCloseTo(before, 6);
 
     await agent(orderId).decide('approval', 'approved', 'sales');
-    await waitsFor(orderId, 'payment.received');
-    expect(await handleStripeEvent(env, paid)).toEqual({
-      outcome: 'handled',
-      orderId,
-      delivered: 'payment.received',
-    });
-    expect(await handleStripeEvent(env, paid)).toEqual({ outcome: 'duplicate' });
+    // The wait takes the held payment as it opens: no redelivery needed.
     const done = await settled(orderId);
     expect(done.status).toBe('completed');
+    expect(done.nodes.paid!.branches).toEqual(['received']);
+    expect(done.timeline.some((t) => /took payment\.received, held since/.test(t.message))).toBe(
+      true,
+    );
+    expect(await handleStripeEvent(env, paid)).toEqual({ outcome: 'duplicate' });
     expect(done.vars).toMatchObject({ invoiceUrl: row!.hostedUrl });
 
     // Settled once: one payment, one settlement, the balance back where it was.
@@ -428,9 +428,10 @@ describe('orders with a Stripe invoice', () => {
     });
     await waitsFor(orderId, 'approval');
     const [row] = await invoiceRows(orderId);
+    // Paid while the order waits for its approval: held until the payment wait opens.
     expect(
       await handleStripeEvent(env, stripe.payInvoice(row!.externalId!) as PaymentEvent),
-    ).toMatchObject({ outcome: 'retry' });
+    ).toMatchObject({ outcome: 'handled', reason: 'Held until a step waits for payment.received' });
     await agent(orderId).cancel('Changed our mind');
     const s = await state(orderId);
     expect(s.status).toBe('cancelled');

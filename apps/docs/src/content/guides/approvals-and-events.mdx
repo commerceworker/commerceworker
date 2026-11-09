@@ -156,9 +156,18 @@ goods before any refund.
 
 ### Delivering an event
 
-An event is delivered to whichever node is waiting for that event name. If none is, nothing
-happens and the caller is told `delivered: false`; delivering again later works once a node is
-waiting.
+An event is delivered to whichever node is waiting for that event name. If none is yet but a
+Wait-for-event step of the order's flow listens for it, an event sent through the API, by a
+connected system, by Stripe or by an agent over MCP is **held** on the order: the caller is told
+`held: true`, and the step takes it when it opens, without anyone sending it again. That covers a
+payment that lands while the order still waits for an approval, or a second seller answering while
+a marketplace order is between passes of its acceptance loop. An order holds up to 20 events.
+A resend of one it already holds, or of one a step already took, counts once (the second answers
+`delivered: true, duplicate: true`), so a sender retrying after a lost answer can't feed a later
+step the same event twice; two events with the same name and payload count as one. What it holds
+goes when it ends. When no step of the
+flow listens for the event, or the order has ended, nothing happens and the caller is told
+`delivered: false`. The order page's own buttons deliver only to a step that is waiting.
 
 - **Order page**: the open wait says what it waits for in plain words and has a button that
   records it by hand, such as **Mark as collected** for `pickup.collected` or **Record payment** for
@@ -209,12 +218,13 @@ X-CommerceWorker-Signature: t=<unix seconds>,k=<integration id>,v1=<hex HMAC-SHA
 ```
 
 The timestamp is part of the signed message and must be within 5 minutes of the server's clock,
-so a captured request can't be replayed later. `k` is the integration's `id`; it tells CommerceWorker which secret to check. The signature of a delivered event is also recorded, so replaying it within the window returns `200 { "delivered": true, "duplicate": true }` and delivers nothing; a `409` is not recorded and may be retried.
+so a captured request can't be replayed later. `k` is the integration's `id`; it tells CommerceWorker which secret to check. The signature of a delivered event is also recorded, so replaying it within the window returns `200 { "delivered": true, "duplicate": true }` and delivers nothing, as does a resend of one the order holds; a `409` is not recorded and may be retried.
 
 | Status | Meaning |
 |---|---|
 | `200` | `{ "delivered": true, "nodeId": "…" }` |
-| `409` | `{ "delivered": false }`: no node is waiting for that event yet, so retry later |
+| `202` | `{ "delivered": false, "held": true }`: no step waits for it yet, so the order holds it until one does; don't send it again |
+| `409` | `{ "delivered": false }`: the order won't wait for it (no step of its flow listens for that event, or it already holds 20), so retry later |
 | `400` | The body isn't `{ orderId, event, payload? }`, or `payload` is over 32 KiB of JSON |
 | `413` | The body is over 1 MiB |
 | `401` | Missing or malformed header, no `k=`, an unknown or revoked integration, stale timestamp, or wrong signature |
@@ -222,8 +232,8 @@ so a captured request can't be replayed later. `k` is the integration's `id`; it
 | `404` | No such order, or (for a channel-bound integration) not one it can see |
 | `429` | The integration sent more than 1,200 requests in a minute (inbound orders included); retry after `Retry-After` seconds |
 
-Answering `409` lets the sender's own retry policy deliver an event that arrives before the order
-reaches its wait.
+An event that arrives before the order reaches its wait is held (`202`), so a sender's retry
+policy only matters for a `409`.
 
 ### Stripe events
 
@@ -236,14 +246,15 @@ passes. The deployment's operator registers the endpoint in Stripe and enables t
 |---|---|
 | `invoice.paid` | For an invoice an order issued through Stripe (see [Payments](/guides/payments/#invoices-paid-through-stripe)): marks it paid, records the payment, settles the account charge, and delivers `payment.received` to the order (payload `provider`, `invoiceId`, `invoiceNumber`, `amount`, `currency`) |
 | `payment_intent.canceled` | Marks the order's payment authorization `voided` |
-| `charge.dispute.created` | Delivers `payment.disputed` (payload `disputeId`, `amount`, `currency`, `reason`) when a node is waiting for it; otherwise it is noted and nothing else happens |
+| `charge.dispute.created` | Delivers `payment.disputed` (payload `disputeId`, `amount`, `currency`, `reason`) when a node is waiting for it, or holds it for a step of the flow that will; otherwise it is noted and nothing else happens |
 
 Each Stripe event id is acted on once; a redelivery answers `200` with `{ "outcome": "duplicate" }`.
 Events about invoices or payments CommerceWorker didn't create, and other event types, answer `200`
 with `{ "outcome": "ignored" }`. When `invoice.paid` arrives before the order reaches its
 `payment.received` wait (the customer paid while it waited for an approval, say), the invoice is
-settled and the answer is `409`: Stripe delivers the event again later (it keeps trying for three
-days) and it resumes the order then. Once the order has ended, the event is settled and not
+settled and the payment held on the order: its wait takes it when it opens, and Stripe isn't asked
+to send it again. An order whose flow never waits for the payment answers `409`, and Stripe tries
+again later (for up to three days). Once the order has ended, the event is settled and not
 retried. A bad signature answers `400`, and `503` means Stripe webhooks aren't configured on the
 deployment.
 

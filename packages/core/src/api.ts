@@ -224,11 +224,22 @@ export interface EngineRpc {
   /** Starts an order at most once per idempotency key. */
   startOrderOnce(input: StartOrderOnceInput): Promise<StartOrderOnceResult>;
   /** Delivers a business event (e.g. "payment.received") to whichever node waits for it. */
+  /**
+   * Delivers a business event to the step waiting for it. With none waiting yet, an order still
+   * running whose flow waits for it holds it until that step opens (`held: true`); a resend of one
+   * already given to a step is `delivered` with `duplicate: true`.
+   */
   sendEvent(
     orderId: string,
     event: string,
     payload?: Record<string, unknown>,
-  ): Promise<{ delivered: boolean; nodeId?: string; notFound?: true }>;
+  ): Promise<{
+    delivered: boolean;
+    held?: true;
+    duplicate?: true;
+    nodeId?: string;
+    notFound?: true;
+  }>;
   /** A verified payment provider event (Stripe): settles invoices and resumes the order. */
   paymentEvent(event: PaymentEvent): Promise<PaymentEventResult>;
   /**

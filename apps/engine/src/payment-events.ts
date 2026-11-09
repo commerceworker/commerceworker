@@ -81,8 +81,9 @@ async function dispatch(env: Env, event: PaymentEvent): Promise<PaymentEventResu
       const intent = idOf(obj.payment_intent);
       const orderId = intent ? await orderForIntent(env, intent) : null;
       if (!orderId) return { outcome: 'ignored', reason: 'Not a CommerceWorker payment' };
-      // Most flows don't wait for a dispute: one that has no wait open is told nothing, rather
-      // than retried for days. A flow that wants disputes waits on `payment.disputed`.
+      // Most flows don't wait for a dispute: one with no `payment.disputed` step is told nothing,
+      // rather than retried for days. A flow that wants disputes waits on `payment.disputed`, and
+      // a dispute that comes before that step opens is held for it.
       const r = await deliver(env, orderId, 'payment.disputed', {
         provider: 'stripe',
         disputeId: str(obj.id),
@@ -102,8 +103,9 @@ async function dispatch(env: Env, event: PaymentEvent): Promise<PaymentEventResu
 
 /**
  * Delivers an order event to the node waiting for it. With no wait open, an order still running
- * may open one later (the invoice node runs before the wait), so the outcome is `retry`; a finished
- * order never will.
+ * whose flow waits for it holds it until the wait opens (the invoice node runs before the wait),
+ * so Stripe needn't send it again. One that won't wait for it (its flow has no such step, or it
+ * holds all it can) is `retry`, as before; a finished order never will.
  */
 async function deliver(
   env: Env,
@@ -115,8 +117,10 @@ async function deliver(
   const state = (await agent.snapshot()) as OrderState;
   if (!state.orderId) return { outcome: 'ignored', orderId, reason: 'Unknown order' };
   const clean = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined));
-  const r = await agent.deliver(name, clean);
+  const r = await agent.deliver(name, clean, { hold: true });
   if (r.delivered) return { outcome: 'handled', orderId, delivered: name };
+  if ('held' in r && r.held)
+    return { outcome: 'handled', orderId, reason: `Held until a step waits for ${name}` };
   if (TERMINAL_ORDER_STATUSES.includes(state.status))
     return { outcome: 'handled', orderId, reason: `Order is ${state.status}` };
   return { outcome: 'retry', orderId, reason: `No node is waiting for ${name} yet` };

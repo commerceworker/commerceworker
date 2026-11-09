@@ -392,7 +392,7 @@ describe('assistant actions', () => {
     expect(again.blocked).toMatch(/Nothing on this order is waiting/);
   });
 
-  it('lists what a cancel will undo, and blocks events nothing waits for', async () => {
+  it('lists what a cancel will undo, holds an event a later step waits for, and blocks the rest', async () => {
     const orderId = await waitingOrder();
     const op = strip(await who('operator', 'ops@example.com'));
     const cancel = await previewAction(env, op, 'cancel_order', {
@@ -403,11 +403,20 @@ describe('assistant actions', () => {
     expect(cancel.consequences).toEqual(
       expect.arrayContaining(['Closes its open approvals', 'Reason: “Duplicate PO”']),
     );
-    const event = await previewAction(env, op, 'deliver_event', {
+    // Nothing waits for the payment yet, but a later step of its flow will: held, as over REST.
+    const early = await previewAction(env, op, 'deliver_event', {
       orderId,
       event: 'payment.received',
     });
-    expect(event.blocked).toMatch(/Nothing on this order is waiting for payment.received/);
+    expect(early.blocked).toBeUndefined();
+    expect(early.consequences).toEqual([
+      'Held on the order until a step waits for payment.received, then given to it',
+    ]);
+    const event = await previewAction(env, op, 'deliver_event', {
+      orderId,
+      event: 'pickup.collected',
+    });
+    expect(event.blocked).toMatch(/Nothing on this order is waiting for pickup.collected/);
     await runAction(env, op, 'cancel_order', { orderId, reason: 'Duplicate PO' }, 'MCP');
     expect((await state(orderId)).reason).toBe('Duplicate PO (ops@example.com via MCP)');
     const logged = await db()
