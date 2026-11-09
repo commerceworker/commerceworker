@@ -2128,6 +2128,72 @@ describe('payments', () => {
   });
 });
 
+describe('ending without payment', () => {
+  const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
+    id,
+    type,
+    label: id,
+    config,
+    position: { x: 0, y: 0 },
+  });
+  const edge = (source: string, target: string, sourceHandle: string | null = null) => ({
+    id: `${source}.${sourceHandle ?? 'out'}-${target}`,
+    source,
+    target,
+    sourceHandle,
+    targetHandle: null,
+  });
+  // A card held, then the flow ends on the outcome named: no rollback runs for any of them.
+  const flowEnding = (outcome: string) => ({
+    id: `test-hold-${outcome}`,
+    name: `Hold then ${outcome}`,
+    description: '',
+    model: 'b2c' as const,
+    channels: [],
+    nodes: [
+      node('start', 'trigger.manual'),
+      node('price', 'commerce.price'),
+      node('authorize', 'commerce.authorize_payment', { method: 'card' }),
+      node('end', 'control.end', { outcome, reason: `Ended ${outcome}` }),
+    ],
+    edges: [edge('start', 'price'), edge('price', 'authorize'), edge('authorize', 'end', 'ok')],
+  });
+
+  beforeAll(async () => {
+    for (const outcome of ['declined', 'cancelled', 'completed'])
+      await publishFlow(db(), flowEnding(outcome));
+  });
+
+  const run = async (outcome: string) => {
+    await introspect();
+    const { orderId } = await startOrder(env, {
+      flowId: `test-hold-${outcome}`,
+      input: input({ model: 'b2c', customerId: 'cus_ada', lines: [{ sku: 'GSK-010', qty: 1 }] }),
+    });
+    const done = await settled(orderId);
+    const pays = await db().select().from(payments).where(eq(payments.orderId, orderId));
+    return { done, pays };
+  };
+
+  for (const outcome of ['declined', 'cancelled'])
+    it(`voids the card hold when the flow ends ${outcome}`, async () => {
+      const { done, pays } = await run(outcome);
+      expect([done.status, done.reason]).toEqual([outcome, `Ended ${outcome}`]);
+      expect(pays.map((p) => [p.kind, p.status])).toEqual([['authorization:card', 'voided']]);
+      const voids = done.timeline.filter((t) => t.kind === 'rollback');
+      expect(voids.map((t) => [t.nodeId, t.message])).toEqual([
+        ['end', 'Voided 1 authorization: the order ended without payment'],
+      ]);
+    });
+
+  it('keeps the hold when the flow ends completed, to be captured later', async () => {
+    const { done, pays } = await run('completed');
+    expect(done.status).toBe('completed');
+    expect(pays.map((p) => [p.kind, p.status])).toEqual([['authorization:card', 'authorized']]);
+    expect(done.timeline.some((t) => t.kind === 'rollback')).toBe(false);
+  });
+});
+
 describe('idempotency', () => {
   const once = async (req: StartOrderOnceInput) => {
     const r = await startOrderOnce(env, req);
