@@ -203,6 +203,25 @@ describe('order actions over REST', () => {
     });
   });
 
+  it('stamps who delivered an event, and refuses a payload naming its source or a return', async () => {
+    engine.sendEvent.mockResolvedValueOnce({ delivered: true, nodeId: 'pay' });
+    await post('orders/ord_x/events', { event: 'payment.received', payload: { amount: 5 } });
+    expect(engine.sendEvent).toHaveBeenLastCalledWith('ord_x', 'payment.received', {
+      amount: 5,
+      source: 'api',
+      by: operator.name,
+    });
+    engine.sendEvent.mockClear();
+    const forged = await post('orders/ord_x/events', {
+      event: 'payment.received',
+      payload: { provider: 'stripe', paymentIntentId: 'pi_1' },
+    });
+    expect(forged.status).toBe(422);
+    expect((await forged.json()).error).toContain('provider, paymentIntentId');
+    expect((await post('orders/ord_x/events', { event: 'return.requested' })).status).toBe(422);
+    expect(engine.sendEvent).not.toHaveBeenCalled();
+  });
+
   it('answers 404 for an event to an unknown order', async () => {
     engine.sendEvent.mockResolvedValueOnce({ delivered: false, notFound: true });
     expect((await post('orders/ord_x/events', { event: 'payment.received' })).status).toBe(404);
@@ -541,6 +560,25 @@ describe('signed events', () => {
     const replay = await send(raw, signature);
     expect(await replay.json()).toEqual({ delivered: true, duplicate: true });
     expect(engine.sendEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('stamps the integration on a signed event, and refuses one naming its source', async () => {
+    const raw = JSON.stringify({
+      orderId: 'ord_x',
+      event: 'payment.received',
+      payload: { amount: 5 },
+    });
+    engine.sendEvent.mockResolvedValueOnce({ delivered: true, nodeId: 'pay' });
+    expect((await send(raw, await sign(raw))).status).toBe(200);
+    expect(engine.sendEvent.mock.calls.at(-1)![2]).toMatchObject({ amount: 5, source: 'webhook' });
+    expect(String(engine.sendEvent.mock.calls.at(-1)![2].by)).toMatch(/^integration:/);
+    const forged = JSON.stringify({
+      orderId: 'ord_x',
+      event: 'payment.received',
+      payload: { source: 'stripe' },
+    });
+    expect((await send(forged, await sign(forged))).status).toBe(422);
+    expect(engine.sendEvent).toHaveBeenCalledTimes(1);
   });
 
   it('treats a respelled copy of a delivered event as the same delivery', async () => {

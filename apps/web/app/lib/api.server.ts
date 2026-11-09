@@ -72,6 +72,7 @@ import {
   type CartAnswer,
   cartOpSchema,
   cartView,
+  deliveredEventProblem,
   flowForOrder,
   type InboundOrder,
   inboundFingerprint,
@@ -362,7 +363,14 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
       if (denied) return denied;
       const b = orderEventInput.safeParse(await body());
       if (!b.success) return json({ error: 'Invalid event', issues: b.error.issues }, 400);
-      const res = await engine().sendEvent(orderId, b.data.event, b.data.payload ?? {});
+      const refused = deliveredEventProblem(b.data.event, b.data.payload);
+      if (refused) return json({ error: refused }, 422);
+      // Its source and `by` last: the payload never names who or what delivered it.
+      const res = await engine().sendEvent(orderId, b.data.event, {
+        ...b.data.payload,
+        source: 'api',
+        by: caller.name,
+      });
       if (res.notFound) return json({ error: 'Not found' }, 404);
       if (res.delivered)
         await audit(request, 'order.event_delivered', {
@@ -794,13 +802,19 @@ export async function handleSignedEvent(request: Request): Promise<Response> {
   if (channel === null) return json({ error: 'Not found' }, 404);
   const scope = allowsEvent(signed.integration, parsed.event, channel);
   if (!scope.ok) return json({ error: scope.reason }, 403);
+  const refused = deliveredEventProblem(parsed.event, parsed.payload);
+  if (refused) return json({ error: refused }, 422);
   // Claim the signature first, so a replay of this exact request (even a concurrent one) delivers
   // nothing. The claim is dropped unless the event was delivered, so a sender may retry a 409.
   const receipt = `event:${signed.integration.id}:${signed.signature}`;
   if (!(await claimReceipt(receipt))) return json({ delivered: true, duplicate: true });
   let delivered = false;
   try {
-    const res = await engine().sendEvent(parsed.orderId, parsed.event, parsed.payload ?? {});
+    const res = await engine().sendEvent(parsed.orderId, parsed.event, {
+      ...parsed.payload,
+      source: 'webhook',
+      by: integrationActor(signed.integration).name,
+    });
     delivered = !!res.delivered;
     if (res.notFound) return json({ error: 'Not found' }, 404);
     if (delivered)

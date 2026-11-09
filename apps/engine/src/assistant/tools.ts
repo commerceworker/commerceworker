@@ -88,22 +88,9 @@ const cartId = z.string().max(100).describe('The cart id (cart_…)');
 const productKey = z.string().min(1).max(128).describe('The product key');
 
 /** Each tool's input. Built once per isolate. */
-/**
- * What an event's own source writes: who delivered it, when, the outcome, and a provider's
- * receipt. A caller's payload can't set them, so a hand delivery never reads as a verified one.
- */
-export const RESERVED_EVENT_FIELDS = new Set([
-  'by',
-  'event',
-  'at',
-  'outcome',
-  'source',
-  'provider',
-  'invoiceId',
-  'paymentIntentId',
-  'note',
-  'goodsBack',
-]);
+import { RESERVED_EVENT_FIELDS } from '@commerceworker/core';
+
+export { RESERVED_EVENT_FIELDS };
 
 export const TOOL_INPUTS = {
   needs_attention: z.object({}),

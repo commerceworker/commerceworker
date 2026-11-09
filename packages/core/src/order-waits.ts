@@ -40,3 +40,39 @@ export function eventProblem(event: unknown, payload: unknown): string | null {
 /** The step waiting for a business event, if any. */
 export const eventWait = (waits: readonly PendingWait[], event: string) =>
   waits.find((w) => w.kind === 'event' && w.event === event);
+
+/**
+ * What an event's own source writes: who delivered it, when, the outcome, and a provider's
+ * receipt. A caller's payload can't set them, so a hand delivery never reads as a verified one.
+ */
+export const RESERVED_EVENT_FIELDS: ReadonlySet<string> = new Set([
+  'by',
+  'event',
+  'at',
+  'outcome',
+  'source',
+  'provider',
+  'invoiceId',
+  'paymentIntentId',
+  'note',
+  'goodsBack',
+]);
+
+/** A return or claim, recorded only from the order page so it is checked against the order. */
+export const RETURN_EVENT = 'return.requested';
+
+/**
+ * Why a delivered event is refused, whoever sends it (REST, a signed webhook, MCP, A2A): a return
+ * that must be recorded from the order page, or a payload naming a field its source writes.
+ */
+export function deliveredEventProblem(
+  event: string,
+  payload: Record<string, unknown> | undefined,
+): string | null {
+  if (event === RETURN_EVENT)
+    return 'Record a return or claim from the order page, so its card shows the refund.';
+  const reserved = Object.keys(payload ?? {}).filter((k) => RESERVED_EVENT_FIELDS.has(k));
+  if (reserved.length)
+    return `payload can't set ${reserved.join(', ')}: the delivery records who sent it`;
+  return null;
+}
