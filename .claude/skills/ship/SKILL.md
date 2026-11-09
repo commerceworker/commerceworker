@@ -39,9 +39,11 @@ never pushes `main`, never deploys.
 4. **Docs.** If the change touched a documented surface and no docs, run `docs-sync` (the Stop
    hook will ask anyway).
 5. **Commit.** Stage only this change's files by name (never `git add -A` in a shared tree).
-   Message: a short imperative subject (as in `git log --oneline`: "Build listing indexes and
-   serve category listings"), a body saying why, then a blank line and the attribution trailer
-   from the system prompt.
+   Message: a Conventional Commits header, `type(scope): subject` with a short imperative
+   lower-case subject (`feat(catalog): build listing indexes and serve category listings`; the
+   scope is a workspace package name without `@commerceworker/`, or one of `commitlint.config.ts`'s
+   repo scopes, and may be left out), a body saying why, then a blank line and the attribution
+   trailer from the system prompt. The commit-msg hook and CI reject anything else.
 6. **Push** the branch: `git push -u origin <branch>` (the `guard-bash` hook asks before
    anything that touches `main` or force-pushes).
 7. **Open the PR:** `gh pr create --head <branch> --base main --title … --body …`. The body says

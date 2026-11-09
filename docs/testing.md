@@ -8,7 +8,9 @@ CI runs it after lint, type-check and build, two test tasks at a time (`TURBO_CO
 runner's 4 vCPUs, turbo's default of ten starved the catalog's Durable Object tests past their
 timeouts), then audits production dependencies
 (`.github/workflows/ci.yml`), each step running even when an earlier one failed. A separate
-`devices` job runs the web app's [device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit.
+`devices` job runs the web app's [device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit,
+and on a pull request a `commits` job lints each commit message against Conventional Commits
+(`commitlint.config.ts`).
 
 | Package | Environment | Config |
 |---|---|---|

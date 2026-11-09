@@ -11,6 +11,7 @@
     "lint": "turbo run lint",
     "format": "biome format --write .",
     "check-types": "turbo run check-types",
+    "commitlint": "commitlint --verbose",
     "web:dev": "pnpm --filter @commerceworker/web dev",
     "engine:dev": "pnpm --filter @commerceworker/engine dev",
     "docs:dev": "pnpm --filter @commerceworker/docs dev",
@@ -35,11 +36,15 @@
     "studio:dev": "turbo run generate && pnpm studio:db:migrate:local && pnpm --filter @commerceworker/studio dev",
     "studio:db:migrate:local": "pnpm --filter @commerceworker/studio exec wrangler d1 migrations apply DB --local",
     "studio:dev:reset": "rm -rf apps/studio/.wrangler/state && pnpm studio:db:migrate:local",
-    "sync:theme": "pnpm --filter @commerceworker/design sync:theme"
+    "sync:theme": "pnpm --filter @commerceworker/design sync:theme",
+    "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
     "@cloudflare/workers-types": "catalog:",
+    "@commitlint/cli": "catalog:",
+    "@commitlint/config-conventional": "catalog:",
+    "@commitlint/types": "catalog:",
     "@types/node": "catalog:",
     "jsonc-parser": "catalog:",
     "turbo": "catalog:",

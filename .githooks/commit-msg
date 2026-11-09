@@ -1,0 +1,4 @@
+#!/bin/sh
+# Conventional Commits, checked by commitlint (commitlint.config.ts). Installed by `pnpm install`
+# (the root `prepare` script points core.hooksPath here).
+exec pnpm exec commitlint --edit "$1"

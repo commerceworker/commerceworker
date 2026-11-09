@@ -190,7 +190,8 @@ needs, is skipped, and so is the nightly demo reset. `.github/workflows/ci.yml` 
 type-check, build, tests, the fleet tests (`pnpm test:fleet`), the Claude Code toolkit's tests
 (`pnpm test:toolkit`) and `pnpm audit --prod --audit-level high` on every push and pull request, and
 beside them the web app's [device tests](testing.md#devices-the-web-app-on-iphone-and-ipad) (the
-`devices` job, which doesn't gate a deploy). On `main`, once the repository variable
+`devices` job, which doesn't gate a deploy). On a pull request the `commits` job also runs
+commitlint (`commitlint.config.ts`) over every commit the PR adds. On `main`, once the repository variable
 `DEPLOY_ENABLED` is `true` (Settings → Secrets and variables → Actions → Variables), it then deploys
 every deployment in `deployments/`, ring by ring ([Operations](operations.md#rings)). Each
 deployment's job (`.github/workflows/deploy.yml`) records a D1 Time Travel bookmark, migrates its
