@@ -15,12 +15,14 @@ import {
   FULFILLMENT_CAPABILITY,
   importSigningKey,
   importVerifyKey,
+  missingInfo,
   negotiate,
   ORDER_CAPABILITY,
   type Order,
   orderPermalink,
   parseDictionary,
   parsePlatformProfile,
+  pickupLineIssues,
   protocolIssues,
   publicJwk,
   readUcpSettings,
@@ -560,6 +562,176 @@ describe('order', () => {
         { id: 'li_2', quantity: -1 },
       ],
     });
+  });
+});
+
+// ── Pickup ────────────────────────────────────────────────────────────────
+
+const stores = [
+  { id: 'loc_soho', name: 'SoHo store', postalCode: '10012' },
+  { id: 'loc_brooklyn', name: 'Brooklyn store' },
+];
+const pickupView = view;
+const pickupInput = (id: string | null = 'loc_soho') =>
+  ucpCheckoutInput.parse({
+    line_items: [{ item: { id: 'TEE-M' }, quantity: 2 }],
+    fulfillment: {
+      methods: [{ type: 'pickup', ...(id ? { selected_destination_id: id } : {}) }],
+    },
+  });
+const collecting = () =>
+  session({
+    pickupStores: stores,
+    fulfillment: 'pickup',
+    pickupLocationId: 'loc_soho',
+    shipTo: null,
+    shippingOption: null,
+    quote: {
+      ...session().quote!,
+      shipping: 0,
+      shippingOptions: [],
+      shippingOption: null,
+      total: 53.92,
+    },
+  });
+
+describe('pickup', () => {
+  it('reads a chosen store as pickup and clears the ship-to and option, and shipping goes back on update', () => {
+    expect(checkoutPatch(pickupInput(), undefined, all)).toMatchObject({
+      fulfillment: 'pickup',
+      pickupLocationId: 'loc_soho',
+      shipTo: null,
+      shippingOption: null,
+    });
+    // A pickup method with no store chosen is not a choice.
+    expect(checkoutPatch(pickupInput(null), undefined, all)).toMatchObject({
+      fulfillment: 'ship',
+      pickupLocationId: null,
+    });
+    // Without the fulfillment extension a pickup is not read, and nothing changes.
+    const bare = new Map<UcpCapability, string>([[CHECKOUT_CAPABILITY, UCP_VERSION]]);
+    const p = checkoutPatch(pickupInput(), undefined, bare);
+    expect(p).not.toHaveProperty('fulfillment');
+    expect(p).not.toHaveProperty('pickupLocationId');
+  });
+
+  it('offers the stores as business locations the schema accepts, and what the buyer chose', () => {
+    const c = toUcpCheckout(collecting(), pickupView);
+    expect(conformsTo('shopping/fulfillment.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
+    const method = c.fulfillment!.methods.find((m) => m.type === 'pickup')!;
+    expect(method).toMatchObject({
+      id: 'fm_pickup',
+      line_item_ids: ['li_1'],
+      selected_destination_id: 'loc_soho',
+      destinations: [
+        {
+          id: 'loc_soho',
+          type: 'business_location',
+          name: 'SoHo store',
+          address: { postal_code: '10012' },
+        },
+        { id: 'loc_brooklyn', type: 'business_location', name: 'Brooklyn store' },
+      ],
+    });
+    expect(c.fulfillment!.methods.map((m) => m.type)).toEqual(['shipping', 'pickup']);
+    expect(c.fulfillment!.available_methods).toEqual([
+      { type: 'shipping', line_item_ids: ['li_1'] },
+      expect.objectContaining({ type: 'pickup', line_item_ids: ['li_1'], fulfillable_on: 'now' }),
+    ]);
+    // Collecting costs nothing to ship.
+    expect(c.totals.find((t) => t.type === 'fulfillment')).toMatchObject({
+      display_text: 'Pickup',
+      amount: 0,
+    });
+  });
+
+  it('offers a store unselected until one is chosen, and the schema still accepts it', () => {
+    const c = toUcpCheckout(session({ pickupStores: stores }), pickupView);
+    expect(conformsTo('shopping/fulfillment.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
+    expect(c.fulfillment!.methods.find((m) => m.type === 'pickup')).toMatchObject({
+      selected_destination_id: null,
+    });
+  });
+
+  it('offers no pickup when the flow has none, and shipping is as before', () => {
+    const c = toUcpCheckout(session(), view);
+    expect(c.fulfillment!.methods.map((m) => m.type)).toEqual(['shipping']);
+    expect(c.fulfillment!.available_methods).toEqual([
+      { type: 'shipping', line_item_ids: ['li_1'] },
+    ]);
+    // The schema refuses a pickup method whose destination is not a business location.
+    const bad = {
+      ...toUcpCheckout(session({ pickupStores: stores }), pickupView),
+    };
+    const m = bad.fulfillment!.methods.find((x) => x.type === 'pickup')!;
+    m.destinations = [{ id: 'x', type: 'business_location' } as never];
+    expect(
+      conformsTo('shopping/fulfillment.json#/$defs/dev.ucp.shopping.checkout', bad).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('finds the pickup method by its id when an update leaves its type out', () => {
+    const update = ucpCheckoutInput.parse({
+      line_items: [{ id: 'li_1', item: { id: 'TEE-M' }, quantity: 2 }],
+      fulfillment: { methods: [{ id: 'fm_pickup', selected_destination_id: 'loc_soho' }] },
+    });
+    expect(checkoutPatch(update, session(), all)).toMatchObject({
+      fulfillment: 'pickup',
+      pickupLocationId: 'loc_soho',
+      shipTo: null,
+    });
+    // And an untyped method with the shipping id is still shipping.
+    const ship = ucpCheckoutInput.parse({
+      line_items: [{ id: 'li_1', item: { id: 'TEE-M' }, quantity: 2 }],
+      fulfillment: { methods: [{ id: 'fm_shipping', selected_destination_id: 'dest_1' }] },
+    });
+    expect(checkoutPatch(ship, session(), all)).toMatchObject({ fulfillment: 'ship' });
+  });
+
+  it('keeps the chosen store listed when no store qualifies and once the checkout is done', () => {
+    const none = toUcpCheckout(
+      session({ fulfillment: 'pickup', pickupLocationId: 'loc_soho', pickupStores: [] }),
+      pickupView,
+    );
+    expect(conformsTo('shopping/fulfillment.json#/$defs/dev.ucp.shopping.checkout', none)).toEqual(
+      [],
+    );
+    expect(none.fulfillment!.methods.find((m) => m.type === 'pickup')).toMatchObject({
+      selected_destination_id: 'loc_soho',
+      destinations: [],
+    });
+    const done = toUcpCheckout(
+      { ...collecting(), status: 'completed', orderId: 'ord_1' },
+      pickupView,
+    );
+    expect(done.fulfillment!.methods.find((m) => m.type === 'pickup')).toMatchObject({
+      selected_destination_id: 'loc_soho',
+    });
+  });
+
+  it('refuses a pickup method that leaves out a line that ships', () => {
+    const named = (ids: string[]) =>
+      ucpCheckoutInput.parse({
+        line_items: [{ item: { id: 'TEE-M' }, quantity: 2 }],
+        fulfillment: {
+          methods: [{ type: 'pickup', line_item_ids: ids, selected_destination_id: 'loc_soho' }],
+        },
+      });
+    expect(pickupLineIssues(named(['li_2']), collecting())).toEqual([
+      expect.objectContaining({
+        code: 'pickup_unavailable',
+        content: expect.stringContaining('li_1'),
+      }),
+    ]);
+    expect(pickupLineIssues(named(['li_1']), collecting())).toEqual([]);
+    expect(pickupLineIssues(pickupInput(), collecting())).toEqual([]);
+  });
+
+  it('asks for no address or shipping option from a pickup', () => {
+    expect(missingInfo(collecting()).map((i) => i.path)).toEqual([]);
+    expect(
+      missingInfo(session({ shipTo: null, shippingOption: null })).map((i) => i.path),
+    ).toContain('$.fulfillment');
   });
 });
 

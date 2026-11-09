@@ -57,7 +57,11 @@ export async function routeFulfillment(
     const levels = await ports.inventory.levels(skus, locationId);
     return new Map([...levels].map(([sku, v]) => [sku, v.stock - v.reserved]));
   };
-  const covers = (f: Map<string, number>) => lines.every(([, l]) => (f.get(l.sku) ?? 0) >= l.qty);
+  // Per SKU, not per line: two lines of one SKU draw on the same stock.
+  const need = new Map<string, number>();
+  for (const [, l] of lines) need.set(l.sku, (need.get(l.sku) ?? 0) + l.qty);
+  const covers = (f: Map<string, number>) =>
+    [...need].every(([sku, qty]) => (f.get(sku) ?? 0) >= qty);
   const stores = await ports.fulfillment.locations();
 
   if (method === 'ship') {

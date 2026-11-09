@@ -175,6 +175,7 @@ The codes a platform will meet:
 | `address_undeliverable` | The address is incomplete or invalid |
 | `policy` | The flow's store policy refuses this checkout; `content` says which rule |
 | `invalid` | A pricing node rejected the checkout |
+| `pickup_unavailable` | The chosen store can't hold every item, or the flow offers no pickup |
 | `fulfillment_required` | The items ship, and the platform doesn't support `dev.ucp.shopping.fulfillment` |
 | `promotion` | A discount code was left out (a `warning`; see [Discounts](#discounts)) |
 | `payment_failed` | Payment could not be authorized; see [Completing](#completing-a-checkout) |
@@ -196,6 +197,36 @@ address. Digital goods need no address and no fulfillment.
 - On an update, a platform may name the held address as `selected_destination_id: "dest_1"` without
   resending it.
 - A platform that doesn't negotiate `dev.ucp.shopping.fulfillment` can buy only digital goods.
+
+### Pickup
+
+When the checkout flow can fulfil a pickup, `fulfillment.methods` also lists a `pickup` method
+(`fm_pickup`) and `available_methods` says so. A flow can when it has a Route fulfillment step that
+follows the order's own method (`from_order`, its default) with a path out of its `pickup` branch,
+as the built-in `tpl-omnichannel-order` does. A flow with no such path, such as
+`tpl-storefront-order`, offers shipping only.
+
+- The method's `destinations` are the stores, as `business_location` destinations with the store's
+  id, name and postal code. Only stores that offer pickup and hold every physical line in the
+  checkout, in free stock, are listed, so a store you can pick is one the order can then be routed
+  to. Lines of one SKU are added up, and the check is against the store's stock, not the
+  warehouse's. Nothing is held until the order runs. The list is worked out on each create and
+  update (and again when completing), so a read shows it as of the last write.
+- Choose a store with `{ "type": "pickup", "selected_destination_id": "<store id>" }` (on an update the
+  method may be named by its `id`, `fm_pickup`, instead of its type). If the method names
+  `line_item_ids`, they must include every line that ships. The checkout is
+  then priced by the flow as a pickup: shipping is free (the totals entry reads "Pickup"), tax is whatever the flow computes, and no
+  address or shipping option is asked for. The order starts with that store, runs the flow's pickup
+  path (hold at the store, ready for pickup, wait for the buyer), and the payment held is the quoted
+  total.
+- A store that can't supply the items, an id that isn't a store, or a pickup on a flow without one, is a
+  `pickup_unavailable` error at `$.fulfillment`, saying which. The chosen store stays on the checkout
+  with its selection even when nothing qualifies, and after completion.
+- Stores have no region, so tax on a pickup uses the flow's fallback rate, as for a pickup that
+  doesn't come through UCP. An update that doesn't send the store goes back to shipping.
+- A checkout is wholly shipped or wholly picked up: the order holds one fulfillment method for its
+  physical lines, so a mixed split (some lines shipped, some collected) is not offered. Digital lines
+  are delivered either way.
 
 ## Discounts
 
@@ -342,7 +373,7 @@ error is a JSON-RPC error with the HTTP status set: code `-32001` for a profile 
 ## Not supported yet
 
 - Currencies other than `USD`.
-- Shipping is the only fulfillment method; no pickup.
+- Fulfillment is shipping or pickup for the whole checkout; no split between them, and no other methods.
 - Catalog search and lookup, carts, identity linking, AP2 mandates and the embedded checkout.
 - Automatic and eligibility discounts (`automatic`, `provisional`, `eligibility`); the discount extension covers promotion codes only.
 - Cards that require 3-D Secure authentication (refused with `payment_failed`).

@@ -389,6 +389,17 @@ only where the step's result supports them. Completion passes the codes into the
 flow's own step redeems them and its authorize node adopts the discounted hold. A session is a row in `checkout_sessions` (the JSON in
 `data`, `version` compared on every write: a loser gets `409 conflict`).
 
+**Pickup.** `flowOffersPickup` (core `checkout.ts`) says whether the flow can fulfil one: a `commerce.route_fulfillment`
+step whose method is `from_order` with an edge out of its `pickup` branch. `pickupCheck` (`pickup.ts`), run once per write in `refresh`, lists the
+stores that offer pickup and hold every physical line (`inventory.levels` at the store, lines of a SKU added up, free =
+stock - reserved, as `routeFulfillment` reads it) and says why the chosen one can't; they are kept on the session
+(`pickupStores`) so a read costs nothing extra, and `toUcpCheckout` shows them as a `pickup` method's
+`business_location` destinations. A pickup is not checked against warehouse stock in `quoteCheckout`.
+A chosen store lands on the session (`fulfillment: 'pickup'`, `pickupLocationId`), `quoteCheckout` drafts the order
+with `fulfillment: { method: 'pickup', locationId }` so the flow's own shipping and tax nodes price it, and
+`refresh` raises `pickup_unavailable` for a store the order could not be routed to. Completion starts the order with
+that fulfillment. One method per checkout: the order model has no per-line split between shipping and pickup.
+
 **Completing.** `completeCheckout` (`checkout.ts`) is under an `Idempotency-Key` (`once`,
 `idempotency.ts`; `ucp_idempotency`, 24 hours, a throwing request releases its key). It reprices, claims the
 session (`complete_in_progress`) and calls `authorizeCheckout` (`payments.ts`): for Stripe a PaymentIntent
