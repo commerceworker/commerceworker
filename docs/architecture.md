@@ -345,7 +345,8 @@ the [Universal Commerce Protocol](https://docs.commerceworker.com/reference/ucp/
 `2026-08-25`). The protocol lives in core: `packages/core/src/checkout.ts` is the protocol-neutral
 checkout session (`CHECKOUT_STATUSES`, `missingInfo`, `openStatus`, `quoteNodes`,
 `checkoutFlowProblem`) and `packages/core/src/ucp/` is UCP over it: profile and negotiation
-(`profile.ts`, `ucpSettingsSchema`), checkout and order mappers (`checkout.ts`, `order.ts`), RFC 9421
+(`profile.ts`, `ucpSettingsSchema`), checkout and order mappers (`checkout.ts`, `order.ts`), the discount
+extension's view of the quote (`discount.ts`), RFC 9421
 message signatures (`signature.ts`, ES256 and `Content-Digest`), RFC 8941 structured fields
 (`structured.ts`) and error shapes (`errors.ts`). All of it is pure and tested against the official
 schemas. The engine serves it from `apps/engine/src/ucp/`.
@@ -373,12 +374,19 @@ failure is `424 profile_unreachable` or `422 profile_malformed`; `negotiate` the
 (`version_unsupported` is `422`, an empty intersection a `200` error response).
 
 **Quote parity.** `quoteCheckout` (`quote.ts`) prices a session with the checkout flow's own executors:
-`quoteNodes(graph)` picks the `QUOTE_NODE_TYPES` nodes (`commerce.validate`, `price`, `shipping_rate`,
-`tax`, `policy`) in the order the flow reaches them and runs `EXECUTORS` on a draft order, in
+`quoteNodes(graph)` picks the `QUOTE_NODE_TYPES` nodes (`commerce.validate`, `price`, `discount`,
+`shipping_rate`, `tax`, `policy`) in the order the flow reaches them and runs `EXECUTORS` on a draft order, in
 process, on the flow's latest published version. Those executors only read, so a quote writes
 nothing. The order the flow later runs prices the same lines the same way, so the hold placed at
 completion matches the total the order's authorize node adopts. Sessions are priced again on every
-write and once more right before completing. A session is a row in `checkout_sessions` (the JSON in
+write and once more right before completing. The discount extension (`dev.ucp.shopping.discount`,
+extending checkout like fulfillment) rides on that quote: its `discounts.codes` are kept on the session
+(`promoCodes`, as sent) and reach the draft order as `meta.promoCodes`, the `commerce.discount` step's
+applied and refused codes and the lines' pre-discount prices are kept on the quote (`discounts`,
+`listPrice`), and `discountView` (`ucp/discount.ts`) turns them into `discounts.applied`, the `discount`
+total and each line's share, so `applied`, `totals` and the lines cannot disagree. Allocations are given
+only where the step's result supports them. Completion passes the codes into the order's `meta`, so the
+flow's own step redeems them and its authorize node adopts the discounted hold. A session is a row in `checkout_sessions` (the JSON in
 `data`, `version` compared on every write: a loser gets `409 conflict`).
 
 **Completing.** `completeCheckout` (`checkout.ts`) is under an `Idempotency-Key` (`once`,

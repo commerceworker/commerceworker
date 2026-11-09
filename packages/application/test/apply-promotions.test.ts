@@ -35,7 +35,9 @@ describe('applying promotion codes to an order', () => {
   it('applies a usable code, refuses the rest in the order given, and re-totals', async () => {
     const pricing = new InMemoryPricingStore(PRICING_FIXTURE, new FixedClock());
     const r = await applyPromotions({ pricing }, order(['nope', 'pcpaused', 'pclast']), opts);
-    expect(r.applied).toEqual([{ id: 'pc_promo_last', code: 'PCLAST', kind: 'pct', amount: 2 }]);
+    expect(r.applied).toEqual([
+      { id: 'pc_promo_last', code: 'PCLAST', name: 'Last one', kind: 'pct', amount: 2 },
+    ]);
     expect(r.refused.map((x) => x.code)).toEqual(['NOPE', 'PCPAUSED']);
     expect(r.order?.subtotal).toBe(43);
     expect(r.order?.total).toBe(48);

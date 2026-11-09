@@ -2,6 +2,7 @@ import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import {
   CHECKOUT_CAPABILITY,
+  DISCOUNT_CAPABILITY,
   digestMatches,
   FULFILLMENT_CAPABILITY,
   importVerifyKey,
@@ -13,7 +14,7 @@ import {
   UCP_VERSION,
   verifyMessage,
 } from '@commerceworker/core';
-import { checkoutSessions, orders } from '@commerceworker/db';
+import { checkoutSessions, orders, promotionRedemptions, promotions } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureTemplates } from '../src/flows';
@@ -385,5 +386,247 @@ describe('UCP over MCP', () => {
       code: -32000,
       data: { code: 'idempotency_key_required' },
     });
+  });
+});
+
+describe('UCP discounts', () => {
+  const SAVE = 'UCPSAVE10';
+  let disc: PlatformCaller;
+  beforeAll(async () => {
+    disc = await platform('disc', platformProfile(UCP_VERSION, true, true));
+    const now = Date.now();
+    await db()
+      .insert(promotions)
+      .values({
+        id: `promo_${SAVE}`,
+        code: SAVE,
+        name: 'Ten percent off',
+        kind: 'pct',
+        value: 10,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing();
+  });
+
+  const withCodes = (codes?: string[]) => ({
+    ...monitorCheckout,
+    ...(codes ? { discounts: { codes } } : {}),
+  });
+  type Total = { type: string; amount: number };
+  // biome-ignore lint/suspicious/noExplicitAny: a checkout body read as untyped JSON
+  type Priced = Record<string, any>;
+  const totalsOf = (c: Priced) => c.totals as Total[];
+  const amountOf = (c: Priced, type: string) =>
+    totalsOf(c).find((t) => t.type === type)?.amount ?? 0;
+  const sums = (c: Priced) =>
+    totalsOf(c)
+      .filter((t) => t.type !== 'total')
+      .reduce((n, t) => n + t.amount, 0);
+
+  it('applies a code over REST, prices it through the flow and reports what was applied', async () => {
+    const plain = (await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', withCodes())).body;
+    const r = await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', withCodes(['ucpSave10']));
+    expect(r.status).toBe(201);
+    const c = r.body;
+    expect(c.ucp.capabilities[DISCOUNT_CAPABILITY]).toEqual([{ version: UCP_VERSION }]);
+    // 10% of the monitor's 349.00, taken from the same quote the flow would charge.
+    expect(c.discounts).toEqual({
+      codes: ['ucpSave10'],
+      applied: [
+        {
+          code: SAVE,
+          title: 'Ten percent off',
+          amount: 3490,
+          method: 'each',
+          allocations: [{ path: '$.line_items[0]', amount: 3490 }],
+        },
+      ],
+    });
+    expect(amountOf(c, 'subtotal')).toBe(34900);
+    expect(amountOf(c, 'discount')).toBe(-3490);
+    expect(c.line_items[0].item.price).toBe(34900);
+    expect(sums(c)).toBe(amountOf(c, 'total'));
+    expect(amountOf(c, 'total')).toBeLessThan(amountOf(plain, 'total'));
+    expect(c.messages ?? []).toEqual([]);
+    expect(c.status).toBe('ready_for_complete');
+
+    // An update replaces the codes: one the step refuses is reported at its place and still
+    // listed, and an empty list clears them.
+    const bad = await ucp(disc, 'PUT', `/ucp/v1/checkout-sessions/${c.id}`, {
+      ...withCodes([SAVE, 'NOPE']),
+      line_items: [{ id: c.line_items[0].id, item: { id: 'MON-27' }, quantity: 1 }],
+      fulfillment: { methods: [{ id: 'fm_shipping', selected_destination_id: 'dest_1' }] },
+    });
+    expect(bad.body.discounts.codes).toEqual([SAVE, 'NOPE']);
+    expect(bad.body.discounts.applied.map((a: { code: string }) => a.code)).toEqual([SAVE]);
+    expect(bad.body.messages).toEqual([
+      {
+        type: 'warning',
+        code: 'promotion',
+        content: "NOPE isn't a promotion.",
+        path: '$.discounts.codes[1]',
+      },
+    ]);
+    expect(bad.body.status).toBe('ready_for_complete');
+    const cleared = await ucp(disc, 'PUT', `/ucp/v1/checkout-sessions/${c.id}`, {
+      ...withCodes([]),
+      line_items: [{ id: c.line_items[0].id, item: { id: 'MON-27' }, quantity: 1 }],
+      fulfillment: { methods: [{ id: 'fm_shipping', selected_destination_id: 'dest_1' }] },
+    });
+    expect(cleared.body.discounts).toEqual({ codes: [], applied: [] });
+    expect(cleared.body.totals).toEqual(plain.totals);
+  });
+
+  it('refuses an unknown code without failing the checkout', async () => {
+    const r = await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', withCodes(['NOPE']));
+    expect(r.body.status).toBe('ready_for_complete');
+    expect(r.body.discounts).toEqual({ codes: ['NOPE'], applied: [] });
+    expect(r.body.messages).toEqual([
+      expect.objectContaining({ code: 'promotion', path: '$.discounts.codes[0]' }),
+    ]);
+    expect(r.body.totals.map((t: Total) => t.type)).toEqual([
+      'subtotal',
+      'fulfillment',
+      'tax',
+      'total',
+    ]);
+  });
+
+  it('ignores codes, and serves no discounts, when the extension was not negotiated', async () => {
+    const plain = (await ucp(alpha, 'POST', '/ucp/v1/checkout-sessions', withCodes())).body;
+    const r = await ucp(alpha, 'POST', '/ucp/v1/checkout-sessions', withCodes([SAVE]));
+    expect(r.status).toBe(201);
+    expect(r.body).not.toHaveProperty('discounts');
+    expect(r.body).not.toHaveProperty('messages');
+    expect(r.body.ucp.capabilities).not.toHaveProperty(DISCOUNT_CAPABILITY);
+    expect(r.body.totals).toEqual(plain.totals);
+    expect(r.body.line_items[0].item.price).toBe(34900);
+  });
+
+  it('applies and refuses codes over MCP as over REST', async () => {
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const res = await worker.fetch(
+        new Request('https://engine/ucp/mcp', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            [PRINCIPAL_HEADER]: await signPlatform(principalKey, disc, '/ucp/mcp'),
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name,
+              arguments: { meta: { 'ucp-agent': { profile: disc.profileUrl } }, ...args },
+            },
+          }),
+        }),
+        env,
+      );
+      // biome-ignore lint/suspicious/noExplicitAny: a response body read as untyped JSON
+      return ((await res.json()) as Record<string, any>).result.structuredContent;
+    };
+    const c = await call('create_checkout', { checkout: withCodes([SAVE, 'NOPE']) });
+    expect(c.discounts.applied).toEqual([expect.objectContaining({ code: SAVE, amount: 3490 })]);
+    expect(c.messages).toEqual([expect.objectContaining({ path: '$.discounts.codes[1]' })]);
+    expect(sums(c)).toBe(amountOf(c, 'total'));
+    // Not negotiated: the same call from a platform without the extension carries no discounts.
+    const res = await worker.fetch(
+      new Request('https://engine/ucp/mcp', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [PRINCIPAL_HEADER]: await signPlatform(principalKey, alpha, '/ucp/mcp'),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'create_checkout',
+            arguments: {
+              meta: { 'ucp-agent': { profile: alpha.profileUrl } },
+              checkout: withCodes([SAVE]),
+            },
+          },
+        }),
+      }),
+      env,
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: a response body read as untyped JSON
+    const plain = ((await res.json()) as Record<string, any>).result.structuredContent;
+    expect(plain).not.toHaveProperty('discounts');
+  });
+
+  it('holds and authorizes the discounted total, and redeems the code once for the order', async () => {
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.disableRetryDelays();
+    });
+    const { body: c } = await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', withCodes([SAVE]));
+    const done = await ucp(disc, 'POST', `/ucp/v1/checkout-sessions/${c.id}/complete`, pay(), {
+      'idempotency-key': key(),
+    });
+    expect(done.body.status).toBe('completed');
+    const orderId = done.body.order.id;
+    const state = await until(async () => {
+      const s = (await env.ORDER_AGENT.getByName(orderId).snapshot()) as OrderState;
+      return s.status === 'waiting' ? s : false;
+    }, 'the return window');
+    // The flow's own discount step took the code off again: its total is the one quoted.
+    expect(state.nodes.authorize?.branches).toEqual(['ok']);
+    expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
+    const redeemed = await db()
+      .select()
+      .from(promotionRedemptions)
+      .where(eq(promotionRedemptions.orderId, orderId));
+    expect(redeemed).toHaveLength(1);
+  });
+
+  it('hands the order only the codes the quote applied', async () => {
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.disableRetryDelays();
+    });
+    const now = Date.now();
+    await db()
+      .insert(promotions)
+      .values({
+        id: 'promo_UCPLATER',
+        code: 'UCPLATER',
+        name: 'Later',
+        kind: 'pct',
+        value: 50,
+        validFrom: now + 3_600_000,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing();
+    const { body: c } = await ucp(
+      disc,
+      'POST',
+      '/ucp/v1/checkout-sessions',
+      withCodes([SAVE, 'UCPLATER']),
+    );
+    expect(c.messages).toEqual([
+      expect.objectContaining({
+        path: '$.discounts.codes[1]',
+        content: "UCPLATER isn't valid yet.",
+      }),
+    ]);
+    const done = await ucp(disc, 'POST', `/ucp/v1/checkout-sessions/${c.id}/complete`, pay(), {
+      'idempotency-key': key(),
+    });
+    const orderId = done.body.order.id;
+    const state = await until(async () => {
+      const s = (await env.ORDER_AGENT.getByName(orderId).snapshot()) as OrderState;
+      return s.status === 'waiting' ? s : false;
+    }, 'the return window');
+    expect(state.order!.meta?.promoCodes).toEqual([SAVE]);
+    expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
   });
 });

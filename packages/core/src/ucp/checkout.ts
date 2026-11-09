@@ -1,7 +1,9 @@
 /**
- * The checkout capability (`dev.ucp.shopping.checkout`) and its fulfillment extension, as a view of
+ * The checkout capability (`dev.ucp.shopping.checkout`) and its fulfillment and discount extensions, as a view of
  * the protocol-neutral session (../checkout.ts): what a platform sends becomes a `CheckoutPatch`,
  * and a session becomes the checkout object UCP responses carry. Amounts are integer minor units.
+ *
+ * Discounts (./discount.ts) carry promotion codes in and the promotions the quote applied out.
  *
  * Fulfillment is shipping only: one method covering every line that ships, one destination (the
  * ship-to, `dest_1`) and one group (`fg_1`) whose options are the checkout flow's shipping rates.
@@ -12,9 +14,11 @@ import type { ShipAddress } from '../address';
 import type { CheckoutIssue, CheckoutPatch, CheckoutSession } from '../checkout';
 import { MAX_CHECKOUT_LINES, MAX_LINE_QUANTITY } from '../checkout';
 import { toMinor } from '../money';
+import { discountView, MAX_DISCOUNT_CODES } from './discount';
 import { UCP_VERSION, ucpMessage } from './errors';
 import {
   CHECKOUT_CAPABILITY,
+  DISCOUNT_CAPABILITY,
   FULFILLMENT_CAPABILITY,
   responseCapabilities,
   type UcpCapability,
@@ -86,12 +90,18 @@ const fulfillment = z
   })
   .passthrough();
 
+/** `shopping/discount.json`'s `discounts_object`, as a request carries it. */
+const discounts = z
+  .object({ codes: z.array(str(64)).max(MAX_DISCOUNT_CODES).optional() })
+  .passthrough();
+
 /** Create and Update Checkout (Update replaces the whole session). */
 export const ucpCheckoutInput = z
   .object({
     line_items: z.array(lineItem).min(1).max(MAX_CHECKOUT_LINES),
     buyer: buyer.optional(),
     fulfillment: fulfillment.optional(),
+    discounts: discounts.optional(),
   })
   .passthrough();
 export type UcpCheckoutInput = z.infer<typeof ucpCheckoutInput>;
@@ -157,9 +167,14 @@ function toPostal(a: Partial<ShipAddress>): PostalAddress {
 /**
  * What a Create or Update Checkout asks for, as a patch over `current`. Update is a full
  * replacement, so whatever the request leaves out is cleared; a destination the platform names by
- * our id (`dest_1`) without resending it keeps the ship-to we hold.
+ * our id (`dest_1`) without resending it keeps the ship-to we hold. Codes are read only when the
+ * discount extension is negotiated, and replace the session's (none sent clears them).
  */
-export function checkoutPatch(input: UcpCheckoutInput, current?: CheckoutSession): CheckoutPatch {
+export function checkoutPatch(
+  input: UcpCheckoutInput,
+  current?: CheckoutSession,
+  capabilities: ReadonlyMap<UcpCapability, string> = new Map(),
+): CheckoutPatch {
   const b = input.buyer;
   const shipping = input.fulfillment?.methods?.find((m) => !m.type || m.type === 'shipping');
   let shipTo: Partial<ShipAddress> | null = null;
@@ -180,6 +195,7 @@ export function checkoutPatch(input: UcpCheckoutInput, current?: CheckoutSession
     },
     shipTo,
     shippingOption: option,
+    ...(capabilities.has(DISCOUNT_CAPABILITY) ? { promoCodes: input.discounts?.codes ?? [] } : {}),
   };
 }
 
@@ -205,10 +221,17 @@ const iso = (ms: number) => new Date(ms).toISOString();
 export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
   const cur = s.currency;
   const m = (n: number) => toMinor(n, cur);
-  const priced = new Map((s.quote?.lines ?? []).map((l) => [l.id, l]));
+  const discounted = view.capabilities.has(DISCOUNT_CAPABILITY);
+  const disc = discountView(s);
+  const priced = new Map(
+    (s.quote?.lines ?? []).map((l, i) => [l.id, { ...l, off: disc.lines[i] ?? 0 }]),
+  );
   const line_items = s.lines.map((l) => {
     const p = priced.get(l.id);
-    const price = m(p?.unitPrice ?? 0);
+    // Promotions lower the unit price; with the discount extension the line shows its list price
+    // and the discount apart, so the lines add up to the same subtotal as the totals.
+    const off = discounted ? (p?.off ?? 0) : 0;
+    const price = m(off ? (p?.listPrice ?? p?.unitPrice ?? 0) : (p?.unitPrice ?? 0));
     const total = price * l.qty;
     return {
       id: l.id,
@@ -216,14 +239,22 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
       quantity: l.qty,
       totals: [
         { type: 'subtotal', amount: total },
-        { type: 'total', amount: total },
+        ...(off ? [{ type: 'discount', display_text: 'Discount', amount: -off }] : []),
+        { type: 'total', amount: total - off },
       ],
     };
   });
   const q = s.quote;
+  const itemsOff = discounted ? disc.items : 0;
+  const shippingOff = discounted ? disc.shipping : 0;
   const totals = [
-    { type: 'subtotal', display_text: 'Subtotal', amount: m(q?.subtotal ?? 0) },
-    ...(q?.ships ? [{ type: 'fulfillment', display_text: 'Shipping', amount: m(q.shipping) }] : []),
+    { type: 'subtotal', display_text: 'Subtotal', amount: m(q?.subtotal ?? 0) + itemsOff },
+    ...(itemsOff + shippingOff
+      ? [{ type: 'discount', display_text: 'Discount', amount: -(itemsOff + shippingOff) }]
+      : []),
+    ...(q?.ships
+      ? [{ type: 'fulfillment', display_text: 'Shipping', amount: m(q.shipping) + shippingOff }]
+      : []),
     { type: 'tax', display_text: 'Tax', amount: m(q?.tax ?? 0) },
     { type: 'total', display_text: 'Total', amount: m(q?.total ?? 0) },
   ];
@@ -263,6 +294,10 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
       }
     : undefined;
 
+  // The discount step's refusals are reported at the code they refer to, not at the quote's own path.
+  const messages = discounted
+    ? [...s.issues.filter((i) => i.code !== 'promotion'), ...disc.messages]
+    : s.issues;
   const done = s.status === 'completed' || s.status === 'canceled';
   return {
     ucp: {
@@ -287,8 +322,9 @@ export function toUcpCheckout(s: CheckoutSession, view: CheckoutView) {
       : {}),
     totals,
     links: view.settings.links,
-    ...(s.issues.length ? { messages: s.issues.map(ucpMessage) } : {}),
+    ...(messages.length ? { messages: messages.map(ucpMessage) } : {}),
     ...(done ? {} : { expires_at: iso(s.expiresAt) }),
+    ...(discounted ? { discounts: { codes: disc.codes, applied: disc.applied } } : {}),
     ...(fulfillmentView ? { fulfillment: fulfillmentView } : {}),
     ...(s.orderId && view.permalink
       ? { order: { id: s.orderId, permalink_url: view.permalink } }

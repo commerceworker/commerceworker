@@ -85,7 +85,7 @@ export async function applyPromotions(
     }
     lines = r.lines;
     if (p.kind === 'free_shipping') shipping = 0;
-    applied.push({ id: p.id, code: p.code, kind: p.kind, amount });
+    applied.push({ id: p.id, code: p.code, name: p.name, kind: p.kind, amount });
   }
   return { order: { lines, ...computeTotals({ ...order, lines, shipping }) }, applied, refused };
 }

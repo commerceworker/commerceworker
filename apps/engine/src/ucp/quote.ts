@@ -9,6 +9,7 @@
 
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
+  type AppliedPromotion,
   BASE_CURRENCY,
   type CheckoutIssue,
   type CheckoutQuote,
@@ -18,6 +19,7 @@ import {
   isBuySide,
   type Order,
   type OrderChannel,
+  type OrderLine,
   quoteNodes,
   type RunContext,
   type ShippingOption,
@@ -76,7 +78,11 @@ export function draftOrder(
       : {}),
     fulfillment: { method: ships ? 'ship' : 'digital' },
     ...(s.shippingOption ? { shippingOption: s.shippingOption } : {}),
-    meta: { ...extra.meta, ...(s.shipTo ? { shipTo: s.shipTo } : {}) },
+    meta: {
+      ...extra.meta,
+      ...(s.promoCodes?.length ? { promoCodes: s.promoCodes } : {}),
+      ...(s.shipTo ? { shipTo: s.shipTo } : {}),
+    },
     createdAt: s.createdAt,
     subtotal: 0,
     shipping: 0,
@@ -135,10 +141,13 @@ export async function quoteCheckout(
   };
   let options: ShippingOption[] = [];
   let chosen: string | null = null;
+  let listed: OrderLine[] | null = null;
+  let discounts: CheckoutQuote['discounts'];
   for (const node of quoteNodes(flow)) {
     const exec = EXECUTORS[node.type];
     if (!exec) continue;
     try {
+      if (node.type === 'commerce.discount') listed = ctx.order.lines;
       const r = await exec({
         env,
         node,
@@ -152,7 +161,7 @@ export async function quoteCheckout(
         for (const failure of (r.vars?.policyFailures as string[] | undefined) ?? [])
           issues.push(issue('policy', failure, '$'));
       // A code the promotions step left out says why, without stopping the checkout.
-      if (node.type === 'commerce.discount')
+      if (node.type === 'commerce.discount') {
         for (const reason of (r.vars?.promotionsRefused as string[] | undefined) ?? [])
           issues.push({
             kind: 'warning',
@@ -160,6 +169,20 @@ export async function quoteCheckout(
             content: reason,
             path: '$.promoCodes',
           });
+        const out = r.output as {
+          applied: AppliedPromotion[];
+          refused: { code: string; reason: string }[];
+        };
+        discounts = {
+          applied: out.applied.map((a) => ({
+            code: a.code,
+            title: a.name,
+            kind: a.kind,
+            amount: a.amount,
+          })),
+          refused: out.refused,
+        };
+      }
       // Why the quote charges less tax: the customer's certificate (a cart's; UCP buyers have
       // none). With a provider, only when it says the certificate exempted the order.
       const exempt = (
@@ -215,6 +238,7 @@ export async function quoteCheckout(
         qty: l.qty,
         unitPrice: l.unitPrice ?? 0,
         ships: products.get(l.sku)?.kind !== 'digital',
+        ...(listed ? { listPrice: listed[i]?.unitPrice ?? l.unitPrice ?? 0 } : {}),
       })),
       subtotal: o.subtotal,
       shipping: o.shipping ?? 0,
@@ -223,6 +247,7 @@ export async function quoteCheckout(
       shippingOptions: options,
       shippingOption: chosen,
       ships,
+      ...(discounts ? { discounts } : {}),
     },
     issues,
   };
