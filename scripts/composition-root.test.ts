@@ -69,17 +69,13 @@ test('the web composition root does bind the D1 adapters', () => {
 
 // The HTTP surface (packages/http) is a library: it takes its adapters as deps and binds none.
 // `wireEdge` and `platform/in-memory` build the import sources, the space export reader, the
-// remote fetcher and the assistant's model; the Workers' entries pass them in. The media routes
-// still import three Cloudflare adapters (R2 signing, Images, Stream's webhook check); they are
-// the one remaining exception, listed so a second can't join them unnoticed.
+// remote fetcher and the assistant's model, and `platform/media` the media routes' R2 transfers,
+// Images transforms and Stream webhook check; the Workers' entries pass them in.
 const HTTP = 'packages/http/src';
-const HTTP_ADAPTER_EXCEPTIONS = new Set([join(HTTP, 'routes/media.ts')]);
 const ADAPTERS = /from '@commerceworker\/adapters(?:\/[\w-]+)?'/;
 
 test('packages/http binds no adapters', () => {
-  const binding = files(HTTP)
-    .filter((f) => !HTTP_ADAPTER_EXCEPTIONS.has(f))
-    .filter((f) => ADAPTERS.test(readFileSync(f, 'utf8')));
+  const binding = files(HTTP).filter((f) => ADAPTERS.test(readFileSync(f, 'utf8')));
   assert.deepEqual(
     binding,
     [],

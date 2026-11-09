@@ -25,9 +25,18 @@ import {
   setAssetMetadata,
   transformAssetUrl,
 } from '@commerceworker/application';
+import { mediaAdapters } from '@commerceworker/platform/media';
 import { FixedClock, InMemoryContentStore, SequenceIdGenerator } from '@commerceworker/test-kit';
 import { describe, expect, it } from 'vitest';
-import { mediaRoutes } from '../src/routes/media';
+import { type MediaRouteDeps, mediaRoutes } from '../src/routes/media';
+
+/** The routes as the api entry binds them: adapters from `@commerceworker/platform/media`. */
+const routes = ({
+  ctx,
+  onUploaded,
+  ...adapters
+}: Omit<MediaRouteDeps, 'media'> & Parameters<typeof mediaAdapters>[0]) =>
+  mediaRoutes({ ctx, media: mediaAdapters(adapters), ...(onUploaded ? { onUploaded } : {}) });
 
 const scope = { spaceId: 's1', environmentId: 'main' };
 const signer = createMediaUrlSigner('k');
@@ -91,7 +100,7 @@ describe('/media routes', () => {
   it('uploads through a signed PUT, downloads, and transforms via the Images binding', async () => {
     const bucket = fakeBucket();
     const { images, formats } = fakeImages();
-    const app = mediaRoutes({ ctx: ctx(), bucket, signer, images });
+    const app = routes({ ctx: ctx(), bucket, signer, images });
     const blob = createR2BlobStore(bucket, { signer, baseUrl: 'https://w.example' });
 
     const { url } = await blob.getUploadUrl('s1/main/a/p.png', 'image/png');
@@ -118,7 +127,7 @@ describe('/media routes', () => {
   it('starts ingest for a completed upload only, and a failed notice never fails it', async () => {
     const bucket = fakeBucket();
     const uploaded: string[] = [];
-    const app = mediaRoutes({
+    const app = routes({
       ctx: ctx(),
       bucket,
       signer,
@@ -146,7 +155,7 @@ describe('/media routes', () => {
   it('stores a signed PUT once: the same URL used again is 412, starts nothing and keeps the bytes', async () => {
     const bucket = fakeBucket();
     const uploaded: { key: string; etag?: string }[] = [];
-    const app = mediaRoutes({
+    const app = routes({
       ctx: ctx(),
       bucket,
       signer,
@@ -181,7 +190,7 @@ describe('/media routes', () => {
       baseUrl: 'https://w.example',
       now: () => NOW,
     });
-    const app = mediaRoutes({ ctx: c, bucket, signer, images, now: () => NOW });
+    const app = routes({ ctx: c, bucket, signer, images, now: () => NOW });
     await createSpace(c, { spaceId: 's1', name: 'S', defaultLocale: 'en-US' });
 
     // A draft whose file was replaced: its bytes are at v2's key now, not where the stored URL
@@ -219,12 +228,12 @@ describe('/media routes', () => {
     expect(served.status).toBe(200);
     expect(formats).toEqual(['image/webp']);
     // Once its read URL has expired, so has the transform.
-    const later = mediaRoutes({ ctx: c, bucket, signer, images, now: () => NOW + 3600 });
+    const later = routes({ ctx: c, bucket, signer, images, now: () => NOW + 3600 });
     expect((await later.request(url)).status).toBe(403);
   });
 
   it('is not mounted without a bucket', async () => {
-    const app = mediaRoutes({ ctx: ctx() });
+    const app = routes({ ctx: ctx() });
     expect((await app.request('https://w.example/media/a/b?sig=x')).status).toBe(404);
   });
 });
@@ -263,7 +272,7 @@ describe('POST /webhooks/stream', () => {
       fileName: 'v.mp4',
       contentType: 'video/mp4',
     });
-    const app = mediaRoutes({ ctx: c, streamWebhookSecret: 'whsec', now: () => 1000 });
+    const app = routes({ ctx: c, streamWebhookSecret: 'whsec', now: () => 1000 });
 
     state = { state: 'ready', ready: true };
     // The payload claims nothing we store; only uid + meta are read from it.

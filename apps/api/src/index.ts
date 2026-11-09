@@ -18,6 +18,7 @@ import { mediaRoutes } from '@commerceworker/http/routes/media';
 import { mountsRole } from '@commerceworker/platform/config';
 import { createDoRateLimiter } from '@commerceworker/platform/do/rate-limiter';
 import { type EdgeEnv, withJurisdiction } from '@commerceworker/platform/env';
+import { mediaAdapters } from '@commerceworker/platform/media';
 import { makeMetrics } from '@commerceworker/platform/metrics';
 import { type EdgeWired, wireEdge } from '@commerceworker/platform/wire';
 import { sendReviewDecision } from '@commerceworker/platform/workflows';
@@ -48,10 +49,12 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
     '/',
     mediaRoutes({
       ctx: wired.ctx,
-      bucket: env.MEDIA_BUCKET,
-      signer: wired.mediaSigner,
-      images: env.IMAGES,
-      streamWebhookSecret: env.STREAM ? env.STREAM_WEBHOOK_SECRET : undefined,
+      media: mediaAdapters({
+        bucket: env.MEDIA_BUCKET,
+        signer: wired.mediaSigner,
+        images: env.IMAGES,
+        streamWebhookSecret: env.STREAM ? env.STREAM_WEBHOOK_SECRET : undefined,
+      }),
       // A completed upload starts its ingest (local dev has no R2 notifications to do it).
       ...(assetIngest
         ? { onUploaded: (key: string, etag?: string) => assetIngest.objectCreated(key, etag) }
