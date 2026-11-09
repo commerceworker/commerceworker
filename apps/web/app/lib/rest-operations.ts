@@ -11,6 +11,7 @@ import {
   type AssistantTool,
   isPageOnly,
   isPanelOnly,
+  type RestOperationTool,
   TOOL_INPUTS,
 } from '@commerceworker/core';
 import type { z } from 'zod';
@@ -19,7 +20,8 @@ export type RestOperation = {
   readonly method: 'GET' | 'POST';
   /** Under /api/v1, e.g. `/orders/{orderId}/restart`. */
   readonly path: string;
-  readonly tool: AssistantTool;
+  /** One of core's `REST_OPERATION_TOOLS`, which the engine checks too. */
+  readonly tool: RestOperationTool;
 };
 
 export const REST_OPERATIONS: readonly RestOperation[] = [
@@ -28,8 +30,6 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'POST', path: '/approvals/decide', tool: 'decide_approvals' },
   { method: 'GET', path: '/flows/{flowId}', tool: 'get_flow' },
   { method: 'POST', path: '/flows/new', tool: 'create_flow' },
-  { method: 'POST', path: '/flows/{flowId}/publish', tool: 'publish_flow' },
-  { method: 'POST', path: '/flows/{flowId}/test', tool: 'test_flow' },
   { method: 'POST', path: '/flows/{flowId}/duplicate', tool: 'duplicate_flow' },
   { method: 'POST', path: '/flows/{flowId}/archive', tool: 'archive_flow' },
   { method: 'POST', path: '/promotions', tool: 'create_promotion' },

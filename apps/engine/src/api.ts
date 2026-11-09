@@ -14,9 +14,12 @@ import {
   type EngineRpc,
   HEALTH_WRITE_PATH,
   healthReport,
-  isAssistantTool,
+  isRestOperationTool,
   type OrderState,
+  operationCall,
   type PaymentEvent,
+  PERSON_CONFIRMS,
+  PERSON_CONFIRMS_TOOLS,
   type PluginCase,
   type Principal,
   parseMailboxes,
@@ -188,10 +191,14 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
   }
 
   async runOperation(name: string, input: unknown, signed: SignedActor, key?: string) {
-    if (!isAssistantTool(name))
+    // Only what REST offers: the web app's table is not the only allowlist.
+    if (!isRestOperationTool(name))
       return { ok: false as const, status: 404 as const, error: 'No such operation.' };
-    const actor = await rpcActor(this.env, signed, `operation:${name}`);
+    const actor = await rpcActor(this.env, signed, await operationCall(name, input));
     if (actor?.kind !== 'staff') return { ...UNSIGNED, status: 403 as const };
+    // What a person always confirms over MCP (prices, tax), a token never does over REST.
+    if (PERSON_CONFIRMS_TOOLS.includes(name) && !actor.person)
+      return { ok: false as const, status: 403 as const, error: PERSON_CONFIRMS };
     const parsed = (TOOL_INPUTS[name] as z.ZodObject).safeParse(input ?? {});
     if (!parsed.success)
       return {

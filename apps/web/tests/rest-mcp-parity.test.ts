@@ -4,7 +4,7 @@
  * allowed only where it is listed here with why; a field one side gains is a failure until the
  * other takes it too, or it is listed.
  */
-import { cartOpSchema, TOOL_INPUTS } from '@commerceworker/core';
+import { cartOpSchema, REST_OPERATION_TOOLS, TOOL_INPUTS } from '@commerceworker/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -140,6 +140,12 @@ describe('REST operations run their MCP tool', () => {
         'not in the OpenAPI document',
       ).toBeDefined();
     });
+
+  it('routes exactly the tools the engine runs for REST, and no others', () => {
+    expect([...new Set(REST_OPERATIONS.map((o) => o.tool))].sort()).toEqual(
+      [...REST_OPERATION_TOOLS].sort(),
+    );
+  });
 
   it('names each operation once', () => {
     const keys = REST_OPERATIONS.map((o) => `${o.method} ${o.path}`);

@@ -79,6 +79,7 @@ import {
   type InboundOrder,
   inboundFingerprint,
   inboundOrderSchema,
+  operationCall,
   PLUGIN_BUNDLE_MAX_BYTES,
   PLUGIN_ID_RE,
   type Principal,
@@ -117,7 +118,7 @@ import {
 } from './api-schemas';
 import { isAuditGroup } from './audit';
 import { audit, listAudit, verifyAudit } from './audit.server';
-import { actor, forbidden } from './auth.server';
+import { actor, actor as actorName, forbidden } from './auth.server';
 import { BodyTooLarge, MAX_EDI_BYTES, readText, tooLarge } from './body';
 import { isCartStatus, listCarts } from './carts.server';
 import { handleCatalog } from './catalog-api.server';
@@ -1050,15 +1051,16 @@ async function runRestOperation(
   if (denied) return denied;
   const given = op.method === 'POST' ? await body() : {};
   const input = { ...(given && typeof given === 'object' ? given : {}), ...fromPath };
+  // Signed for this tool and exactly this input; named as the audit trail names the caller.
   const actor = await signedActor(
     {
       kind: 'staff',
       id: caller.id,
-      name: caller.name,
+      name: actorName(caller),
       role: caller.role,
       ...(caller.kind === 'user' ? { person: true as const } : {}),
     },
-    `operation:${op.tool}`,
+    await operationCall(op.tool, input),
   );
   const key = request.headers.get('idempotency-key')?.slice(0, 200) || undefined;
   const r = await engine().runOperation(op.tool, input, actor, key);

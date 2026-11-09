@@ -1,5 +1,5 @@
 import type { Cart, Principal } from '@commerceworker/core';
-import { DEV_PRINCIPAL_KEY, verifyRpcActor } from '@commerceworker/core';
+import { DEV_PRINCIPAL_KEY, operationCall, verifyRpcActor } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const engine = {
@@ -935,10 +935,12 @@ describe('operations REST runs as MCP does', () => {
     expect(await res.json()).toEqual({ done: 'Restarted the order' });
     const [tool, input, signed, key] = run.mock.calls.at(-1)!;
     expect([tool, input, key]).toEqual(['restart_order', { orderId: 'ord_1' }, undefined]);
-    expect(await actorOf(signed, 'operation:restart_order')).toEqual({
+    expect(
+      await actorOf(signed, await operationCall('restart_order', { orderId: 'ord_1' })),
+    ).toEqual({
       kind: 'staff',
       id: 'tok_1',
-      name: 'ci',
+      name: 'ops@example.com',
       role: 'operator',
     });
   });
@@ -959,7 +961,15 @@ describe('operations REST runs as MCP does', () => {
       { customerId: 'cus_1', certificateId: 'txc_1' },
       'k-1',
     ]);
-    expect(await actorOf(signed, 'operation:verify_tax_certificate')).toMatchObject({
+    expect(
+      await actorOf(
+        signed,
+        await operationCall('verify_tax_certificate', {
+          customerId: 'cus_1',
+          certificateId: 'txc_1',
+        }),
+      ),
+    ).toMatchObject({
       id: 'usr_1',
       person: true,
     });

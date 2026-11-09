@@ -287,15 +287,16 @@ on, and its JSON body gives the rest of the tool's input. Among them:
 | `POST` | `/api/v1/orders/:orderId/restart` | Starts a fresh order like it: same customer, lines and fulfilment, on its flow's current version |
 | `POST` | `/api/v1/approvals/decide` | `{ decision, note?, approvals: [{ orderId, nodeId }] }`: decides several at once |
 | `GET` | `/api/v1/flows/:flowId` | A flow's published graph |
-| `POST` | `/api/v1/flows/:flowId/publish` | Publishes the flow's draft |
 | `POST` | `/api/v1/promotions` | Creates a promotion code |
 | `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
 | `POST` | `/api/v1/stock/review` | Runs the stock review now |
 
 The [API explorer](/api/) lists every one, with its body. An operation answers `200` with what it
 did or found, `400` for a body its tool doesn't take, `403` when your role is too low, and `409`
-when it is refused: for example, verifying a certificate needs a person signed in as themselves,
-never an API token, as over MCP. Send an `Idempotency-Key` header and an order an operation starts
+when it is refused. What changes what buyers pay or owe (creating a promotion or turning one on
+or off, verifying or revoking a tax certificate) needs a person signed in as themselves, never an
+API token (`403`), as over MCP. Publishing a flow stays in the app and MCP for now, where it is
+held to the draft you saw. Send an `Idempotency-Key` header and an order an operation starts
 is started once for it.
 
 ## Integrations
