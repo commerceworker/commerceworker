@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { fingerprintOf } from './api';
 import { assessQuestionsSchema } from './assess';
 import type { AssistantTool } from './assistant';
+import { AUDIT_GROUPS, type AuditGroup } from './audit';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
@@ -325,6 +326,32 @@ export const TOOL_INPUTS = {
     sha: z.string().max(80),
     cases: pluginCasesSchema,
   }),
+  list_audit_events: z.object({
+    group: z.enum(Object.keys(AUDIT_GROUPS) as [AuditGroup, ...AuditGroup[]]).optional(),
+    before: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Only events before this time, epoch ms'),
+    after: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe('A seq: the sealed events after it, oldest first'),
+    limit: z.number().int().min(1).max(500).optional().describe('Default 100'),
+  }),
+  verify_audit_trail: z.object({
+    after: z.number().int().nonnegative().optional().describe('A seq, from a previous `next`'),
+  }),
+  list_plugins: z.object({}),
+  get_plugin_usage: z.object({ pluginId: z.string().max(60) }),
+  list_webhook_subscriptions: z.object({}),
+  list_webhook_deliveries: z.object({
+    subscriptionId: z.string().max(60),
+    limit: z.number().int().min(1).max(200).optional().describe('Default 50'),
+  }),
   publish_catalog: z.object({
     keys: z.array(productKey).min(1).max(500).describe('Product keys whose staged edits publish'),
   }),
@@ -524,6 +551,71 @@ export const TOOL_OUTPUTS = {
   rollback_plugin: actionOutput,
   uninstall_plugin: actionOutput,
   run_plugin_cases: row({ done: z.string(), href: z.string(), results: z.array(row({})) }),
+  list_audit_events: row({
+    events: z.array(
+      row({
+        id: z.string(),
+        at: z.number(),
+        action: z.string(),
+        actor: z.string().nullable(),
+        target: z.string().nullable(),
+        detail: z.record(z.string(), z.unknown()).nullable(),
+        seq: z.number().nullable(),
+      }),
+    ),
+  }),
+  verify_audit_trail: row({
+    ok: z.boolean(),
+    checked: z.number(),
+    brokenAt: z.number().optional(),
+    reason: z.string().optional(),
+    next: z.number().optional().describe('Call again with after set to this, to check the rest'),
+  }),
+  list_plugins: row({
+    plugins: z.array(
+      row({
+        id: z.string(),
+        runtime: z.string(),
+        source: z.string(),
+        name: z.string().nullable(),
+        version: z.string().nullable(),
+        nodes: z.array(z.string()),
+        events: z.array(z.string()),
+        provides: z.array(z.string()),
+        healthy: z.boolean(),
+        error: z.string().optional(),
+      }),
+    ),
+  }),
+  get_plugin_usage: row({
+    flows: z.array(row({ id: z.string(), version: z.number() })),
+    orders: z.array(row({ id: z.string(), flowId: z.string(), version: z.number() })),
+    labels: z.array(row({ id: z.string(), orderId: z.string() })),
+  }),
+  list_webhook_subscriptions: row({
+    subscriptions: z.array(
+      row({
+        id: z.string(),
+        url: z.string(),
+        events: z.array(z.string()),
+        active: z.boolean(),
+        createdAt: z.number(),
+        previousExpiresAt: z.number().nullable(),
+      }),
+    ),
+  }),
+  list_webhook_deliveries: row({
+    deliveries: z.array(
+      row({
+        id: z.string(),
+        event: z.string(),
+        orderId: z.string(),
+        status: z.string(),
+        attempts: z.number(),
+        payload: z.unknown(),
+      }),
+    ),
+  }),
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,

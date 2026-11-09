@@ -1,15 +1,18 @@
 import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import {
+  auditRow,
   type OrderInput,
   type OrderState,
   PRINCIPAL_HEADER,
   type Principal,
+  sealAuditRow,
 } from '@commerceworker/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
 import { startOrder } from '../src/orders';
+import { auditLog, webhookOutbox } from '../src/wire';
 import { signed } from './principal';
 
 const state = async (id: string) => (await env.ORDER_AGENT.getByName(id).snapshot()) as OrderState;
@@ -265,11 +268,109 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(37);
+    expect(admin).toHaveLength(43);
+    // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
+    // role sees them.
+    const adminReads = [
+      'get_plugin_usage',
+      'list_audit_events',
+      'list_plugins',
+      'list_webhook_deliveries',
+      'list_webhook_subscriptions',
+      'verify_audit_trail',
+    ];
+    for (const name of adminReads) {
+      expect(admin.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        outputSchema: { type: 'object' },
+      });
+      expect(operator.find((t) => t.name === name)).toBeUndefined();
+      expect(viewer.find((t) => t.name === name)).toBeUndefined();
+    }
     expect(admin.find((t) => t.name === 'draft_plugin')).toMatchObject({
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       outputSchema: { type: 'object', properties: { id: {}, cases: {}, href: {} } },
     });
+  });
+
+  it('reads the audit trail, plugins and webhooks as an admin, and shows no secret', async () => {
+    const admin = person('admin', 'ann@example.com');
+    const outbox = webhookOutbox(env);
+    const id = `whs_mcp_${Date.now()}`;
+    await outbox.addSubscription({
+      id,
+      url: 'https://example.com/hook',
+      secret: 'sealed-secret-value',
+      events: JSON.stringify(['order.shipped']),
+      createdAt: Date.now(),
+    });
+    await outbox.rotateSubscription(id, 'sealed-new-secret', Date.now() + 60_000);
+    await outbox.record(
+      [
+        {
+          id: `del_${id}`,
+          subscriptionId: id,
+          subject: 'ord_1',
+          event: 'order.shipped',
+          payload: JSON.stringify({ orderId: 'ord_1' }),
+        },
+      ],
+      Date.now(),
+    );
+    const log = auditLog(env);
+    await log.append((head) =>
+      sealAuditRow(
+        auditRow(`aud_mcp_${id}`, 'webhook.subscribed', { target: id, detail: { via: 'mcp' } }),
+        head,
+      ),
+    );
+
+    const subs = await call(admin, 'list_webhook_subscriptions', {});
+    expect(subs.isError).toBeFalsy();
+    const mine = (subs.structuredContent!.subscriptions as Record<string, unknown>[]).find(
+      (s) => s.id === id,
+    );
+    expect(mine).toMatchObject({ events: ['order.shipped'], active: true });
+    expect(typeof mine!.previousExpiresAt).toBe('number');
+    const deliveries = await call(admin, 'list_webhook_deliveries', { subscriptionId: id });
+    expect(deliveries.structuredContent).toMatchObject({
+      deliveries: [{ id: `del_${id}`, payload: { orderId: 'ord_1' } }],
+    });
+    expect(
+      (await call(admin, 'list_webhook_deliveries', { subscriptionId: id, limit: 201 })).isError,
+    ).toBe(true);
+
+    const events = await call(admin, 'list_audit_events', { group: 'webhook' });
+    expect(events.structuredContent!.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: `aud_mcp_${id}`, detail: { via: 'mcp' } }),
+      ]),
+    );
+    expect((await call(admin, 'list_audit_events', { group: 'nope' })).isError).toBe(true);
+    expect((await call(admin, 'verify_audit_trail', {})).structuredContent).toMatchObject({
+      ok: true,
+    });
+
+    const plugins = await call(admin, 'list_plugins', {});
+    expect(plugins.structuredContent).toMatchObject({ plugins: expect.any(Array) });
+    expect(
+      (await call(admin, 'get_plugin_usage', { pluginId: 'nothing-here' })).structuredContent,
+    ).toEqual({ flows: [], orders: [], labels: [] });
+
+    // Whatever they return, none of it carries a secret.
+    for (const out of [subs, deliveries, events, plugins])
+      expect(JSON.stringify(out.structuredContent)).not.toMatch(/sealed-|whsec_/);
+
+    // A lower role isn't offered them, and is told so when it calls one anyway.
+    for (const role of ['viewer', 'operator'] as const) {
+      const r = await rpc(person(role, `${role}@example.com`), 'tools/call', {
+        name: 'list_webhook_subscriptions',
+        arguments: {},
+      });
+      expect(r.body).toMatchObject({
+        error: { message: 'Tool list_webhook_subscriptions not found' },
+      });
+    }
   });
 
   it('keeps an internal error to itself', async () => {

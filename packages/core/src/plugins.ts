@@ -841,6 +841,30 @@ export type PluginStatus = {
   error?: string;
 };
 
+/**
+ * What an admin is shown of a plugin (the REST API's and MCP's plugin lists): which nodes, events
+ * and built-in steps it provides, and whether it is healthy. Never its pinned bundle or a secret.
+ */
+export const pluginSummary = ({
+  id,
+  runtime,
+  source,
+  manifest: m,
+  healthy,
+  error,
+}: PluginStatus) => ({
+  id,
+  runtime,
+  source,
+  name: m?.name ?? null,
+  version: m?.version ?? null,
+  nodes: m?.nodes.map((n) => n.type) ?? [],
+  events: m?.events ?? [],
+  provides: m?.provides ?? [],
+  healthy,
+  ...(error ? { error } : {}),
+});
+
 /** What still uses a plugin; it can be removed only once every list is empty. */
 export type PluginUsage = {
   /** Flows whose published version uses the plugin's nodes, or names it as a Provider. */

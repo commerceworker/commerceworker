@@ -69,33 +69,8 @@ export const AUDIT_ACTIONS = {
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
 
-/** Filter groups, by action prefix. */
-export const AUDIT_GROUPS = {
-  auth: 'Sign-in',
-  team: 'Team',
-  token: 'API tokens',
-  scim: 'SCIM provisioning',
-  api: 'API access',
-  oauth: 'Connected apps',
-  integration: 'Integrations',
-  ucp: 'Agentic checkout',
-  order: 'Orders',
-  approval: 'Approvals',
-  cart: 'Carts',
-  flow: 'Flows',
-  webhook: 'Webhooks',
-  stock: 'Stock review',
-  promotion: 'Promotions',
-  tax_certificate: 'Tax certificates',
-  catalog: 'Catalog',
-  plugin: 'Plugins',
-  personal_data: 'Personal data',
-} as const;
-
-export type AuditGroup = keyof typeof AUDIT_GROUPS;
-
-export const isAuditGroup = (v: unknown): v is AuditGroup =>
-  typeof v === 'string' && v in AUDIT_GROUPS;
+// The groups are core's, so the MCP tool filters by the same ones; re-exported for the app's imports.
+export { AUDIT_GROUPS, type AuditGroup, isAuditGroup } from '@commerceworker/core';
 
 export type AuditEvent = {
   action: string;

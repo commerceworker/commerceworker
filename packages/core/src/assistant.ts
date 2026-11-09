@@ -106,6 +106,12 @@ export type AssistantTool =
   | 'rollback_plugin'
   | 'uninstall_plugin'
   | 'run_plugin_cases'
+  | 'list_audit_events'
+  | 'verify_audit_trail'
+  | 'list_plugins'
+  | 'get_plugin_usage'
+  | 'list_webhook_subscriptions'
+  | 'list_webhook_deliveries'
   | 'draft_cart_reply'
   | 'set_assistant_routing';
 
@@ -478,6 +484,56 @@ export const ASSISTANT_TOOLS: Record<
     label: 'Ran the test cases',
     title: 'Run a plugin draft’s test cases',
     description: 'Run test cases against a plugin draft; nothing is installed.',
+  },
+  // The audit trail, plugins and webhooks an admin reads on their pages: the same reads as the
+  // REST API's, with nothing a secret in them.
+  list_audit_events: {
+    role: 'admin',
+    confirm: false,
+    label: 'Read the audit trail',
+    title: 'List audit events',
+    description:
+      'Read the audit trail, newest first: who signed in, changed the team or acted on orders, carts, flows and webhooks, and through which way in. Filter by group, page back with before, or give after (a seq) to read sealed events oldest first.',
+  },
+  verify_audit_trail: {
+    role: 'admin',
+    confirm: false,
+    label: 'Checked the audit chain',
+    title: 'Verify the audit trail',
+    description:
+      'Check that the audit trail’s hash chain holds: no event changed, removed or reordered. Checks a batch at a time; next says where to continue.',
+  },
+  list_plugins: {
+    role: 'admin',
+    confirm: false,
+    label: 'Listed plugins',
+    title: 'List plugins',
+    description:
+      'Every plugin this deployment runs: its runtime, where it came from, the nodes, events and built-in steps it provides, and whether it answered just now.',
+  },
+  get_plugin_usage: {
+    role: 'admin',
+    confirm: false,
+    label: 'Checked a plugin’s use',
+    title: 'Get where a plugin is used',
+    description:
+      'What still depends on a plugin: published flows, running orders and labels it couldn’t void yet. A plugin can be uninstalled once all three are empty.',
+  },
+  list_webhook_subscriptions: {
+    role: 'admin',
+    confirm: false,
+    label: 'Listed webhook subscriptions',
+    title: 'List webhook subscriptions',
+    description:
+      'The outbound webhook subscriptions: where each posts, which events it takes and whether it is on. Never a signing secret.',
+  },
+  list_webhook_deliveries: {
+    role: 'admin',
+    confirm: false,
+    label: 'Listed webhook deliveries',
+    title: 'List a webhook’s deliveries',
+    description:
+      'A subscription’s latest deliveries, newest first: the event, its payload, and whether it was delivered, with attempts and the receiver’s last status or error.',
   },
   draft_cart_reply: {
     role: 'viewer',

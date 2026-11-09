@@ -86,6 +86,7 @@ import {
   parseEdiPartners,
   parseOrderRoutes,
   parseX12,
+  pluginSummary,
   RESERVED_ORDER_KEY_PREFIXES,
   type Role,
   reservedOrderKey,
@@ -272,20 +273,7 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
       if (denied) return denied;
       if (parts.length === 1)
         return json({
-          plugins: (await pluginStatuses()).map(
-            ({ id, runtime, source, manifest: m, healthy, error }) => ({
-              id,
-              runtime,
-              source,
-              name: m?.name ?? null,
-              version: m?.version ?? null,
-              nodes: m?.nodes.map((n) => n.type) ?? [],
-              events: m?.events ?? [],
-              provides: m?.provides ?? [],
-              healthy,
-              ...(error ? { error } : {}),
-            }),
-          ),
+          plugins: (await pluginStatuses()).map(pluginSummary),
         });
       if (parts.length === 3 && parts[2] === 'usage' && PLUGIN_ID_RE.test(parts[1]!))
         return json(await engine().pluginUsage(parts[1]!));

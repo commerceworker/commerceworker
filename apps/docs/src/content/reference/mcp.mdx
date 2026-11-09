@@ -172,6 +172,16 @@ cancelling voids payments and cancels shipments with the carrier, a submitted ca
 flow (payments and shipping included), the stock review places reorders with suppliers, and an
 assessment may fetch an `https` image. The other tools set it to `false`.
 
+## Admin reads
+
+An admin token (a connected app is never offered `admin`) also has six reads that mirror the
+REST API's, and they return the same thing: `list_audit_events` (by group, paging back with `before`,
+or from a `seq` with `after`, oldest first), `verify_audit_trail` (checks the hash chain a batch at
+a time; `next` is where to continue), `list_plugins` and `get_plugin_usage` (what still depends on
+a plugin), and `list_webhook_subscriptions` and `list_webhook_deliveries`. None of them returns a
+signing secret or anything sealed. Their annotations are `readOnlyHint: true`. Lower roles aren't
+offered them.
+
 ## Carts
 
 `list_carts` and `get_cart` read the carts your team opens on the Carts page; a cart a customer

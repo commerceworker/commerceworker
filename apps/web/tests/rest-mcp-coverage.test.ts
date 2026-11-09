@@ -30,6 +30,12 @@ const TWINS: Record<string, AssistantTool> = {
   'POST /api/v1/catalog/products/{key}/draft': 'draft_product_content',
   'POST /api/v1/catalog/edits/publish': 'publish_catalog',
   'POST /api/v1/plugins/{id}/disable': 'set_plugin_enabled',
+  'GET /api/v1/audit-events': 'list_audit_events',
+  'GET /api/v1/audit-events/verify': 'verify_audit_trail',
+  'GET /api/v1/plugins': 'list_plugins',
+  'GET /api/v1/plugins/{id}/usage': 'get_plugin_usage',
+  'GET /api/v1/webhook-subscriptions': 'list_webhook_subscriptions',
+  'GET /api/v1/webhook-subscriptions/{id}/deliveries': 'list_webhook_deliveries',
 };
 
 const SIGNED = {
@@ -51,28 +57,20 @@ const REST_ONLY: Record<string, Why> = {
   'POST /api/v1/webhooks/stripe': SIGNED,
   'POST /api/v1/channels/shopify/orders': SIGNED,
   'POST /api/v1/channels/edi/850': SIGNED,
-  'GET /api/v1/audit-events': { gap: 'Reading the audit trail (admin)' },
-  'GET /api/v1/audit-events/verify': { gap: 'Checking the audit chain (admin)' },
   'POST /api/v1/data-subjects/export': {
     design: 'Everything held about a person: an admin’s request, never an agent’s',
   },
   'POST /api/v1/data-subjects/erase': {
     design: 'Erasing a person cannot be undone: an admin’s request, never an agent’s',
   },
-  'GET /api/v1/webhook-subscriptions': { gap: 'Listing webhook subscriptions (admin)' },
   'POST /api/v1/webhook-subscriptions': CREDENTIALS,
   'DELETE /api/v1/webhook-subscriptions/{id}': { gap: 'Removing a webhook subscription (admin)' },
   'POST /api/v1/webhook-subscriptions/{id}/rotate': CREDENTIALS,
-  'GET /api/v1/webhook-subscriptions/{id}/deliveries': {
-    gap: 'A subscription’s deliveries (admin)',
-  },
   'GET /api/v1/integrations': { gap: 'Listing integrations (admin)' },
   'POST /api/v1/integrations': CREDENTIALS,
   'POST /api/v1/integrations/{id}/rotate': CREDENTIALS,
   'DELETE /api/v1/integrations/{id}': { gap: 'Revoking an integration (admin)' },
-  'GET /api/v1/plugins': { gap: 'Listing plugins and their health (admin)' },
   'POST /api/v1/plugins': { design: 'Uploads a signed plugin bundle: a file, from a person or CI' },
-  'GET /api/v1/plugins/{id}/usage': { gap: 'Where a plugin is used (admin)' },
   'GET /api/v1/ucp': { gap: 'UCP settings and platforms (admin)' },
   'POST /api/v1/ucp/settings': { gap: 'Changing UCP settings (admin)' },
   'POST /api/v1/ucp/platforms': CREDENTIALS,
@@ -156,4 +154,4 @@ describe('every operation is on both transports, or says why not', () => {
 });
 
 /** The gaps open today (the catalog's admin routes are most of them). */
-const GAPS_OPEN = 44;
+const GAPS_OPEN = 38;

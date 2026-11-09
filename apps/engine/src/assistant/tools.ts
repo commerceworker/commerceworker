@@ -7,15 +7,24 @@
  */
 
 import {
+  listAuditEvents,
+  listWebhookDeliveries,
+  listWebhookSubscriptions,
+  verifyAuditTrail,
+} from '@commerceworker/application/commerce';
+import {
   type AssistantContext,
   type AssistantTool,
   type AuditVia,
   isPageOnly,
   isPanelOnly,
   type Principal,
+  pluginSummary,
   type ToolInput,
 } from '@commerceworker/core';
 import type { StageEdit } from '@commerceworker/core/product';
+import { pluginStatuses, pluginUsage } from '../plugins';
+import { auditLog, webhookOutbox } from '../wire';
 import { runCases } from './admin';
 import { draftCartReply } from './cart-reply';
 import { changeCart, getCart, listCarts, openCart } from './carts';
@@ -204,6 +213,33 @@ export async function runTool<T extends AssistantTool>(
     case 'draft_cart_reply': {
       const i = input as ToolInput<'draft_cart_reply'>;
       return draftCartReply(env, p, i.cartId, i.instruction, trailOf(p, name, opts));
+    }
+    case 'list_audit_events': {
+      const i = input as ToolInput<'list_audit_events'>;
+      return { events: await listAuditEvents({ audit: auditLog(env) }, i) };
+    }
+    case 'verify_audit_trail':
+      return verifyAuditTrail(
+        { audit: auditLog(env) },
+        (input as ToolInput<'verify_audit_trail'>).after,
+      );
+    case 'list_plugins':
+      return { plugins: (await pluginStatuses(env)).map(pluginSummary) };
+    case 'get_plugin_usage':
+      return pluginUsage(env, (input as ToolInput<'get_plugin_usage'>).pluginId);
+    case 'list_webhook_subscriptions':
+      return {
+        subscriptions: await listWebhookSubscriptions({ outbox: webhookOutbox(env) }, Date.now()),
+      };
+    case 'list_webhook_deliveries': {
+      const i = input as ToolInput<'list_webhook_deliveries'>;
+      return {
+        deliveries: await listWebhookDeliveries(
+          { outbox: webhookOutbox(env) },
+          i.subscriptionId,
+          i.limit,
+        ),
+      };
     }
     case 'start_scenario':
       return startScenario(
