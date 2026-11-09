@@ -1,6 +1,7 @@
 /**
  * Customer rules every store applies the same way.
  */
+import { money, toBase } from './logic';
 
 /** A name as matching compares it: lower case, punctuation and runs of spacing folded to one space. */
 export function customerNameKey(name: string): string {
@@ -23,4 +24,22 @@ export function matchCustomerByName<T extends { name: string }>(
   if (!needle) return undefined;
   const matches = candidates.filter((c) => customerNameKey(c.name) === needle);
   return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * A credit check (`commerce.credit_check`): a business customer's available credit (limit less
+ * balance, both in the base currency) against the order's total in the base currency. A consumer
+ * or a guest has no account; `noAccount` says whether that passes.
+ */
+export function creditCheck(
+  customer: { kind: string; creditLimit: number; balance: number } | null | undefined,
+  order: { total: number; baseTotal?: number; fxRate?: number },
+  opts: { noAccount: 'ok' | 'over_limit' },
+):
+  | { ok: boolean; account: false }
+  | { ok: boolean; account: true; available: number; total: number; over: number } {
+  if (customer?.kind !== 'business') return { ok: opts.noAccount === 'ok', account: false };
+  const available = money(customer.creditLimit - customer.balance);
+  const total = order.baseTotal ?? toBase(order.total, order.fxRate);
+  return { ok: total <= available, account: true, available, total, over: total - available };
 }

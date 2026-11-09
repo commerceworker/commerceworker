@@ -73,3 +73,15 @@ export function threeWayMatch(
     Math.max(Math.abs(received - ordered), Math.abs(invoiced - ordered)) / Math.max(ordered, 1);
   return { drift, match: drift <= tolerance };
 }
+
+/**
+ * Whether an invoice is owed on account (charged to the customer's balance): only an unpaid
+ * invoice to a business customer, and only when the node keeps an account (`onAccount`, on by
+ * default). A paid order, a consumer or a guest has nothing outstanding.
+ */
+export const owedOnAccount = (o: {
+  onAccount: boolean;
+  customerKind: string | null | undefined;
+  paid: number;
+  total: number;
+}) => o.onAccount && o.customerKind === 'business' && o.paid < o.total;

@@ -1092,3 +1092,16 @@ export function sampleRedactedOrder(over: Record<string, unknown> = {}): Redacte
     ...over,
   } as unknown as RedactedOrder;
 }
+
+/**
+ * What is wrong with a tax provider's amount, if anything: tax charged on nothing taxable, or more
+ * than `PROVIDER_MAX_TAX_RATE` of what is. A provider that answers either way fails the step.
+ */
+export function providerTaxProblem(
+  amount: number,
+  taxable: number,
+): 'untaxable' | 'over_cap' | null {
+  if (amount > 0 && taxable <= 0) return 'untaxable';
+  if (amount > taxable * PROVIDER_MAX_TAX_RATE) return 'over_cap';
+  return null;
+}

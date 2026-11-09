@@ -12,3 +12,4 @@ export * from './seller-orders';
 export * from './shipping-labels';
 export * from './subjects';
 export * from './tax-certificates';
+export * from './tax-order';
