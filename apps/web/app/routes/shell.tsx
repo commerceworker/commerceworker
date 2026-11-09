@@ -73,13 +73,10 @@ import { pendingApprovalCounts } from '~/lib/orders.server';
 import { PluginsProvider } from '~/lib/plugins';
 import { pluginManifests } from '~/lib/plugins.server';
 import { pageShortcut } from '~/lib/shortcuts';
+import { sidebarOpenFrom } from '~/lib/sidebar';
 import { type ThemeChoice, useTheme } from '~/lib/theme';
 import { workspaceStore } from '~/lib/wire.server';
 import type { Route } from './+types/shell';
-
-/** The sidebar as it was left (shadcn's `sidebar_state` cookie), so the server draws it right. */
-const sidebarOpenFrom = (request: Request) =>
-  !/(?:^|;\s*)sidebar_state=false(?:;|$)/.test(request.headers.get('Cookie') ?? '');
 
 export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request);
