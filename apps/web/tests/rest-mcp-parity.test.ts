@@ -77,6 +77,20 @@ const PAIRS: {
     path: ['cartId'],
     differs: { version: 'REST’s name for cartVersion, matching the cart’s ETag; both are taken' },
   },
+  // Operations whose every field REST reads from the path.
+  {
+    rest: 'POST /customers/{id}/tax-certificates/{certificateId}/verify',
+    tool: 'verify_tax_certificate',
+    body: z.object({}),
+    path: ['customerId', 'certificateId'],
+  },
+  {
+    rest: 'POST /customers/{id}/tax-certificates/{certificateId}/revoke',
+    tool: 'revoke_tax_certificate',
+    body: z.object({}),
+    path: ['customerId', 'certificateId'],
+  },
+  { rest: 'POST /stock/review', tool: 'run_stock_review', body: z.object({}), path: [] },
 ];
 
 describe('REST and MCP take each operation alike', () => {
