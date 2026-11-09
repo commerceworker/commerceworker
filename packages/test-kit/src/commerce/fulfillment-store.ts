@@ -65,6 +65,16 @@ export class InMemoryFulfillmentStore implements FulfillmentStore {
     return { collected: 'carry_out' as const };
   }
 
+  async takeBack(orderId: string) {
+    let n = 0;
+    for (const s of this.shipmentRows.values())
+      if (s.orderId === orderId && s.status === 'collected') {
+        this.shipmentRows.set(s.id, { ...s, status: 'returned' });
+        n++;
+      }
+    return n;
+  }
+
   async issueEntitlements(orderId: string, stepKey: string, lines: readonly DigitalLine[]) {
     const out: { sku: string; code: string }[] = [];
     for (const l of lines)

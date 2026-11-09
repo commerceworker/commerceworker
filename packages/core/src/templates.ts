@@ -747,6 +747,8 @@ export function omnichannelOrderFlow(): Flow {
         event: 'pickup.collected',
         timeout: '5 days',
       })
+      // Carry-out (the customer is at the counter): take the store's stock, then hand it over.
+      .n('reserve_carry', 'commerce.reserve_inventory', 'Take from store stock')
       .n('handover', 'commerce.handover', 'Hand over')
       .n('deliver', 'commerce.deliver_digital', 'Deliver digital goods')
       .n('delivered', 'commerce.notify', 'Download ready', {
@@ -791,7 +793,9 @@ export function omnichannelOrderFlow(): Flow {
       .e('authorize.declined', 'declined')
       .e('route.ship', 'reserve_ship')
       .e('route.pickup', 'reserve_pickup')
-      .e('route.carry_out', 'unavailable')
+      .e('route.carry_out', 'reserve_carry')
+      .e('reserve_carry.ok', 'handover')
+      .e('reserve_carry.backorder', 'short')
       .e('route.digital', 'deliver')
       .e('route.unavailable', 'unavailable')
       .e('reserve_ship.ok', 'ship')
@@ -814,7 +818,7 @@ export function omnichannelOrderFlow(): Flow {
         id: 'tpl-omnichannel-order',
         name: 'Omnichannel order',
         description:
-          'A brand’s own store: authorize, then route each order to shipping (from the warehouse or a store), pickup in store with a code, or digital delivery, and capture once every part is fulfilled.',
+          'A brand’s own store: authorize, then route each order to shipping (from the warehouse or a store), pickup in store with a code, carry-out at the counter, or digital delivery, and capture once every part is fulfilled.',
         model: 'd2c',
         channels: ['web', 'mobile', 'api'],
       })

@@ -103,6 +103,9 @@
     "collect": {
       "status": "waiting"
     },
+    "reserve_carry": {
+      "status": "skipped"
+    },
     "handover": {
       "status": "pending"
     },

@@ -76,6 +76,15 @@ export function d1FulfillmentStore(d1: D1Database, clock: Clock): FulfillmentSto
       return { collected: 'carry_out' };
     },
 
+    async takeBack(orderId) {
+      const res = await d
+        .update(shipments)
+        .set({ status: 'returned' })
+        .where(and(eq(shipments.orderId, orderId), eq(shipments.status, 'collected')))
+        .returning({ id: shipments.id });
+      return res.length;
+    },
+
     async issueEntitlements(orderId, stepKey, lines) {
       const at = now();
       const rows = lines.flatMap((l) =>

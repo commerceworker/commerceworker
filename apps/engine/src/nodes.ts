@@ -1071,6 +1071,15 @@ export const ROLLBACKS: Record<
   },
   'commerce.deliver_digital': async (env, orderId) =>
     `Revoked ${plural(await fulfillmentStore(env).revokeEntitlements(orderId), 'code')}`,
+  // The sale is undone: the goods come back to the store, then the stock they consumed is
+  // restored (once no shipment of the order is still with the customer or booked).
+  'commerce.handover': async (env, orderId) => {
+    const back = await fulfillmentStore(env).takeBack(orderId);
+    const restored = await inventoryStore(env).restoreShipped(orderId);
+    return back
+      ? `Took back ${plural(back, 'hand-over')}, restored ${plural(restored, 'reservation')}`
+      : 'Nothing handed over to take back';
+  },
   'commerce.split_by_seller': async (env, orderId) =>
     `Cancelled ${plural(await marketplaceStore(env).cancel(orderId), 'seller order')}`,
   'commerce.payout': async (env, orderId) =>

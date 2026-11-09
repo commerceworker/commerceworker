@@ -54,6 +54,12 @@ export interface FulfillmentStore {
     order: Pick<Order, 'id' | 'fulfillment'>,
     stepKey: string,
   ): Promise<{ collected: 'pickup' | 'carry_out' }>;
+  /**
+   * Compensation for a hand-over: the goods the customer collected or carried out come back to
+   * the store, so the order's `collected` shipments become `returned` (and no longer hold off
+   * restoring the stock they consumed). Returns how many this call took back.
+   */
+  takeBack(orderId: string): Promise<number>;
   /** One code per unit of each digital line, keyed by step, line and unit. */
   issueEntitlements(
     orderId: string,

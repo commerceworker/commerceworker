@@ -194,6 +194,22 @@ describe('planner', () => {
     expect(state.nodes.reserve_pickup!.status).toBe('skipped');
   });
 
+  it('carries out at the counter: store stock, hand-over, then capture', () => {
+    const { ran, ended } = simulate(tpl('tpl-omnichannel-order'), (id) =>
+      id === 'route' ? ['carry_out'] : undefined,
+    );
+    expect(ended).toBe('done');
+    const at = (id: string) => ran.indexOf(id);
+    expect(at('reserve_carry')).toBeGreaterThan(at('route'));
+    expect(at('handover')).toBeGreaterThan(at('reserve_carry'));
+    expect(at('capture')).toBeGreaterThan(at('handover'));
+    expect(ran).not.toContain('collect');
+    const short = simulate(tpl('tpl-omnichannel-order'), (id) =>
+      id === 'route' ? ['carry_out'] : id === 'reserve_carry' ? ['backorder'] : undefined,
+    );
+    expect(short.ended).toBe('short');
+  });
+
   it('cancels a pickup that is never collected, without capturing', () => {
     const { ran, ended } = simulate(tpl('tpl-omnichannel-order'), (id) => {
       if (id === 'route') return ['pickup'];
