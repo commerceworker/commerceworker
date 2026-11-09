@@ -96,7 +96,7 @@ waits at and since when, steps run, recent activity),
 [cart's](/guides/carts/) lines with their ids, its price with shipping and tax, promotion codes,
 its ship-to and the shipping options on offer, the problems its price
 found, and why it can't be submitted yet), `list_flows` and `get_flow` (a saved
-draft with its validation problems). An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) and webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), as the REST API shows them, never with a secret. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
+draft with its validation problems). Every role can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) and webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), as the REST API shows them, never with a secret. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
 conversation: what it is doing while the reply streams, then what it found. An order's line names
 the step it waits at or stopped at, and opens that step on the order's graph; answers about an order
 say the same. A line for one cart, flow or assessment links to it too, and a reply that opened

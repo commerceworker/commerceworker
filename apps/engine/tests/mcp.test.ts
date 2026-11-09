@@ -1,5 +1,5 @@
 import { introspectWorkflow } from 'cloudflare:test';
-import { env } from 'cloudflare:workers';
+import { env, withEnv } from 'cloudflare:workers';
 import {
   auditRow,
   type OrderInput,
@@ -8,6 +8,7 @@ import {
   type Principal,
   sealAuditRow,
 } from '@commerceworker/core';
+import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
@@ -123,6 +124,19 @@ async function rpc(
   return { status: 200, body: json as { result?: Record<string, unknown>; error?: unknown } };
 }
 
+const CATALOG_READS = [
+  'get_product',
+  'find_product_by_alias',
+  'get_product_sheet',
+  'list_product_types',
+  'list_catalog_channels',
+  'list_categories',
+  'list_catalog_feeds',
+  'get_catalog_feed',
+  'catalog_board',
+  'catalog_board_column',
+];
+
 const call = async (
   p: Principal,
   name: string,
@@ -156,7 +170,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        9,
+        19,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -224,15 +238,31 @@ describe('MCP', () => {
     const viewer = await tools(person('viewer', 'vic@example.com'));
     expect(viewer.map((t) => t.name).sort()).toEqual([
       'assess_order',
+      'catalog_board',
+      'catalog_board_column',
       'find_orders',
+      'find_product_by_alias',
       'find_products',
       'get_cart',
+      'get_catalog_feed',
       'get_flow',
       'get_order',
+      'get_product',
+      'get_product_sheet',
       'list_carts',
+      'list_catalog_channels',
+      'list_catalog_feeds',
+      'list_categories',
       'list_flows',
+      'list_product_types',
       'needs_attention',
     ]);
+    // The catalog's reads are a viewer's, as REST's are: nothing changes, and each says so.
+    for (const name of CATALOG_READS)
+      expect(viewer.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        outputSchema: { type: 'object' },
+      });
     expect(viewer.find((t) => t.name === 'find_orders')).toMatchObject({
       title: 'Find orders',
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -241,7 +271,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(32);
+    expect(operator).toHaveLength(42);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -268,7 +298,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(43);
+    expect(admin).toHaveLength(53);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -371,6 +401,128 @@ describe('MCP', () => {
         error: { message: 'Tool list_webhook_subscriptions not found' },
       });
     }
+  });
+
+  it('reads the catalog as a viewer, with REST’s answers, bounds and refusals', async () => {
+    const tee = { key: 'tee', type: 'apparel', version: 3 };
+    const feed = (id: string) => ({
+      id,
+      name: `${id}.csv`,
+      format: 'csv',
+      state: 'done',
+      by: 'ops',
+      createdAt: 1,
+      rows: 2,
+      parts: 1,
+      partsDone: 1,
+      created: 1,
+      updated: 1,
+      unchanged: 0,
+      rejected: 0,
+      errors: [],
+    });
+    const asked: Record<string, unknown[]> = {};
+    const note =
+      <A extends unknown[], R>(name: string, fn: (...a: A) => R) =>
+      (...a: A) => {
+        asked[name] = [...(asked[name] ?? []), a];
+        return fn(...a);
+      };
+    const fake: Partial<ProductCatalogRpc> = {
+      getProduct: async (k) => (k === 'tee' ? (tee as never) : null),
+      resolveAlias: async (a) => (a === 'sku:TEE-1' ? 'tee' : null),
+      getProductSheet: async (k) =>
+        k === 'tee'
+          ? ({
+              product: tee,
+              feed: tee,
+              overrides: [],
+              staged: [],
+              drafts: [],
+              gaps: [],
+              rejection: null,
+              revisions: [],
+            } as never)
+          : null,
+      listTypes: async () => [{ code: 'apparel', version: 3, attributes: [] }] as never,
+      listChannels: async () => [{ code: 'web' }] as never,
+      listCategories: async () => [{ code: 'tops' }] as never,
+      listFeeds: note('listFeeds', async () => [feed('fd_1')] as never),
+      feedStatus: async (id) => (id === 'fd_1' ? (feed(id) as never) : null),
+      catalogBoard: async () =>
+        ({
+          columns: { gaps: 1, drafted: 0, staged: 0, published: 4 },
+          gapGroups: {},
+          gapsByKind: { missing_alt: { gaps: 2, products: 1 } },
+          lastFeed: feed('fd_1'),
+          runningFeed: null,
+          indexBuilt: true,
+        }) as never,
+      listBoard: note('listBoard', async () => ({ items: [], cursor: null })),
+    };
+    // The MCP handler reads the Worker's own env; the suite's catalog binding answers 503.
+    await withEnv({ ...env, CATALOG: fake }, async () => {
+      const viewer = person('viewer', 'vic@example.com');
+      // The same bodies REST sends: the answer under its name.
+      expect((await call(viewer, 'get_product', { key: 'tee' })).structuredContent).toEqual({
+        product: tee,
+      });
+      expect(
+        (await call(viewer, 'find_product_by_alias', { alias: 'sku:TEE-1' })).structuredContent,
+      ).toEqual({ key: 'tee' });
+      expect(
+        (await call(viewer, 'get_product_sheet', { key: 'tee' })).structuredContent,
+      ).toMatchObject({ sheet: { product: tee } });
+      expect((await call(viewer, 'list_product_types', {})).structuredContent).toMatchObject({
+        types: [{ code: 'apparel' }],
+      });
+      expect((await call(viewer, 'list_catalog_channels', {})).structuredContent).toEqual({
+        channels: [{ code: 'web' }],
+      });
+      expect((await call(viewer, 'list_categories', {})).structuredContent).toEqual({
+        categories: [{ code: 'tops' }],
+      });
+      expect(
+        (await call(viewer, 'list_catalog_feeds', { limit: 5 })).structuredContent,
+      ).toMatchObject({ feeds: [{ id: 'fd_1' }] });
+      expect(
+        (await call(viewer, 'get_catalog_feed', { feedId: 'fd_1' })).structuredContent,
+      ).toMatchObject({ feed: { id: 'fd_1' } });
+      expect((await call(viewer, 'catalog_board', {})).structuredContent).toMatchObject({
+        board: { columns: { gaps: 1 }, indexBuilt: true },
+      });
+      expect(
+        (await call(viewer, 'catalog_board_column', { column: 'gaps', kind: 'missing_alt' }))
+          .structuredContent,
+      ).toEqual({ items: [], cursor: null });
+      expect(asked.listFeeds).toEqual([[5]]);
+      expect(asked.listBoard).toEqual([[{ column: 'gaps', kind: 'missing_alt' }]]);
+
+      // What the catalog doesn't have is a refusal (REST's 404), not an empty answer.
+      for (const [name, args, message] of [
+        ['get_product', { key: 'nope' }, 'The catalog has no product nope.'],
+        ['get_product_sheet', { key: 'nope' }, 'The catalog has no product nope.'],
+        ['find_product_by_alias', { alias: 'sku:NOPE' }, 'No catalog product holds sku:NOPE.'],
+        ['get_catalog_feed', { feedId: 'fd_9' }, 'The catalog has no feed fd_9.'],
+      ] as const) {
+        const r = await call(viewer, name, args);
+        expect(r.isError, name).toBe(true);
+        expect(r.content[0]!.text, name).toBe(message);
+      }
+      // Bounds the schemas hold before the catalog is asked.
+      for (const [name, args] of [
+        ['catalog_board_column', { column: 'nope' }],
+        ['catalog_board_column', { column: 'gaps', kind: 'nope' }],
+        ['catalog_board_column', { column: 'gaps', limit: 101 }],
+        ['list_catalog_feeds', { limit: 101 }],
+        ['get_product', { key: '' }],
+      ] as const)
+        expect((await call(viewer, name, args)).isError, `${name} ${JSON.stringify(args)}`).toBe(
+          true,
+        );
+      expect(asked.listFeeds).toHaveLength(1);
+      expect(asked.listBoard).toHaveLength(1);
+    });
   });
 
   it('keeps an internal error to itself', async () => {

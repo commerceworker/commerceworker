@@ -36,6 +36,16 @@ const TWINS: Record<string, AssistantTool> = {
   'GET /api/v1/plugins/{id}/usage': 'get_plugin_usage',
   'GET /api/v1/webhook-subscriptions': 'list_webhook_subscriptions',
   'GET /api/v1/webhook-subscriptions/{id}/deliveries': 'list_webhook_deliveries',
+  'GET /api/v1/catalog/products/{key}': 'get_product',
+  'GET /api/v1/catalog/products/{key}/sheet': 'get_product_sheet',
+  'GET /api/v1/catalog/aliases/{alias}': 'find_product_by_alias',
+  'GET /api/v1/catalog/types': 'list_product_types',
+  'GET /api/v1/catalog/channels': 'list_catalog_channels',
+  'GET /api/v1/catalog/categories': 'list_categories',
+  'GET /api/v1/catalog/feeds': 'list_catalog_feeds',
+  'GET /api/v1/catalog/feeds/{id}': 'get_catalog_feed',
+  'GET /api/v1/catalog/board': 'catalog_board',
+  'GET /api/v1/catalog/board/{column}': 'catalog_board_column',
 };
 
 const SIGNED = {
@@ -47,7 +57,7 @@ const CREDENTIALS = {
     'Issues or rotates a credential shown once; given only to a person in the app or a token they hold',
 };
 const CATALOG = {
-  gap: 'The catalog’s admin surface: MCP has finding products, drafting content and publishing so far',
+  gap: 'The catalog’s admin surface: MCP has its reads, finding products, drafting content and publishing so far',
 };
 
 /** REST operations with no tool, and why. */
@@ -154,4 +164,4 @@ describe('every operation is on both transports, or says why not', () => {
 });
 
 /** The gaps open today (the catalog's admin routes are most of them). */
-const GAPS_OPEN = 38;
+const GAPS_OPEN = 28;

@@ -182,6 +182,22 @@ a plugin), and `list_webhook_subscriptions` and `list_webhook_deliveries`. None 
 signing secret or anything sealed. Their annotations are `readOnlyHint: true`. Lower roles aren't
 offered them.
 
+## Catalog reads
+
+Every role can also read the product catalog, with ten tools that mirror the REST API's catalog
+`GET` routes and return the same thing, as the catalog Worker answers them: `get_product` and
+`get_product_sheet` (its live and feed versions, staged edits, drafts, gaps and history),
+`find_product_by_alias` (the key behind `sku:…`, `gtin:…` or `slug:<locale>:…`),
+`list_product_types`, `list_catalog_channels`, `list_categories`, `list_catalog_feeds` (newest
+first; `limit` 1 to 100, 20 unset), `get_catalog_feed`, `catalog_board` (the product editor's counts
+per column and gap kind, with the latest and the running feed) and `catalog_board_column` (one
+column's products, a page at a time: `limit` 1 to 100, 50 unset, and the `cursor` the last page
+returned; `kind` narrows the gaps column). A product, alias, sheet or feed the catalog doesn't have
+is a tool error, where REST answers `404`. `find_products` is not one of these: it reads the stock
+list. Their annotations are `readOnlyHint: true`. Changing the catalog (staging, publishing, feeds,
+types, channels, categories) stays on REST and the Catalog page, apart from `draft_product_content`
+and `publish_catalog`.
+
 ## Carts
 
 `list_carts` and `get_cart` read the carts your team opens on the Carts page; a cart a customer

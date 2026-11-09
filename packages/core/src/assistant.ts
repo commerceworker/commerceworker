@@ -72,6 +72,16 @@ export type AssistantTool =
   | 'propose_flow_change'
   | 'draft_plugin'
   | 'draft_product_content'
+  | 'get_product'
+  | 'find_product_by_alias'
+  | 'get_product_sheet'
+  | 'list_product_types'
+  | 'list_catalog_channels'
+  | 'list_categories'
+  | 'list_catalog_feeds'
+  | 'get_catalog_feed'
+  | 'catalog_board'
+  | 'catalog_board_column'
   | 'create_cart'
   | 'change_cart'
   | 'decide_approval'
@@ -219,6 +229,83 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Draft product content',
     description:
       'Draft a catalog product’s missing text (titles, descriptions, text attributes and image alt text, locale by locale) from what it says in its other locales. Name fields and locales to draft those instead. The drafts are saved on the product; nothing goes live until a person accepts and publishes them.',
+  },
+  get_product: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a product',
+    title: 'Get a catalog product',
+    description:
+      'A catalog product as stored: its type, titles and descriptions by locale, attributes, media, variants and per-channel listing data. Use find_product_by_alias for a SKU, GTIN or slug.',
+  },
+  find_product_by_alias: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Found a product',
+    title: 'Find a catalog product by SKU, GTIN or slug',
+    description:
+      'The key of the catalog product that holds an alias: sku:ABC, gtin:… or slug:en:… (a slug names its locale). Pass the key to get_product.',
+  },
+  get_product_sheet: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a product sheet',
+    title: 'Get a product’s sheet',
+    description:
+      'A catalog product’s editing sheet: the live and feed versions, overrides, staged edits, assistant drafts, content gaps, the feed row the catalog refused, and its history.',
+  },
+  list_product_types: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read product types',
+    title: 'List product types',
+    description: 'The latest version of each catalog product type: its fields and attributes.',
+  },
+  list_catalog_channels: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read channels',
+    title: 'List catalog channels',
+    description:
+      'The catalog’s channels: where products are published, with their currencies and locales.',
+  },
+  list_categories: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read categories',
+    title: 'List catalog categories',
+    description: 'The catalog’s categories, each with its code, names and parent.',
+  },
+  list_catalog_feeds: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read feeds',
+    title: 'List catalog feeds',
+    description: 'The most recent product feeds, newest first, with their state and counts.',
+  },
+  get_catalog_feed: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a feed',
+    title: 'Get a catalog feed',
+    description:
+      'One product feed’s state: how far it has got, what it wrote, and what it refused.',
+  },
+  catalog_board: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read the catalog board',
+    title: 'Get the catalog board',
+    description:
+      'The product editor’s board: products per column (gaps, drafted, staged, published), gaps per kind, and the latest and the running feed. Use catalog_board_column for a column’s products.',
+  },
+  catalog_board_column: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a board column',
+    title: 'List a catalog board column',
+    description:
+      'One board column’s products in key order, a page at a time: pass the cursor a page returned for the next. Narrow the gaps column to one kind of gap.',
   },
   create_cart: {
     role: 'operator',

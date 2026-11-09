@@ -37,9 +37,19 @@ import {
   BOARD_COLUMNS,
   type BoardColumn,
   FEED_FORMATS,
+  FEEDS_LIMIT,
   type FeedFormat,
   GAP_KINDS,
   type GapKind,
+  readBoard,
+  readCategories,
+  readChannels,
+  readFeed,
+  readFeeds,
+  readProduct,
+  readProductByAlias,
+  readProductSheet,
+  readProductTypes,
 } from '@commerceworker/core/product';
 import {
   catalogCategoriesDeleteInput,
@@ -98,14 +108,14 @@ export async function handleCatalog(
     if (get && id && sub === 'sheet') {
       const blocked = need('viewer');
       if (blocked) return blocked;
-      const sheet = await c.getProductSheet(id);
-      return sheet ? json({ sheet }) : json({ error: 'Not found' }, 404);
+      const sheet = await readProductSheet(c, id);
+      return sheet ? json(sheet) : json({ error: 'Not found' }, 404);
     }
     if (get && id && !sub) {
       const blocked = need('viewer');
       if (blocked) return blocked;
-      const product = await c.getProduct(id);
-      return product ? json({ product }) : json({ error: 'Not found' }, 404);
+      const product = await readProduct(c, id);
+      return product ? json(product) : json({ error: 'Not found' }, 404);
     }
     if (post && id && sub === 'draft') {
       const blocked = need('operator');
@@ -180,12 +190,12 @@ export async function handleCatalog(
   if (section === 'aliases' && get && id && !sub) {
     const blocked = need('viewer');
     if (blocked) return blocked;
-    const key = await c.resolveAlias(id);
-    return key ? json({ key }) : json({ error: 'Not found' }, 404);
+    const found = await readProductByAlias(c, id);
+    return found ? json(found) : json({ error: 'Not found' }, 404);
   }
 
   if (section === 'types' && !id) {
-    if (get) return need('viewer') ?? json({ types: await c.listTypes() });
+    if (get) return need('viewer') ?? json(await readProductTypes(c));
     if (post) {
       const blocked = need('operator');
       if (blocked) return blocked;
@@ -244,7 +254,7 @@ export async function handleCatalog(
   }
 
   if (section === 'channels' && !id) {
-    if (get) return need('viewer') ?? json({ channels: await c.listChannels() });
+    if (get) return need('viewer') ?? json(await readChannels(c));
     if (post) {
       const blocked = need('operator');
       if (blocked) return blocked;
@@ -262,7 +272,7 @@ export async function handleCatalog(
   }
 
   if (section === 'categories' && !id) {
-    if (get) return need('viewer') ?? json({ categories: await c.listCategories() });
+    if (get) return need('viewer') ?? json(await readCategories(c));
     if (post) {
       const blocked = need('operator');
       if (blocked) return blocked;
@@ -280,16 +290,14 @@ export async function handleCatalog(
 
   if (section === 'feeds') {
     if (get && !id) {
-      const limit = Number(new URL(request.url).searchParams.get('limit') ?? 20);
-      return (
-        need('viewer') ?? json({ feeds: await c.listFeeds(Number.isFinite(limit) ? limit : 20) })
-      );
+      const limit = Number(new URL(request.url).searchParams.get('limit') ?? FEEDS_LIMIT.default);
+      return need('viewer') ?? json(await readFeeds(c, limit));
     }
     if (get && id && !sub) {
       const blocked = need('viewer');
       if (blocked) return blocked;
-      const feed = await c.feedStatus(id);
-      return feed ? json({ feed }) : json({ error: 'Not found' }, 404);
+      const feed = await readFeed(c, id);
+      return feed ? json(feed) : json({ error: 'Not found' }, 404);
     }
     if (post && id && sub === 'cancel') {
       const blocked = need('operator');
@@ -348,7 +356,7 @@ export async function handleCatalog(
   if (section === 'board' && get && !sub) {
     const blocked = need('viewer');
     if (blocked) return blocked;
-    if (!id) return json({ board: await c.catalogBoard() });
+    if (!id) return json(await readBoard(c));
     if (!(BOARD_COLUMNS as readonly string[]).includes(id))
       return json({ error: `No column ${id}: one of ${BOARD_COLUMNS.join(', ')}` }, 404);
     const q = new URL(request.url).searchParams;

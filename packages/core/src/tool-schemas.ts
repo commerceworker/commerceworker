@@ -14,13 +14,15 @@ import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from 
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
 import { pluginCasesSchema } from './plugins';
-import { EDIT_SOURCES } from './product/api';
+import { BOARD_COLUMNS, EDIT_SOURCES } from './product/api';
 import {
   fieldRefSchema,
+  GAP_KINDS,
   MAX_DRAFT_FIELDS,
   PRODUCT_DRAFT_INSTRUCTION_MAX,
   TEXT_MAX,
 } from './product/content';
+import { BOARD_PAGE_LIMIT, FEEDS_LIMIT } from './product/reads';
 import { PROMOTION_KINDS } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
@@ -111,6 +113,41 @@ export const TOOL_INPUTS = {
       .max(PRODUCT_DRAFT_INSTRUCTION_MAX)
       .optional()
       .describe('Guidance from the person: tone, length, terms to keep'),
+  }),
+  get_product: z.object({ key: productKey }),
+  find_product_by_alias: z.object({
+    alias: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe('sku:ABC, gtin:… or slug:<locale>:… (the alias is case-sensitive)'),
+  }),
+  get_product_sheet: z.object({ key: productKey }),
+  list_product_types: z.object({}),
+  list_catalog_channels: z.object({}),
+  list_categories: z.object({}),
+  list_catalog_feeds: z.object({
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(FEEDS_LIMIT.max)
+      .optional()
+      .describe(`Default ${FEEDS_LIMIT.default}`),
+  }),
+  get_catalog_feed: z.object({ feedId: z.string().min(1).max(100) }),
+  catalog_board: z.object({}),
+  catalog_board_column: z.object({
+    column: z.enum(BOARD_COLUMNS),
+    kind: z.enum(GAP_KINDS).optional().describe('Only products with this kind of gap'),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(BOARD_PAGE_LIMIT.max)
+      .optional()
+      .describe(`Default ${BOARD_PAGE_LIMIT.default}`),
   }),
   create_cart: z.object({
     title: F.cartTitle,
@@ -375,6 +412,17 @@ const orderRow = row({
   href,
 });
 
+const feedOutput = row({
+  id: z.string(),
+  name: z.string(),
+  state: z.string(),
+  rows: z.number(),
+  created: z.number(),
+  updated: z.number(),
+  unchanged: z.number(),
+  rejected: z.number(),
+});
+
 const cartOutput = row({
   id: z.string(),
   href,
@@ -499,6 +547,40 @@ export const TOOL_OUTPUTS = {
     drafted: z.array(row({ ref: row({ field: z.string() }), value: z.string() })),
     refused: z.array(row({ ref: row({ field: z.string() }), issues: z.array(z.string()) })),
     model: z.string().nullable().describe('The model that wrote them'),
+  }),
+  get_product: row({ product: row({ key: z.string(), type: z.string(), version: z.number() }) }),
+  find_product_by_alias: row({ key: z.string().describe('The product key, for get_product') }),
+  get_product_sheet: row({
+    sheet: row({
+      product: row({ key: z.string() }),
+      feed: row({}),
+      overrides: z.array(row({})),
+      staged: z.array(row({})),
+      drafts: z.array(row({})),
+      gaps: z.array(row({ kind: z.string(), field: z.string() })),
+      rejection: row({}).nullable(),
+      revisions: z.array(row({})),
+    }),
+  }),
+  list_product_types: row({
+    types: z.array(row({ code: z.string(), version: z.number(), attributes: z.array(row({})) })),
+  }),
+  list_catalog_channels: row({ channels: z.array(row({ code: z.string() })) }),
+  list_categories: row({ categories: z.array(row({ code: z.string() })) }),
+  list_catalog_feeds: row({ feeds: z.array(feedOutput) }),
+  get_catalog_feed: row({ feed: feedOutput }),
+  catalog_board: row({
+    board: row({
+      columns: z.record(z.string(), z.number()).describe('Products per column'),
+      gapsByKind: z.record(z.string(), row({ gaps: z.number(), products: z.number() })),
+      lastFeed: feedOutput.nullable(),
+      runningFeed: feedOutput.nullable(),
+      indexBuilt: z.boolean().describe('False while the gap index is still being built'),
+    }),
+  }),
+  catalog_board_column: row({
+    items: z.array(row({ key: z.string(), title: z.string(), column: z.string() })),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
   }),
   create_cart: cartOutput,
   change_cart: cartOutput.extend({ applied: z.number().describe('Ops applied') }),

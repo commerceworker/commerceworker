@@ -22,7 +22,18 @@ import {
   pluginSummary,
   type ToolInput,
 } from '@commerceworker/core';
-import type { StageEdit } from '@commerceworker/core/product';
+import {
+  readBoard,
+  readCategories,
+  readChannels,
+  readFeed,
+  readFeeds,
+  readProduct,
+  readProductByAlias,
+  readProductSheet,
+  readProductTypes,
+  type StageEdit,
+} from '@commerceworker/core/product';
 import { pluginStatuses, pluginUsage } from '../plugins';
 import { auditLog, webhookOutbox } from '../wire';
 import { runCases } from './admin';
@@ -49,6 +60,7 @@ import {
 } from './data';
 import { createFlow, duplicateFlow, saveFlowDraft, setFlowArchived } from './flows';
 import { startScenario } from './orders';
+import { catalog } from './product-draft';
 
 /** The audit trail of a write that needs no confirm: the channel, the tool, a page's button. */
 const trailOf = (p: Principal, tool: AssistantTool, opts: { via: Channel; direct?: boolean }) => {
@@ -67,6 +79,12 @@ import { draftPlugin } from './plugin-draft';
 import { draftProductContent } from './product-draft';
 
 const auditVia = (via: Channel): AuditVia => AUDIT_CHANNEL[via];
+
+/** A catalog read's answer, or a refusal when the catalog has no such thing (REST's 404). */
+function found<T>(answer: T | null, missing: string): T {
+  if (answer === null) throw new Refused(missing);
+  return answer;
+}
 
 export { RESERVED_EVENT_FIELDS } from '@commerceworker/core';
 
@@ -213,6 +231,39 @@ export async function runTool<T extends AssistantTool>(
     case 'draft_cart_reply': {
       const i = input as ToolInput<'draft_cart_reply'>;
       return draftCartReply(env, p, i.cartId, i.instruction, trailOf(p, name, opts));
+    }
+    case 'get_product': {
+      const key = (input as ToolInput<'get_product'>).key;
+      return found(await readProduct(catalog(env), key), `The catalog has no product ${key}.`);
+    }
+    case 'find_product_by_alias': {
+      const alias = (input as ToolInput<'find_product_by_alias'>).alias;
+      return found(
+        await readProductByAlias(catalog(env), alias),
+        `No catalog product holds ${alias}.`,
+      );
+    }
+    case 'get_product_sheet': {
+      const key = (input as ToolInput<'get_product_sheet'>).key;
+      return found(await readProductSheet(catalog(env), key), `The catalog has no product ${key}.`);
+    }
+    case 'list_product_types':
+      return readProductTypes(catalog(env));
+    case 'list_catalog_channels':
+      return readChannels(catalog(env));
+    case 'list_categories':
+      return readCategories(catalog(env));
+    case 'list_catalog_feeds':
+      return readFeeds(catalog(env), (input as ToolInput<'list_catalog_feeds'>).limit);
+    case 'get_catalog_feed': {
+      const id = (input as ToolInput<'get_catalog_feed'>).feedId;
+      return found(await readFeed(catalog(env), id), `The catalog has no feed ${id}.`);
+    }
+    case 'catalog_board':
+      return readBoard(catalog(env));
+    case 'catalog_board_column': {
+      const { column, kind, cursor, limit } = input as ToolInput<'catalog_board_column'>;
+      return catalog(env).listBoard({ column, kind, cursor, limit });
     }
     case 'list_audit_events': {
       const i = input as ToolInput<'list_audit_events'>;
