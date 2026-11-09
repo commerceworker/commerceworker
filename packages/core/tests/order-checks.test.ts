@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creditCheck, owedOnAccount, providerTaxProblem } from '../src';
+import { budgetCheck, creditCheck, owedOnAccount, providerTaxProblem } from '../src';
 
 const business = { kind: 'business', creditLimit: 1000, balance: 400 };
 
@@ -50,5 +50,14 @@ describe("a tax provider's amount", () => {
     expect(providerTaxProblem(1, 0)).toBe('untaxable');
     expect(providerTaxProblem(50, 100)).toBeNull();
     expect(providerTaxProblem(50.01, 100)).toBe('over_cap');
+  });
+});
+
+describe('budget check', () => {
+  it("holds the order's base total to the budget, at the edge included", () => {
+    expect(budgetCheck({ total: 25_000 }, 25_000)).toEqual({ within: true, total: 25_000 });
+    expect(budgetCheck({ total: 9, baseTotal: 25_001 }, 25_000).within).toBe(false);
+    // 23,000 EUR at 0.92 per USD is 25,000 USD.
+    expect(budgetCheck({ total: 23_000, fxRate: 0.92 }, 25_000).within).toBe(true);
   });
 });

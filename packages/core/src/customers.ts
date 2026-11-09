@@ -43,3 +43,15 @@ export function creditCheck(
   const total = order.baseTotal ?? toBase(order.total, order.fxRate);
   return { ok: total <= available, account: true, available, total, over: total - available };
 }
+
+/** The budget a `commerce.budget_check` node holds an order to when it names none (base currency). */
+export const DEFAULT_ORDER_BUDGET = 25_000;
+
+/** Whether an order's total, in the base currency, is within a budget (`commerce.budget_check`). */
+export function budgetCheck(
+  order: { total: number; baseTotal?: number; fxRate?: number },
+  budget: number,
+): { within: boolean; total: number } {
+  const total = order.baseTotal ?? toBase(order.total, order.fxRate);
+  return { within: total <= budget, total };
+}

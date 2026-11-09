@@ -28,10 +28,13 @@ import {
   assessBranch,
   assessQuestionsSchema,
   BASE_CURRENCY,
+  budgetCheck,
   CUSTOMER_MATCHED_BY,
   checkAddress,
   creditCheck,
+  DEFAULT_ORDER_BUDGET,
   describeAnswers,
+  digitalLines,
   durationMs,
   evaluate,
   evaluatePolicy,
@@ -59,7 +62,6 @@ import {
   taxExemptNote,
   taxRegionsSchema,
   threeWayMatch,
-  toBase,
   truthy,
   uncheckedRoute,
   validateOrder,
@@ -405,8 +407,8 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.budget_check': async ({ ctx, config }) => {
-    const budget = num(config.budget, 25_000);
-    const within = (ctx.order.baseTotal ?? toBase(ctx.order.total, ctx.order.fxRate)) <= budget;
+    const budget = num(config.budget, DEFAULT_ORDER_BUDGET);
+    const { within } = budgetCheck(ctx.order, budget);
     return {
       branches: [within ? 'within' : 'over'],
       output: { budget },
@@ -708,15 +710,8 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.deliver_digital': async ({ env, ctx, stepKey }) => {
-    const kinds = new Map(
-      (await pricingStore(env).products(ctx.order.lines.map((l) => l.sku))).map((p) => [
-        p.sku,
-        p.kind,
-      ]),
-    );
-    const digital = [...ctx.order.lines.entries()]
-      .filter(([, l]) => kinds.get(l.sku) === 'digital')
-      .map(([index, l]) => ({ index, sku: l.sku, qty: l.qty }));
+    const products = await pricingStore(env).products(ctx.order.lines.map((l) => l.sku));
+    const digital = digitalLines(ctx.order.lines, products);
     const codes = await fulfillmentStore(env).issueEntitlements(ctx.order.id, stepKey, digital);
     return {
       output: { entitlements: codes },

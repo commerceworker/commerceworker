@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shippableLines, validateOrder } from '../src';
+import { digitalLines, shippableLines, validateOrder } from '../src';
 
 const products = [
   { sku: 'A', name: 'Apron', kind: 'physical', weightKg: 0.5 },
@@ -55,5 +55,20 @@ describe('what ships', () => {
     ).toEqual([
       { qty: 2, weightKg: 0.5, lengthCm: undefined, widthCm: undefined, heightCm: undefined },
     ]);
+  });
+});
+
+describe('what is delivered as a code', () => {
+  it('keeps the digital lines with their place on the order, and nothing that ships', () => {
+    expect(
+      digitalLines(
+        [
+          { sku: 'A', qty: 2 },
+          { sku: 'E', qty: 3 },
+          { sku: 'Z', qty: 1 },
+        ],
+        products,
+      ),
+    ).toEqual([{ index: 1, sku: 'E', qty: 3 }]);
   });
 });
