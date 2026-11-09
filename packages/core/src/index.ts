@@ -32,6 +32,7 @@ export * from './marketplace';
 export * from './mcp-skills';
 export * from './money';
 export * from './order-index';
+export * from './order-report';
 export * from './order-schemas';
 export * from './payments';
 export * from './plugin-host';

@@ -9,20 +9,20 @@ import type { ReturnRequest } from '@commerceworker/core';
 import {
   aiGateFeedback,
   atLeast,
-  type EdgeState,
   EMPTY_ORDER_STATE,
   eraseOrderState,
   type FlowVersion,
+  foldReport,
   MAX_EVENT_PAYLOAD_BYTES,
   type NodeRun,
   newId,
   type Order,
   type OrderEvent,
+  type OrderReport,
   type OrderState,
   type OrderStatus,
   orderIndexRow,
   type PendingWait,
-  type PlanNode,
   type Principal,
   type ProxiedPrincipal,
   payloadFits,
@@ -44,20 +44,10 @@ import { separationRefusal } from './separation';
 import { releaseHold } from './ucp/payments';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
 import { orderRecords } from './wire';
-import { orderReason, plural } from './words';
+import { plural } from './words';
 
-export type Report = {
-  /** Plan snapshots are sequenced per generation; stale ones are dropped. */
-  seq?: number;
-  generation?: number;
-  status?: OrderStatus;
-  reason?: string;
-  plan?: { nodes: Record<string, PlanNode>; edges: Record<string, EdgeState> };
-  order?: Order;
-  vars?: Record<string, unknown>;
-  node?: { id: string } & Partial<NodeRun>;
-  log?: TimelineEntry;
-};
+/** What the Workflow reports (`OrderReport` in core, where `foldReport` applies it). */
+export type Report = OrderReport;
 
 /**
  * The synced state: `flow` is always null and `timeline` holds the newest `TIMELINE_BROADCAST`
@@ -237,73 +227,17 @@ export class OrderAgent extends Agent<Env, State> {
   async report(r: Report) {
     this.tables();
     const s = this.state;
-    let next: State = { ...s };
-    const gen = r.generation ?? s.generation;
-    const sequenced = r.seq !== undefined;
-    const fresh = !sequenced || gen > s.generation || (gen === s.generation && r.seq! > s.seq);
-
-    if (sequenced && fresh) {
-      next.seq = r.seq!;
-      if (r.plan) {
-        const nodes: Record<string, NodeRun> = { ...next.nodes };
-        for (const [id, pn] of Object.entries(r.plan.nodes)) {
-          const cur = nodes[id] ?? { status: 'pending', runs: 0 };
-          // Rollback and failure come from their own reports; a later plan never clears them.
-          const keep = cur.status === 'rolled_back' || cur.status === 'failed';
-          nodes[id] = {
-            ...cur,
-            status: keep ? cur.status : pn.status,
-            runs: pn.runs,
-            branches: pn.branches,
-          };
-        }
-        next.nodes = nodes;
-        next.edges = r.plan.edges;
-      }
-      if (r.order) next.order = r.order;
-      if (r.vars) next.vars = r.vars;
-    }
-    if (r.status && (fresh || !sequenced) && !TERMINAL_ORDER_STATUSES.includes(s.status)) {
-      next.status = r.status;
-      // Capped here too, whoever reported it: the order page, list and webhooks show it whole.
-      if (r.reason !== undefined) next.reason = orderReason(r.reason);
-      if (r.status !== s.status) {
-        next.timeline = this.log(
-          {
-            kind: 'order',
-            message: `Order ${r.status}${r.reason ? `: ${r.reason}` : ''}`,
-            key: `status:${gen}:${r.status}`,
-          },
-          next.timeline,
-        );
-      }
-    }
-    let finished: { id: string; run: NodeRun } | null = null;
-    if (r.node) {
-      const { id, ...detail } = r.node;
-      const cur = next.nodes[id] ?? { status: 'pending', runs: 0 };
-      const running = cur.startedAt !== undefined && cur.endedAt === undefined;
-      if (detail.startedAt !== undefined) {
-        // A retried attempt keeps the run's first start; a new run starts afresh.
-        if (running) detail.startedAt = cur.startedAt;
-        else detail.endedAt = undefined;
-      }
-      const merged = { ...cur, ...detail };
-      next.nodes = { ...next.nodes, [id]: merged };
-      // Only the first end of a running node counts, so replayed reports never add a row.
-      if (running && detail.endedAt !== undefined && detail.endedAt >= cur.startedAt!)
-        finished = { id, run: merged };
-    }
-    if (r.log) next.timeline = this.log(r.log, next.timeline);
-    next = { ...next, updatedAt: Date.now() };
+    const folded = foldReport(s, r, Date.now());
+    let timeline = s.timeline;
+    for (const entry of folded.log) timeline = this.log(entry, timeline);
+    const next = { ...folded.state, timeline };
     this.setState(next);
 
-    if (finished) await this.recordRun(finished.id, finished.run);
+    if (folded.finished) await this.recordRun(folded.finished.id, folded.finished.run);
 
-    const statusChanged = next.status !== s.status;
-    if (statusChanged || r.order) await this.syncIndex();
+    if (folded.statusChanged || r.order) await this.syncIndex();
     // A failed order rolls back inside the Workflow; poll it until it settles to record the outcome.
-    if (statusChanged && next.status === 'failed')
+    if (folded.statusChanged && next.status === 'failed')
       await this.schedule(5, 'checkInstance', { attempt: 0 });
   }
 
