@@ -171,7 +171,7 @@ async function createServer(p: Principal) {
       // narrows the list within a minute.
       cacheHints: { 'tools/list': { ttlMs: 60_000, cacheScope: 'private' } },
       instructions:
-        'CommerceWorker runs each commerce order as a flow graph of steps; people step in at approvals, events and exceptions. Start with needs_attention or find_orders. Orders are named by id (ord_…) or #reference. Carts (cart_…) are built with create_cart and change_cart and become orders with submit_cart. Actions (deciding, delivering an event, cancelling, submitting a cart, publishing, the stock review) take two calls: the first returns a preview and a confirmation code and changes nothing; call again with the code only after the person agrees.',
+        'CommerceWorker runs each commerce order as a flow graph of steps; people step in at approvals, events and exceptions. Start with needs_attention or find_orders. Orders are named by id (ord_…) or #reference. Carts (cart_…) are built with create_cart and change_cart and become orders with submit_cart. Actions (deciding, delivering an event, cancelling, submitting a cart, publishing, the stock review, and catalog writes that go live or delete) take two calls: the first returns a preview and a confirmation code and changes nothing; call again with the code only after the person agrees.',
     },
   );
   for (const name of Object.keys(ASSISTANT_TOOLS) as AssistantTool[]) {
