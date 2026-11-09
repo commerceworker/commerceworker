@@ -176,6 +176,7 @@ The codes a platform will meet:
 | `policy` | The flow's store policy refuses this checkout; `content` says which rule |
 | `invalid` | A pricing node rejected the checkout |
 | `fulfillment_required` | The items ship, and the platform doesn't support `dev.ucp.shopping.fulfillment` |
+| `promotion` | A discount code was left out (a `warning`; see [Discounts](#discounts)) |
 | `payment_failed` | Payment could not be authorized; see [Completing](#completing-a-checkout) |
 | `order_failed` | The order could not be placed; the payment hold is released. Try again |
 | `not_allowed` | The checkout can no longer be changed |
@@ -195,6 +196,48 @@ address. Digital goods need no address and no fulfillment.
 - On an update, a platform may name the held address as `selected_destination_id: "dest_1"` without
   resending it.
 - A platform that doesn't negotiate `dev.ucp.shopping.fulfillment` can buy only digital goods.
+
+## Discounts
+
+With `dev.ucp.shopping.discount` negotiated, a platform sends promotion codes (the codes an admin
+creates under [Promotions](/guides/promotions/)) as `discounts.codes` on create and update. They are
+case-insensitive, at most five, and replace any sent before; an update that sends none clears them
+(an update replaces the whole checkout, like the rest of it). The checkout is priced as ever, by the
+flow's own nodes, so the flow needs an Apply promotions step (`commerce.discount`) for a code to do
+anything, and the payment held at completion is the discounted total the order's authorize node
+then adopts. The order carries the codes, so the step redeems each once for it.
+
+The response carries `discounts`:
+
+- `codes`: the codes as sent.
+- `applied`: what the promotions step applied, each with the `code`, the promotion's name as `title`,
+  the `amount` in minor units and a `method` (`each` for a percentage, `across` for a fixed amount).
+  Free shipping has no `method`. Every promotion here is code-based, so none is `automatic`.
+- `allocations` on an applied discount: where it landed, summing to its `amount`. They are given
+  when they can be derived from the step's own result: the lines a single discount lowered
+  (`$.line_items[n]`, a rounding remainder on the last of them) or, for free shipping, the shipping
+  total. When several line discounts are applied, the step reports one result for all of them, so
+  none carries allocations.
+
+`totals` then lists the subtotal before the discounts, a `discount` entry (negative) for everything
+applied, shipping before any free-shipping discount, tax and the total, and each discounted line
+shows its list price with its share as a `discount` total. The entries add up to the total.
+
+A code the step leaves out (unknown, expired, used up, not combinable with another) stays in
+`codes` and comes back as a `warning` message with code `promotion` at its place in the list
+(`$.discounts.codes[1]`), saying why. It doesn't block the checkout.
+
+A code that can't do anything is told so the same way: free shipping when the flow rates shipping
+after its promotions step takes nothing off, so it is left out of `applied` with a warning, and when
+the checkout flow has no Apply promotions step every code gets a warning that codes don't apply.
+
+Only the codes that were applied are passed on to the order. Redemption limits are checked when
+the order runs, not held while the checkout is open, so with one use left of a code, two checkouts
+can both quote it and the second order, whose step then refuses it, is declined at authorization and
+reaches the platform as an order event.
+
+A platform that doesn't negotiate the extension has any `discounts` it sends ignored, and sees no
+`discounts` or discount total: the checkout is as it was.
 
 ## Payment handlers
 
@@ -300,8 +343,8 @@ error is a JSON-RPC error with the HTTP status set: code `-32001` for a profile 
 
 - Currencies other than `USD`.
 - Shipping is the only fulfillment method; no pickup.
-- Catalog search and lookup, carts, identity linking, the discount extension, AP2 mandates and the
-  embedded checkout.
+- Catalog search and lookup, carts, identity linking, AP2 mandates and the embedded checkout.
+- Automatic and eligibility discounts (`automatic`, `provisional`, `eligibility`); the discount extension covers promotion codes only.
 - Cards that require 3-D Secure authentication (refused with `payment_failed`).
 - Verifying a platform's own request signatures; platforms authenticate with their key.
 

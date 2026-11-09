@@ -6,6 +6,7 @@
  */
 
 export * from './checkout';
+export * from './discount';
 export * from './errors';
 export * from './order';
 export * from './profile';

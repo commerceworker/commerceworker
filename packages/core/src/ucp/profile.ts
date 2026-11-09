@@ -78,6 +78,7 @@ export const orderPermalink = (s: UcpSettings, origin: string, orderId: string) 
 
 export const CHECKOUT_CAPABILITY = 'dev.ucp.shopping.checkout';
 export const FULFILLMENT_CAPABILITY = 'dev.ucp.shopping.fulfillment';
+export const DISCOUNT_CAPABILITY = 'dev.ucp.shopping.discount';
 export const ORDER_CAPABILITY = 'dev.ucp.shopping.order';
 
 const SPEC = `https://ucp.dev/${UCP_VERSION}`;
@@ -91,6 +92,11 @@ export const UCP_CAPABILITIES = {
   [FULFILLMENT_CAPABILITY]: {
     spec: `${SPEC}/specification/shopping/extensions/fulfillment`,
     schema: `${SPEC}/schemas/shopping/fulfillment.json`,
+    extends: CHECKOUT_CAPABILITY,
+  },
+  [DISCOUNT_CAPABILITY]: {
+    spec: `${SPEC}/specification/shopping/extensions/discount`,
+    schema: `${SPEC}/schemas/shopping/discount.json`,
     extends: CHECKOUT_CAPABILITY,
   },
   [ORDER_CAPABILITY]: {

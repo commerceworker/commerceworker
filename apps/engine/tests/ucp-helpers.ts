@@ -3,6 +3,7 @@
 import { env } from 'cloudflare:workers';
 import {
   CHECKOUT_CAPABILITY,
+  DISCOUNT_CAPABILITY,
   FULFILLMENT_CAPABILITY,
   ORDER_CAPABILITY,
   type PlatformCaller,
@@ -24,7 +25,7 @@ const entry = (name: string) => ({
   spec: `https://ucp.dev/${UCP_VERSION}/specification/${name}`,
   schema: `https://ucp.dev/${UCP_VERSION}/schemas/${name}.json`,
 });
-export const platformProfile = (version = UCP_VERSION, order = true) => ({
+export const platformProfile = (version = UCP_VERSION, order = true, discount = false) => ({
   ucp: {
     version,
     services: {},
@@ -34,6 +35,13 @@ export const platformProfile = (version = UCP_VERSION, order = true) => ({
       [FULFILLMENT_CAPABILITY]: [
         { ...entry('shopping/fulfillment'), extends: CHECKOUT_CAPABILITY },
       ],
+      ...(discount
+        ? {
+            [DISCOUNT_CAPABILITY]: [
+              { ...entry('shopping/discount'), extends: CHECKOUT_CAPABILITY },
+            ],
+          }
+        : {}),
       ...(order
         ? { [ORDER_CAPABILITY]: [{ ...entry('shopping/order'), config: { webhook_url: HOOK } }] }
         : {}),

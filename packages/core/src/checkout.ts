@@ -12,6 +12,7 @@
 
 import type { ShipAddress } from './address';
 import { isBackEdge } from './graph';
+import type { PromotionKind } from './promotions';
 import type { ShippingOption } from './shipping';
 import type { FlowGraph, FlowNode, FulfillmentMethod } from './types';
 
@@ -78,6 +79,16 @@ export type CheckoutBuyer = {
   phone?: string;
 };
 
+/** A promotion the quote's discount step applied, in the session's currency. */
+export type QuoteDiscount = {
+  code: string;
+  /** The promotion's name. */
+  title: string;
+  kind: PromotionKind;
+  /** What it took off the lines (or, for free shipping, the shipping charge). */
+  amount: number;
+};
+
 /** The price of a session, as the checkout flow's pricing nodes worked it out. */
 export type CheckoutQuote = {
   currency: string;
@@ -89,6 +100,8 @@ export type CheckoutQuote = {
     unitPrice: number;
     /** A physical good: it needs a ship-to. */
     ships: boolean;
+    /** The unit price before promotions, when the flow has a discount step. */
+    listPrice?: number;
   }[];
   subtotal: number;
   shipping: number;
@@ -100,6 +113,12 @@ export type CheckoutQuote = {
   shippingOption: string | null;
   /** Whether any line ships (a physical good). */
   ships: boolean;
+  /**
+   * What the flow's discount step did with the session's codes: the promotions it applied (their
+   * amounts are already out of the line prices) and each code it refused, with why. Unset when
+   * the flow has no discount step.
+   */
+  discounts?: { applied: QuoteDiscount[]; refused: { code: string; reason: string }[] };
 };
 
 export type CheckoutSession = {
@@ -113,6 +132,8 @@ export type CheckoutSession = {
   fulfillment: FulfillmentMethod;
   shipTo: Partial<ShipAddress> | null;
   shippingOption: string | null;
+  /** Promotion codes as the platform sent them; unset for a session that never had any. */
+  promoCodes?: string[];
   quote: CheckoutQuote | null;
   issues: CheckoutIssue[];
   /** The order completing it started. */
@@ -130,6 +151,7 @@ export type CheckoutPatch = {
   buyer?: CheckoutBuyer;
   shipTo?: Partial<ShipAddress> | null;
   shippingOption?: string | null;
+  promoCodes?: string[];
 };
 
 export const isFinalCheckout = (s: Pick<CheckoutSession, 'status'>) =>
@@ -163,6 +185,7 @@ export function patchCheckout(s: CheckoutSession, patch: CheckoutPatch): Checkou
     buyer: patch.buyer ? { ...patch.buyer } : s.buyer,
     shipTo: patch.shipTo !== undefined ? patch.shipTo : s.shipTo,
     shippingOption: patch.shippingOption !== undefined ? patch.shippingOption : s.shippingOption,
+    ...(patch.promoCodes !== undefined ? { promoCodes: patch.promoCodes } : {}),
   };
 }
 

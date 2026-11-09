@@ -159,7 +159,12 @@ export async function createCheckout(
     expiresAt: now + CHECKOUT_TTL_MS,
     version: 1,
   };
-  const s = await refresh(env, flow, patchCheckout(empty, checkoutPatch(input)), ctx);
+  const s = await refresh(
+    env,
+    flow,
+    patchCheckout(empty, checkoutPatch(input, undefined, ctx.capabilities)),
+    ctx,
+  );
   // Nothing in it can be bought: there is no checkout to create.
   const unavailable = s.issues.filter((i) => i.code === 'item_unavailable');
   if (unavailable.length === s.lines.length)
@@ -199,7 +204,7 @@ export async function updateCheckout(
   const settings = await ucpSettings(env);
   const flow = await checkoutFlow(env, settings);
   if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
-  const patch: CheckoutPatch = checkoutPatch(input, s);
+  const patch: CheckoutPatch = checkoutPatch(input, s, ctx.capabilities);
   const next = await refresh(env, flow, bump(patchCheckout(s, patch), {}), ctx);
   if (!(await save(env, next, s.version))) return raced();
   return respond(env, next, ctx, 200, settings);
@@ -316,6 +321,12 @@ export async function completeCheckout(
           : {}),
         ...(auth.payment ? { payment: auth.payment } : {}),
         meta: {
+          // Only the codes the quote applied: the flow's discount step takes them off again, so
+          // the total it authorizes is the one that was held. A code the quote refused isn't
+          // handed on, or it could apply now and move the total off the hold.
+          ...(q.discounts?.applied.length
+            ? { promoCodes: q.discounts.applied.map((a) => a.code) }
+            : {}),
           ...(claimed.shipTo ? { shipTo: claimed.shipTo } : {}),
           ucp: { platformId: ctx.caller.id, checkoutId: claimed.id, origin: ctx.caller.origin },
         },

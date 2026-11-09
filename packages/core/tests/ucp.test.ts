@@ -9,7 +9,9 @@ import {
   type CheckoutSession,
   checkoutPatch,
   contentDigest,
+  DISCOUNT_CAPABILITY,
   digestMatches,
+  discountView,
   FULFILLMENT_CAPABILITY,
   importSigningKey,
   importVerifyKey,
@@ -185,6 +187,34 @@ describe('profiles and negotiation', () => {
     expect(p.webhookUrl).toBe('https://agent.example/hooks');
     const n = negotiate(p);
     expect(n.ok && [...n.capabilities.keys()]).toEqual([ORDER_CAPABILITY]);
+  });
+
+  it('lists the discount extension on checkout and activates it only beside checkout', () => {
+    const profile = businessProfile(ORIGIN, [handler], []);
+    expect(profile.ucp.capabilities[DISCOUNT_CAPABILITY]).toEqual([
+      expect.objectContaining({
+        version: UCP_VERSION,
+        extends: CHECKOUT_CAPABILITY,
+        schema: `https://ucp.dev/${UCP_VERSION}/schemas/shopping/discount.json`,
+      }),
+    ]);
+    const entry = { version: UCP_VERSION, spec: 'https://ucp.dev/x', schema: 'https://ucp.dev/y' };
+    const negotiated = (caps: Record<string, unknown>) => {
+      const p = parsePlatformProfile(platformDoc(caps));
+      if ('problem' in p) throw new Error(p.problem);
+      const n = negotiate(p);
+      return n.ok ? [...n.capabilities.keys()] : n.code;
+    };
+    expect(
+      negotiated({
+        [CHECKOUT_CAPABILITY]: [entry],
+        [DISCOUNT_CAPABILITY]: [{ ...entry, extends: CHECKOUT_CAPABILITY }],
+      }),
+    ).toEqual([CHECKOUT_CAPABILITY, DISCOUNT_CAPABILITY]);
+    // Without checkout the extension has no parent, and nothing else is shared.
+    expect(
+      negotiated({ [DISCOUNT_CAPABILITY]: [{ ...entry, extends: CHECKOUT_CAPABILITY }] }),
+    ).toBe('capabilities_incompatible');
   });
 
   it('refuses a newer protocol and an empty intersection', () => {
@@ -530,5 +560,289 @@ describe('order', () => {
         { id: 'li_2', quantity: -1 },
       ],
     });
+  });
+});
+
+// ── Discounts ─────────────────────────────────────────────────────────────
+
+const withDiscount = new Map<UcpCapability, string>([...all, [DISCOUNT_CAPABILITY, UCP_VERSION]]);
+const discountView_ = { ...view, capabilities: withDiscount };
+
+/** SAVE10 (10% off) taken off both lines: 19.99 → 17.991 and 9.50 → 8.55. */
+const discounted = (s: Partial<CheckoutSession> = {}) => {
+  const base = session();
+  return session({
+    promoCodes: ['save10'],
+    quote: {
+      ...base.quote!,
+      lines: [
+        { ...base.quote!.lines[0]!, unitPrice: 17.991, listPrice: 19.99 },
+        { ...base.quote!.lines[1]!, unitPrice: 8.55, listPrice: 9.5 },
+      ],
+      subtotal: 44.53,
+      tax: 4,
+      total: 54.53,
+      discounts: {
+        applied: [{ code: 'SAVE10', title: 'Ten percent off', kind: 'pct', amount: 4.95 }],
+        refused: [{ code: 'NOPE', reason: "NOPE isn't a promotion." }],
+      },
+    },
+    ...s,
+  });
+};
+
+describe('discounts', () => {
+  it('reads codes only when the extension is negotiated, and replaces the held ones', () => {
+    const input = ucpCheckoutInput.parse({
+      line_items: [{ item: { id: 'TEE-M' }, quantity: 1 }],
+      discounts: { codes: ['save10', 'Welcome'] },
+    });
+    expect(checkoutPatch(input, undefined, withDiscount).promoCodes).toEqual(['save10', 'Welcome']);
+    expect(checkoutPatch(input)).not.toHaveProperty('promoCodes');
+    expect(checkoutPatch(input, undefined, all)).not.toHaveProperty('promoCodes');
+    const none = ucpCheckoutInput.parse({ line_items: [{ item: { id: 'TEE-M' }, quantity: 1 }] });
+    expect(checkoutPatch(none, discounted(), withDiscount).promoCodes).toEqual([]);
+    expect(
+      ucpCheckoutInput.safeParse({
+        line_items: [{ item: { id: 'TEE-M' }, quantity: 1 }],
+        discounts: { codes: ['A', 'B', 'C', 'D', 'E', 'F'] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('serves applied discounts the schema accepts, with totals that agree with them', () => {
+    const c = toUcpCheckout(discounted(), discountView_);
+    expect(conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
+    // The schema is what holds the shape: an applied discount with no title, or a positive
+    // discount total, is refused.
+    expect(
+      conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', {
+        ...c,
+        discounts: { codes: [], applied: [{ amount: 1 }] },
+      }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', {
+        ...c,
+        totals: c.totals.map((t) => (t.type === 'discount' ? { ...t, amount: 495 } : t)),
+      }).length,
+    ).toBeGreaterThan(0);
+    expect(c.ucp.capabilities).toHaveProperty([DISCOUNT_CAPABILITY]);
+    expect(c.discounts).toEqual({
+      codes: ['save10'],
+      applied: [
+        {
+          code: 'SAVE10',
+          title: 'Ten percent off',
+          amount: 495,
+          method: 'each',
+          allocations: [
+            { path: '$.line_items[0]', amount: 400 },
+            { path: '$.line_items[1]', amount: 95 },
+          ],
+        },
+      ],
+    });
+    expect(c.totals).toEqual([
+      { type: 'subtotal', display_text: 'Subtotal', amount: 4948 },
+      { type: 'discount', display_text: 'Discount', amount: -495 },
+      { type: 'fulfillment', display_text: 'Shipping', amount: 600 },
+      { type: 'tax', display_text: 'Tax', amount: 400 },
+      { type: 'total', display_text: 'Total', amount: 5453 },
+    ]);
+    // The total is the sum of the entries, and the discount is the sum of what was applied.
+    const sum = c.totals.filter((t) => t.type !== 'total').reduce((n, t) => n + t.amount, 0);
+    expect(sum).toBe(c.totals.find((t) => t.type === 'total')!.amount);
+    expect(c.discounts!.applied.reduce((n, a) => n + a.amount, 0)).toBe(495);
+    // Each line shows its list price, its share of the discount, and the lines add up to the subtotal.
+    expect(c.line_items[0]).toMatchObject({
+      item: { price: 1999 },
+      totals: [
+        { type: 'subtotal', amount: 3998 },
+        { type: 'discount', amount: -400 },
+        { type: 'total', amount: 3598 },
+      ],
+    });
+    expect(c.line_items.reduce((n, l) => n + l.totals[0]!.amount, 0)).toBe(4948);
+  });
+
+  it('reports a code the step refused at its place in the codes, and keeps it in codes', () => {
+    const c = toUcpCheckout(
+      discounted({ promoCodes: ['save10', 'nope', 'bad code'] }),
+      discountView_,
+    );
+    expect(conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
+    expect(c.discounts!.codes).toEqual(['save10', 'nope', 'bad code']);
+    expect(c.messages).toEqual([
+      {
+        type: 'warning',
+        code: 'promotion',
+        content: "NOPE isn't a promotion.",
+        path: '$.discounts.codes[1]',
+      },
+      {
+        type: 'warning',
+        code: 'promotion',
+        content: "bad code isn't a promotion.",
+        path: '$.discounts.codes[2]',
+      },
+    ]);
+    // The quote's own issue, at its own path, is replaced rather than repeated.
+    const twice = toUcpCheckout(
+      discounted({
+        promoCodes: ['nope'],
+        issues: [
+          {
+            kind: 'warning',
+            code: 'promotion',
+            content: "NOPE isn't a promotion.",
+            path: '$.promoCodes',
+          },
+        ],
+      }),
+      discountView_,
+    );
+    expect(twice.messages).toHaveLength(1);
+  });
+
+  it('attributes a discount to lines only when one step result can be', () => {
+    const base = discounted();
+    const two = discountView({
+      ...base,
+      quote: {
+        ...base.quote!,
+        discounts: {
+          applied: [
+            { code: 'A', title: 'A', kind: 'pct', amount: 2.5 },
+            { code: 'B', title: 'B', kind: 'amount', amount: 2.45 },
+          ],
+          refused: [],
+        },
+      },
+    });
+    expect(two.applied.map((a) => a.allocations)).toEqual([undefined, undefined]);
+    expect(two.applied.map((a) => a.method)).toEqual(['each', 'across']);
+    expect(two.lines.reduce((n, l) => n + l, 0)).toBe(two.items);
+    const ship = discountView({
+      ...base,
+      quote: {
+        ...base.quote!,
+        discounts: {
+          applied: [{ code: 'SHIP', title: 'Free shipping', kind: 'free_shipping', amount: 6 }],
+          refused: [],
+        },
+      },
+    });
+    expect(ship.applied[0]).toEqual({
+      code: 'SHIP',
+      title: 'Free shipping',
+      amount: 600,
+      allocations: [{ path: '$.totals[?@.type == "fulfillment"]', amount: 600 }],
+    });
+    expect(ship.shipping).toBe(600);
+  });
+
+  it.each([
+    ['7 lines of 0.15 at 10%', 7, 0.15, 0.135, 0.11],
+    ['4 lines of 0.99 at 33%', 4, 0.99, 0.6633, 1.31],
+  ])(
+    'shares a discount across many lines without a negative share: %s',
+    (_n, count, list, unit, off) => {
+      const base = session();
+      const ids = Array.from({ length: count }, (_, i) => `li_${i + 1}`);
+      const many = session({
+        promoCodes: ['SAVE'],
+        lines: ids.map((id) => ({ id, sku: 'TEE-M', qty: 1 })),
+        quote: {
+          ...base.quote!,
+          lines: ids.map((id) => ({
+            id,
+            sku: 'TEE-M',
+            title: 'Tee',
+            qty: 1,
+            unitPrice: unit,
+            listPrice: list,
+            ships: true,
+          })),
+          subtotal: Math.round(count * unit * 100) / 100,
+          discounts: {
+            applied: [{ code: 'SAVE', title: 'Save', kind: 'pct', amount: off }],
+            refused: [],
+          },
+        },
+      });
+      const c = toUcpCheckout(many, discountView_);
+      expect(conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
+      const applied = c.discounts!.applied[0]!;
+      const shares = applied.allocations!.map((a) => a.amount);
+      expect(shares.every((n) => n >= 0)).toBe(true);
+      expect(shares.reduce((a, b) => a + b, 0)).toBe(applied.amount);
+      // Spread evenly: no share is more than one unit from another.
+      expect(Math.max(...shares) - Math.min(...shares)).toBeLessThanOrEqual(1);
+      const lineOff = c.line_items.map(
+        (l) => -(l.totals.find((t) => t.type === 'discount')?.amount ?? 0),
+      );
+      expect(lineOff.reduce((a, b) => a + b, 0)).toBe(applied.amount);
+      expect(c.totals.find((t) => t.type === 'discount')!.amount).toBe(-applied.amount);
+    },
+  );
+
+  it('leaves out free shipping that takes nothing off, and says why', () => {
+    const base = discounted();
+    const v = discountView({
+      ...base,
+      promoCodes: ['ship', 'save10'],
+      quote: {
+        ...base.quote!,
+        discounts: {
+          applied: [
+            { code: 'SHIP', title: 'Free shipping', kind: 'free_shipping', amount: 0 },
+            { code: 'SAVE10', title: 'Ten percent off', kind: 'pct', amount: 4.95 },
+          ],
+          refused: [],
+        },
+      },
+    });
+    expect(v.applied.map((a) => a.code)).toEqual(['SAVE10']);
+    expect(v.shipping).toBe(0);
+    expect(v.messages).toEqual([
+      expect.objectContaining({
+        kind: 'warning',
+        code: 'promotion',
+        path: '$.discounts.codes[0]',
+        content: expect.stringContaining('takes nothing off'),
+      }),
+    ]);
+  });
+
+  it('tells each code it does not apply when the flow has no discount step', () => {
+    const base = session();
+    const c = toUcpCheckout(
+      session({ promoCodes: ['A', 'B'], quote: { ...base.quote!, discounts: undefined } }),
+      discountView_,
+    );
+    expect(c.messages).toEqual([
+      expect.objectContaining({ path: '$.discounts.codes[0]', code: 'promotion' }),
+      expect.objectContaining({ path: '$.discounts.codes[1]', code: 'promotion' }),
+    ]);
+    expect(c.discounts).toEqual({ codes: ['A', 'B'], applied: [] });
+    expect(conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
+  });
+
+  it('serves a checkout as before when the extension was not negotiated', () => {
+    const c = toUcpCheckout(discounted(), view);
+    expect(c).not.toHaveProperty('discounts');
+    expect(c.totals.map((t) => t.type)).toEqual(['subtotal', 'fulfillment', 'tax', 'total']);
+    expect(c.totals[0]!.amount).toBe(4453);
+    expect(c.line_items[0]!.item.price).toBe(1799);
+    expect(c.ucp.capabilities).not.toHaveProperty([DISCOUNT_CAPABILITY]);
+    expect(conformsTo('shopping/checkout.json', c)).toEqual([]);
+  });
+
+  it('shows a negotiated checkout with no codes as empty discounts', () => {
+    const c = toUcpCheckout(session(), discountView_);
+    expect(c.discounts).toEqual({ codes: [], applied: [] });
+    expect(c.totals.map((t) => t.type)).toEqual(['subtotal', 'fulfillment', 'tax', 'total']);
+    expect(conformsTo('shopping/discount.json#/$defs/dev.ucp.shopping.checkout', c)).toEqual([]);
   });
 });

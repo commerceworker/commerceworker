@@ -45,7 +45,7 @@ const id = { type: 'string', description: 'The checkout session id.' };
 const checkout = {
   type: 'object',
   description:
-    'The checkout payload (dev.ucp.shopping.checkout, with dev.ucp.shopping.fulfillment).',
+    'The checkout payload (dev.ucp.shopping.checkout, with dev.ucp.shopping.fulfillment and dev.ucp.shopping.discount).',
 };
 const SCHEMA = 'https://ucp.dev/2026-08-25/schemas/shopping';
 

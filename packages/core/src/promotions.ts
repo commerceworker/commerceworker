@@ -88,6 +88,7 @@ export function promotionProblem(p: Promotion, c: PromotionContext): string | nu
 export type AppliedPromotion = {
   id: string;
   code: string;
+  name: string;
   kind: PromotionKind;
   /** What it took off the lines, in the order's currency (0 for free shipping). */
   amount: number;
