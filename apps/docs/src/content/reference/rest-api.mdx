@@ -46,7 +46,7 @@ deployment can have different budgets; ask your CommerceWorker contact if an int
 | `POST` | `/api/v1/carts` | `{ title, flowId, customerId? }` | `201 { cart }`, or `422 { error }` |
 | `GET` | `/api/v1/carts/:id` | | `{ cart }` |
 | `POST` | `/api/v1/carts/:id/ops` | One cart op, such as `{ op: "add", sku, qty }` | `{ cart }`, or `409 { error }` |
-| `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
+| `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `cartVersion`, or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
 | `POST` | `/api/v1/carts/:id/cancel` | | `{ cart }`, or `409 { error }` |
 | `GET` | `/api/v1/audit-events?type=&before=&after=&limit=` | | `{ events }` (admin) |
 | `GET` | `/api/v1/audit-events/verify?after=` | | `{ ok, checked, last, next }` or `{ ok: false, brokenAt, reason }` (admin) |

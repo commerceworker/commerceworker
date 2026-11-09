@@ -543,9 +543,16 @@ async function handleCarts(
     const match = ifMatchVersion(request.headers.get('if-match'));
     if (match === 'invalid')
       return json({ error: 'If-Match must be the cart’s ETag, its version in quotes' }, 400);
-    if (match !== undefined && b.data.version !== undefined && match !== b.data.version)
+    if (
+      b.data.version !== undefined &&
+      b.data.cartVersion !== undefined &&
+      b.data.version !== b.data.cartVersion
+    )
+      return json({ error: 'version and cartVersion name different versions' }, 400);
+    const named = b.data.version ?? b.data.cartVersion;
+    if (match !== undefined && named !== undefined && match !== named)
       return json({ error: 'If-Match and version name different versions' }, 400);
-    const version = match ?? b.data.version;
+    const version = match ?? named;
     const r = await engine().submitCart(id, actor, version);
     if (!r.ok && r.error === CART_CHANGED_SINCE_CONFIRM)
       return json({ error: `The cart has changed since version ${version}; read it again` }, 412);
