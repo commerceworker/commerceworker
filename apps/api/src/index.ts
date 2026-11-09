@@ -3,23 +3,24 @@
  * live (SSE) route. Synchronous request/response only: queue consumers, cron, Durable Objects and
  * Workflows belong to the engine Worker, bound here by script name.
  */
-import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { createHasher, drainOutbox } from '@commerceworker/application';
 import { WEB_SIGN_IN } from '@commerceworker/http/api/access-policy';
 import { createApp } from '@commerceworker/http/api/app';
 import { type AuthDeps, createApiHasher } from '@commerceworker/http/api/auth';
-import { validateApiSecrets } from '@commerceworker/http/api/secure-secrets';
-import { isAssistantPath, routeAssistant } from '@commerceworker/http/assistant/gate';
+import {
+  deriveGateKeys,
+  isAssistantPath,
+  routeAssistant,
+} from '@commerceworker/http/assistant/gate';
 import type { McpDeps } from '@commerceworker/http/mcp/deps';
 import { mcpRoutes } from '@commerceworker/http/mcp/routes';
-import { createCfRequestRateLimiter } from '@commerceworker/http/rate-limit';
 import { liveRoutes } from '@commerceworker/http/routes/live';
 import { mediaRoutes } from '@commerceworker/http/routes/media';
 import { mountsRole } from '@commerceworker/platform/config';
-import { createDoRateLimiter } from '@commerceworker/platform/do/rate-limiter';
 import { type EdgeEnv, withJurisdiction } from '@commerceworker/platform/env';
 import { mediaAdapters } from '@commerceworker/platform/media';
 import { makeMetrics } from '@commerceworker/platform/metrics';
+import { validateApiSecrets } from '@commerceworker/platform/secure-secrets';
 import { type EdgeWired, wireEdge } from '@commerceworker/platform/wire';
 import { sendReviewDecision } from '@commerceworker/platform/workflows';
 import { seedConfigFrom, seedDev } from '@commerceworker/seed';
@@ -62,10 +63,6 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
     }),
   );
   const mountManagement = mountsRole(wired.config, 'management');
-  // Distributed failed-auth limiter: one DO per client IP, global across
-  // isolates (the in-process default only sees its own isolate's failures).
-  const rateLimiter = env.AUTH_LIMITER ? createDoRateLimiter(env.AUTH_LIMITER) : undefined;
-
   if (env.LIVE_HUB) {
     // Pre-mounted (first match wins): the DO-served Live Content API replaces
     // the stock in-process SSE route, with the identical auth chain.
@@ -82,8 +79,8 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       importSources: wired.importSources,
       spaceExportReader: wired.spaceExportReader,
       remoteFetcher: wired.remoteFetcher,
-      agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
-      rateLimiter,
+      agents: wired.inProcessAgents({ ctx: wired.ctx, ai: wired.ai }),
+      rateLimiter: wired.authRateLimit,
     };
     app.route('/', liveRoutes(authDeps, env.LIVE_HUB));
   }
@@ -101,7 +98,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       // On-demand agent actions are synchronous request/response, so they run
       // in-process (same policy as the HTTP API's createApp); the durable
       // Workflows runtime serves the queue consumer's on-publish runs.
-      agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
+      agents: wired.inProcessAgents({ ctx: wired.ctx, ai: wired.ai }),
       hasher: createHasher(env.TOKEN_PEPPER),
       adminToken: mcpToken,
       blob: wired.blob,
@@ -145,13 +142,12 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
       wired.ai,
       wired,
       wired.bus,
-      rateLimiter,
       // Review decisions reach the durable watcher as Workflow events.
       env.AGENT_WF
         ? (review, decision) => sendReviewDecision(env.AGENT_WF as Workflow, review.id, decision)
         : undefined,
       // Native per-colo rate limiting; absent bindings leave classes unlimited.
-      createCfRequestRateLimiter(env),
+      wired.requestRateLimit,
       // Editorial workflow runs on the EDITORIAL_WF Workflows binding.
       {
         ...(wired.workflowEngine ? { workflowEngine: wired.workflowEngine } : {}),
@@ -180,7 +176,10 @@ export default {
       isAssistantPath(new URL(req.url).pathname) &&
       mountsRole({ role: env.ROLE ?? 'all' }, 'management')
     )
-      return routeAssistant(req, env);
+      return routeAssistant(req, {
+        namespace: env.ASSISTANT_AGENT,
+        keys: await deriveGateKeys([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]),
+      });
     // Writes start at the primary; reads may start at any replica unless the client brings a
     // bookmark, which pins them to at least the state it last saw.
     // A client-sent bookmark is used only when it has D1's shape; anything else would make every
@@ -194,7 +193,7 @@ export default {
           : 'first-unconstrained';
     const wired = wireEdge(env, { bookmark });
     try {
-      validateApiSecrets(wired.config, env as unknown as NodeJS.ProcessEnv);
+      validateApiSecrets(wired.config, env);
       // The seed appends hundreds of events (thousands at a larger SEED_SCALE) in whatever
       // request runs first, often a GET; relay them now, since local dev has no cron sweep.
       let seededNow = false;

@@ -1,4 +1,3 @@
-import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import {
   type AppContext,
   type RagDeps,
@@ -49,10 +48,16 @@ export function createApp(
   rag: RagDeps,
   blob: BlobStore,
   ai: AIProvider,
-  /** The import and fetch adapters the composition root bound (`wireEdge`, `platform/in-memory`). */
-  edge: Pick<AuthDeps, 'importSources' | 'spaceExportReader' | 'remoteFetcher'>,
+  /**
+   * The adapters the composition root bound (`wireEdge`, `platform/in-memory`): the import and
+   * fetch adapters, and the runtime on-demand agent actions run on.
+   */
+  edge: Pick<AuthDeps, 'importSources' | 'spaceExportReader' | 'remoteFetcher'> & {
+    /** The failed-auth limiter (`AuthDeps.rateLimiter`). */
+    readonly authRateLimit: AuthRateLimit;
+    readonly inProcessAgents: (deps: { ctx: AppContext; ai: AIProvider }) => AuthDeps['agents'];
+  },
   bus: EventBus = noopBus,
-  rateLimiter?: AuthRateLimit,
   signalReview?: AuthDeps['signalReview'],
   requestLimiter?: RequestRateLimit,
   /**
@@ -169,14 +174,14 @@ export function createApp(
     // On-demand agent actions are synchronous request/response, so they always
     // run in-process; the durable Cloudflare Workflows path serves the queue
     // consumer's on-publish runs (AGENT_RUNTIME=cloudflare-workflows).
-    agents: new InProcessAgentRuntime(makeActivities({ ctx, ai })),
+    agents: edge.inProcessAgents({ ctx, ai }),
     importSources: edge.importSources,
     spaceExportReader: edge.spaceExportReader,
     // Downloading a plugin package is a fetch like any other, bounded and
     // redirect-refusing; the policy that decides *whether* is config, not code.
     remoteFetcher: edge.remoteFetcher,
     pluginSources: config.pluginSources ?? {},
-    rateLimiter,
+    rateLimiter: edge.authRateLimit,
     signalReview,
     trustedProxyCount: config.trustedProxyCount,
     moderateBeforePublish: config.moderateBeforePublish,

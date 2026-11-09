@@ -39,7 +39,6 @@ function makeApp(opts: { ingest?: FakeAssetIngestQueue } = {}) {
     wired.bus,
     undefined,
     undefined,
-    undefined,
     opts.ingest ? { assetIngest: opts.ingest } : {},
   );
   return { app, ctx: wired.ctx };

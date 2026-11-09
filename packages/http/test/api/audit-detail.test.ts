@@ -134,7 +134,6 @@ describe('audit row detail, over REST and MCP', () => {
       wired.bus,
       undefined,
       undefined,
-      undefined,
       { workflowEngine: harness.engine, workflowNodes: { ai: wired.ai } },
     );
     expect(

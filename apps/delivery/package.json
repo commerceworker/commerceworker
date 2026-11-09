@@ -13,7 +13,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@commerceworker/agent-runtime": "workspace:*",
     "@commerceworker/application": "workspace:*",
     "@commerceworker/domain": "workspace:*",
     "@commerceworker/http": "workspace:*",

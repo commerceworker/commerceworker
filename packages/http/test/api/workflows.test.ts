@@ -85,7 +85,6 @@ describe('workflow routes', () => {
       wired.bus,
       undefined,
       undefined,
-      undefined,
       { workflowEngine: harness.engine, workflowNodes: { ai: wired.ai } },
     );
     for (const apiId of ['post', 'page']) {

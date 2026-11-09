@@ -17,8 +17,6 @@
   },
   "dependencies": {
     "@cloudflare/ai-chat": "catalog:",
-    "@commerceworker/adapters": "workspace:*",
-    "@commerceworker/agent-runtime": "workspace:*",
     "@commerceworker/application": "workspace:*",
     "@commerceworker/docs-index": "workspace:*",
     "@commerceworker/domain": "workspace:*",
@@ -43,6 +41,8 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/adapters": "workspace:*",
+    "@commerceworker/agent-runtime": "workspace:*",
     "@commerceworker/cli": "workspace:*",
     "@commerceworker/sdk-core": "workspace:*",
     "@commerceworker/sdk-management": "workspace:*",

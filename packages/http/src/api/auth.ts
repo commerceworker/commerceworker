@@ -29,11 +29,7 @@ import {
   type Principal,
   scopesForKind,
 } from '@commerceworker/domain';
-import {
-  type AuthRateLimit,
-  AuthRateLimiter,
-  clientIp,
-} from '@commerceworker/platform/auth-rate-limit';
+import { type AuthRateLimit, clientIp } from '@commerceworker/platform/auth-rate-limit';
 import type {
   AIProvider,
   AssetIngestQueue,
@@ -114,10 +110,10 @@ export interface AuthDeps {
     decision: 'approved' | 'rejected',
   ) => Promise<boolean>;
   /**
-   * Failed-auth rate limiter. Defaults to the in-process sliding window;
-   * multi-isolate runtimes (Cloudflare Workers) inject a shared-state one.
+   * Failed-auth rate limiter, bound by the composition root: a shared-state one on Cloudflare
+   * Workers (a Durable Object per client IP), an in-process sliding window elsewhere.
    */
-  readonly rateLimiter?: AuthRateLimit;
+  readonly rateLimiter: AuthRateLimit;
   /**
    * A principal already authenticated by a trusted caller in the same Worker (the delivery
    * gateway, which authenticates before the cache). When it returns one, the request's own
@@ -163,11 +159,6 @@ const ADMIN: Principal = {
   kind: 'admin',
   scopes: [...scopesForKind('cma')],
 };
-
-const authRateLimiter = new AuthRateLimiter(
-  Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10),
-  Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS ?? 60_000),
-);
 
 async function resolvePrincipal(deps: AuthDeps, token: string): Promise<Principal> {
   if (deps.adminToken && secureTokenEqual(token, deps.adminToken)) {
@@ -244,7 +235,7 @@ export async function throttleAuth<T>(
   resolve: () => Promise<T>,
 ): Promise<T> {
   const ip = requestIp(deps, c);
-  const limiter = deps.rateLimiter ?? authRateLimiter;
+  const limiter = deps.rateLimiter;
   if (await limiter.isBlocked(ip)) {
     logger.warn({ ip, path: c.req.path }, 'auth: rate limit exceeded');
     throw new HTTPException(429, { message: 'Too many authentication attempts' });

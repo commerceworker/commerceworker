@@ -20,10 +20,12 @@ const config = testConfig({
 /** The delivery routes as the delivery Worker serves them: on their own, behind its gateway. */
 function app() {
   const { ctx, rag, blob, ai, bus } = wire(config);
+  const edge = inMemoryEdge();
   const principal = { spaceId: 's1', kind: 'cda', scopes: ['delivery:read'] } as Principal;
   return deliveryApp(
     deliveryRoutes({
-      ...inMemoryEdge(),
+      ...edge,
+      rateLimiter: edge.authRateLimit,
       ctx,
       hasher: createApiHasher(config.tokenPepper),
       adminToken: '',

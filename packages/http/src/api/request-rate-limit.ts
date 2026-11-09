@@ -15,7 +15,7 @@
  *
  * The in-process implementation below serves tests and bare `createApp`
  * callers. The Worker injects Cloudflare's `ratelimit` binding through the same
- * interface (see src/rate-limit.ts).
+ * interface (`@commerceworker/adapters/rate-limit-cf`, bound by `wireEdge`).
  */
 
 import { clientIp } from '@commerceworker/platform/auth-rate-limit';

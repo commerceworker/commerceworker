@@ -52,6 +52,24 @@ export class AuthRateLimiter implements AuthRateLimit {
   }
 }
 
+let isolateLimiter: AuthRateLimiter | undefined;
+
+/**
+ * The failed-auth limiter for a deployment with no shared one (no `AUTH_LIMITER` Durable Object):
+ * one per isolate, so the window survives across requests. It only sees its own isolate's
+ * failures; `createDoRateLimiter` is the global one.
+ */
+export function isolateAuthRateLimiter(env: {
+  readonly AUTH_RATE_LIMIT_MAX?: string;
+  readonly AUTH_RATE_LIMIT_WINDOW_MS?: string;
+}): AuthRateLimiter {
+  isolateLimiter ??= new AuthRateLimiter(
+    Number(env.AUTH_RATE_LIMIT_MAX ?? 10),
+    Number(env.AUTH_RATE_LIMIT_WINDOW_MS ?? 60_000),
+  );
+  return isolateLimiter;
+}
+
 /**
  * Derives the client key for rate limiting in a spoof-resistant way.
  *

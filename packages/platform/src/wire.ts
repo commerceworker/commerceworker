@@ -21,6 +21,7 @@ import { createSpaceExportReader } from '@commerceworker/adapters/import-space-e
 import { structuredImportSources } from '@commerceworker/adapters/import-structured';
 import { createWorkerLoaderRuntime } from '@commerceworker/adapters/plugins-cf-loader';
 import { createAssetIngestQueue, createCfQueueProducer } from '@commerceworker/adapters/queue-cf';
+import { createCfRequestRateLimiter } from '@commerceworker/adapters/rate-limit-cf';
 import { createKvDevVectorStore } from '@commerceworker/adapters/vector-kv-dev';
 import { createVectorizeStore } from '@commerceworker/adapters/vector-vectorize';
 import { createStreamVideoHost } from '@commerceworker/adapters/video-stream';
@@ -89,9 +90,11 @@ import {
 import { CloudflareAssetIngestStarter } from './asset-ingest';
 import { CloudflareAssetZipStarter } from './asset-zip';
 import { type AssistantLlm, makeAssistantModel } from './assistant-model';
+import { type AuthRateLimit, isolateAuthRateLimiter } from './auth-rate-limit';
 import { type ApiConfig, loadConfig } from './config';
 import { sealerFromEnv } from './data-key';
 import { doCostGuardFromEnv } from './do/cost-guard';
+import { createDoRateLimiter } from './do/rate-limiter';
 import { createShardedSearchIndex, DEFAULT_SEARCH_SHARDS } from './do/search-shard';
 import { type EdgeEnv, withJurisdiction } from './env';
 import { newId } from './ids';
@@ -150,6 +153,22 @@ export interface EdgeWired {
   readonly spaceExportReader: SpaceExportReader;
   /** Readers for external content formats, by source id (the structured parsers: JSON, CSV, WXR). */
   readonly importSources: Readonly<Record<string, ImportSource>>;
+  /**
+   * The failed-auth limiter: one Durable Object per client IP when `AUTH_LIMITER` is bound
+   * (global across isolates), else one per isolate.
+   */
+  readonly authRateLimit: AuthRateLimit;
+  /**
+   * The runtime for on-demand agent actions. Those are synchronous request/response, so they
+   * always run in-process; the durable Cloudflare Workflows path serves the queue consumer's
+   * on-publish runs (`makeAgents`, AGENT_RUNTIME=cloudflare-workflows).
+   */
+  readonly inProcessAgents: (deps: { ctx: AppContext; ai: AIProvider }) => AgentRunner;
+  /**
+   * Native per-colo request rate limiting (the RATE_LIMIT_READ, _WRITE and _AI bindings); absent
+   * when none is bound, which leaves the deployment unlimited.
+   */
+  readonly requestRateLimit?: ReturnType<typeof createCfRequestRateLimiter>;
   /**
    * The assistant's Workers AI model for one person; absent under AI_MODE=mock or with no AI
    * binding, where the assistant answers with its own mock.
@@ -307,6 +326,11 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
 
   const email = makeEmail(env);
   const assistantModel = makeAssistantModel(env);
+  const requestRateLimit = createCfRequestRateLimiter({
+    read: env.RATE_LIMIT_READ,
+    write: env.RATE_LIMIT_WRITE,
+    ai: env.RATE_LIMIT_AI,
+  });
   const people = wirePeople(env);
   const workflowEngine = makeWorkflowEngine(env);
   return {
@@ -318,6 +342,11 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
     remoteFetcher: createRemoteFetcher(),
     spaceExportReader: createSpaceExportReader(),
     importSources: structuredImportSources(),
+    authRateLimit: env.AUTH_LIMITER
+      ? createDoRateLimiter(env.AUTH_LIMITER)
+      : isolateAuthRateLimiter(env),
+    inProcessAgents,
+    ...(requestRateLimit ? { requestRateLimit } : {}),
     ...(assistantModel ? { assistantModel } : {}),
     ...(people ? { people } : {}),
     workflowNodes: {
@@ -465,6 +494,10 @@ export function agentConfigFromEnv(env: EdgeEnv): PublishAgentsConfig {
   };
 }
 
+/** Agent actions run on demand, in this isolate (see `EdgeWired.inProcessAgents`). */
+export const inProcessAgents = ({ ctx, ai }: { ctx: AppContext; ai: AIProvider }): AgentRunner =>
+  new InProcessAgentRuntime(makeActivities({ ctx, ai }));
+
 /**
  * Agent runtime for on-publish runs: Cloudflare Workflows when selected
  * (durable), else in-process (non-durable; dev/demo and tests).
@@ -476,7 +509,7 @@ export function makeAgents(env: EdgeEnv, ctx: AppContext, ai: AIProvider): Agent
   if (env.AGENT_RUNTIME === 'cloudflare-workflows' && env.AGENT_WF) {
     return new CloudflareWorkflowsAgentRuntime(env.AGENT_WF, ids);
   }
-  return new InProcessAgentRuntime(makeActivities({ ctx, ai }));
+  return inProcessAgents({ ctx, ai });
 }
 
 /**

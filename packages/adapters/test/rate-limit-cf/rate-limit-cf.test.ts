@@ -1,6 +1,5 @@
-import type { EdgeEnv } from '@commerceworker/platform/env';
 import { describe, expect, it } from 'vitest';
-import { type CfRateLimiter, createCfRequestRateLimiter } from '../src/rate-limit';
+import { type CfRateLimiter, createCfRequestRateLimiter } from '../../src/rate-limit-cf/index';
 
 /** Stand-in for a native `ratelimit` binding, recording the keys it is asked about. */
 function fakeBinding(success: boolean) {
@@ -16,7 +15,7 @@ function fakeBinding(success: boolean) {
 
 describe('Cloudflare ratelimit binding adapter', () => {
   it('is absent when no class is bound, leaving the deployment unlimited', () => {
-    expect(createCfRequestRateLimiter({} as EdgeEnv)).toBeUndefined();
+    expect(createCfRequestRateLimiter({})).toBeUndefined();
   });
 
   it('routes each class to its own binding and namespaces the key by class', async () => {
@@ -24,10 +23,10 @@ describe('Cloudflare ratelimit binding adapter', () => {
     const write = fakeBinding(true);
     const ai = fakeBinding(true);
     const limiter = createCfRequestRateLimiter({
-      RATE_LIMIT_READ: read.binding,
-      RATE_LIMIT_WRITE: write.binding,
-      RATE_LIMIT_AI: ai.binding,
-    } as EdgeEnv);
+      read: read.binding,
+      write: write.binding,
+      ai: ai.binding,
+    });
 
     expect(await limiter?.limit('read', 'k:abc')).toBe(true);
     expect(await limiter?.limit('write', 'k:abc')).toBe(true);
@@ -42,7 +41,7 @@ describe('Cloudflare ratelimit binding adapter', () => {
 
   it('reports exhaustion when the binding denies', async () => {
     const ai = fakeBinding(false);
-    const limiter = createCfRequestRateLimiter({ RATE_LIMIT_AI: ai.binding } as EdgeEnv);
+    const limiter = createCfRequestRateLimiter({ ai: ai.binding });
     expect(await limiter?.limit('ai', 'k:abc')).toBe(false);
   });
 
@@ -50,7 +49,7 @@ describe('Cloudflare ratelimit binding adapter', () => {
     // Only the AI class is bound. A config slip that drops the read binding must
     // not take the entire delivery surface offline.
     const ai = fakeBinding(false);
-    const limiter = createCfRequestRateLimiter({ RATE_LIMIT_AI: ai.binding } as EdgeEnv);
+    const limiter = createCfRequestRateLimiter({ ai: ai.binding });
     expect(await limiter?.limit('read', 'k:abc')).toBe(true);
     expect(await limiter?.limit('write', 'k:abc')).toBe(true);
   });

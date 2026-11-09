@@ -347,9 +347,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@commerceworker/agent-runtime':
-        specifier: workspace:*
-        version: link:../../packages/agent-runtime
       '@commerceworker/application':
         specifier: workspace:*
         version: link:../../packages/application
@@ -431,9 +428,6 @@ importers:
 
   apps/delivery:
     dependencies:
-      '@commerceworker/agent-runtime':
-        specifier: workspace:*
-        version: link:../../packages/agent-runtime
       '@commerceworker/application':
         specifier: workspace:*
         version: link:../../packages/application
@@ -1298,12 +1292,6 @@ importers:
       '@cloudflare/ai-chat':
         specifier: 'catalog:'
         version: 0.12.2(@ai-sdk/react@4.0.163(react@19.3.0)(zod@4.6.7))(agents@0.32.0(@ai-sdk/provider@4.0.35)(@ai-sdk/react@4.0.163(react@19.3.0)(zod@4.6.7))(@babel/core@8.0.7)(@babel/runtime@7.29.10)(@modelcontextprotocol/client@2.4.0)(@modelcontextprotocol/server@2.4.0)(ai@7.0.159(zod@4.6.7))(react@19.3.0)(rolldown@1.2.13)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(zod@4.6.7))(ai@7.0.159(zod@4.6.7))(react@19.3.0)
-      '@commerceworker/adapters':
-        specifier: workspace:*
-        version: link:../adapters
-      '@commerceworker/agent-runtime':
-        specifier: workspace:*
-        version: link:../agent-runtime
       '@commerceworker/application':
         specifier: workspace:*
         version: link:../application
@@ -1371,6 +1359,12 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261013.1
+      '@commerceworker/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@commerceworker/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@commerceworker/cli':
         specifier: workspace:*
         version: link:../cli

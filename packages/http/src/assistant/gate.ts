@@ -11,7 +11,6 @@
  */
 
 import { ASSISTANT_AGENT } from '@commerceworker/domain';
-import type { EdgeEnv } from '@commerceworker/platform/env';
 import { deriveAssistantPrincipalKey } from '@commerceworker/security/assistant-key';
 import {
   PRINCIPAL_HEADER,
@@ -21,25 +20,18 @@ import {
 } from '@commerceworker/security/principal';
 import { routeAgentRequest } from 'agents';
 
-const present = (keys: (string | undefined)[]) => keys.filter((k): k is string => Boolean(k));
-
 /**
- * The api's keys for the assistant's paths: derived from PRINCIPAL_KEY, then from
- * PRINCIPAL_KEY_PREVIOUS while a rotation finishes. Never the main keys themselves: a principal
- * signed with one is good for the REST surface only.
+ * The keys the api verifies the assistant's paths with: each of `principalKeys` (PRINCIPAL_KEY,
+ * then PRINCIPAL_KEY_PREVIOUS while a rotation finishes) derived into the assistant's own key.
+ * Never the main keys themselves: a principal signed with one is good for the REST surface only.
+ * The caller hands over the keys; this reads no environment.
  */
-export async function gateKeys(env: EdgeEnv): Promise<string[]> {
+export async function deriveGateKeys(
+  principalKeys: readonly (string | undefined)[],
+): Promise<string[]> {
   return Promise.all(
-    present([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]).map(deriveAssistantPrincipalKey),
+    principalKeys.filter((k): k is string => Boolean(k)).map(deriveAssistantPrincipalKey),
   );
-}
-
-/**
- * The engine's keys: ASSISTANT_PRINCIPAL_KEY, then ASSISTANT_PRINCIPAL_KEY_PREVIOUS while a
- * rotation finishes. The engine holds no other principal key.
- */
-export function engineKeys(env: EdgeEnv): string[] {
-  return present([env.ASSISTANT_PRINCIPAL_KEY, env.ASSISTANT_PRINCIPAL_KEY_PREVIOUS]);
 }
 
 /** True for a path the assistant's routing owns (`/agents/assistant-agent/…`). */
@@ -95,10 +87,20 @@ export async function assistantCaller(
  * The api's forward to the engine's AssistantAgent: checked here first, then routed by the SDK
  * with only the assistant's binding in reach, so no path can address another Durable Object.
  */
-export async function routeAssistant(request: Request, env: EdgeEnv): Promise<Response> {
-  const namespace = env.ASSISTANT_AGENT;
+export async function routeAssistant(
+  request: Request,
+  {
+    namespace,
+    keys,
+  }: {
+    /** The `ASSISTANT_AGENT` Durable Object namespace; absent, the assistant is not served. */
+    namespace: DurableObjectNamespace | undefined;
+    /** The keys its paths are signed with (`deriveGateKeys`). */
+    keys: readonly string[];
+  },
+): Promise<Response> {
   if (!namespace) return refuse(404, 'Not found');
-  const claims = await assistantCaller(await gateKeys(env), request);
+  const claims = await assistantCaller(keys, request);
   if (claims instanceof Response) return claims;
   // Keyed on the route the SDK matched, not on the path's spelling.
   const gate = (_req: Request, route: { className: string; name: string }) =>

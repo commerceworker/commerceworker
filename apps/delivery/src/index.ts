@@ -15,7 +15,6 @@
  * GraphQL POSTs) are answered here directly. Its queue consumer drains the purge queue, rationed
  * to Cloudflare's purge limits.
  */
-import { InProcessAgentRuntime, makeActivities } from '@commerceworker/agent-runtime';
 import { authenticateCached, createHasher } from '@commerceworker/application';
 import type { Principal } from '@commerceworker/domain';
 import type { AuthDeps } from '@commerceworker/http/api/auth';
@@ -93,7 +92,8 @@ export default {
       importSources: wired.importSources,
       spaceExportReader: wired.spaceExportReader,
       remoteFetcher: wired.remoteFetcher,
-      agents: new InProcessAgentRuntime(makeActivities({ ctx: wired.ctx, ai: wired.ai })),
+      agents: wired.inProcessAgents({ ctx: wired.ctx, ai: wired.ai }),
+      rateLimiter: wired.authRateLimit,
       ...(principal ? { trustedPrincipal: () => principal } : {}),
     });
 
