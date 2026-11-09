@@ -68,6 +68,13 @@ const errors = {
 };
 const orderId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
 const cartId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const customerId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const certificateId = {
+  name: 'certificateId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' },
+};
 const cart = (description: string) => ({
   description,
   content: {
@@ -423,6 +430,40 @@ export function openApiDocument(serverUrl: string) {
             '409': ok('The cart has already ended', '#/components/schemas/Error'),
             ...errors,
           },
+        },
+      },
+      '/api/v1/customers/{id}/tax-certificates/{certificateId}/verify': {
+        post: {
+          summary: 'Verify a tax exemption certificate (operator)',
+          description:
+            'Records that you checked the certificate with its issuer: orders placed from now are exempt where it covers. Refused (`409`) for a revoked or expired certificate and, with approval separation on, to whoever added it. Verifying again changes nothing (`changed: false`). MCP: `verify_tax_certificate`.',
+          parameters: [customerId, certificateId],
+          responses: {
+            '200': ok('`{ id, status, changed }`'),
+            '409': ok('Refused', '#/components/schemas/Error'),
+            ...errors,
+          },
+        },
+      },
+      '/api/v1/customers/{id}/tax-certificates/{certificateId}/revoke': {
+        post: {
+          summary: 'Revoke a tax exemption certificate (operator)',
+          description:
+            'Stops the certificate exempting orders placed from now; it stays on record, revoked. Revoking again changes nothing (`changed: false`). MCP: `revoke_tax_certificate`.',
+          parameters: [customerId, certificateId],
+          responses: {
+            '200': ok('`{ id, status, changed }`'),
+            '409': ok('Refused', '#/components/schemas/Error'),
+            ...errors,
+          },
+        },
+      },
+      '/api/v1/stock/review': {
+        post: {
+          summary: 'Run the stock review now (operator)',
+          description:
+            'Starts the daily stock review (reorders below each product’s reorder point) now. MCP: `run_stock_review`.',
+          responses: { '202': ok('`{ instanceId }`'), ...errors },
         },
       },
       '/api/v1/webhooks/events': {
