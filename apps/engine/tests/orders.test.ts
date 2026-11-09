@@ -1379,6 +1379,108 @@ describe('omnichannel and point of sale', () => {
     const pays = await db().select().from(payments).where(eq(payments.orderId, orderId));
     expect(pays.map((p) => p.kind).sort()).toEqual(['authorization:card_present', 'capture']);
   });
+
+  it('carries out a web order at the counter from the store’s stock, and captures once', async () => {
+    await introspect();
+    const before = await storeStock('loc_mission', 'TEE-01');
+    const { orderId } = await startOrder(env, {
+      flowId: 'tpl-omnichannel-order',
+      input: input({
+        model: 'd2c',
+        channel: 'web',
+        customerId: 'cus_ada',
+        fulfillment: { method: 'carry_out', locationId: 'loc_mission' },
+        lines: [{ sku: 'TEE-01', qty: 1 }],
+      }),
+    });
+    const done = await settled(orderId);
+    expect([done.status, done.reason]).toEqual(['completed', '']);
+    expect(done.nodes.route!.branches).toEqual(['carry_out']);
+    expect(done.nodes.handover!.summary).toBe('Carried out');
+    expect(done.nodes.unavailable!.status).toBe('skipped');
+    expect(await storeStock('loc_mission', 'TEE-01')).toEqual({
+      stock: before.stock - 1,
+      reserved: before.reserved,
+    });
+    const pays = await db().select().from(payments).where(eq(payments.orderId, orderId));
+    expect(pays.filter((p) => p.kind === 'capture')).toHaveLength(1);
+  });
+
+  describe('undoing a hand-over', () => {
+    const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
+      id,
+      type,
+      label: id,
+      config,
+      position: { x: 0, y: 0 },
+    });
+    const edge = (source: string, target: string, sourceHandle: string | null = null) => ({
+      id: `${source}.${sourceHandle ?? 'out'}-${target}`,
+      source,
+      target,
+      sourceHandle,
+      targetHandle: null,
+    });
+
+    beforeAll(async () => {
+      // Handed over, then the order fails: the goods come back and the stock is restored.
+      await publishFlow(db(), {
+        id: 'test-handover-fails',
+        name: 'Hand over, then fail',
+        description: '',
+        model: 'b2c',
+        channels: [],
+        nodes: [
+          node('start', 'trigger.manual'),
+          node('route', 'commerce.route_fulfillment', { method: 'carry_out' }),
+          node('reserve', 'commerce.reserve_inventory'),
+          node('handover', 'commerce.handover'),
+          node('fail', 'control.end', { outcome: 'failed', reason: 'Failed after hand-over' }),
+          node('nowhere', 'control.end', { outcome: 'failed', reason: 'No store' }),
+        ],
+        edges: [
+          edge('start', 'route'),
+          edge('route', 'reserve', 'carry_out'),
+          edge('route', 'nowhere', 'unavailable'),
+          edge('reserve', 'handover', 'ok'),
+          edge('reserve', 'nowhere', 'backorder'),
+          edge('handover', 'fail'),
+        ],
+      });
+    });
+
+    it('takes the goods back and restores the store’s stock when the order fails after it', async () => {
+      await introspect();
+      const before = await storeStock('loc_mission', 'TEE-01');
+      const { orderId } = await startOrder(env, {
+        flowId: 'test-handover-fails',
+        input: input({
+          model: 'b2c',
+          channel: 'pos',
+          fulfillment: { method: 'carry_out', locationId: 'loc_mission' },
+          lines: [{ sku: 'TEE-01', qty: 2 }],
+        }),
+      });
+      const done = await settled(orderId);
+      expect([done.status, done.reason]).toEqual(['failed', 'Failed after hand-over']);
+      // The compensation is a rollback, so it can land after the `failed` report.
+      const back = await until(async () => {
+        const rows = await db().select().from(shipments).where(eq(shipments.orderId, orderId));
+        return rows.length > 0 && rows.every((r) => r.status === 'returned') && rows;
+      }, 'the take-back');
+      expect(back.map((r) => [r.carrier, r.status])).toEqual([['carry_out', 'returned']]);
+      await until(
+        async () => (await storeStock('loc_mission', 'TEE-01')).stock === before.stock,
+        'the restock',
+      );
+      expect(await storeStock('loc_mission', 'TEE-01')).toEqual(before);
+      const rolled = await until(async () => {
+        const s = await state(orderId);
+        return s.nodes.handover?.status === 'rolled_back' && s;
+      }, 'the rollback report');
+      expect(rolled.nodes.handover!.summary).toBe('Took back 1 hand-over, restored 1 reservation');
+    });
+  });
 });
 
 describe('address validation', () => {

@@ -84,6 +84,27 @@ export function describeFulfillmentStoreContract(
       ).toEqual([['carry_out', 'fc_store_b', 'collected']]);
     });
 
+    it('takes back what was handed over, once, and leaves other shipments alone', async () => {
+      const s = await fresh();
+      await s.stagePickup('fc_ord_back', 'pickup#1');
+      await s.handOver({ id: 'fc_ord_back' }, 'handover#1');
+      await s.stagePickup('fc_ord_back_staged', 'pickup#1');
+      expect(await s.takeBack('fc_ord_back')).toBe(1);
+      expect(await s.takeBack('fc_ord_back')).toBe(0);
+      expect((await s.shipments('fc_ord_back')).map((x) => [x.carrier, x.status])).toEqual([
+        ['pickup', 'returned'],
+      ]);
+      // Not handed over yet: nothing to take back, and the staged pickup stays staged.
+      expect(await s.takeBack('fc_ord_back_staged')).toBe(0);
+      expect((await s.shipments('fc_ord_back_staged')).map((x) => x.status)).toEqual([
+        'ready_for_pickup',
+      ]);
+      const carry = { id: 'fc_ord_back_carry', fulfillment: { locationId: 'fc_store_b' } as never };
+      await s.handOver(carry, 'handover#1');
+      expect(await s.takeBack('fc_ord_back_carry')).toBe(1);
+      expect((await s.shipments('fc_ord_back_carry')).map((x) => x.status)).toEqual(['returned']);
+    });
+
     it('issues one code per unit, the same on a retry, and revokes them once', async () => {
       const s = await fresh();
       const lines = [

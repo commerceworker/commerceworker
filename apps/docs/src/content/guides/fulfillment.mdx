@@ -138,7 +138,7 @@ Till sales arrive on the `pos` channel. The default order routes send `b2c:pos` 
 a flow can authorize with include `card_present`, `wallet`, `gift_card` and `cash` besides
 `card`, `ach` and `terms`.
 
-`tpl-omnichannel-order` doesn't sell at a till: its `carry_out` branch ends in **Cannot fulfil**.
+`tpl-omnichannel-order` takes carry-out the same way: an order routed `carry_out` (say, a web order the customer pays for at the counter) is reserved from its store's stock as **Take from store stock**, handed over, and captured with the rest of the order. A store short of a line ends it in **Out of stock**.
 
 ## Digital delivery
 
@@ -319,12 +319,13 @@ returns no label for fails the node after voiding the labels that did come back.
 
 | Event | Undone |
 |---|---|
-| A failed order rolls back | `commerce.reserve_inventory` releases held stock (at the location it was held at); `commerce.ship` cancels every shipment it booked and, once none of the order's shipments is live, restocks what they consumed (reservation `restored`); `commerce.pickup_ready` cancels the staged pickup; `commerce.deliver_digital` revokes the order's issued codes (`status` `revoked`); `commerce.authorize_payment` voids the authorization; `commerce.invoice` takes an on-account invoice back off the customer's balance |
+| A failed order rolls back | `commerce.reserve_inventory` releases held stock (at the location it was held at); `commerce.ship` cancels every shipment it booked and, once none of the order's shipments is live, restocks what they consumed (reservation `restored`); `commerce.pickup_ready` cancels the staged pickup; `commerce.deliver_digital` revokes the order's issued codes (`status` `revoked`); `commerce.handover` takes the goods back (the order's `collected` shipments become `returned`) and, once none of its shipments is live, restores the stock they consumed; `commerce.authorize_payment` voids the authorization; `commerce.invoice` takes an on-account invoice back off the customer's balance |
 | A cancel | Does the same in one pass: releases holds, voids authorizations, voids provider labels (a label the provider cannot void is left uncancelled and counted in the timeline), cancels staged pickups along with open shipments, restocks shipped stock, reverses account charges, revokes codes, plus seller orders and payouts |
 
 Codes issued for a mixed cart are revoked when its physical part later fails, for example when the
-store runs out between routing and reserving. A completed hand-over has consumed its stock and has no
-rollback; returns go through the return steps.
+store runs out between routing and reserving. A hand-over the order fails after (a capture that
+fails, say) is undone as if the customer brought the goods back. An operator's cancel doesn't take
+back what was handed over: goods the customer still has come back through the return steps.
 
 ## Events
 

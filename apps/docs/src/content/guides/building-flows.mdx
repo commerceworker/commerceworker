@@ -138,7 +138,8 @@ A commerce node that still fails after its retries fails the order the same way,
 End node. The order's reason then names the step and the error's first line, or says "Database error
 at" the step when the database refused; the whole error is on that step in the order's graph. Only nodes tagged **undo** in the [node catalog](/reference/nodes/) have rollbacks: reserve inventory
 (releases the reservation), authorize payment (voids the hold), create shipment and ready for
-pickup (cancel the shipment or staged pickup, and restock what it consumed), generate invoice (voids an unpaid Stripe invoice and takes an on-account charge back off the balance), deliver digital goods (revokes the codes), split by
+pickup (cancel the shipment or staged pickup, and restock what it consumed), hand over (takes the
+goods back and restores their stock), generate invoice (voids an unpaid Stripe invoice and takes an on-account charge back off the balance), deliver digital goods (revokes the codes), split by
 seller (cancels the seller orders) and seller payouts (reverses scheduled payouts).
 
 ## Expressions and templates

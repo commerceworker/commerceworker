@@ -470,10 +470,11 @@ export const NODE_SPECS = [
     category: 'commerce',
     label: 'Hand over',
     description:
-      'The customer has the goods: a pickup is collected or a carry-out sale leaves the store, and held stock is consumed. Returns go through the return steps.',
+      'The customer has the goods: a pickup is collected or a carry-out sale leaves the store, and held stock is consumed. If the order fails afterwards, the goods are taken back and their stock restored. Returns go through the return steps.',
     icon: 'HandPlatter',
     fields: [],
     outputs: OUT,
+    rollback: true,
   }),
   node({
     type: 'commerce.deliver_digital',
