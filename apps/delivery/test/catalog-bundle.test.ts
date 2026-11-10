@@ -3,21 +3,17 @@ import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The catalog path's size budget. The catalog's entry modules are bundled on their own, minified
- * as the Worker is, so anything from the content stack that one of them imports (the http, platform
- * or application packages, hono, zod through core's full model) shows up as a jump in size, and in
- * the module list. The delivery Worker's one script carries both sides; this holds the catalog's
- * share of it to about 10 KiB gzipped (8.1 KiB when the budget was set).
+ * The catalog Worker's size budget. `src/catalog/worker.ts`, the entry `wrangler.catalog.jsonc`
+ * deploys, is bundled as it is, minified as the Worker is, so anything from the content stack that
+ * it imports (the http, platform or application packages, hono, zod through core's full model)
+ * shows up as a jump in size, and in the module list. This holds the deployed script to about 10 KiB gzipped (8.1 KiB when the budget was set).
  */
 const BUDGET_GZIP = 10 * 1024;
 
 const bundle = () =>
   build({
-    stdin: {
-      contents: "export * from './gateway'; export { CatalogDelivery } from './delivery';",
-      resolveDir: new URL('../src/catalog/', import.meta.url).pathname,
-      loader: 'ts',
-    },
+    entryPoints: ['src/catalog/worker.ts'],
+    absWorkingDir: new URL('..', import.meta.url).pathname,
     bundle: true,
     format: 'esm',
     platform: 'neutral',
@@ -30,7 +26,7 @@ const bundle = () =>
     logLevel: 'silent',
   });
 
-describe('catalog entrypoint bundle', () => {
+describe('the catalog Worker bundle', () => {
   it('stays within its gzipped budget', async () => {
     const out = await bundle();
     const size = gzipSync(out.outputFiles[0]?.contents ?? new Uint8Array()).length;
@@ -41,7 +37,6 @@ describe('catalog entrypoint bundle', () => {
     const inputs = Object.keys((await bundle()).metafile.inputs);
     const stray = inputs.filter(
       (f) =>
-        !f.startsWith('<stdin>') &&
         !f.startsWith('src/catalog/') &&
         !/packages\/core\/src\/product\/(paths|listing|listing-index|routing|search)\.ts$/.test(f),
     );

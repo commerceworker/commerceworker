@@ -21,7 +21,7 @@ and on a pull request a `commits` job lints each commit message against Conventi
 | `plugins/fixture-carrier` | workerd, through `@cloudflare/vitest-plugin`, with the plugin's own D1 | `plugins/fixture-carrier/vitest.config.ts` |
 | `apps/engine` | workerd, through `@cloudflare/vitest-plugin`; five projects, `engine`, `plugins`, `sandboxed`, `installs` and `stripe` | `apps/engine/vitest.config.ts` |
 | `apps/catalog` | workerd, through `@cloudflare/vitest-plugin` | `apps/catalog/vitest.config.ts` |
-| `apps/delivery` | two projects: `unit` (Node: the content gateway's pure parts, the catalog bundle budget) and `catalog` (workerd, through `@cloudflare/vitest-plugin`, as a catalog-only deployment) | `apps/delivery/vitest.config.ts` |
+| `apps/delivery` | three projects: `unit` (Node: the content gateway's pure parts, the catalog bundle budget), `catalog` (workerd, through `@cloudflare/vitest-plugin`, the catalog-only entry) and `dispatcher` (workerd, `src/index.ts` with content off) | `apps/delivery/vitest.config.ts` |
 | `apps/web` | Node | `apps/web/vitest.config.ts` |
 
 :::caution
@@ -551,7 +551,7 @@ test shrinks to the area above a keyboard.
 ## Catalog edge: delivery in workerd
 
 `apps/delivery/test/catalog/edge.test.ts` runs the gateway and `Delivery` against local R2 and KV,
-from `test/catalog/wrangler.jsonc` (the catalog's bindings and no content binding, as `wrangler.catalog.jsonc` renders) with `remoteBindings: false`. `content-off.test.ts` holds that one Worker serves a catalog read with content off: the content routes are `404`, `/health` names only the catalog, a write is `405`. `test/catalog-bundle.test.ts` (the `unit` project) bundles `src/catalog/` alone with esbuild and holds it to 10 KiB gzipped and to core's zod-free subpaths, with no content-stack import. `beforeAll` writes what the
+from `test/catalog/wrangler.jsonc` (the catalog-only entry `src/catalog/worker.ts` with the catalog's bindings, as `wrangler.catalog.jsonc` deploys it) with `remoteBindings: false`. `test/dispatcher/content-off.test.ts` (the `dispatcher` project, `src/index.ts` with the same bindings) holds that one Worker serves a catalog read with content off: the content routes are `404`, `/health` names only the catalog, a write is `405`. `test/catalog-bundle.test.ts` (the `unit` project) bundles `src/catalog/worker.ts` with esbuild and holds it to 10 KiB gzipped and to core's zod-free subpaths, with no content-stack import. No `apps/delivery` test binds `DB`, so the content side (`src/content.ts`) is covered only by its pure-part unit tests (`test/delivery.test.ts`). `beforeAll` writes what the
 publisher would (two products, one in two locales, SKU and slug alias pointers, a category tree, uid
 entries and cards) with `paths` from `@commerceworker/core/product/paths`, and requests go to the default
 entrypoint through `exports`.

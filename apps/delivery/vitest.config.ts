@@ -29,7 +29,7 @@ export default defineConfig({
           fsModuleCache: false,
         },
       },
-      // The delivery Worker in workerd as a catalog-only deployment (test/catalog/wrangler.jsonc: no
+      // The catalog-only entry (src/catalog/worker.ts, as wrangler.catalog.jsonc deploys it; no
       // content binding) with local R2 and KV. Workers Caching isn't emulated locally, so these
       // tests check what reaches the cache (canonical URLs, headers, 304s); production checks the rest.
       {
@@ -52,6 +52,30 @@ export default defineConfig({
         test: {
           name: 'catalog',
           include: ['test/catalog/**/*.test.ts'],
+          fsModuleCache: false,
+        },
+      },
+      // The dispatcher (src/index.ts) with the catalog bound and content off.
+      {
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: './test/dispatcher/wrangler.jsonc' },
+            remoteBindings: false,
+            miniflare: {
+              workers: [
+                {
+                  name: 'commerceworker-catalog',
+                  modules: true,
+                  script: catalogStub,
+                  compatibilityDate: '2026-10-01',
+                },
+              ],
+            },
+          }),
+        ],
+        test: {
+          name: 'dispatcher',
+          include: ['test/dispatcher/**/*.test.ts'],
           fsModuleCache: false,
         },
       },

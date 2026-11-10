@@ -937,8 +937,9 @@ path, answers `404` for a surface that isn't bound, and has `/health` name only 
 (`{ "ok": true, "serves": ["catalog"] }`; a content-only deployment answers `{ "ok": true }` as
 before). Each surface sets its own CORS and security headers, and the queue handler routes on the
 batch's queue: the catalog's purge queue to the catalog, every other to content. The fleet deploys
-`apps/delivery/wrangler.catalog.jsonc` (rendered by `renderDelivery`): the catalog's bindings and
-none of the content stack's, on the custom domain `catalog.<domain>` (`catalog.commerceworker.com`
+`apps/delivery/wrangler.catalog.jsonc` (rendered by `renderDelivery`), whose entry is
+`src/catalog/worker.ts`: the catalog's bindings and none of the content stack's, and no content code
+in the deployed script, on the custom domain `catalog.<domain>` (`catalog.commerceworker.com`
 for the `commerceworker` deployment), with no `workers_dev` or preview URLs. `wrangler.jsonc` stays
 the content stack's template.
 
@@ -946,8 +947,10 @@ The catalog surface reads what the catalog published (R2 `PUBLISHED`, KV `CARDS`
 of its own. It has two entrypoints, and Workers Caching (`cache.enabled`, with
 `cross_version_cache`, so a deploy doesn't empty the cache: paths carry `DOC_FORMAT`) sits between
 them. Its modules import core only through the zod-free subpaths and nothing of the content stack,
-so the catalog's share of the bundle stays about 10 KiB gzipped: `test/catalog-bundle.test.ts`
-bundles `src/catalog/` alone and fails above 10 KiB (8.1 KiB when set), or on any import outside it.
+so the deployed script stays about 10 KiB gzipped: `test/catalog-bundle.test.ts` bundles
+`src/catalog/worker.ts` and fails above 10 KiB (8.1 KiB when set), or on any import outside
+`src/catalog/`. That entry answers `/health` with `{ "ok": true }` and serves only the catalog;
+`src/index.ts`, the dispatcher described above, is for a deployment with content on too.
 
 - **The gateway** (`catalogFetch` in `src/catalog/gateway.ts`, called from the default export, whose
   `exports` entry turns the cache off, since caching in front of it would skip normalizing). It

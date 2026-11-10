@@ -153,7 +153,7 @@ describe('the gateway', () => {
     expect((await get('/v1/web/EN_us/products/tee')).status).toBe(400);
     expect((await get('/v1/web/en/slugs/Not-A-Slug')).status).toBe(400);
     expect((await get('/v1/web/en/widgets')).status).toBe(404);
-    expect(await (await get('/health')).json()).toEqual({ ok: true, serves: ['catalog'] });
+    expect(await (await get('/health')).json()).toEqual({ ok: true });
   });
 });
 
