@@ -56,6 +56,9 @@ one order of theirs may total, in the base currency), and a status:
 
 Roles are fixed: **Buyer**, **Approver** and **Company admin**. Members don't sign in yet and
 have no tokens of their own: staff manage them, and an order names the member placing it.
+A flow's [Approval](/guides/approvals-and-events/#who-approves-and-how-many-votes) step can be voted
+by a company's **Approver** members, a team or named members (one, all, a majority or a quorum);
+staff record each member's vote for them until members can sign in.
 
 An order names its buyer with `meta.buyerId`, the member's id. The Validate step declines an order
 whose buyer isn't an **active** member of the order's own customer. An order with no

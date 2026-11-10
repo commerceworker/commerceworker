@@ -40,7 +40,7 @@ deployment can have different budgets; ask your CommerceWorker contact if an int
 | `GET` | `/api/v1/orders?model=&channel=&status=&q=&limit=&cursor=` | | `{ orders, nextCursor }` |
 | `GET` | `/api/v1/orders/:id` | | The order's live state |
 | `POST` | `/api/v1/orders/:id/events` | `{ event, payload? }` | `{ delivered, nodeId? }` |
-| `POST` | `/api/v1/orders/:id/approvals/:nodeId` | `{ decision, note? }` | `{ ok: true }`, `403 { error }` if the caller started the order and the workspace separates [approvals](/guides/team-and-roles/#approvals) |
+| `POST` | `/api/v1/orders/:id/approvals/:nodeId` | `{ decision, note?, onBehalfOf? }` | `{ ok: true, outcome, tally }`, `403 { error }` if the caller started the order and the workspace separates [approvals](/guides/team-and-roles/#approvals), `409 { error }` for a vote that can't be taken |
 | `POST` | `/api/v1/orders/:id/cancel` | `{ reason? }` | `{ ok: true }` |
 | `GET` | `/api/v1/carts?status=&limit=` | | `{ carts }` |
 | `POST` | `/api/v1/carts` | `{ title, flowId, customerId? }` | `201 { cart }`, or `422 { error }` |
@@ -193,7 +193,17 @@ POST /api/v1/orders/ord_…/approvals/approval
 ```
 
 `decision` is `approved` or `rejected`. A person or an API token always decides as themselves; the record names the caller. The decision takes effect at once,
-with no confirm card. An unknown order is `404`, and a node that
+with no confirm card.
+
+The call casts a vote. Where one approver decides (the default), `outcome` is `approved` or
+`rejected` and `tally` is `"1 of 1"`. Where an [approval is voted](/guides/approvals-and-events/#who-approves-and-how-many-votes)
+by several people, `outcome` is `recorded` while more votes are needed (the order still waits, and
+`tally` says how far, like `"1 of 2"`), and `approved` or `rejected` once the votes decide it. A
+company's members vote through staff: send `onBehalfOf` with the member's id (`mem_…`) and the vote is
+theirs, naming you as having recorded it, and the audit event carries it. A vote that can't be taken
+(not one of the approvers, already voted, already decided, a buyer on their own order when the
+workspace separates approvals, a company that isn't active, or `onBehalfOf` on a staff approval) is
+`409` with the reason. An unknown order is `404`, and a node that
 isn't waiting for an approval (already decided, or never reached) is `409`. So is an order that is
 recorded but has no live run to resume (one imported as a record, say), with
 `{ error: "The order has no live run, so its approvals can’t be decided" }`.
@@ -287,7 +297,7 @@ on, and its JSON body (or, for a `GET`, its query string) gives the rest of the 
 |---|---|---|
 | `GET` | `/api/v1/attention` | What is waiting on people |
 | `POST` | `/api/v1/orders/:orderId/restart` | Starts a fresh order like it: same customer, lines and fulfilment, on its flow's current version |
-| `POST` | `/api/v1/approvals/decide` | `{ decision, note?, approvals: [{ orderId, nodeId }] }`: decides several at once |
+| `POST` | `/api/v1/approvals/decide` | `{ decision, note?, onBehalfOf?, approvals: [{ orderId, nodeId }] }`: decides several at once; each result has its `outcome` and `tally` |
 | `GET` | `/api/v1/flows/:flowId` | A flow's draft graph, with `draft`, its fingerprint |
 | `POST` | `/api/v1/flows/:flowId/publish` | `{ draft }`: publishes the draft you read |
 | `POST` | `/api/v1/flows/:flowId/test` | `{ draft }`: publishes that draft if it changed, then starts a test order |
@@ -377,8 +387,8 @@ integration), and the same fields and `return.requested` are `422`.
 
 The order routes bound their bodies the same way: `POST /api/v1/orders/{id}/events` takes `event`
 (1 to 100 characters) and an optional `payload` of at most 32 KiB of JSON,
-`POST …/approvals/{nodeId}` takes `decision` and `note` (at most
-2000), and `POST …/cancel` takes `reason` (at most 500). Anything else is a `400` with `issues`.
+`POST …/approvals/{nodeId}` takes `decision`, `note` (at most
+2000) and `onBehalfOf` (a member id), and `POST …/cancel` takes `reason` (at most 500). Anything else is a `400` with `issues`.
 The order page enforces the same bounds.
 
 | Status | Meaning |

@@ -224,6 +224,16 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     'admin approvals: a later page of the queue',
     () => ports.board.approvals('pending', { requestedAt: 0, id: '' }, 50, 'live'),
   ],
+  [
+    'admin approvals: a company’s page',
+    () =>
+      ports.board.approvals('pending', { requestedAt: 0, id: '' }, 50, 'live', {
+        companyId: 'qc_company',
+        approver: 'qc_member',
+      }),
+  ],
+  ['admin order: its votes', () => ports.board.votes(id('invoice'))],
+  ['admin order: who may vote', () => ports.board.voters(id('invoice'))],
   ['admin approvals: pending counts', () => ports.board.pendingApprovalCounts()],
   ['admin order: its records', () => ports.board.records(id('invoice'))],
   ['admin events: orders waiting on an event', () => ports.board.waitingOnEvents(50, now)],

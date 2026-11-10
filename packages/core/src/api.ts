@@ -245,8 +245,10 @@ export interface EngineRpc {
   /** A verified payment provider event (Stripe): settles invoices and resumes the order. */
   paymentEvent(event: PaymentEvent): Promise<PaymentEventResult>;
   /**
-   * `actor` is signed for `decide:<orderId>` (`signRpcActor`): its name is who the record names,
-   * its id the principal checked against the order's starter.
+   * Casts a vote on an approval; the order resumes once the votes decide it. `actor` is signed for
+   * `decide:<orderId>` (`signRpcActor`): its name is who the record names, its id the principal
+   * checked against the order's starter. `onBehalfOf` is a company member's id: staff record that
+   * member's vote (docs/b2b.md, D3).
    */
   decide(
     orderId: string,
@@ -254,12 +256,22 @@ export interface EngineRpc {
     decision: 'approved' | 'rejected',
     actor: SignedActor,
     note?: string,
+    onBehalfOf?: string,
   ): Promise<
-    | { ok: true }
+    | {
+        ok: true;
+        /** `recorded`: the vote counted but more are needed, so the order still waits. */
+        outcome: 'recorded' | 'approved' | 'rejected';
+        /** The approvals so far of those needed, like "1 of 2". */
+        tally: string;
+      }
     | {
         ok: false;
-        /** `no_run`: the order is recorded but the engine has no run for it to resume. */
-        reason: 'not_found' | 'no_run' | 'not_waiting' | 'own_order' | 'forbidden';
+        /**
+         * `no_run`: the order is recorded but the engine has no run for it to resume. `refused`: the
+         * vote can't be taken (not an approver, already voted, already decided, …); `error` says why.
+         */
+        reason: 'not_found' | 'no_run' | 'not_waiting' | 'own_order' | 'forbidden' | 'refused';
         error?: string;
       }
   >;

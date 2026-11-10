@@ -271,6 +271,185 @@ export function describeOrderBoardContract(
         });
       });
 
+      it('says who votes and the tally so far, and narrows to a company or an approver', async () => {
+        const votes = (id: string, ...by: [string, 'approved' | 'rejected'][]) =>
+          by.map(([voterId, decision], i) => ({
+            approvalId: `apr_ob_${id}`,
+            voterId,
+            voterKind: 'member' as const,
+            onBehalfBy: 'ob_staff',
+            decision,
+            note: null,
+            at: 10 + i,
+          }));
+        const s = await make(
+          fixture(
+            { customers: [{ id: 'ob_co', name: 'Contoso' }] },
+            asked('a', 100),
+            asked('c', 300),
+            {
+              orders: [
+                {
+                  id: 'ob_b',
+                  model: 'procurement',
+                  status: 'waiting',
+                  instanceId: 'ob_b-g1',
+                  createdAt: 200,
+                },
+              ],
+              approvals: [
+                {
+                  id: 'apr_ob_b',
+                  orderId: 'ob_b',
+                  nodeId: 'mgr',
+                  title: 'Approve ob_b',
+                  requestedAt: 200,
+                  companyId: 'ob_co',
+                  approvers: 'company:approver',
+                  mode: 'quorum',
+                  required: 2,
+                  eligible: ['ob_mem_a', 'ob_mem_b'],
+                },
+              ],
+              votes: [
+                ...votes('b', ['ob_mem_a', 'approved']),
+                ...votes('c', ['ob_mem_a', 'rejected']),
+              ],
+            },
+          ),
+        );
+        const rows = (await s.approvals('pending', null, 10)).rows;
+        const company = rows.find((r) => r.companyId === 'ob_co');
+        expect(company).toMatchObject({
+          companyName: 'Contoso',
+          approvers: 'company:approver',
+          mode: 'quorum',
+          required: 2,
+          approved: 1,
+          rejected: 0,
+        });
+        const plain = rows.find((r) => r.id === 'apr_ob_a');
+        expect(plain).toMatchObject({
+          companyId: null,
+          companyName: null,
+          approvers: 'staff:approver',
+          mode: 'any',
+          required: 1,
+          approved: 0,
+        });
+        expect(rows.find((r) => r.id === 'apr_ob_c')).toMatchObject({ approved: 0, rejected: 1 });
+        const mine = await s.approvals('pending', null, 10, undefined, { companyId: 'ob_co' });
+        expect(ids(mine.rows)).toEqual(['apr_ob_b']);
+        expect(mine.total).toBe(1);
+        const byApprover = await s.approvals('pending', null, 10, undefined, {
+          approver: 'ob_mem_b',
+        });
+        expect(ids(byApprover.rows)).toEqual(['apr_ob_b']);
+        expect(byApprover.total).toBe(1);
+        expect(
+          (await s.approvals('pending', null, 10, undefined, { approver: 'ob_nobody' })).rows,
+        ).toEqual([]);
+        expect(
+          (
+            await s.approvals('pending', null, 10, undefined, {
+              companyId: 'ob_co',
+              approver: 'ob_mem_z',
+            })
+          ).rows,
+        ).toEqual([]);
+      });
+
+      it('lists an order’s votes with who cast them and who recorded them', async () => {
+        const vote = (voterId: string, at: number, decision: 'approved' | 'rejected') => ({
+          approvalId: 'apr_ob_a',
+          voterId,
+          voterKind: voterId.startsWith('ob_mem') ? ('member' as const) : ('staff' as const),
+          onBehalfBy: voterId.startsWith('ob_mem') ? 'ob_staff' : null,
+          decision,
+          note: at === 11 ? 'fine by me' : null,
+          at,
+        });
+        const s = await make(
+          fixture(asked('a', 100), asked('b', 200), {
+            people: [
+              { id: 'ob_mem_a', name: 'Ann', kind: 'member' },
+              { id: 'ob_staff', name: 'Sam', kind: 'staff' },
+              { id: 'ob_staff_2', name: 'Kit', kind: 'staff' },
+            ],
+            votes: [
+              vote('ob_mem_a', 11, 'approved'),
+              vote('ob_staff_2', 12, 'rejected'),
+              { ...vote('ob_mem_a', 5, 'approved'), approvalId: 'apr_ob_b' },
+            ],
+          }),
+        );
+        expect(await s.votes('ob_a')).toEqual([
+          {
+            approvalId: 'apr_ob_a',
+            nodeId: 'mgr',
+            voterId: 'ob_mem_a',
+            voterKind: 'member',
+            voterName: 'Ann',
+            onBehalfBy: 'ob_staff',
+            onBehalfName: 'Sam',
+            decision: 'approved',
+            note: 'fine by me',
+            at: 11,
+          },
+          {
+            approvalId: 'apr_ob_a',
+            nodeId: 'mgr',
+            voterId: 'ob_staff_2',
+            voterKind: 'staff',
+            voterName: 'Kit',
+            onBehalfBy: null,
+            onBehalfName: null,
+            decision: 'rejected',
+            note: null,
+            at: 12,
+          },
+        ]);
+        expect(await s.votes('ob_none')).toEqual([]);
+      });
+
+      it('lists the members who may vote on an order’s pending approvals, by name', async () => {
+        const plan = (id: string, eligible: string[] | null, status = 'pending') => ({
+          id: `apr_ob_${id}`,
+          orderId: `ob_${id}`,
+          nodeId: 'mgr',
+          title: 't',
+          requestedAt: 1,
+          status,
+          eligible,
+        });
+        const waiting = (id: string) => order(id, { status: 'waiting', instanceId: `ob_${id}-g1` });
+        const s = await make(
+          fixture(waiting('a'), waiting('b'), waiting('c'), {
+            approvals: [
+              plan('a', ['ob_mem_b', 'ob_mem_a', 'ob_staff', 'ob_ghost']),
+              plan('b', null),
+              plan('c', ['ob_mem_a'], 'approved'),
+            ],
+            people: [
+              { id: 'ob_mem_b', name: 'Bo', kind: 'member' },
+              { id: 'ob_mem_a', name: 'Ann', kind: 'member' },
+              // Staff aren't company members, even when named as eligible.
+              { id: 'ob_staff', name: 'Sam', kind: 'staff' },
+            ],
+          }),
+        );
+        expect(
+          (await s.voters('ob_a')).map((v) => [v.approvalId, v.nodeId, v.memberId, v.name]),
+        ).toEqual([
+          ['apr_ob_a', 'mgr', 'ob_mem_a', 'Ann'],
+          ['apr_ob_a', 'mgr', 'ob_mem_b', 'Bo'],
+        ]);
+        // Open to any staff, decided, or unknown: no members to choose from.
+        expect(await s.voters('ob_b')).toEqual([]);
+        expect(await s.voters('ob_c')).toEqual([]);
+        expect(await s.voters('ob_none')).toEqual([]);
+      });
+
       it('keeps approvals on recorded orders out of the live queue, and lists them on their own', async () => {
         const s = await make(
           fixture(

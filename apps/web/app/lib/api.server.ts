@@ -9,7 +9,7 @@
  *   GET  /api/v1/orders?model=&channel=&status=&q=&limit=&cursor=   newest first; { orders, nextCursor }
  *   GET  /api/v1/orders/:id                     live state from the order's agent
  *   POST /api/v1/orders/:id/events              { event: "payment.received", payload? }  (404 unknown order)
- *   POST /api/v1/orders/:id/approvals/:nodeId   { decision: "approved"|"rejected", by?, note? }  (409 not waiting)
+ *   POST /api/v1/orders/:id/approvals/:nodeId   { decision: "approved"|"rejected", by?, note?, onBehalfOf? }  (409 not waiting, or a vote that can't be taken)
  *   POST /api/v1/orders/:id/cancel              { reason? }  (409 already finished)
  *
  *   GET  /api/v1/carts?status=&limit=           staff carts, most recently changed first
@@ -383,6 +383,7 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
         b.decision,
         await signedActor(decider(caller, actor(caller)), `decide:${orderId}`),
         b.note,
+        b.onBehalfOf,
       );
       if (res.ok) {
         await audit(request, 'approval.decided', {
@@ -392,11 +393,17 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
             nodeId: parts[3],
             decision: b.decision,
             ...(b.note ? { note: b.note } : {}),
+            ...(b.onBehalfOf ? { onBehalfOf: b.onBehalfOf } : {}),
+            // Where the vote stands, when it isn't one approver's decision.
+            ...(b.onBehalfOf || res.outcome === 'recorded' || res.tally !== '1 of 1'
+              ? { outcome: res.outcome, tally: res.tally }
+              : {}),
             via: 'api',
           },
         });
         return json(res);
       }
+      if (res.reason === 'refused') return json({ error: res.error }, 409);
       if (res.reason === 'own_order' || res.reason === 'forbidden')
         return json({ error: res.error }, 403);
       if (res.reason === 'not_found') return json({ error: 'Not found' }, 404);

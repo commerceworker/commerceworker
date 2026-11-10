@@ -12,7 +12,8 @@ waits and survives restarts, and the order page lists every open wait.
 ## Approvals
 
 An Approval node has a `title` (a template, default `Approve order {{order.id}}`), an `assignee`
-(free text, default `manager`) and a `timeout` (default `2 days`). When it starts, the order page
+(free text, default `manager`, which the order and the inbox show as who it is for), `approvers` and
+a `mode` (below) and a `timeout` (default `2 days`). When it starts, the order page
 shows the wait, and the approvals inbox lists a `pending` approval with the title, assignee and
 order total.
 
@@ -28,6 +29,61 @@ The node's output (`nodes.<id>`) is the decision payload: `decision`, `by`, `not
 `outcome`. The inbox records the outcome, who decided (`timeout` for an escalation) and the
 note. Escalation only picks the branch; what happens next is up to the flow,
 for example a second approval for a more senior assignee.
+
+### Who approves, and how many votes
+
+By default one staff approver decides an approval: anyone with the `approver` role or higher, and
+the first decision ends the wait. Three more fields on the node change that, for flows that need a
+company's own people to sign off:
+
+| Field | Values | What it does |
+|---|---|---|
+| `approvers` | `staff:<role>` (default `staff:approver`), `company:<role>`, `team:<id>`, `members:<id>,<id>` | Who may vote. `company:approver` is the order's company's active members with the Approver role; `team:` is a team's members and the teams under it; `members:` names up to 50 by id |
+| `mode` | `any` (default), `all`, `majority`, `quorum` | How many votes decide it |
+| `quorum` | a whole number of 1 or more | With `quorum`: the approvals that decide it |
+| `majorityPercent` | 1 to 99, default 50 | With `majority`: more than this share of the approvers |
+
+How the modes decide:
+
+- **any**: the first approval.
+- **all**: an approval from every approver, counted by who they are, so one approver voting twice, or
+  someone who isn't an approver, never stands in for another.
+- **majority**: strictly more than `majorityPercent` of the approvers. At the default 50, 2 of 4 is
+  not a majority and 3 of 4 is; 2 of 3 is.
+- **quorum**: the `quorum` number of approvals.
+
+**A rejection ends the vote** in every mode, however many approvals came before it, and the node
+takes its `rejected` branch. An approval with nobody who can vote (an order with no company, a
+company that isn't active, or a team with no active members) waits for the timeout and takes
+`escalated`. The company's members are those who are active when the wait starts.
+
+The Workflow still waits for one decision. Each vote is recorded once per voter, and the order
+resumes only when the votes decide the step; until then the answer to a vote is `recorded` with the
+tally so far (**1 of 2**), and the order keeps waiting. The timeout, `escalated` and the node's
+output (`decision`, `by`, `note`, `outcome`) are unchanged. Nothing approves outside the
+flow: every decision, from the order page, the inbox, the REST API, MCP or A2A, is a vote.
+
+Company members can't sign in yet, so **staff record a member's vote** for them: choose the member
+under **Recording the vote of** on the order page (or send `onBehalfOf` with their id over REST and
+MCP). The vote is the member's, it names the staff member who recorded it, and the audit log's
+`approval.decided` entry carries `onBehalfOf`, the outcome and the tally. The same checks hold as
+for any voter: they must be one of the approvers, vote once, and not vote after it is decided; with
+**Who started an order** set to **Can't approve it** (see [Team and
+roles](/guides/team-and-roles/#approvals)), the member who placed the order (`meta.buyerId`) can't
+vote on it either; and a company that isn't active has no votes. A staff member who started the
+order can't record votes for it, as they can't decide it.
+
+Thresholds are flow logic, not a table: put a Condition ahead of the approval, over `order.baseTotal`
+and `company.*` or `buyer.*` (see [Companies](/guides/companies/#what-flows-and-promotions-read)), so only the orders that
+need a company's sign-off reach it. A staff approval can count too: with `staff:approver` and
+`mode: all`, every non-disabled person on the team with the role must approve (API tokens aren't
+counted, and can't vote on one).
+
+The approvals inbox shows the company, who votes and the tally on each row (**Contoso · Company
+approvers · a quorum, 1 of 2**), and narrows to one company (click its name) or to what a member may
+vote on (`?company=` and `?approver=` take ids). Company approvals don't take inline decisions: the
+row links to the order, where the votes are recorded. The order page lists the votes under the wait
+and, once it is over, under **Votes** on its details.
 
 ### Deciding
 

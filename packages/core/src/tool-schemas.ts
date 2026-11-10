@@ -96,6 +96,13 @@ export const MAX_CANCEL_REASON = 500;
 export const OPERATION_FIELDS = {
   decision: z.enum(['approved', 'rejected']),
   decisionNote: z.string().max(MAX_DECISION_NOTE),
+  onBehalfOf: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe(
+      'A company member’s id: staff record that member’s vote on a company approval, audited',
+    ),
   cancelReason: z.string().max(MAX_CANCEL_REASON),
   cartTitle: z.string().trim().min(1).max(MAX_CART_TITLE),
   cartFlowId: z.string().min(1).max(100),
@@ -236,10 +243,12 @@ export const TOOL_INPUTS = {
       .describe('The approval step; omit when the order has only one open'),
     decision: F.decision,
     note: F.decisionNote.optional(),
+    onBehalfOf: F.onBehalfOf.optional(),
   }),
   decide_approvals: z.object({
     decision: F.decision,
     note: F.decisionNote.optional(),
+    onBehalfOf: F.onBehalfOf.optional(),
     approvals: z
       .array(z.object({ orderId, nodeId: z.string().min(1).max(200) }))
       .min(1)
@@ -809,6 +818,9 @@ const priceBookOutput = row({
   updatedAt: z.number(),
 });
 
+/** Where a vote stands after it is recorded: still open, or decided. */
+const decisionOutcome = z.enum(['recorded', 'approved', 'rejected']);
+
 /** An action's result: a preview and code on the first call, what was done on the second. */
 const actionOutput = row({
   preview: row({
@@ -952,7 +964,10 @@ export const TOOL_OUTPUTS = {
   }),
   create_cart: cartOutput,
   change_cart: cartOutput.extend({ applied: z.number().describe('Ops applied') }),
-  decide_approval: actionOutput,
+  decide_approval: actionOutput.extend({
+    outcome: decisionOutcome.optional().describe('Once confirmed: where the vote stands'),
+    tally: z.string().optional().describe('Approvals so far of those needed, like "1 of 2"'),
+  }),
   decide_approvals: actionOutput.extend({
     results: z
       .array(
@@ -961,6 +976,8 @@ export const TOOL_OUTPUTS = {
           nodeId: z.string(),
           ok: z.boolean(),
           error: z.string().optional(),
+          outcome: decisionOutcome.optional(),
+          tally: z.string().optional(),
         }),
       )
       .optional()

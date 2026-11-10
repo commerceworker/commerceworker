@@ -7,6 +7,7 @@
 -- come back on the next page load (seedFlows).
 PRAGMA defer_foreign_keys = ON;
 
+DELETE FROM approval_votes;
 DELETE FROM approvals;
 DELETE FROM balance_entries;
 DELETE FROM credit_holds;

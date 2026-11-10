@@ -7,6 +7,8 @@
 
 import type { ReturnInput } from '@commerceworker/core';
 import {
+  describePlan,
+  evaluateApprovalStatus,
   FULFILLMENT_METHOD_LABELS,
   mergeTimeline,
   ORDER_CHANNEL_LABELS,
@@ -14,6 +16,8 @@ import {
   type OrderModel,
   type OrderState,
   OWN_ORDER_REFUSAL,
+  type PendingWait,
+  planSpec,
   TERMINAL_ORDER_STATUSES,
 } from '@commerceworker/core';
 import { Ago } from '@commerceworker/ui/ago';
@@ -73,7 +77,7 @@ import { Inspector } from '~/components/inspector';
 import { ReturnSheet } from '~/components/return-sheet';
 import { ShareButton } from '~/components/share-button';
 import { StatusBadge, StatusDot } from '~/components/status';
-import { approvalContext } from '~/lib/approvals';
+import { approvalContext, votedByMembers } from '~/lib/approvals';
 import { useAssistant, usePageContext, useStartOrder } from '~/lib/assistant';
 import { actor, requireUser } from '~/lib/auth.server';
 import { useMedia, WIDE } from '~/lib/device';
@@ -275,8 +279,14 @@ function OrderView() {
     try {
       // Edits go through the assistant, as its own tool calls: the person confirms on its card.
       if (method === 'decide') {
-        const [nodeId, decision, , note] = args;
-        return await act('decide_approval', { orderId: state.orderId, nodeId, decision, note });
+        const [nodeId, decision, , note, onBehalfOf] = args;
+        return await act('decide_approval', {
+          orderId: state.orderId,
+          nodeId,
+          decision,
+          note,
+          ...(onBehalfOf ? { onBehalfOf } : {}),
+        });
       }
       if (method === 'cancel')
         return await act('cancel_order', { orderId: state.orderId, reason: args[0] });
@@ -550,6 +560,8 @@ function OrderView() {
                 onSelect={select}
                 sellers={records.sellers}
                 messages={records.messages}
+                votes={records.votes}
+                voters={records.voters}
                 onActivity={() => setTab('activity')}
               />
               <Compensation state={state} records={records} onSelect={select} />
@@ -943,6 +955,39 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
+/**
+ * Who votes on an approval and where the vote stands: "Company approvers, 2 of 3 must approve ·
+ * 1 of 2", and the votes cast on this wait. Nothing for the plain approval, which any one staff
+ * approver decides.
+ */
+function VoteTally({ wait: w, votes }: { wait: PendingWait; votes: Records['votes'] }) {
+  const plan = w.approval;
+  const cast = votes.filter((v) => v.nodeId === w.nodeId && v.at >= w.since);
+  if (!plan || (!describePlan(plan) && !cast.length)) return null;
+  const tally = evaluateApprovalStatus(
+    planSpec(plan),
+    plan.eligible,
+    cast.map((v) => ({
+      voterId: v.voterId,
+      decision: v.decision,
+    })),
+  );
+  return (
+    <div className="space-y-0.5 text-muted-foreground text-xs">
+      <p>
+        {describePlan(plan) || 'Any one approver'} · <span className="tabular">{tally.label}</span>
+      </p>
+      {cast.map((v) => (
+        <p key={v.voterId}>
+          {v.voterName ?? v.voterId} {v.decision === 'approved' ? 'approved' : 'rejected'}
+          {v.onBehalfBy ? ` (recorded by ${v.onBehalfName ?? v.onBehalfBy})` : ''}
+          {v.note ? ` — “${v.note}”` : ''}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function Actions({
   state,
   busy,
@@ -951,6 +996,8 @@ function Actions({
   onSelect,
   sellers,
   messages,
+  votes,
+  voters,
   onActivity,
 }: {
   state: OrderState;
@@ -960,6 +1007,8 @@ function Actions({
   onSelect: (id: string) => void;
   sellers: Records['sellers'];
   messages: Records['messages'];
+  votes: Records['votes'];
+  voters: Records['voters'];
   onActivity: () => void;
 }) {
   const canApprove = useCan('approver');
@@ -1009,7 +1058,10 @@ function Actions({
                   </button>
                 </ItemTitle>
                 {w.kind === 'approval' ? (
-                  <DecisionContext ctx={approvalContext(state, w.nodeId)} />
+                  <>
+                    <DecisionContext ctx={approvalContext(state, w.nodeId)} />
+                    <VoteTally wait={w} votes={votes} />
+                  </>
                 ) : (
                   <>
                     <p className="text-muted-foreground text-xs">
@@ -1044,8 +1096,22 @@ function Actions({
                       onTimeout={approvalContext(state, w.nodeId).onTimeout}
                       busy={busy === 'decide'}
                       disabled={!!busy}
-                      onDecide={(decision, note) =>
-                        void call('decide', 'decide', [w.nodeId, decision, by, note || undefined])
+                      // A company's members vote; staff record the vote for the one they choose.
+                      {...(w.approval && votedByMembers({ approvers: w.approval.approvers })
+                        ? {
+                            members: voters
+                              .filter((v) => v.nodeId === w.nodeId)
+                              .map((v) => ({ id: v.memberId, name: v.name })),
+                          }
+                        : {})}
+                      onDecide={(decision, note, onBehalfOf) =>
+                        void call('decide', 'decide', [
+                          w.nodeId,
+                          decision,
+                          by,
+                          note || undefined,
+                          onBehalfOf,
+                        ])
                       }
                     />
                   ) : (
@@ -1278,8 +1344,17 @@ function Details({ state, records }: { state: OrderState; records: Records }) {
 
 /** What the order's steps wrote to D1: documents, money, sellers, shipments and messages. */
 function RecordSections({ records, currency }: { records: Records; currency: string }) {
+  const formatTime = useDateTime();
   return (
     <>
+      <Ledger
+        title="Votes"
+        rows={records.votes.map((v) => [
+          `${v.voterName ?? v.voterId}${v.voterKind === 'member' ? ' (company member)' : ''}`,
+          `${v.decision === 'approved' ? 'Approved' : 'Rejected'}${v.onBehalfBy ? `, recorded by ${v.onBehalfName ?? v.onBehalfBy}` : ''}${v.note ? ` — “${v.note}”` : ''}`,
+          formatTime(v.at),
+        ])}
+      />
       {records.documents.length || records.invoices.length ? (
         <Section title="Documents">
           <ul className="-mx-2 flex flex-col gap-1">

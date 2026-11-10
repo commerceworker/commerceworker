@@ -68,6 +68,10 @@ metadata:
    with their reason. The first call changes nothing: the client asks the person to confirm, or
    the call returns a preview and a confirmation code. Send the code back only after the person
    agrees to that preview.
+5. Where a company's members vote, the wait names its approvers and the tally so far, and the
+   answer says whether the vote is \`recorded\` (more are needed, so the order still waits),
+   \`approved\` or \`rejected\`. Staff record a member's vote with \`onBehalfOf\`, the member's
+   id; say whose vote it is. A rejection ends the vote.
 
 A refusal is for the person to read. If they started the order and the workspace separates
 approvals, someone else must decide. If it was already decided, read the order again.

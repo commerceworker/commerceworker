@@ -6,6 +6,7 @@ import type { OrderIndexRow } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import type {
   ApprovalRecord,
+  ApprovalVoteRecord,
   NewOrderRow,
   NodeRunRecord,
   OrderRecords,
@@ -24,6 +25,7 @@ export class InMemoryOrderRecords implements OrderRecords {
   private readonly rows = new Map<string, OrderIndexRow | null>();
   private readonly runRows = new Map<string, NodeRunRecord>();
   private readonly approvalRows: ApprovalRecord[] = [];
+  private readonly voteRows: ApprovalVoteRecord[] = [];
 
   constructor(
     private readonly fixture: OrderRecordsFixture = {},
@@ -100,15 +102,15 @@ export class InMemoryOrderRecords implements OrderRecords {
       );
   }
 
-  async openApproval(
-    a: Pick<
-      ApprovalRecord,
-      'id' | 'orderId' | 'nodeId' | 'eventType' | 'title' | 'assignee' | 'amount'
-    >,
-  ) {
+  async openApproval(a: Parameters<OrderRecords['openApproval']>[0]) {
     if (this.approvalRows.some((x) => x.orderId === a.orderId && x.eventType === a.eventType))
       return;
     this.approvalRows.push({
+      companyId: null,
+      approvers: 'staff:approver',
+      mode: 'any',
+      required: 1,
+      eligible: null,
       ...a,
       status: 'pending',
       note: null,
@@ -116,6 +118,25 @@ export class InMemoryOrderRecords implements OrderRecords {
       decidedAt: null,
       decidedBy: null,
     });
+  }
+
+  async recordVote(
+    orderId: string,
+    eventType: string,
+    vote: Omit<ApprovalVoteRecord, 'approvalId'>,
+  ) {
+    const ask = this.approvalRows.find((a) => a.orderId === orderId && a.eventType === eventType);
+    if (!ask || this.voteRows.some((v) => v.approvalId === ask.id && v.voterId === vote.voterId))
+      return false;
+    this.voteRows.push({ ...vote, approvalId: ask.id });
+    return true;
+  }
+
+  async votes(orderId: string, eventType: string) {
+    const ask = this.approvalRows.find((a) => a.orderId === orderId && a.eventType === eventType);
+    return this.voteRows
+      .filter((v) => v.approvalId === ask?.id)
+      .sort((a, b) => a.at - b.at || (a.voterId < b.voterId ? -1 : a.voterId > b.voterId ? 1 : 0));
   }
 
   private change(match: (a: ApprovalRecord) => boolean, to: Partial<ApprovalRecord>) {

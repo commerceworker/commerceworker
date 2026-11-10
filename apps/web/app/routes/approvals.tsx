@@ -42,6 +42,8 @@ import {
   groupName,
   lockAt,
   rowContext,
+  votedByMembers,
+  voteSummary,
 } from '~/lib/approvals';
 import { useAssistant } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
@@ -70,8 +72,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Pages are keyed by their last row; the cursor is the orders list's, read as request time + id.
   const cursor = decodeCursor(params.get('after'));
   const after = cursor ? { requestedAt: cursor.createdAt, id: cursor.id } : null;
+  // Narrowed to one company's approvals, or to those a member may vote on (ids, as the API takes).
+  const company = params.get('company') ?? undefined;
+  const approver = params.get('approver') ?? undefined;
   const [page, separate, pending] = await Promise.all([
-    listApprovals(status, after, undefined, scope),
+    listApprovals(status, after, undefined, scope, {
+      ...(company ? { companyId: company } : {}),
+      ...(approver ? { approver } : {}),
+    }),
     approvalSeparation(),
     status === 'pending' ? pendingApprovalCounts() : null,
   ]);
@@ -101,7 +109,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     const s = states.get(r.orderId);
     if (s === null) noRun[r.orderId] = true;
     context[r.id] = rowContext(s, r);
-    const why = r.status === 'pending' ? ownOrderRefusal(separate, r.startedBy, me.id) : null;
+    const why =
+      r.status === 'pending'
+        ? votedByMembers(r)
+          ? // A member's vote is recorded for them on the order page, one member at a time.
+            'Company members vote on this one. Record a vote on the order.'
+          : ownOrderRefusal(separate, r.startedBy, me.id)
+        : null;
     if (why) refused[r.id] = why;
   }
   // Most urgent first within the page: the soonest escalation, then the oldest request.
@@ -109,6 +123,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     status,
     recorded,
+    company: company ?? null,
+    approver: approver ?? null,
     /** Pending approvals on recorded orders, for the queue's folded line. */
     undecidable: pending?.recorded ?? 0,
     // Who started each order stays on the server; the page only needs `refused`.
@@ -215,11 +231,24 @@ type Tracking = {
 };
 
 export default function Approvals() {
-  const { rows, status, recorded, undecidable, context, refused, noRun, total, from, paged, next } =
-    useLoaderData<typeof loader>();
+  const {
+    rows,
+    status,
+    recorded,
+    company,
+    approver,
+    undecidable,
+    context,
+    refused,
+    noRun,
+    total,
+    from,
+    paged,
+    next,
+  } = useLoaderData<typeof loader>();
   const canApprove = useCan('approver');
   const [params, setParams] = useSearchParams();
-  const view = `${status}:${recorded ? 'recorded' : ''}:${params.get('after') ?? ''}`;
+  const view = `${status}:${recorded ? 'recorded' : ''}:${company ?? ''}:${approver ?? ''}:${params.get('after') ?? ''}`;
   const shown = useStableRows(rows, status, view);
   // Approvals that join while the inbox is open fade in at the end; another view is a new list.
   const arrived = useArrivals(
@@ -232,7 +261,7 @@ export default function Approvals() {
   Object.assign(seen.current, context);
   const ctxs = seen.current;
   // Base for this list's pages and "first page": the recorded list keeps its own scope.
-  const base = `?status=${encodeURIComponent(status)}${recorded ? '&recorded=1' : ''}`;
+  const base = `?status=${encodeURIComponent(status)}${recorded ? '&recorded=1' : ''}${company ? `&company=${encodeURIComponent(company)}` : ''}${approver ? `&approver=${encodeURIComponent(approver)}` : ''}`;
   const pending = status === 'pending';
 
   const [held, setHeld] = useState<ReadonlySet<string>>(() => new Set());
@@ -374,7 +403,13 @@ export default function Approvals() {
             // track scrolls sideways rather than squeezing the words together.
             className="max-w-full overflow-x-auto [scrollbar-width:none] max-sm:max-w-[calc(100vw-2rem)] max-sm:auto-cols-max"
             value={status}
-            onValueChange={(s) => setParams({ status: s })}
+            onValueChange={(s) =>
+              setParams({
+                status: s,
+                ...(company ? { company } : {}),
+                ...(approver ? { approver } : {}),
+              })
+            }
           >
             {FILTERS.map((s) => (
               <SegmentedItem key={s} value={s}>
@@ -385,6 +420,23 @@ export default function Approvals() {
         }
       />
       <div className="mx-auto max-w-page px-4 pb-10 sm:px-6">
+        {company || approver ? (
+          <p className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-muted-foreground text-sm">
+            <span>
+              Only approvals
+              {company
+                ? ` of ${rows.find((r) => r.companyId === company)?.companyName ?? company}`
+                : ''}
+              {approver ? ` that ${approver} may vote on` : ''}.
+            </span>
+            <Link
+              to={`?status=${encodeURIComponent(status)}${recorded ? '&recorded=1' : ''}`}
+              className="hit-area text-link hover:underline"
+            >
+              Show everyone’s
+            </Link>
+          </p>
+        ) : null}
         {recorded ? (
           <p className="mb-3 flex max-w-[75ch] flex-wrap items-baseline gap-x-3 gap-y-1 text-muted-foreground text-sm">
             <span>
@@ -557,19 +609,29 @@ function Group({
         return;
       }
       const out = (r.output ?? {}) as {
-        results?: { orderId: string; nodeId: string; ok: boolean; error?: string }[];
+        results?: {
+          orderId: string;
+          nodeId: string;
+          ok: boolean;
+          error?: string;
+          outcome?: string;
+        }[];
       };
       const results = out.results ?? [];
       for (const id of ids) {
         const row = rowsById.current.get(id)!;
         const res = results.find((x) => x.orderId === row.orderId && x.nodeId === row.nodeId);
-        if (!res) continue;
+        // A vote that didn't decide its approval leaves the row waiting for the rest.
+        if (!res || res.outcome === 'recorded') continue;
         onSent(id);
         onResult(id, { ok: res.ok, error: res.error });
       }
-      const ok = results.filter((x) => x.ok).length;
-      const refusedN = results.length - ok;
-      setSaid(`${verb} ${ok}.${refusedN ? ` ${refusedN} not recorded; each row says why.` : ''}`);
+      const waiting = results.filter((x) => x.ok && x.outcome === 'recorded').length;
+      const ok = results.filter((x) => x.ok).length - waiting;
+      const refusedN = results.filter((x) => !x.ok).length;
+      setSaid(
+        `${verb} ${ok}.${waiting ? ` ${waiting} counted as a vote; they wait for the rest.` : ''}${refusedN ? ` ${refusedN} not recorded; each row says why.` : ''}`,
+      );
     } catch (err) {
       setSaid(err instanceof Error ? err.message : String(err));
     } finally {
@@ -829,6 +891,8 @@ function Row({
   // Decided here, or by the group's batch.
   const decided = result?.ok || tracking.results[r.id]?.ok;
   const [made, setMade] = useState<Decision | null>(null);
+  // This person's vote counted but didn't decide it: the tally so far.
+  const [voted, setVoted] = useState<string | null>(null);
   const open = r.status === 'pending' && !decided && !gone;
   // Only an open row the engine can resume takes part in the keyboard path.
   const decidable = open && !noRun;
@@ -863,6 +927,12 @@ function Row({
         ...(note ? { note } : {}),
       });
       if ('declined' in res) return;
+      const out = (res.output ?? {}) as { outcome?: string; tally?: string };
+      // One vote of several: it counted, and the approval waits for the rest.
+      if (out.outcome === 'recorded') {
+        setVoted(out.tally ?? '');
+        return;
+      }
       onSent(r.id);
       setResult({ ok: true });
       onResult(r.id, { ok: true });
@@ -892,10 +962,27 @@ function Row({
     el.addEventListener('keydown', onKey);
     return () => el.removeEventListener('keydown', onKey);
   }, [tick]);
+  const votes = voteSummary(r);
   const meta = (
     <p className="mt-1 text-muted-foreground text-xs">
       {ctx?.step ? `${ctx.step} · assigned to` : 'Assigned to'}{' '}
       {assigneeLabel(r.assignee) || 'any approver'} · requested <Ago ms={r.requestedAt} />
+      {votes ? (
+        <>
+          {' · '}
+          {r.companyId ? (
+            <Link
+              to={`?status=${encodeURIComponent(r.status)}&company=${encodeURIComponent(r.companyId)}`}
+              className="hover:underline"
+              title="Only this company’s approvals"
+            >
+              {votes}
+            </Link>
+          ) : (
+            votes
+          )}
+        </>
+      ) : null}
       {r.status === 'escalated'
         ? ` · nobody decided in time${ctx?.onTimeout ? `, so it went to ${ctx.onTimeout}` : ''}`
         : r.decidedBy
@@ -1065,7 +1152,21 @@ function Row({
               </Link>
             </div>
           ) : open && canApprove && refused ? (
-            <p className="max-w-64 text-muted-foreground text-sm sm:text-right">{refused}</p>
+            <div className="flex max-w-64 flex-col items-start gap-1 sm:items-end">
+              <p className="text-muted-foreground text-sm sm:text-right">{refused}</p>
+              {votedByMembers(r) ? (
+                <Link
+                  to={`/orders/${r.orderId}`}
+                  className="hit-area inline-flex items-center gap-1 text-link text-sm hover:underline"
+                >
+                  Record a vote <ArrowRight className="size-3.5" aria-hidden="true" />
+                </Link>
+              ) : null}
+            </div>
+          ) : open && canApprove && voted !== null ? (
+            <p className="max-w-64 text-muted-foreground text-sm sm:text-right" role="status">
+              Your vote is recorded ({voted}). It waits for the rest.
+            </p>
           ) : open && canApprove ? (
             <DecisionControls
               compact

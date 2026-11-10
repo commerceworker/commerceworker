@@ -6,6 +6,7 @@
 import { TERMINAL_ORDER_STATUSES } from '@commerceworker/core';
 import type {
   ApprovalCursor,
+  ApprovalFilter,
   ApprovalScope,
   BoardFilter,
   OrderBoard,
@@ -30,8 +31,11 @@ import {
 } from 'drizzle-orm';
 import { createDb } from './index';
 import { contains } from './match';
+import { approvalRecord } from './order-records';
 import {
   approvals,
+  approvalVotes,
+  companyMembers,
   customers,
   documents,
   entitlements,
@@ -47,6 +51,7 @@ import {
   sellerOrders,
   sellers,
   shipments,
+  users,
 } from './schema';
 
 /** An order the engine runs: it names its Workflow instance in the index when it starts. */
@@ -164,11 +169,26 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
   const inScope = (scope?: ApprovalScope) =>
     scope === 'live' ? hasRun : scope === 'recorded' ? isNull(orders.instanceId) : undefined;
 
+  /** The approvals a company or an approver picks: the voters resolved when the wait opened. */
+  const forFilter = (f?: ApprovalFilter) =>
+    and(
+      f?.companyId ? eq(approvals.companyId, f.companyId) : undefined,
+      f?.approver
+        ? sql`exists (select 1 from json_each(${approvals.eligible}) where value = ${f.approver})`
+        : undefined,
+    );
+
   function approvalsQuery(
     status: string,
-    { where, scope, limit }: { where?: SQL; scope?: ApprovalScope; limit: number },
+    {
+      where,
+      scope,
+      limit,
+      filter,
+    }: { where?: SQL; scope?: ApprovalScope; limit: number; filter?: ApprovalFilter },
   ) {
     const matching = status === 'all' ? sql`1` : sql`q.status = ${status}`;
+    const narrowed = sql`${filter?.companyId ? sql` and q.company_id = ${filter.companyId}` : sql``}${filter?.approver ? sql` and exists (select 1 from json_each(q.eligible) where value = ${filter.approver})` : sql``}`;
     const scoped =
       scope === 'live'
         ? sql` and o.instance_id is not null`
@@ -209,10 +229,25 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
         customerName: customers.name,
         fxRate: orders.fxRate,
         startedBy: orders.startedBy,
+        companyId: approvals.companyId,
+        companyName: sql<
+          string | null
+        >`(select c.name from customers c where c.id = approvals.company_id)`.as('company_name'),
+        approvers: approvals.approvers,
+        mode: approvals.mode,
+        required: approvals.required,
+        approved:
+          sql<number>`(select count(*) from approval_votes v where v.approval_id = approvals.id and v.decision = 'approved')`.as(
+            'approved',
+          ),
+        rejected:
+          sql<number>`(select count(*) from approval_votes v where v.approval_id = approvals.id and v.decision = 'rejected')`.as(
+            'rejected',
+          ),
         // How many approvals have this status in this scope. Uncorrelated, so SQLite counts once
         // from the status index; a window count would read every matching row.
-        total: (scope
-          ? sql<number>`(select count(*) from approvals q left join orders o on o.id = q.order_id where ${matching}${scoped})`
+        total: (scope || filter?.companyId || filter?.approver
+          ? sql<number>`(select count(*) from approvals q left join orders o on o.id = q.order_id where ${matching}${scoped}${narrowed})`
           : status === 'all'
             ? sql<number>`(select count(*) from approvals)`
             : sql<number>`(select count(*) from approvals q where q.status = ${status})`
@@ -222,7 +257,12 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
       .leftJoin(orders, eq(orders.id, approvals.orderId))
       .leftJoin(customers, eq(customers.id, orders.customerId))
       .where(
-        and(status === 'all' ? undefined : eq(approvals.status, status), inScope(scope), where),
+        and(
+          status === 'all' ? undefined : eq(approvals.status, status),
+          inScope(scope),
+          forFilter(filter),
+          where,
+        ),
       )
       .orderBy(
         ...(status === 'pending'
@@ -368,7 +408,7 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
       };
     },
 
-    async approvals(status, after, limit, scope) {
+    async approvals(status, after, limit, scope, filter) {
       const later = status === 'pending' ? gt : lt;
       const past = after
         ? or(
@@ -376,7 +416,7 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
             and(eq(approvals.requestedAt, after.requestedAt), later(approvals.id, after.id)),
           )
         : undefined;
-      const page = approvalsQuery(status, { where: past, scope, limit: limit + 1 });
+      const page = approvalsQuery(status, { where: past, scope, limit: limit + 1, filter });
       // How many rows the pages before this one held, so the page can say where it starts.
       const [rows, before] = past
         ? await d.batch([
@@ -389,6 +429,7 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
                 and(
                   status === 'all' ? undefined : eq(approvals.status, status),
                   inScope(scope),
+                  forFilter(filter),
                   not(past),
                 ),
               ),
@@ -400,6 +441,60 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
       const next: ApprovalCursor | null =
         rows.length > limit && last ? { requestedAt: last.requestedAt, id: last.id } : null;
       return { rows: shown, from, total: rows[0]?.total ?? from, next };
+    },
+
+    async votes(orderId) {
+      const rows = await d
+        .select({
+          approvalId: approvalVotes.approvalId,
+          nodeId: approvals.nodeId,
+          voterId: approvalVotes.voterId,
+          voterKind: approvalVotes.voterKind,
+          voterName: sql<string | null>`coalesce(${companyMembers.name}, ${users.name})`.as(
+            'voter_name',
+          ),
+          onBehalfBy: approvalVotes.onBehalfBy,
+          onBehalfName: sql<
+            string | null
+          >`(select u.name from users u where u.id = ${approvalVotes.onBehalfBy})`.as(
+            'on_behalf_name',
+          ),
+          decision: approvalVotes.decision,
+          note: approvalVotes.note,
+          at: approvalVotes.at,
+        })
+        .from(approvalVotes)
+        .innerJoin(approvals, eq(approvals.id, approvalVotes.approvalId))
+        .leftJoin(
+          companyMembers,
+          and(eq(approvalVotes.voterKind, 'member'), eq(companyMembers.id, approvalVotes.voterId)),
+        )
+        .leftJoin(
+          users,
+          and(eq(approvalVotes.voterKind, 'staff'), eq(users.id, approvalVotes.voterId)),
+        )
+        .where(eq(approvals.orderId, orderId))
+        .orderBy(asc(approvalVotes.at), asc(approvalVotes.voterId));
+      return rows.map((r) => ({
+        ...r,
+        voterKind: r.voterKind as 'staff' | 'member',
+        decision: r.decision as 'approved' | 'rejected',
+      }));
+    },
+
+    async voters(orderId) {
+      return d
+        .select({
+          approvalId: approvals.id,
+          nodeId: approvals.nodeId,
+          memberId: companyMembers.id,
+          name: companyMembers.name,
+        })
+        .from(approvals)
+        .innerJoin(sql`json_each(${approvals.eligible}) e`, sql`${approvals.eligible} is not null`)
+        .innerJoin(companyMembers, sql`${companyMembers.id} = e.value`)
+        .where(and(eq(approvals.orderId, orderId), eq(approvals.status, 'pending')))
+        .orderBy(asc(companyMembers.name), asc(companyMembers.id));
     },
 
     async pendingApprovalCounts() {
@@ -502,7 +597,7 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
           .orderBy(asc(approvals.requestedAt)),
         order.status === 'rolled_back' ? undoneOn(orderId) : null,
       ]);
-      return { order, runs, approvals: asks, undone };
+      return { order, runs, approvals: asks.map(approvalRecord), undone };
     },
 
     async performance(since) {

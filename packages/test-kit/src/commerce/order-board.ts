@@ -5,9 +5,12 @@
 import { TERMINAL_ORDER_STATUSES } from '@commerceworker/core';
 import type {
   ApprovalCursor,
+  ApprovalFilter,
   ApprovalRecord,
   ApprovalRow,
   ApprovalScope,
+  ApprovalVoteRecord,
+  ApprovalVoteView,
   BoardFilter,
   InboundEmailRow,
   IndexedOrder,
@@ -29,6 +32,10 @@ export interface OrderBoardFixture {
   orders?: BoardOrder[];
   approvals?: (Pick<ApprovalRecord, 'id' | 'orderId' | 'nodeId' | 'title' | 'requestedAt'> &
     Partial<ApprovalRecord>)[];
+  /** Votes on those approvals, by approval id. */
+  votes?: ApprovalVoteRecord[];
+  /** Company members and staff, for a vote's voter name. */
+  people?: { id: string; name: string; kind: 'staff' | 'member' }[];
   customers?: { id: string; name: string }[];
   flows?: { id: string; name: string }[];
   /** Published versions' steps, for an approval's step label. */
@@ -114,6 +121,11 @@ export const approvalRecord = (
   a: NonNullable<OrderBoardFixture['approvals']>[number],
 ): ApprovalRecord => ({
   eventType: `approval:${a.id}`,
+  companyId: null,
+  approvers: 'staff:approver',
+  mode: 'any',
+  required: 1,
+  eligible: null,
   assignee: '',
   amount: null,
   status: 'pending',
@@ -262,9 +274,13 @@ export class InMemoryOrderBoard implements OrderBoard {
           ?.find((v) => v.flowId === o.flowId && v.version === o.flowVersion)
           ?.nodes.find((n) => n.id === a.nodeId)?.label ?? null)
       : null;
-    const { eventType: _e, ...approval } = a;
+    const { eventType: _e, eligible: _l, ...approval } = a;
+    const votes = (this.f.votes ?? []).filter((v) => v.approvalId === a.id);
     return {
       ...approval,
+      companyName: a.companyId ? this.customerName(a.companyId) : null,
+      approved: votes.filter((v) => v.decision === 'approved').length,
+      rejected: votes.filter((v) => v.decision === 'rejected').length,
       orderModel: o?.model ?? null,
       orderTitle: o?.title ?? null,
       stepLabel: label,
@@ -284,11 +300,14 @@ export class InMemoryOrderBoard implements OrderBoard {
     after: ApprovalCursor | null,
     limit: number,
     scope?: ApprovalScope,
+    filter?: ApprovalFilter,
   ) {
     const pending = status === 'pending';
     const all = this.asks
       .filter((a) => status === 'all' || a.status === status)
       .filter(this.inScope(scope))
+      .filter((a) => !filter?.companyId || a.companyId === filter.companyId)
+      .filter((a) => !filter?.approver || !!a.eligible?.includes(filter.approver))
       .sort(
         pending
           ? byKey<ApprovalRecord>(
@@ -314,6 +333,35 @@ export class InMemoryOrderBoard implements OrderBoard {
       total: shown.length ? all.length : from,
       next: rest.length > limit && last ? { requestedAt: last.requestedAt, id: last.id } : null,
     };
+  }
+
+  async votes(orderId: string): Promise<ApprovalVoteView[]> {
+    const name = (id: string | null) =>
+      id ? (this.f.people?.find((p) => p.id === id)?.name ?? null) : null;
+    return (this.f.votes ?? [])
+      .flatMap((v) => {
+        const ask = this.asks.find((a) => a.id === v.approvalId && a.orderId === orderId);
+        return ask ? [{ v, ask }] : [];
+      })
+      .sort((a, b) => a.v.at - b.v.at || cmp(a.v.voterId, b.v.voterId))
+      .map(({ v, ask }) => ({
+        ...v,
+        nodeId: ask.nodeId,
+        voterName: name(v.voterId),
+        onBehalfName: name(v.onBehalfBy),
+      }));
+  }
+
+  async voters(orderId: string) {
+    return this.asks
+      .filter((a) => a.orderId === orderId && a.status === 'pending')
+      .flatMap((a) =>
+        (a.eligible ?? []).flatMap((memberId) => {
+          const name = this.f.people?.find((p) => p.id === memberId && p.kind === 'member')?.name;
+          return name === undefined ? [] : [{ approvalId: a.id, nodeId: a.nodeId, memberId, name }];
+        }),
+      )
+      .sort((a, b) => cmp(a.name, b.name) || cmp(a.memberId, b.memberId));
   }
 
   async pendingApprovalCounts() {

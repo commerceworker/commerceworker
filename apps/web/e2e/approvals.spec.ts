@@ -40,3 +40,18 @@ test('identical requests group, and a batch asks once, on one card in the assist
   await page.keyboard.press('x');
   await expect(group.getByText('1 selected')).toBeVisible();
 });
+
+test('the inbox narrowed to a company says so, and fits the screen', async ({ page }) => {
+  await open(page, '/approvals?company=cus_northwind&approver=mem_nora');
+  await expect(
+    page.getByText(/^Only approvals of cus_northwind that mem_nora may vote on\./),
+  ).toBeVisible();
+  await page.getByRole('link', { name: 'Show everyone’s' }).click();
+  await expect(page).toHaveURL(/\/approvals\?status=pending$/);
+  await expect(page.getByText(/^Only approvals of/)).toHaveCount(0);
+  const [scroll, width] = await page.evaluate(() => [
+    document.documentElement.scrollWidth,
+    window.innerWidth,
+  ]);
+  expect(scroll, `page is ${scroll}px wide in a ${width}px viewport`).toBeLessThanOrEqual(width);
+});

@@ -46,6 +46,7 @@ import {
 } from '@commerceworker/core';
 import { loadAccount } from './accounts';
 import type { Report } from './agent';
+import { approvalPlan } from './approvals';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
 import { EXECUTORS, type NodeResult, ROLLBACKS, scaled } from './nodes';
@@ -396,8 +397,19 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
           since: Date.now(),
         };
         await step.do(`${key}:open`, async () => {
+          // Who may vote, resolved here so a replay keeps what the wait opened with. The wait is
+          // still one event: the agent sends it once the votes decide the step.
+          let votePlan: Awaited<ReturnType<typeof approvalPlan>> | undefined;
+          if (approval) {
+            try {
+              votePlan = await approvalPlan(env, config, ctx.order);
+            } catch (err) {
+              throw new NonRetryableError(err instanceof Error ? err.message : String(err));
+            }
+          }
           await agent.openWait({
             ...wait,
+            ...(votePlan ? { approval: votePlan } : {}),
             since: Date.now(),
             deadline: Date.now() + scaled(env, timeout),
           });

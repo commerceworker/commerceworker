@@ -371,7 +371,8 @@ export const ASSISTANT_TOOLS: Record<
     confirm: true,
     label: 'Decide an approval',
     title: 'Decide an approval',
-    description: 'Approve or reject an approval an order is waiting on.',
+    description:
+      'Approve or reject an approval an order is waiting on. Where several people vote, this records one vote (the answer says how many so far) and the order moves on once the vote is decided; staff record a company member’s vote with onBehalfOf.',
   },
   decide_approvals: {
     role: 'approver',
@@ -379,7 +380,7 @@ export const ASSISTANT_TOOLS: Record<
     label: 'Decide approvals',
     title: 'Decide several approvals',
     description:
-      'Approve or reject up to 25 open approvals at once, with one note for all. Each is checked and decided on its own; one that can’t be decided is skipped and says why.',
+      'Approve or reject up to 25 open approvals at once, with one note for all (and one onBehalfOf member, for company approvals). Each is checked and decided on its own; one that can’t be decided is skipped and says why, and one that needs more votes records this one.',
   },
   deliver_event: {
     role: 'operator',

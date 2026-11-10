@@ -3,6 +3,7 @@
  * Edge fields use React Flow's names so the canvas can bind them without mapping.
  */
 
+import type { ApprovalPlan } from './b2b/approvals';
 import type { FlowGraph, OrderInput, OrderInputDraft } from './order-schemas';
 
 // The schemas' inferred types, still importable from here; the schemas live in order-schemas.ts.
@@ -175,6 +176,8 @@ export type PendingWait = {
   event?: string;
   amount?: number;
   assignee?: string;
+  /** For approval waits: who may vote and how many votes decide it, resolved when the wait opened. */
+  approval?: ApprovalPlan;
   deadline?: number;
   since: number;
 };

@@ -11,6 +11,8 @@ import { createDb } from '../src/index';
 import { d1OrderBoard } from '../src/order-board';
 import {
   approvals,
+  approvalVotes,
+  companyMembers,
   customers,
   documents,
   entitlements,
@@ -28,6 +30,7 @@ import {
   sellerOrders,
   sellers,
   shipments,
+  users,
 } from '../src/schema';
 
 const DB = (env as unknown as { DB: D1Database }).DB;
@@ -36,6 +39,7 @@ const DB = (env as unknown as { DB: D1Database }).DB;
 async function seed(f: OrderBoardFixture) {
   const db = createDb(DB);
   for (const t of [
+    approvalVotes,
     approvals,
     orders,
     nodeRuns,
@@ -52,6 +56,8 @@ async function seed(f: OrderBoardFixture) {
   ])
     await db.delete(t);
   await db.delete(customers).where(like(customers.id, 'ob_%'));
+  await db.delete(companyMembers).where(like(companyMembers.id, 'ob_%'));
+  await db.delete(users).where(like(users.id, 'ob_%'));
   await db.delete(sellers).where(like(sellers.id, 'ob_%'));
   await db.delete(locations).where(like(locations.id, 'ob_%'));
   await db.delete(flows).where(like(flows.id, 'ob_%'));
@@ -73,7 +79,31 @@ async function seed(f: OrderBoardFixture) {
     }),
   );
   await each(f.orders, (o) => db.insert(orders).values(indexedOrder(o)));
-  await each(f.approvals, (a) => db.insert(approvals).values(approvalRecord(a)));
+  await each(f.approvals, (a) => {
+    const { eligible, ...rest } = approvalRecord(a);
+    return db
+      .insert(approvals)
+      .values({ ...rest, eligible: eligible ? JSON.stringify(eligible) : null });
+  });
+  await each(f.votes, (v) => db.insert(approvalVotes).values(v));
+  await each(f.people, (p) =>
+    p.kind === 'member'
+      ? db.insert(companyMembers).values({
+          id: p.id,
+          companyId: 'ob_co',
+          name: p.name,
+          email: `${p.id}@example.com`,
+          createdAt: 1,
+          updatedAt: 1,
+        })
+      : db.insert(users).values({
+          id: p.id,
+          name: p.name,
+          email: `${p.id}@example.com`,
+          role: 'approver',
+          createdAt: 1,
+        }),
+  );
   await each(f.runs, (r) => db.insert(nodeRuns).values(r));
   await each(f.documents, (x) => db.insert(documents).values(x));
   await each(f.messages, (x) => db.insert(messages).values(x));

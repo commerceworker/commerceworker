@@ -16,6 +16,8 @@ import {
   BASE_CURRENCY,
   boundText,
   describeDiff,
+  describePlan,
+  evaluateApprovalStatus,
   type Flow,
   type FlowGraph,
   type FlowProposal,
@@ -30,6 +32,7 @@ import {
   type OrderModel,
   type OrderState,
   type Principal,
+  planSpec,
   RETURN_NOTE_MAX,
   type ReturnInput,
   ROLE_LABELS,
@@ -39,13 +42,15 @@ import {
   type ToolInput,
   validateGraph,
 } from '@commerceworker/core';
+import type { VoteResult } from '../agent';
 import { copilot, modelView } from '../ai';
+import { plainPlan, tallyWith, voteRefusal, voterOf } from '../approvals';
 import { recordAudit } from '../audit';
 import { assess, resolveImages } from '../clef';
 import { orderAgent } from '../namespaces';
 import { registry } from '../plugins';
 import { separationRefusal } from '../separation';
-import { flowStore, inventoryStore, orderQueries, pricingStore } from '../wire';
+import { flowStore, inventoryStore, orderQueries, orderRecords, pricingStore } from '../wire';
 import {
   previewDeleteWebhook,
   previewRevokeIntegration,
@@ -284,6 +289,27 @@ export async function getOrder(env: Env, ref: string) {
   const { id, s } = await loadOrder(env, ref);
   const o = s.order!;
   const customer = o.customerId ? await pricingStore(env).customer(o.customerId) : null;
+  // Where each vote stands, for approvals decided by more than one voice.
+  const tallies = new Map(
+    await Promise.all(
+      s.waits.flatMap((w) =>
+        w.approval
+          ? [
+              orderRecords(env)
+                .votes(id, w.eventType)
+                .then(
+                  (votes) =>
+                    [
+                      w.eventType,
+                      evaluateApprovalStatus(planSpec(w.approval!), w.approval!.eligible, votes)
+                        .label,
+                    ] as const,
+                ),
+            ]
+          : [],
+      ),
+    ),
+  );
   return {
     id,
     ref: orderRef(id),
@@ -305,6 +331,8 @@ export async function getOrder(env: Env, ref: string) {
       title: w.title,
       event: w.event,
       assignee: w.assignee,
+      approvers: w.approval ? describePlan(w.approval) || undefined : undefined,
+      tally: tallies.get(w.eventType),
       amount: w.amount === undefined ? undefined : money(w.amount, o.currency),
       deadline: w.deadline ? new Date(w.deadline).toISOString() : undefined,
       onApprove: w.kind === 'approval' ? nextStep(s, w.nodeId, 'approved') : undefined,
@@ -437,10 +465,12 @@ export type ActionInput = {
     nodeId?: string;
     decision: 'approved' | 'rejected';
     note?: string;
+    onBehalfOf?: string;
   };
   decide_approvals: {
     decision: 'approved' | 'rejected';
     note?: string;
+    onBehalfOf?: string;
     approvals: { orderId: string; nodeId: string }[];
   };
   deliver_event: { orderId: string; event: string; payload?: EventPayload };
@@ -522,19 +552,38 @@ export async function previewAction<T extends ActionTool>(
         const own = await separationRefusal(env, id, p.id);
         const verb = i.decision === 'approved' ? 'Approve' : 'Reject';
         const next = w ? nextStep(s, w.nodeId, i.decision) : null;
+        // Who may vote and where the vote would stand: said before anyone confirms.
+        const plan = w ? (w.approval ?? plainPlan()) : undefined;
+        const voter = voterOf({ id: p.id, by: p.name, role: p.role, onBehalfOf: i.onBehalfOf });
+        const votes = w && plan ? await orderRecords(env).votes(id, w.eventType) : [];
+        const vote =
+          w && plan
+            ? await voteRefusal(env, plan, votes, voter, o, i.onBehalfOf, i.decision)
+            : undefined;
+        const after = plan ? tallyWith(plan, votes, voter, i.decision) : undefined;
+        const decides = after ? after.status !== 'pending' : true;
+        const group = plan ? describePlan(plan) : '';
         return {
           title: `${verb} ${orderRef(id)}${w ? ` · ${label(s, w.nodeId)}` : ''}`,
           href: `/orders/${id}`,
           consequences: [
             `${o.title || ORDER_MODEL_LABELS[o.model as OrderModel]} · ${money(o.total, o.currency)}`,
-            next ? `The order goes on to ${next}` : 'The order continues from this approval',
+            ...(group ? [`Decided by: ${group}`] : []),
+            ...(i.onBehalfOf
+              ? [`Records ${i.onBehalfOf}’s vote; you are named as having recorded it`]
+              : []),
+            decides
+              ? next
+                ? `The order goes on to ${next}`
+                : 'The order continues from this approval'
+              : `Counts as a vote (${after!.label}); the order keeps waiting until it is decided`,
             i.note ? `Note: “${i.note}”` : 'No note',
           ],
           blocked:
             roleBlock ??
             own ??
             (w
-              ? undefined
+              ? (vote ?? undefined)
               : s.waits.some((x) => x.kind === 'approval')
                 ? 'This order has more than one approval open. Name the step.'
                 : 'Nothing on this order is waiting for an approval now.'),
@@ -545,7 +594,11 @@ export async function previewAction<T extends ActionTool>(
         const rows = await Promise.all(
           batchOf(i).map(async (a) => ({
             a,
-            p: await previewAction(env, p, 'decide_approval', { ...a, decision: i.decision }),
+            p: await previewAction(env, p, 'decide_approval', {
+              ...a,
+              decision: i.decision,
+              ...(i.onBehalfOf ? { onBehalfOf: i.onBehalfOf } : {}),
+            }),
           })),
         );
         const going = rows.filter((r) => !r.p.blocked);
@@ -920,7 +973,16 @@ export async function runAction<T extends ActionTool>(
       const i = input as ActionInput['decide_approval'];
       const { id, s } = await loadOrder(env, i.orderId);
       const w = approvalWait(s, i.nodeId)!;
-      await orderAgent(env, id).decide(w.nodeId, i.decision, by, i.note, p.id);
+      const voted = (await orderAgent(env, id).castVote({
+        nodeId: w.nodeId,
+        decision: i.decision,
+        by,
+        note: i.note,
+        deciderId: p.id,
+        onBehalfOf: i.onBehalfOf,
+        role: p.role,
+      })) as VoteResult;
+      if (!voted.ok) throw new Refused(voted.error);
       await recordAudit(env, 'approval.decided', {
         actor: p,
         target: id,
@@ -928,27 +990,53 @@ export async function runAction<T extends ActionTool>(
           nodeId: w.nodeId,
           decision: i.decision,
           ...(i.note ? { note: i.note } : {}),
+          ...(i.onBehalfOf ? { onBehalfOf: i.onBehalfOf } : {}),
+          ...(voted.audited ? { outcome: voted.outcome, tally: voted.tally } : {}),
           ...trail,
         },
       });
-      return { done: preview.title, href: preview.href };
+      return {
+        done:
+          voted.outcome === 'recorded'
+            ? `Recorded a vote on ${orderRef(id)} (${voted.tally})`
+            : preview.title,
+        href: preview.href,
+        outcome: voted.outcome,
+        tally: voted.tally,
+      };
     }
     case 'decide_approvals': {
       // Each one on its own, with its own checks and audit row: one refused doesn't stop the rest.
       const i = input as ActionInput['decide_approvals'];
-      const results: { orderId: string; nodeId: string; ok: boolean; error?: string }[] = [];
+      const results: {
+        orderId: string;
+        nodeId: string;
+        ok: boolean;
+        error?: string;
+        outcome?: 'recorded' | 'approved' | 'rejected';
+        tally?: string;
+      }[] = [];
       for (const a of batchOf(i)) {
         try {
-          await runAction(
+          const r = await runAction(
             env,
             p,
             'decide_approval',
-            { ...a, decision: i.decision, note: i.note },
+            { ...a, decision: i.decision, note: i.note, onBehalfOf: i.onBehalfOf },
             channel,
             undefined,
             direct,
           );
-          results.push({ ...a, ok: true });
+          results.push({
+            ...a,
+            ok: true,
+            ...(r.outcome
+              ? {
+                  outcome: r.outcome as 'recorded' | 'approved' | 'rejected',
+                  tally: String(r.tally),
+                }
+              : {}),
+          });
         } catch (err) {
           if (!(err instanceof Refused)) throw err;
           results.push({ ...a, ok: false, error: err.message });
@@ -957,8 +1045,10 @@ export async function runAction<T extends ActionTool>(
       const ok = results.filter((r) => r.ok).length;
       if (!ok) throw new Refused(results[0]?.error ?? 'Nothing was decided.');
       const verb = i.decision === 'approved' ? 'Approved' : 'Rejected';
+      // A vote that doesn't yet decide its approval is counted, not approved or rejected.
+      const waiting = results.filter((r) => r.outcome === 'recorded').length;
       return {
-        done: `${verb} ${ok} of ${results.length}`,
+        done: `${verb} ${ok - waiting} of ${results.length}${waiting ? `, ${waiting} recorded as a vote` : ''}`,
         href: '/approvals',
         results,
       };

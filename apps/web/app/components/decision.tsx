@@ -11,6 +11,7 @@ import { useNow } from '@commerceworker/ui/hooks/use-now';
 import { Input } from '@commerceworker/ui/input';
 import { until } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
 import { Check, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { type ApprovalContext, deadlineWords, lockAt, WARN_MS } from '~/lib/approvals';
@@ -135,9 +136,18 @@ export function DecisionControls({
   label,
   defaultNote = '',
   withNote = true,
+  members,
 }: {
-  /** Asks for the decision: the assistant's confirm card says what it does and records it. */
-  onDecide: (decision: Decision, note: string) => void;
+  /**
+   * Asks for the decision: the assistant's confirm card says what it does and records it.
+   * `onBehalfOf` is the member whose vote it is, when `members` were offered.
+   */
+  onDecide: (decision: Decision, note: string, onBehalfOf?: string) => void;
+  /**
+   * A company approval is voted by its members, and staff record the vote for one (docs/b2b.md,
+   * D3): who, to choose from. The buttons wait until one is chosen.
+   */
+  members?: { id: string; name: string }[];
   /** When the step times out. Decisions close just before it. */
   deadline?: number;
   /** What the flow does on timeout, e.g. "Decline order". */
@@ -155,6 +165,7 @@ export function DecisionControls({
   withNote?: boolean;
 }) {
   const [note, setNote] = useState(defaultNote);
+  const [member, setMember] = useState('');
   // Near the deadline, tick so the controls lock before a decision could arrive too late.
   const nearDeadline = deadline !== undefined && deadline - Date.now() < 60_000;
   const now = useNow(nearDeadline ? 1000 : null);
@@ -178,11 +189,18 @@ export function DecisionControls({
     if (locked && focusWithin.current) closedRef.current?.focus();
   }, [locked]);
   const noteId = useId();
-  const latest = useRef({ onDecide, note, closed: false });
-  latest.current = { onDecide, note, closed: !!(disabled || busy || locked) };
+  const memberId = useId();
+  const latest = useRef({ onDecide, note, member, closed: false });
+  const needsMember = !!members && !member;
+  latest.current = {
+    onDecide,
+    note,
+    member,
+    closed: !!(disabled || busy || locked || needsMember),
+  };
   const decide = (decision: Decision) => {
     const l = latest.current;
-    if (!l.closed) l.onDecide(decision, l.note.trim());
+    if (!l.closed) l.onDecide(decision, l.note.trim(), l.member || undefined);
   };
 
   useEffect(() => {
@@ -230,12 +248,34 @@ export function DecisionControls({
           {warning ? 'Ten seconds left to decide.' : ''}
         </span>
       )}
+      {members ? (
+        <Field data-disabled={disabled || locked || undefined} className="gap-1">
+          <FieldLabel htmlFor={memberId} className="text-muted-foreground text-xs">
+            Recording the vote of
+          </FieldLabel>
+          <NativeSelect
+            id={memberId}
+            size="sm"
+            wrapperClassName="w-full"
+            value={member}
+            onChange={(e) => setMember(e.target.value)}
+            disabled={disabled || locked}
+          >
+            <NativeSelectOption value="">Choose a member</NativeSelectOption>
+            {members.map((m) => (
+              <NativeSelectOption key={m.id} value={m.id}>
+                {m.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </Field>
+      ) : null}
       <DecisionForm
         compact={compact}
         noteId={noteId}
         note={note}
         setNote={setNote}
-        disabled={disabled || locked}
+        disabled={disabled || locked || needsMember}
         decide={decide}
         label={label}
         withNote={withNote}

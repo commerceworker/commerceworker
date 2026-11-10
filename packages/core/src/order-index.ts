@@ -4,6 +4,7 @@
  * writes it through the order records port (@commerceworker/ports/commerce) only when it differs.
  */
 import type { OrderState } from './api';
+import { approvalWaitingFor } from './b2b/approvals';
 import { orderReason } from './reasons';
 import type { FlowVersion } from './types';
 
@@ -73,7 +74,7 @@ export function orderIndexRow(
     waitingFor:
       [
         ...s.waits.map((w) =>
-          w.kind === 'approval' ? `person:${w.assignee ?? ''}` : `event:${w.event ?? ''}`,
+          w.kind === 'approval' ? approvalWaitingFor(w) : `event:${w.event ?? ''}`,
         ),
         ...timers.map(() => 'timer'),
       ].join(' · ') || null,

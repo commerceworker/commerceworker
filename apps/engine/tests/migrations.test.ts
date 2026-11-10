@@ -524,3 +524,53 @@ describe('0071_budgets', () => {
     ).toEqual({ spent: 0 });
   });
 });
+
+describe('0072_approval_votes', () => {
+  it('reads an approval that existed before as any one staff approver, with no votes', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0072_');
+    await applyD1Migrations(db, applied);
+    await db
+      .prepare(
+        `INSERT INTO approvals (id, order_id, node_id, event_type, title, assignee, status, requested_at)
+         VALUES ('av_a', 'av_o', 'mgr', 'approval:mgr#1', 'Approve', 'manager', 'pending', 1)`,
+      )
+      .run();
+    await applyD1Migrations(db, [next]);
+
+    expect(
+      await db
+        .prepare(
+          "SELECT company_id, approvers, mode, required, eligible, status FROM approvals WHERE id = 'av_a'",
+        )
+        .first(),
+    ).toEqual({
+      company_id: null,
+      approvers: 'staff:approver',
+      mode: 'any',
+      required: 1,
+      eligible: null,
+      status: 'pending',
+    });
+    expect(
+      (await db
+        .prepare("SELECT count(*) AS n FROM approval_votes WHERE approval_id = 'av_a'")
+        .first<{
+          n: number;
+        }>())!.n,
+    ).toBe(0);
+
+    // A voter votes once on an approval; another voter, or the same one elsewhere, may too.
+    const vote = (approval: string, voter: string) =>
+      db
+        .prepare(
+          `INSERT INTO approval_votes (approval_id, voter_id, voter_kind, decision, at)
+           VALUES (?, ?, 'member', 'approved', 1)`,
+        )
+        .bind(approval, voter);
+    await vote('av_a', 'mem_1').run();
+    await expect(vote('av_a', 'mem_1').run()).rejects.toThrow(/UNIQUE|PRIMARY/);
+    await vote('av_a', 'mem_2').run();
+    await vote('av_b', 'mem_1').run();
+  });
+});
