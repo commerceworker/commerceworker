@@ -120,9 +120,9 @@ describe('a rate a person sets', () => {
 });
 
 describe('the daily refresh and a person’s rate', () => {
-  it('overwrites a person’s rate: the feed is the reference', () => {
-    expect(REFRESH_OVERWRITES).toEqual({ ecb: true, person: true });
-    expect(refreshMayWrite('person')).toBe(true);
+  it('keeps a person’s rate, and refreshes its own', () => {
+    expect(REFRESH_OVERWRITES).toEqual({ ecb: true, person: false });
+    expect(refreshMayWrite('person')).toBe(false);
     expect(refreshMayWrite('ecb')).toBe(true);
     expect(refreshMayWrite(undefined)).toBe(true);
   });

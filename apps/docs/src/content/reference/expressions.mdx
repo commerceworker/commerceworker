@@ -175,9 +175,8 @@ was set and by whom: the daily refresh, or a person. A rate is a positive number
 never `USD` itself, for a currency the workspace has a rate for or is set up to sell in. The confirmation
 shows the rate now, the new one and the change, and flags a change of 10% or more, since a slipped
 decimal point would reprice every new order. Orders already priced keep their `fxRate`. The European
-Central Bank's daily refresh is the reference: it replaces a person's rate for a currency it covers at its
-next run (once a day), so a rate set by hand holds until then, and for a currency the workspace doesn't
-have refreshed it holds until someone changes it.
+Central Bank's daily refresh keeps every currency it covers current, except one a person set: a rate set
+by hand holds until someone changes it, and the table shows who set it and when.
 
 - Amounts on the order, its documents, payments and refunds are in the order's currency.
 - Credit check and budget check compare `baseTotal`; the credit check reports in the order's

@@ -96,7 +96,8 @@ describe('the daily refresh and a person’s rate', () => {
   const original = { ...REFRESH_OVERWRITES };
   afterEach(() => Object.assign(REFRESH_OVERWRITES, original));
 
-  it('overwrites a person’s rate on a currency it refreshes, handing it back to the feed', async () => {
+  it('overwrites a person’s rate when the rule hands it back to the feed', async () => {
+    REFRESH_OVERWRITES.person = true;
     const pricing = store();
     await setFxRate({ pricing }, { currency: 'GBP', rate: 0.5 }, 'ada', 1, ['GBP']);
     expect(await refreshFxRates({ pricing }, feed, ['GBP'], 2)).toMatchObject({ updated: ['GBP'] });
@@ -107,8 +108,7 @@ describe('the daily refresh and a person’s rate', () => {
     });
   });
 
-  it('leaves a person’s rate when the rule says to keep it', async () => {
-    REFRESH_OVERWRITES.person = false;
+  it('leaves a person’s rate and refreshes the rest, as the rule says today', async () => {
     const pricing = store();
     await setFxRate({ pricing }, { currency: 'GBP', rate: 0.5 }, 'ada', 1, ['GBP']);
     expect(await refreshFxRates({ pricing }, feed, ['GBP', 'EUR'], 2)).toMatchObject({

@@ -85,13 +85,11 @@ export const FX_SOURCES = ['ecb', 'person'] as const;
 export type FxSource = (typeof FX_SOURCES)[number];
 
 /**
- * Whether the daily refresh writes over a rate a given source set. The feed is the reference, so
- * it wins: a person's rate on a currency the deployment names in `fxCurrencies` holds until the
- * next refresh (the cron runs once a day). A currency the registry doesn't name is never refreshed,
- * so a person's rate on one holds until they change it. Flip `person` to keep their rates through a
- * refresh; the tests state both sides.
+ * Whether the daily refresh writes over a rate a given source set. A rate a person set holds until
+ * a person changes it: the refresh keeps every other currency it covers current, and the rates page
+ * shows who set each rate and when, so a stale one by hand is in view. The tests state both sides.
  */
-export const REFRESH_OVERWRITES: Record<FxSource, boolean> = { ecb: true, person: true };
+export const REFRESH_OVERWRITES: Record<FxSource, boolean> = { ecb: true, person: false };
 
 export const refreshMayWrite = (current: FxSource | undefined) =>
   current === undefined || REFRESH_OVERWRITES[current];

@@ -198,8 +198,8 @@ workspace is set up to sell in but has no rate for yet shows with none. `set_fx_
 and the new one, the change as a percent, flags a change of 10% or more, and says that orders already
 priced keep their rate. It is refused up front for `USD`, a currency the workspace has no rate for and isn't
 set up to sell in, or a rate that isn't a positive number within bounds. Only a person confirms it: over
-REST an API token is refused (`403`), and a typed A2A skill never runs it. The next daily refresh replaces a
-rate set this way for a currency the refresh covers.
+REST an API token is refused (`403`), and a typed A2A skill never runs it. A rate set this way holds until
+someone changes it: the daily refresh leaves it and keeps refreshing the other currencies.
 
 ## Outside access
 

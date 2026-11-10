@@ -829,7 +829,7 @@ describe('MCP', () => {
       const text = preview.consequences.join('\n');
       expect(text).toContain('Now 0.92, then 0.94 EUR per 1 USD (+2.17%)');
       expect(text).toContain('Orders already priced keep the rate they were priced at');
-      expect(text).toMatch(/next daily ECB refresh replaces it/);
+      expect(text).toMatch(/daily ECB refresh leaves a rate a person set/);
       expect(text).not.toMatch(/slipped decimal/);
       expect(await pricingStore(env).fxRate('EUR')).toBe(0.94);
       expect((await audited()).at(-1)).toEqual({

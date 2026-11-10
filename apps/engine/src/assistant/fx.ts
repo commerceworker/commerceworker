@@ -57,7 +57,7 @@ export async function previewFxRate(
       `Carts and orders priced in ${i.currency} from now on convert at it`,
       'Orders already priced keep the rate they were priced at (their fxRate)',
       refreshed
-        ? 'The next daily ECB refresh replaces it: that is the reference rate'
+        ? `It holds until someone changes it: the daily ECB refresh leaves a rate a person set`
         : `The daily refresh doesn't cover ${i.currency}, so it holds until someone changes it`,
     ],
     blocked: roleBlock ?? problem ?? undefined,
