@@ -523,11 +523,40 @@ export const balanceEntries = sqliteTable(
     customerId: text('customer_id').notNull(),
     amount: real('amount').notNull(),
     applied: integer('applied', { mode: 'boolean' }).notNull().default(false),
+    /** charge | settle | reverse | adjust (`CREDIT_ENTRY_KINDS` in core). */
+    kind: text('kind').notNull().default('charge'),
+    /** The charge a settlement or reversal offsets. */
+    reference: text('reference'),
+    /** An adjustment's reason. */
+    note: text('note'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
     index('balance_entries_customer').on(t.customerId, t.createdAt),
     index('balance_entries_order').on(t.orderId),
+  ],
+);
+
+/**
+ * What an open order has claimed of a customer's credit limit, keyed by order and step. `status`
+ * moves `held → charged | released | expired` (`CREDIT_HOLD` in core), each by one compare-and-set;
+ * a customer's held amount is the sum of its `held` rows not past `expiresAt`.
+ */
+export const creditHolds = sqliteTable(
+  'credit_holds',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id').notNull(),
+    customerId: text('customer_id').notNull(),
+    amount: real('amount').notNull(),
+    status: text('status').notNull().default('held'),
+    expiresAt: integer('expires_at').notNull(),
+    createdAt: integer('created_at').notNull(),
+    resolvedAt: integer('resolved_at'),
+  },
+  (t) => [
+    index('credit_holds_order').on(t.orderId),
+    index('credit_holds_open').on(t.customerId).where(sql`${t.status} = 'held'`),
   ],
 );
 

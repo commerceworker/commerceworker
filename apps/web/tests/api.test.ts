@@ -1210,6 +1210,70 @@ describe('operations REST runs as MCP does', () => {
     run.mockReset();
   });
 
+  it("reads a customer's credit account for a viewer, and lets an admin person set the limit and adjust the balance", async () => {
+    const admin: Principal = { ...person, role: 'admin' };
+    run.mockResolvedValueOnce({ ok: true, value: { limit: 1_000, entries: [], next: null } });
+    const read = await handleApi(
+      new Request('https://app.test/api/v1/customers/cus_1/credit?after=5%3Aabc&limit=10'),
+      viewer,
+    );
+    expect(read.status).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'get_credit_account',
+      { customerId: 'cus_1', after: '5:abc', limit: 10 },
+    ]);
+
+    run.mockResolvedValueOnce({ ok: true, value: { done: 'Set cus_1’s credit limit' } });
+    const limit = await handleApi(
+      new Request('https://app.test/api/v1/customers/cus_1/credit/limit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 2_500, customerId: 'cus_other' }),
+      }),
+      admin,
+    );
+    expect(limit.status).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'set_credit_limit',
+      { customerId: 'cus_1', limit: 2_500 },
+    ]);
+
+    run.mockResolvedValueOnce({ ok: true, value: { done: 'Lowered cus_1’s balance' } });
+    const adjusted = await handleApi(
+      new Request('https://app.test/api/v1/customers/cus_1/credit/adjustments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'adj-1' },
+        body: JSON.stringify({ amount: -250, reason: 'Credit memo 41' }),
+      }),
+      admin,
+    );
+    expect(adjusted.status).toBe(200);
+    const [tool, input, signed, key] = run.mock.calls.at(-1)!;
+    expect([tool, input, key]).toEqual([
+      'adjust_credit',
+      { customerId: 'cus_1', amount: -250, reason: 'Credit memo 41' },
+      'adj-1',
+    ]);
+    expect(await actorOf(signed, await operationCall('adjust_credit', input))).toMatchObject({
+      person: true,
+      role: 'admin',
+    });
+
+    // Changing what a customer owes is an admin's; an operator is refused before the engine.
+    const calls = run.mock.calls.length;
+    expect((await post('customers/cus_1/credit/limit', { limit: 1 })).status).toBe(403);
+    expect(
+      (await post('customers/cus_1/credit/adjustments', { amount: -1, reason: 'x' })).status,
+    ).toBe(403);
+    expect(run).toHaveBeenCalledTimes(calls);
+    // The engine refuses a token, which never changes what a customer owes.
+    run.mockResolvedValueOnce({ ok: false, status: 403, error: 'A person does this' });
+    expect(
+      (await post('customers/cus_1/credit/limit', { limit: 1 }, { ...operator, role: 'admin' }))
+        .status,
+    ).toBe(403);
+  });
+
   it("answers the engine's refusal, holds the tool's role, and leaves other paths alone", async () => {
     run.mockResolvedValueOnce({ ok: false, error: 'A person verifies a certificate…' });
     expect((await post('customers/cus_1/tax-certificates/txc_1/verify', {})).status).toBe(409);

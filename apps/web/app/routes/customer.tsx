@@ -34,6 +34,7 @@ import {
 } from '@commerceworker/ui/item';
 import { count, dateTime, money } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { NativeSelect } from '@commerceworker/ui/native-select';
 import { Body, Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { useState } from 'react';
@@ -52,7 +53,14 @@ import { StatusBadge, ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { audit } from '~/lib/audit.server';
 import { requireUser } from '~/lib/auth.server';
-import { addCertificate, addressesOf, companyOf, customerById } from '~/lib/customers.server';
+import { amountFrom, ENTRY_KINDS } from '~/lib/credit';
+import {
+  addCertificate,
+  addressesOf,
+  companyOf,
+  creditOf,
+  customerById,
+} from '~/lib/customers.server';
 import { engine } from '~/lib/env.server';
 import { humanize, liveStatus, orderRef } from '~/lib/format';
 import { countOrders, listOrders } from '~/lib/orders.server';
@@ -68,10 +76,13 @@ export const meta = ({ loaderData: d }: Route.MetaArgs) => [
 const RECENT_ORDERS = 6;
 /** How many of the places it ships to, most recently used first. */
 const ADDRESSES = 4;
+/** How many ledger entries a page of the credit account lists. */
+const CREDIT_ENTRIES = 10;
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const me = await requireUser(request);
-  const [customer, certificates, recent, ordered, addresses, company] = await Promise.all([
+  const after = new URL(request.url).searchParams.get('after') ?? undefined;
+  const [customer, certificates, recent, ordered, addresses, company, credit] = await Promise.all([
     customerById(params.customerId),
     engine().taxCertificates(params.customerId),
     listOrders({ customer: params.customerId, sort: 'updated' }, RECENT_ORDERS),
@@ -79,6 +90,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     addressesOf(params.customerId, ADDRESSES),
     // Members are personal data: the page shows them to the roles that may list them.
     companyOf(params.customerId, new URL(request.url).searchParams, atLeast(me.role, 'operator')),
+    // Null for a customer who doesn't buy on account.
+    creditOf(params.customerId, after, CREDIT_ENTRIES),
   ]);
   if (!customer || !certificates) throw data('Customer not found', { status: 404 });
   const { stripeCustomerId: _c, stripePaymentMethodId: _pm, ...shown } = customer;
@@ -90,6 +103,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     ordered,
     addresses,
     company,
+    credit,
+    after: after ?? null,
     // The next certificate's id, minted here so a form sent twice adds it once.
     nextId: newId('txc'),
   };
@@ -122,6 +137,8 @@ export default function CustomerPage() {
     ordered,
     addresses,
     company,
+    credit,
+    after,
     nextId,
   } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
@@ -137,21 +154,7 @@ export default function CustomerPage() {
       : null;
   const states = certificates.map((t) => taxCertificateState(t, now));
   const exempting = states.filter((s) => s === 'active').length;
-  const over = business && !!c.creditLimit && c.balance > c.creditLimit;
-  // Close enough that one more order could tip it over, as Commerce's customer list marks it.
-  const near = business && !over && !!c.creditLimit && c.balance >= c.creditLimit * 0.9;
   const figures: Figure[] = [
-    ...(business
-      ? [
-          {
-            label: 'Balance',
-            value: money(c.balance),
-            note: over ? 'Over limit' : near ? 'Near limit' : undefined,
-            tone: over ? 'text-bad' : near ? 'text-wait' : undefined,
-          },
-          { label: 'Credit limit', value: c.creditLimit ? money(c.creditLimit) : 'No limit' },
-        ]
-      : []),
     { label: 'Terms', value: business ? humanize(c.terms) : 'Pays at checkout' },
     {
       label: 'Exempting certificates',
@@ -172,8 +175,8 @@ export default function CustomerPage() {
           humanize(c.kind),
           business ? `${humanize(c.tier)} tier` : null,
           business ? humanize(c.terms) : 'Pays at checkout',
-          business && c.creditLimit
-            ? `${money(c.balance)} of ${money(c.creditLimit)} credit`
+          credit && c.creditLimit
+            ? `${money(credit.balance)} of ${money(credit.limit)} credit`
             : null,
         ]
           .filter(Boolean)
@@ -189,10 +192,7 @@ export default function CustomerPage() {
       />
       <Body className="grid gap-4 lg:gap-6">
         {/* The account as the commerce steps read it, figure by figure (the preview cards' tiles). */}
-        <section
-          aria-label="Account"
-          className={cn('grid grid-cols-2 gap-4', business && 'lg:grid-cols-4')}
-        >
+        <section aria-label="Account" className="grid grid-cols-2 gap-4">
           {figures.map((f) => (
             <FigureCard key={f.label} f={f} />
           ))}
@@ -206,6 +206,7 @@ export default function CustomerPage() {
             </div>
           </>
         ) : null}
+        {credit ? <CreditSection customerId={c.id} credit={credit} after={after} /> : null}
         <Section
           title="Tax exemption certificates"
           description="Only a verified, unexpired certificate covering an order’s ship-to exempts it from tax."
@@ -559,5 +560,256 @@ function AddCertificate({
         </div>
       </FieldGroup>
     </Form>
+  );
+}
+
+type Credit = NonNullable<ReturnType<typeof useLoaderData<typeof loader>>['credit']>;
+
+/**
+ * A business customer's credit: the limit, what is owed, what open orders hold and what is left,
+ * then the ledger behind the balance, newest first with the balance after each entry. An admin
+ * sets the limit or adjusts the balance (a credit memo, a payment received elsewhere) through the
+ * assistant, whose card shows the account before and after.
+ */
+function CreditSection({
+  customerId,
+  credit,
+  after,
+}: {
+  customerId: string;
+  credit: Credit;
+  after: string | null;
+}) {
+  const canAdmin = useCan('admin');
+  const over = credit.limit > 0 && credit.balance > credit.limit;
+  const tight = !over && credit.available < 0;
+  const near = !over && !tight && credit.limit > 0 && credit.available <= credit.limit * 0.1;
+  const figures: Figure[] = [
+    { label: 'Credit limit', value: credit.limit ? money(credit.limit) : 'No limit' },
+    {
+      label: 'Balance owed',
+      value: money(credit.balance),
+      note: over ? 'Over limit' : undefined,
+      tone: over ? 'text-bad' : undefined,
+    },
+    {
+      label: 'Held by open orders',
+      value: money(credit.held),
+      note: 'Claimed until invoiced or released',
+    },
+    {
+      label: 'Available',
+      value: money(credit.available),
+      note: tight ? 'Orders on account are refused' : near ? 'Near limit' : undefined,
+      tone: tight ? 'text-bad' : near ? 'text-wait' : undefined,
+    },
+  ];
+  return (
+    <Section
+      id="credit"
+      title="Credit"
+      description="Orders on account hold their total against the limit until they are invoiced."
+      actions={
+        canAdmin ? (
+          <div className="flex flex-wrap gap-2">
+            <CreditSheet kind="limit" customerId={customerId} credit={credit} />
+            <CreditSheet kind="adjust" customerId={customerId} credit={credit} />
+          </div>
+        ) : null
+      }
+      flush
+    >
+      <div className="grid grid-cols-2 gap-4 px-(--card-spacing) lg:grid-cols-4">
+        {figures.map((f) => (
+          <FigureCard key={f.label} f={f} />
+        ))}
+      </div>
+      {credit.entries.length ? (
+        <Table stack="cards" caption="Credit ledger">
+          <TableHead>
+            <Tr>
+              <Th>When</Th>
+              <Th>Entry</Th>
+              <Th numeric>Amount</Th>
+              <Th numeric>Balance after</Th>
+            </Tr>
+          </TableHead>
+          <TableBody>
+            {credit.entries.map((e) => (
+              <Tr key={e.id}>
+                <Td label="When" className="text-muted-foreground">
+                  {dateTime(e.at, 'UTC')}
+                </Td>
+                <Td label="Entry">
+                  <span className="font-medium">{ENTRY_KINDS[e.kind]}</span>
+                  <div className="text-muted-foreground text-xs">
+                    {e.orderId ? (
+                      <Link to={`/orders/${e.orderId}`} className="hover:underline">
+                        Order {orderRef(e.orderId)}
+                      </Link>
+                    ) : null}
+                    {e.note ? `${e.note}${e.reference ? ` · ${e.reference}` : ''}` : null}
+                  </div>
+                </Td>
+                <Td numeric label="Amount" className={cn(e.amount < 0 && 'text-ok')}>
+                  {e.amount > 0 ? '+' : ''}
+                  {money(e.amount)}
+                </Td>
+                <Td numeric label="Balance after">
+                  {money(e.balanceAfter)}
+                </Td>
+              </Tr>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <Empty>No entries yet. Invoicing an order on account is the first.</Empty>
+      )}
+      {after || credit.next ? (
+        <nav aria-label="Ledger pages" className="flex justify-between gap-2 border-t px-4 py-2">
+          {after ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to={{ search: '', hash: '#credit' }}>Latest entries</Link>
+            </Button>
+          ) : (
+            <span />
+          )}
+          {credit.next ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to={`?after=${encodeURIComponent(credit.next)}#credit`}>Older entries</Link>
+            </Button>
+          ) : null}
+        </nav>
+      ) : null}
+    </Section>
+  );
+}
+
+/**
+ * One credit change behind a button: the new limit, or an adjustment's amount, direction and
+ * reason. Nothing is saved until the person confirms the assistant's card, which shows the account
+ * now and after; the sheet closes once they have.
+ */
+function CreditSheet({
+  kind,
+  customerId,
+  credit,
+}: {
+  kind: 'limit' | 'adjust';
+  customerId: string;
+  credit: Credit;
+}) {
+  const { act } = useAssistant();
+  const { revalidate } = useRevalidator();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(kind === 'limit' ? String(credit.limit) : '');
+  const [lower, setLower] = useState('lower');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = `credit-${kind}`;
+  const amount = amountFrom(text);
+  const problem =
+    typeof amount === 'string'
+      ? amount
+      : kind === 'adjust' && amount === 0
+        ? 'An adjustment can’t be zero.'
+        : kind === 'adjust' && !reason.trim()
+          ? 'Give a reason: it is what the ledger shows.'
+          : null;
+  const save = async () => {
+    if (typeof amount === 'string') return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r =
+        kind === 'limit'
+          ? await act('set_credit_limit', { customerId, limit: amount })
+          : await act('adjust_credit', {
+              customerId,
+              amount: lower === 'lower' ? -amount : amount,
+              reason: reason.trim(),
+            });
+      if ('declined' in r) return;
+      revalidate();
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <FormSheet
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setError(null);
+      }}
+      icon={null}
+      label={kind === 'limit' ? 'Set limit' : 'Adjust balance'}
+      title={kind === 'limit' ? 'Set the credit limit' : 'Adjust the balance'}
+      description={
+        kind === 'limit'
+          ? 'What the customer may owe on account, in US dollars. Orders already holding credit keep it.'
+          : 'A credit memo or a payment received elsewhere lowers what is owed. The entry stays in the ledger; undo it with another.'
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!problem && !busy) void save();
+        }}
+      >
+        <FieldGroup className="gap-5">
+          {kind === 'adjust' ? (
+            <Field className="gap-2">
+              <FieldLabel htmlFor={`${id}-direction`}>Effect</FieldLabel>
+              <NativeSelect
+                id={`${id}-direction`}
+                value={lower}
+                onChange={(e) => setLower(e.target.value)}
+              >
+                <option value="lower">Lower the balance (memo or payment)</option>
+                <option value="raise">Raise the balance (debit)</option>
+              </NativeSelect>
+            </Field>
+          ) : null}
+          <Field className="gap-2">
+            <FieldLabel htmlFor={`${id}-amount`}>
+              {kind === 'limit' ? 'Limit' : 'Amount'}
+            </FieldLabel>
+            <Input
+              id={`${id}-amount`}
+              inputMode="decimal"
+              autoComplete="off"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              aria-invalid={text !== '' && typeof amount === 'string' ? true : undefined}
+              className="max-w-48 tabular"
+            />
+          </Field>
+          {kind === 'adjust' ? (
+            <Field className="gap-2">
+              <FieldLabel htmlFor={`${id}-reason`}>Reason</FieldLabel>
+              <Input
+                id={`${id}-reason`}
+                maxLength={500}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Credit memo 41, wire received"
+              />
+              <FieldDescription>It is shown in the ledger and the audit trail.</FieldDescription>
+            </Field>
+          ) : null}
+          {error ? <FieldError>{error}</FieldError> : null}
+          <div>
+            <Button type="submit" size="sm" disabled={!!problem || busy}>
+              {busy ? 'Confirm it in the assistant' : 'Review'}
+            </Button>
+          </div>
+        </FieldGroup>
+      </form>
+    </FormSheet>
   );
 }

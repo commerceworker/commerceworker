@@ -31,16 +31,26 @@ export type Undid = Awaited<ReturnType<typeof compensateOrder>>;
 export async function compensateOrder(ports: CompensationPorts, orderId: string) {
   // First, so a label a provider made is voided there before its shipment reads as cancelled.
   const labels = await voidOpenLabels(ports, orderId);
-  const [released, voided, cancelled, sellerOrdersCancelled, payoutsReversed, revoked, invoices] =
-    await Promise.all([
-      ports.inventory.release(orderId),
-      voidAuthorizations(ports, orderId),
-      ports.shipping.cancelOpen(orderId),
-      ports.marketplace.cancel(orderId),
-      ports.marketplace.reversePayouts(orderId),
-      ports.fulfillment.revokeEntitlements(orderId),
-      voidInvoices(ports, orderId),
-    ]);
+  const [
+    released,
+    voided,
+    cancelled,
+    sellerOrdersCancelled,
+    payoutsReversed,
+    revoked,
+    invoices,
+    creditReleased,
+  ] = await Promise.all([
+    ports.inventory.release(orderId),
+    voidAuthorizations(ports, orderId),
+    ports.shipping.cancelOpen(orderId),
+    ports.marketplace.cancel(orderId),
+    ports.marketplace.reversePayouts(orderId),
+    ports.fulfillment.revokeEntitlements(orderId),
+    voidInvoices(ports, orderId),
+    // Credit the order still holds goes back to the customer's limit; a charged hold stays charged.
+    ports.balances.releaseHolds(orderId),
+  ]);
   // After the void, so an invoice found paid at the processor keeps its (settled) account charge.
   const unbilled = await ports.balances.reverse(orderId);
   // After the cancel above, so a shipment it cancelled no longer holds the stock.
@@ -55,6 +65,7 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string)
     payoutsReversed,
     revoked,
     unbilled,
+    creditReleased,
     invoicesVoided: invoices.voided,
     invoicesPaid: invoices.paid,
     labelsNotVoided: labels.failed,

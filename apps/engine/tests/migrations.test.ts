@@ -395,3 +395,71 @@ describe('0068_companies', () => {
     expect(role).toEqual({ role: 'buyer', status: 'active' });
   });
 });
+
+describe('0069_credit_ledger', () => {
+  it('gives each existing ledger entry its kind and the charge it offsets, and starts with no holds', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0069_');
+    await applyD1Migrations(db, applied);
+    const entry = (id: string, amount: number) =>
+      db
+        .prepare(
+          `INSERT INTO balance_entries (id, order_id, customer_id, amount, applied, created_at)
+           VALUES (?, 'o-credit', 'cus-credit', ?, 1, 0)`,
+        )
+        .bind(id, amount);
+    await db.batch([
+      entry('bal_o-credit_invoice_1', 100),
+      entry('set_bal_o-credit_invoice_1', -100),
+      entry('bal_o-credit_invoice_2', 40),
+      entry('rev_bal_o-credit_invoice_2', -40),
+      // An id that merely starts like an offset's, to the underscore: a charge for an order named so.
+      entry('bal_set1_invoice_1', 5),
+    ]);
+    await applyD1Migrations(db, [next]);
+
+    const rows = await db
+      .prepare(
+        "SELECT id, kind, reference, note, amount FROM balance_entries WHERE customer_id = 'cus-credit' ORDER BY id",
+      )
+      .all();
+    expect(rows.results).toEqual([
+      { id: 'bal_o-credit_invoice_1', kind: 'charge', reference: null, note: null, amount: 100 },
+      { id: 'bal_o-credit_invoice_2', kind: 'charge', reference: null, note: null, amount: 40 },
+      { id: 'bal_set1_invoice_1', kind: 'charge', reference: null, note: null, amount: 5 },
+      {
+        id: 'rev_bal_o-credit_invoice_2',
+        kind: 'reverse',
+        reference: 'bal_o-credit_invoice_2',
+        note: null,
+        amount: -40,
+      },
+      {
+        id: 'set_bal_o-credit_invoice_1',
+        kind: 'settle',
+        reference: 'bal_o-credit_invoice_1',
+        note: null,
+        amount: -100,
+      },
+    ]);
+    expect(
+      (await db.prepare('SELECT count(*) AS n FROM credit_holds').first<{ n: number }>())?.n,
+    ).toBe(0);
+    // A hold is one row per order and step, and a customer's open holds are found by customer.
+    const hold = (id: string) =>
+      db
+        .prepare(
+          `INSERT INTO credit_holds (id, order_id, customer_id, amount, expires_at, created_at)
+           VALUES (?, 'o-credit', 'cus-credit', 10, 1, 0)`,
+        )
+        .bind(id)
+        .run();
+    await hold('hld_o-credit_credit_1');
+    await expect(hold('hld_o-credit_credit_1')).rejects.toThrow(/UNIQUE|PRIMARY/);
+    expect(
+      await db
+        .prepare("SELECT status FROM credit_holds WHERE id = 'hld_o-credit_credit_1'")
+        .first(),
+    ).toEqual({ status: 'held' });
+  });
+});

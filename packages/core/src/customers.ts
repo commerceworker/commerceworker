@@ -1,7 +1,8 @@
 /**
  * Customer rules every store applies the same way.
  */
-import { money, toBase } from './logic';
+import { creditAvailable, creditHoldAmount } from './credit';
+import { toBase } from './logic';
 
 /** A name as matching compares it: lower case, punctuation and runs of spacing folded to one space. */
 export function customerNameKey(name: string): string {
@@ -28,19 +29,24 @@ export function matchCustomerByName<T extends { name: string }>(
 
 /**
  * A credit check (`commerce.credit_check`): a business customer's available credit (limit less
- * balance, both in the base currency) against the order's total in the base currency. A consumer
- * or a guest has no account; `noAccount` says whether that passes.
+ * balance and what open orders hold, all in the base currency) against the order's total in the
+ * base currency. A consumer or a guest has no account; `noAccount` says whether that passes. This
+ * is the read the preview and a hold-less check make; with a hold the store makes the same
+ * comparison atomically (`BalanceStore.hold`), so two orders can't both pass.
  */
 export function creditCheck(
-  customer: { kind: string; creditLimit: number; balance: number } | null | undefined,
+  customer:
+    | { kind: string; creditLimit: number; balance: number; held?: number }
+    | null
+    | undefined,
   order: { total: number; baseTotal?: number; fxRate?: number },
   opts: { noAccount: 'ok' | 'over_limit' },
 ):
   | { ok: boolean; account: false }
   | { ok: boolean; account: true; available: number; total: number; over: number } {
   if (customer?.kind !== 'business') return { ok: opts.noAccount === 'ok', account: false };
-  const available = money(customer.creditLimit - customer.balance);
-  const total = order.baseTotal ?? toBase(order.total, order.fxRate);
+  const available = creditAvailable(customer);
+  const total = creditHoldAmount(order);
   return { ok: total <= available, account: true, available, total, over: total - available };
 }
 

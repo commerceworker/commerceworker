@@ -6,7 +6,11 @@
  * as a cart's files are; one the engine doesn't end up holding is deleted again.
  */
 
-import { getCompany, listCompanyMembers } from '@commerceworker/application/commerce';
+import {
+  getCompany,
+  getCreditAccount,
+  listCompanyMembers,
+} from '@commerceworker/application/commerce';
 import {
   attachmentName,
   COMPANY_ROLES,
@@ -24,10 +28,24 @@ import { actorName } from './audit.server';
 import { docs, engine } from './env.server';
 import { signedActor } from './principal.server';
 import { expiryFrom, parseTaxPlaces } from './tax-certificates';
-import { addressBook, companyDirectory, pricingStore } from './wire.server';
+import { addressBook, balanceStore, companyDirectory, pricingStore } from './wire.server';
 
 export async function customerById(id: string) {
   return (await pricingStore().customer(id)) ?? null;
+}
+
+/**
+ * A business customer's credit account for its page: limit, balance, what open orders hold, what
+ * is available and a page of the ledger, newest first (`after` is the previous page's `next`).
+ * Null for a customer without one.
+ */
+export async function creditOf(customerId: string, after: string | undefined, limit: number) {
+  const r = await getCreditAccount(
+    { balances: balanceStore(), pricing: pricingStore(), companies: companyDirectory() },
+    customerId,
+    { after, limit },
+  );
+  return r.ok ? r.value : null;
 }
 
 /** The places the customer's orders ship to, most recently used first; `more` when there are others. */

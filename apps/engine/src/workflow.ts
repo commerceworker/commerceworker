@@ -16,6 +16,7 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
+import { releaseCredit } from '@commerceworker/application/commerce';
 import {
   type AccountContext,
   beginNode,
@@ -52,6 +53,7 @@ import { instanceExists } from './orders';
 import { emit, orderSummary } from './outbox';
 import { voidAuthorizations } from './payments';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
+import { balanceStore } from './wire';
 import { capReason, failureReason, plural } from './words';
 
 export type OrderWorkflowParams = {
@@ -200,6 +202,10 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
     if (end && (outcome === 'declined' || outcome === 'cancelled')) {
       await this.voidOpenHolds(step, p, end.nodeId, end.key);
     }
+    // Whatever the outcome but failed (a failed run's rollbacks give the credit back), an order
+    // that ends holds no credit: an invoice already converted its hold, and any left over (a card
+    // order, a decline after the check) goes back to the customer's limit.
+    if (outcome !== 'failed') await this.releaseCreditHolds(step, p, end?.nodeId ?? 'end');
     await snapshot(outcome, { reason });
     if (outcome === 'failed') {
       // Fails the instance; Workflows then runs every registered rollback in reverse order.
@@ -243,6 +249,40 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
           }
         }
         return voided;
+      },
+    );
+  }
+
+  /**
+   * Gives back the credit the order still holds, as one step (`credit:release`). Retry-safe: a
+   * hold is released once, so a retry finds none left and reports nothing.
+   */
+  private async releaseCreditHolds(step: WorkflowStep, p: OrderWorkflowParams, nodeId: string) {
+    const env = this.env;
+    const fx = effectKey(p.generation, 'credit');
+    await step.do(
+      'credit:release',
+      { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+      async () => {
+        const released = await releaseCredit({ balances: balanceStore(env) }, p.orderId);
+        if (released) {
+          // Sent from inside the step, so it is reported once; a failed report doesn't redo the release.
+          try {
+            await orderAgent(env, p.orderId).report({
+              generation: p.generation,
+              log: {
+                at: Date.now(),
+                nodeId,
+                kind: 'rollback',
+                message: `Released ${plural(released, 'credit hold')}: the order ended without charging it`,
+                key: `${fx}:release`,
+              },
+            });
+          } catch (err) {
+            console.warn('credit release report failed', err);
+          }
+        }
+        return released;
       },
     );
   }

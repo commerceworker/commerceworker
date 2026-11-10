@@ -67,6 +67,8 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'set_fx_rate',
   'set_company_status',
   'remove_company_member',
+  // A limit replaces the one customers order on account by.
+  'set_credit_limit',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -95,6 +97,7 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'put_company_members',
   'remove_company_member',
   'update_customer',
+  'set_credit_limit',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
