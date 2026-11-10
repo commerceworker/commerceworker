@@ -289,7 +289,7 @@ describe('assignments', () => {
     await setPriceBookStatus(p, { bookId: 'x', status: 'active' }, NOW);
     expect(await assignPriceBook(p, { bookId: 'x', customerId: 'pc_twin_a' }, NOW)).toEqual({
       ok: false,
-      error: 'Twin A is suspended: a book is assigned only to an active company.',
+      error: 'Pricing Contract Twin is suspended: a book is assigned only to an active company.',
     });
     // Assigned while it was active (written straight to the store), the books still price after it
     // is suspended: pricing is not access control, `validateOrder` declines the order.
