@@ -7,8 +7,9 @@
  * is refused rather than given twice. Keyed by the step: a retried step holds the same
  * redemptions. A dry run (a quote) holds none.
  *
- * Only a code the order carries is ever refused with a reason; an automatic promotion that
- * doesn't fit, or loses to another, is simply not applied.
+ * Only a code the order carries is ever refused with a reason (a promotion's `conditionMessage`,
+ * when its condition fails and it has one); an automatic promotion that doesn't fit, or loses to
+ * another, is simply not applied.
  */
 import {
   type AppliedPromotion,
@@ -46,6 +47,12 @@ export async function applyPromotions(
   // In the order the codes were given, so where a refusal sits says nothing about which exist.
   const refused = new Map<string, string>();
   const usable: Promotion[] = [];
+  // Read once, and only when a candidate has a condition that may ask about the buyer.
+  let customer: Promise<{ kind: string; tier: string } | undefined> | undefined;
+  const customerOf = () =>
+    (customer ??= ports.pricing
+      .customer(order.customerId)
+      .then((c) => c && { kind: c.kind, tier: c.tier }));
   const check = async (p: Promotion) => {
     // Only a promotion with a limit needs its redemptions counted.
     const redeemed =
@@ -57,7 +64,10 @@ export async function applyPromotions(
       customerId: order.customerId,
       currency: order.currency,
       fxRate: order.fxRate,
+      channel: order.channel,
       lines: order.lines,
+      meta: order.meta,
+      customer: p.condition && order.customerId ? await customerOf() : undefined,
       redeemed,
     });
   };

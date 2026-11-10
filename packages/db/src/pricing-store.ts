@@ -65,6 +65,8 @@ export function promotionFromRow(r: PromotionRow): Promotion {
       ? (r.stacking as Promotion['stacking'])
       : 'exclusive',
     maxDiscount: r.maxDiscount,
+    condition: r.condition ? (JSON.parse(r.condition) as object) : null,
+    conditionMessage: r.conditionMessage,
   };
 }
 
@@ -288,6 +290,8 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
           priority: p.priority,
           stacking: p.stacking,
           maxDiscount: p.maxDiscount,
+          condition: p.condition ? JSON.stringify(p.condition) : null,
+          conditionMessage: p.conditionMessage,
           createdBy,
           createdAt: at,
           updatedAt: at,

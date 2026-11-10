@@ -293,7 +293,7 @@ on, and its JSON body (or, for a `GET`, its query string) gives the rest of the 
 | `POST` | `/api/v1/flows/:flowId/test` | `{ draft }`: publishes that draft if it changed, then starts a test order |
 | `GET` | `/api/v1/fx-rates` | Each currency's exchange rate (units per one USD), when it was set and by whom: the daily ECB refresh or a person |
 | `POST` | `/api/v1/fx-rates/:currency` | `{ rate }`: sets a currency's rate (admin). The confirmation's check runs: not `USD`, a currency the workspace has a rate for or sells in, a positive rate within bounds |
-| `POST` | `/api/v1/promotions` | Creates a promotion: a code, or an automatic one (no code, named), with priority, stacking and a cap |
+| `POST` | `/api/v1/promotions` | Creates a promotion: a code, or an automatic one (no code, named), with priority, stacking, a cap, and an optional JSON Logic `condition` and `conditionMessage` ([Conditions](/guides/promotions/#conditions)) |
 | `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
 | `POST` | `/api/v1/stock/review` | Runs the stock review now |
 | `GET` | `/api/v1/stock?q=&belowReorder=` | The stock list: SKUs, stock and reorder points |

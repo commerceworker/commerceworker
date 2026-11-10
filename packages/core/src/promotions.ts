@@ -5,7 +5,8 @@
  * and what they take off.
  *
  * Every stored field is interpreted here and nowhere else: `promotionProblem` is the one gate on
- * whether a promotion fits an order, `applyPromotion` the one place a kind turns into a discount,
+ * whether a promotion fits an order (its typed fields, then its JSON Logic `condition`, see
+ * `promotion-conditions.ts`), `applyPromotion` the one place a kind turns into a discount,
  * and `choosePromotions` the one place stacking and priority are decided.
  *
  * A discount lowers the unit prices of the lines it covers, so the subtotal, tax, invoices and
@@ -15,6 +16,7 @@
 
 import { normalizePromoCode } from './cart';
 import { fromBase, money, toBase } from './logic';
+import { type ConditionInput, promotionConditionHolds } from './promotion-conditions';
 import type { OrderLine } from './types';
 
 export const PROMOTION_KINDS = ['pct', 'amount', 'free_shipping'] as const;
@@ -51,6 +53,13 @@ export type Promotion = {
   stacking: PromotionStacking;
   /** The most it takes off one order, in the base currency; null for no cap. */
   maxDiscount: number | null;
+  /**
+   * A JSON Logic expression the order must meet, beside the fields above (see
+   * `promotion-conditions.ts`); null for none.
+   */
+  condition: object | null;
+  /** What a buyer entering the code is told when `condition` fails; null for the default. */
+  conditionMessage: string | null;
 };
 
 /** What a promotion is called to people: its code, else its name. */
@@ -68,12 +77,7 @@ export function promoCodesOf(meta: Record<string, unknown> | undefined): string[
   return [...new Set(codes)].slice(0, 10);
 }
 
-export type PromotionContext = {
-  now: number;
-  customerId: string | undefined;
-  currency: string;
-  fxRate: number | undefined;
-  lines: OrderLine[];
+export type PromotionContext = ConditionInput & {
   /** Redemptions so far, for the limits: all of them, and this customer's. */
   redeemed: { total: number; byCustomer: number };
 };
@@ -105,6 +109,9 @@ export function promotionProblem(p: Promotion, c: PromotionContext): string | nu
   if (!lines.length) return `${l} doesn't cover anything in the order.`;
   if (p.minSubtotal !== null && toBase(subtotalOf(c.lines), c.fxRate) < p.minSubtotal)
     return `${l} needs a subtotal of at least ${p.minSubtotal}.`;
+  // Last: the typed fields are cheap and their refusals say more.
+  if (p.condition !== null && !promotionConditionHolds(p.condition, c))
+    return p.conditionMessage || `This order doesn't qualify for ${l}.`;
   return null;
 }
 

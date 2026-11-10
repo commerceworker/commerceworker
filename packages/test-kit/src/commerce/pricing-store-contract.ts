@@ -70,6 +70,8 @@ export const PRICING_FIXTURE: PricingFixture = {
       priority: 0,
       stacking: 'exclusive',
       maxDiscount: null,
+      condition: null,
+      conditionMessage: null,
     },
     {
       id: 'pc_promo_paused',
@@ -89,6 +91,8 @@ export const PRICING_FIXTURE: PricingFixture = {
       priority: 0,
       stacking: 'exclusive',
       maxDiscount: null,
+      condition: null,
+      conditionMessage: null,
     },
     // Automatic promotions (no code): one live, and one each paused, not yet valid and ended.
     ...(
@@ -116,6 +120,8 @@ export const PRICING_FIXTURE: PricingFixture = {
       priority: 7,
       stacking: 'stackable' as const,
       maxDiscount: 12,
+      condition: null,
+      conditionMessage: null,
       ...over,
     })),
   ],
@@ -200,6 +206,7 @@ export function describePricingStoreContract(
       expect(paused).toMatchObject({ status: 'paused', skus: null, perCustomerLimit: 1 });
       // The rules every promotion carries: older ones are exclusive, uncapped, priority 0.
       expect(last).toMatchObject({ priority: 0, stacking: 'exclusive', maxDiscount: null });
+      expect(last).toMatchObject({ condition: null, conditionMessage: null });
     });
 
     it('reads automatic promotions live at a time, and never by code', async () => {
@@ -362,6 +369,8 @@ export function describePricingStoreContract(
         priority: 3,
         stacking: 'stackable' as const,
         maxDiscount: 25,
+        condition: null,
+        conditionMessage: null,
       };
       expect(await s.createPromotion(promo, 'usr_ada')).toBe(true);
       expect(await s.createPromotion({ ...promo, id: 'pc_promo_dup' }, 'usr_ada')).toBe(false);
@@ -381,6 +390,46 @@ export function describePricingStoreContract(
       expect((await s.promotionsByCode(['PC-NEW10']))[0]?.status).toBe('paused');
     });
 
+    it('keeps a promotion’s condition and its message, as written', async () => {
+      const s = await store();
+      const condition = {
+        and: [
+          { '==': [{ var: 'order.meta.shipTo.country' }, 'US'] },
+          { some: [{ var: 'order.lines' }, { '>=': [{ var: 'qty' }, 3] }] },
+        ],
+      };
+      const promo = {
+        id: 'pc_promo_cond',
+        code: 'PC-COND',
+        name: 'US bulk',
+        kind: 'pct' as const,
+        value: 5,
+        minSubtotal: null,
+        skus: null,
+        customerId: null,
+        validTo: null,
+        maxRedemptions: null,
+        perCustomerLimit: null,
+        priority: 0,
+        stacking: 'exclusive' as const,
+        maxDiscount: null,
+        condition,
+        conditionMessage: 'US orders with 3 or more of a SKU only.',
+      };
+      expect(await s.createPromotion(promo, 'usr_ada')).toBe(true);
+      const expected = { condition, conditionMessage: promo.conditionMessage };
+      expect(await s.promotion('pc_promo_cond')).toMatchObject(expected);
+      expect((await s.promotionsByCode(['PC-COND']))[0]).toMatchObject(expected);
+      expect((await s.listPromotions()).find((p) => p.id === 'pc_promo_cond')).toMatchObject(
+        expected,
+      );
+      // Without one, both read back null, not an empty expression.
+      expect(await s.promotion('pc_promo_last')).toMatchObject({
+        condition: null,
+        conditionMessage: null,
+      });
+    });
+
     it('adds any number of automatic promotions, which have no code to clash', async () => {
       const s = await store();
       const auto = {
@@ -398,6 +447,8 @@ export function describePricingStoreContract(
         priority: 0,
         stacking: 'exclusive' as const,
         maxDiscount: null,
+        condition: null,
+        conditionMessage: null,
       };
       expect(await s.createPromotion(auto, 'usr_ada')).toBe(true);
       expect(await s.createPromotion({ ...auto, id: 'pc_promo_auto_b' }, 'usr_ada')).toBe(true);

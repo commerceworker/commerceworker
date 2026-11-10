@@ -35,6 +35,7 @@ and can be limited to:
 - **Uses in all** and **uses per customer**: each order that keeps a promotion uses it once, an
   automatic one included.
 - **An end date**.
+- **A condition**: a JSON Logic expression the order must also meet (see [Conditions](#conditions)).
 - **A cap**: the most it takes off one order, in the base currency, whatever its percentage or
   amount works out to. A free-shipping promotion with a cap takes off at most the cap.
 
@@ -47,6 +48,84 @@ and set apart by how it combines:
 end date is marked **Ended**, paused or not, and offers neither, since neither would change
 anything. Its dates can't be edited: to run the offer again, add a new promotion. One for a single
 customer names them, linked to their page. The **Used** column counts the orders that have used it.
+
+## Conditions
+
+A condition is a [JSON Logic](/reference/expressions/#json-logic) expression, the same language a
+flow's Condition step uses, stored with the promotion. It sits beside the fields above, not
+instead of them: a promotion applies only when its limits and its condition both hold. Use the
+fields for what they cover (SKUs, one customer, a minimum subtotal, dates) and a condition for the
+rest. The form's **Condition** field takes the expression as JSON; **Told to a buyer whose order
+doesn't meet it** is the message for a code whose condition fails (it needs a condition).
+`create_promotion` takes `condition` and `conditionMessage`, over MCP and REST alike; its confirm
+card shows the condition as written.
+
+A condition reads this data, with the names a flow's expressions use:
+
+| Variable | Holds |
+|---|---|
+| `now` | When the order is priced, in epoch milliseconds |
+| `order.channel` | Where the order came in: `web`, `pos`, `api`, `agent`, … |
+| `order.currency` | The order's currency |
+| `order.subtotal` | The lines' total in the order's currency, before shipping and tax |
+| `order.baseSubtotal` | The same subtotal in the base currency |
+| `order.customerId` | The buyer's customer id, or `null` for a guest |
+| `order.lines` | The lines, each with `sku`, `name`, `qty` and `unitPrice` (`null` when unset); `order.lines.0.sku` reads one by position |
+| `order.meta.shipTo.country` | The ship-to country as a two-letter code (`"usa"` reads as `US`), or `null` |
+| `order.meta.shipTo.region` | The ship-to state or province code, or `null` |
+| `customer.id`, `customer.kind`, `customer.tier` | The buyer's id, kind (`business`, `consumer`, `internal`) and pricing tier; all `null` for a guest |
+
+The subtotal is the order's lines as they stand when the step runs, before any promotion. The data
+is read-only: a condition can't change the order. Products' tags and categories aren't available
+yet.
+
+Beside `var`, a condition may use `if`, `==`, `===`, `!=`, `!==`, `!`, `!!`, `and`, `or`, `>`,
+`>=`, `<`, `<=`, `max`, `min`, `+`, `-`, `*`, `/`, `%`, `in`, `cat`, `substr`, `merge`, `map`,
+`filter`, `reduce`, `all`, `some`, `none`, and CommerceWorker's `days` and `len`. Inside `map`,
+`filter`, `all`, `some`, `none` and `reduce` only the item is in scope: for a line, `sku`, `name`,
+`qty` and `unitPrice` (`current` and `accumulator` in `reduce`). The form and `create_promotion`
+refuse, with the reason, an expression that names another variable, uses another operator
+(`method`, or the clock's `{"now": []}`: read the variable `now`), computes a variable's name,
+nests list operations more than two deep, or runs past 4,000 characters. A condition that can't
+be evaluated, or whose result is false, doesn't qualify the order.
+
+Examples:
+
+```json
+{ "==": [{ "var": "order.meta.shipTo.country" }, "US"] }
+```
+
+Only orders shipping to the US.
+
+```json
+{ "and": [
+  { "==": [{ "var": "customer.kind" }, "business"] },
+  { "in": [{ "var": "customer.tier" }, ["gold", "silver"]] }
+] }
+```
+
+Business customers in the gold or silver tier.
+
+```json
+{ "some": [{ "var": "order.lines" },
+  { "and": [{ "==": [{ "var": "sku" }, "WID-100"] }, { ">=": [{ "var": "qty" }, 3] }] }
+] }
+```
+
+An order with three or more of `WID-100`.
+
+```json
+{ "and": [
+  { "==": [{ "var": "order.channel" }, "pos"] },
+  { "<": [{ "var": "now" }, 1798761600000] }
+] }
+```
+
+In-store orders until the end of 2026.
+
+A buyer entering a code whose condition fails is told the message you wrote, or
+`This order doesn't qualify for WELCOME15.` An automatic promotion whose condition fails is
+dropped without a word, like any other automatic promotion that doesn't fit.
 
 ## In a flow
 

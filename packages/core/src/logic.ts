@@ -33,13 +33,14 @@ jsonLogic.add_operation('len', (v: unknown) =>
   Array.isArray(v) ? v.length : typeof v === 'string' ? v.length : 0,
 );
 
-export function evaluate(expression: unknown, ctx: RunContext): unknown {
+/** `ctx` is the data the expression's `var`s read: a run's context, or a promotion's. */
+export function evaluate(expression: unknown, ctx: object): unknown {
   if (expression === undefined || expression === null) return expression;
   if (typeof expression !== 'object') return expression;
   return jsonLogic.apply(expression as jsonLogic.RulesLogic, ctx);
 }
 
-export function truthy(expression: unknown, ctx: RunContext): boolean {
+export function truthy(expression: unknown, ctx: object): boolean {
   return jsonLogic.truthy(evaluate(expression, ctx));
 }
 

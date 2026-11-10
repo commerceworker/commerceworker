@@ -1092,7 +1092,9 @@ export const carts = sqliteTable(
  * `kind` is `pct` (`value` a percentage), `amount` (`value` off the subtotal) or `free_shipping`;
  * `skus` a JSON array the discount is limited to, or null for every line. `priority` (higher is
  * considered first), `stacking` (`exclusive` or `stackable`) and `max_discount` (a cap per order,
- * in the base currency) decide how promotions combine.
+ * in the base currency) decide how promotions combine. `condition` is a JSON Logic expression
+ * (JSON text) the order must meet and `condition_message` what a buyer entering the code is told
+ * when it doesn't.
  */
 export const promotions = sqliteTable(
   'promotions',
@@ -1117,6 +1119,8 @@ export const promotions = sqliteTable(
     priority: integer('priority').notNull().default(0),
     stacking: text('stacking').notNull().default('exclusive'),
     maxDiscount: real('max_discount'),
+    condition: text('condition'),
+    conditionMessage: text('condition_message'),
   },
   (t) => [
     uniqueIndex('promotions_code').on(t.code),

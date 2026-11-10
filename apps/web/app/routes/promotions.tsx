@@ -9,6 +9,7 @@ import { BASE_CURRENCY, promotionLabel } from '@commerceworker/core';
 import { Button } from '@commerceworker/ui/button';
 import {
   Field,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -21,6 +22,7 @@ import { cn } from '@commerceworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
 import { Body, Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
+import { Textarea } from '@commerceworker/ui/textarea';
 import { Fragment, type ReactNode, useEffect, useState } from 'react';
 import {
   Form,
@@ -68,6 +70,8 @@ export async function action({ request }: Route.ActionArgs) {
     maxRedemptions,
     perCustomerLimit,
     maxDiscount,
+    condition,
+    conditionMessage,
     ...rest
   } = p;
   return {
@@ -75,6 +79,8 @@ export async function action({ request }: Route.ActionArgs) {
       ...rest,
       ...(code ? { code } : {}),
       ...(maxDiscount !== null ? { maxDiscount } : {}),
+      ...(condition ? { condition } : {}),
+      ...(conditionMessage ? { conditionMessage } : {}),
       ...(customerId ? { customerId } : {}),
       ...(minSubtotal !== null ? { minSubtotal } : {}),
       ...(skus ? { skus } : {}),
@@ -179,6 +185,7 @@ export default function Promotions() {
                         {customers[p.customerId] ?? p.customerId}
                       </Link>
                     ) : null,
+                    p.condition ? 'a condition' : null,
                     p.maxDiscount ? `at most ${money(p.maxDiscount)} per order` : null,
                     p.maxRedemptions ? plural(p.maxRedemptions, 'use') : null,
                     p.perCustomerLimit ? `${p.perCustomerLimit} per customer` : null,
@@ -328,6 +335,35 @@ function NewPromotion({ error, busy }: { error?: string | null; busy: boolean })
           <Field className="gap-2">
             <FieldLabel htmlFor="promo-validTo">Ends on (optional)</FieldLabel>
             <Input id="promo-validTo" name="validTo" type="date" className="max-w-48" />
+          </Field>
+        </FieldSet>
+        <FieldSet className="gap-4">
+          <FieldLegend variant="label" className="mb-0">
+            Condition
+          </FieldLegend>
+          <Field className="gap-2">
+            <FieldLabel htmlFor="promo-condition">JSON Logic (optional)</FieldLabel>
+            <Textarea
+              id="promo-condition"
+              name="condition"
+              rows={5}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder={'{"==": [{"var": "order.meta.shipTo.country"}, "US"]}'}
+              className="font-mono text-xs"
+            />
+            <FieldDescription>
+              Also has to hold, beside the limits above. Variables: order.channel, order.currency,
+              order.subtotal, order.baseSubtotal, order.lines, order.meta.shipTo.country and
+              .region, customer.kind and .tier, now.
+            </FieldDescription>
+          </Field>
+          <Field className="gap-2">
+            <FieldLabel htmlFor="promo-conditionMessage">
+              Told to a buyer whose order doesn't meet it (optional)
+            </FieldLabel>
+            <Input id="promo-conditionMessage" name="conditionMessage" maxLength={200} />
           </Field>
         </FieldSet>
         {error ? <FieldError>{error}</FieldError> : null}

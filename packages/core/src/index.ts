@@ -43,6 +43,7 @@ export * from './plugin-ui';
 export * from './plugins';
 export * from './policy';
 export * from './pricing';
+export * from './promotion-conditions';
 export * from './promotions';
 export * from './provenance';
 export * from './reasons';

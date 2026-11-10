@@ -4,11 +4,13 @@
  */
 
 import {
+  MAX_CONDITION_MESSAGE,
   normalizePromoCode,
   PROMOTION_KINDS,
   PROMOTION_STACKING,
   type PromotionKind,
   type PromotionStacking,
+  parsePromotionCondition,
 } from '@commerceworker/core';
 
 export type PromotionState = 'active' | 'paused' | 'ended';
@@ -40,6 +42,8 @@ export type PromotionForm = {
   priority: number;
   stacking: PromotionStacking;
   maxDiscount: number | null;
+  condition: object | null;
+  conditionMessage: string | null;
 };
 
 /** The promotion a form describes, or why it can't be one. */
@@ -73,6 +77,15 @@ export function promotionFrom(f: FormData): PromotionForm | string {
   if (!PROMOTION_STACKING.includes(stacking)) return 'Pick how the promotion combines.';
   const validTo = s('validTo') ? Date.parse(`${s('validTo')}T23:59:59Z`) : null;
   if (validTo !== null && Number.isNaN(validTo)) return 'The end date is not a date.';
+  // Pasted JSON Logic, checked here by the same rules the assistant's tool applies.
+  let condition: object | null = null;
+  if (s('condition')) {
+    const parsed = parsePromotionCondition(s('condition'));
+    if ('error' in parsed) return parsed.error;
+    condition = parsed.condition;
+  }
+  const conditionMessage = s('conditionMessage').slice(0, MAX_CONDITION_MESSAGE) || null;
+  if (conditionMessage && !condition) return 'A message for a failed condition needs a condition.';
   const skus = s('skus')
     ? s('skus')
         .split(/[\s,]+/)
@@ -92,5 +105,7 @@ export function promotionFrom(f: FormData): PromotionForm | string {
     priority,
     stacking,
     maxDiscount,
+    condition,
+    conditionMessage,
   };
 }
