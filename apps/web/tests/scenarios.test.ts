@@ -1,14 +1,10 @@
 import { orderInputSchema, SCENARIOS, TEMPLATES, validateGraph } from '@commerceworker/core';
+import { ago, clock, dateTime, money, plural } from '@commerceworker/ui/lib/format';
 import { describe, expect, it } from 'vitest';
 import {
-  ago,
   channelLabel,
   clip,
-  clock,
-  dateTime,
   duration,
-  money,
-  plural,
   statusColor,
   waitingForLabel,
   waitLabel,

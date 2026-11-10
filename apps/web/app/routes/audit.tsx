@@ -1,9 +1,9 @@
+import { Ago } from '@commerceworker/ui/ago';
 import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
+import { Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { ScrollText, X } from 'lucide-react';
 import { Form, Link, useLoaderData, useSubmit } from 'react-router';
-import { Ago } from '~/components/ago';
-import { Empty, PageHeader, Section } from '~/components/page';
 import {
   AUDIT_GROUPS,
   type AuditEvent,

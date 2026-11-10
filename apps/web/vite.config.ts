@@ -95,7 +95,11 @@ export default defineConfig(async () => {
         // A fleet deploy builds against its rendered config (`scripts/fleet.ts render <id>`).
         configPath: process.env.COMMERCEWORKER_WRANGLER_CONFIG,
         ...(e2e ? { remoteBindings: false, persistState: { path: '.wrangler/e2e' } } : {}),
-        ...(devPlugins.length ? { config: (c) => ({ services: withPlugins(c.services) }) } : {}),
+        // The storefront runs beside it (`pnpm storefront:dev`) on its own port.
+        config: (c) => ({
+          vars: { STOREFRONT_ORIGIN: 'http://localhost:5174' },
+          ...(devPlugins.length ? { services: withPlugins(c.services) } : {}),
+        }),
         // In dev, run the engine Worker in the same session so the ENGINE service binding, its
         // OrderAgent Durable Objects and Workflows all work locally. It deploys on its own. Dev
         // compresses waits so scenarios finish in minutes (production runs in real time), calls
@@ -108,6 +112,7 @@ export default defineConfig(async () => {
             config: (c) => ({
               vars: {
                 TIME_SCALE: '1440',
+                STOREFRONT_ORIGIN: 'http://localhost:5174',
                 APP_ORIGIN: 'http://localhost:5173',
                 OWN_HOSTS: 'localhost',
                 AI_GATEWAY_ID: '',

@@ -11,9 +11,9 @@ import {
   type Principal,
   type ProductReindex,
 } from '@commerceworker/core';
+import { count } from '@commerceworker/ui/lib/format';
 import { actorName, audit } from './audit.server';
 import { engine } from './env.server';
-import { count } from './format';
 import { signedActor } from './principal.server';
 
 /** The run, and what it did in one line for the page. */

@@ -1,16 +1,24 @@
 /**
- * The buyer of an external cart (a punchout session) in the web app. A plugin hands the buyer's
+ * The buyer of an external cart (a punchout session) on the storefront. A plugin hands the buyer's
  * system a one-time start link (`/cart/start/<cartId>/<token>`); redeeming it sets a cookie that
  * keeps that buyer on that cart, and nowhere else, until the cart closes. The cookie is its own
- * envelope (`signCartGuestSession`), never a session: it opens no staff page and no other cart.
+ * envelope (`signCartGuestSession`), never a session: it opens no staff page and no other cart,
+ * and the admin's host never sees it.
  */
 
 import { env } from 'cloudflare:workers';
 import { type CartGuest, signCartGuestSession, verifyCartGuestSession } from '@commerceworker/core';
+import { ANY_HTTPS_FRAMER, EMBED_HEADER } from '@commerceworker/security/csp';
 import { data } from 'react-router';
-import { cookie } from './auth.server';
-import { ANY_HTTPS_FRAMER, EMBED_HEADER } from './csp';
 import { principalKey } from './principal.server';
+
+/** The cookie `name` carries on `request`, if any. */
+function cookie(request: Request, name: string): string | undefined {
+  return (request.headers.get('cookie') ?? '')
+    .split(/;\s*/)
+    .find((c) => c.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
+}
 
 const COOKIE_RE = /^cart_[a-z0-9]+$/;
 

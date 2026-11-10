@@ -7,7 +7,7 @@ import {
   typingDue,
   typingLabel,
   typingSeen,
-} from '../app/lib/cart-typing';
+} from '../src/cart-typing';
 
 const now = 1_000_000;
 const notice = (memberId: string, name: string, until = now + CART_TYPING_MS): CartTyping => ({

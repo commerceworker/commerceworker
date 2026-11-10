@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepTicks, NO_TICKS, tick, tickAll, ticked } from '../app/lib/cart-ticks';
+import { keepTicks, NO_TICKS, tick, tickAll, ticked } from '../src/cart-ticks';
 
 const a = { id: 'li_1', sku: 'WID-100' };
 const b = { id: 'li_2', sku: 'GSK-010' };

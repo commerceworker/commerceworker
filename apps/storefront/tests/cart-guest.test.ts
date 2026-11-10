@@ -3,18 +3,17 @@ import {
   type CartGuest,
   type CartState,
   PRINCIPAL_HEADER,
-  type Principal,
   signCartGuestSession,
   verifyCartGuest,
   verifyPrincipal,
 } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const env = { PRINCIPAL_KEY: 'web-test-key' };
+const env = { PRINCIPAL_KEY: 'storefront-test-key' };
 const engineFetch = vi.fn(async (_r: Request) => new Response('ok'));
 const redeemCartStart = vi.fn();
 const cartSnapshot = vi.fn();
-const principal = vi.fn(async (_r: Request): Promise<Principal | null> => null);
+const customers = vi.fn(async (_ids: string[]): Promise<{ id: string; name: string }[]> => []);
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
@@ -22,44 +21,26 @@ vi.mock('~/lib/env.server', () => ({
   engine: () => ({ fetch: engineFetch, redeemCartStart, cartSnapshot }),
   docs: () => ({}),
 }));
-vi.mock('~/lib/orders.server', () => ({ customerNames: async () => ({}) }));
-vi.mock('~/lib/auth.server', () => ({
-  principal,
-  apiPrincipal: vi.fn(),
-  awaitingSetup: async () => false,
-  sessionId: async () => 'ses_1',
-  setupDue: () => null,
-  Throttled: class extends Error {},
-  TokenExpired: class extends Error {},
-  cookie: (request: Request, name: string) =>
-    (request.headers.get('cookie') ?? '')
-      .split(/;\s*/)
-      .find((c) => c.startsWith(`${name}=`))
-      ?.slice(name.length + 1),
-}));
+vi.mock('~/lib/wire.server', () => ({ pricingStore: () => ({ customers }) }));
 
 const { default: worker } = await import('../workers/app');
 const cartStart = await import('../app/routes/cart-start');
 const cartBuy = await import('../app/routes/cart-buy');
 
-const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as never;
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
   `ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
 const socket = (path: string, headers: Record<string, string> = {}) =>
   worker.fetch(
-    new Request(`https://app.test${path}`, {
-      headers: { upgrade: 'websocket', origin: 'https://app.test', ...headers },
+    new Request(`https://shop.test${path}`, {
+      headers: { upgrade: 'websocket', origin: 'https://shop.test', ...headers },
     }) as never,
     env as never,
-    ctx,
   );
 
 describe('an external cart’s buyer on its socket', () => {
   beforeEach(() => {
     engineFetch.mockClear();
-    principal.mockReset();
-    principal.mockResolvedValue(null);
   });
 
   it('forwards the buyer to their own cart with a guest header and no credentials', async () => {
@@ -99,34 +80,35 @@ describe('an external cart’s buyer on its socket', () => {
     expect(engineFetch).not.toHaveBeenCalled();
   });
 
-  it('forwards a signed-in person as themselves, not as the buyer whose cookie they hold', async () => {
-    const staff: Principal = { kind: 'user', id: 'usr_1', name: 'Sam', role: 'operator' };
-    principal.mockResolvedValue(staff);
-    await socket('/agents/cart-agent/cart_1', { cookie: await guestCookie() });
-    const header = engineFetch.mock.calls[0]![0].headers.get(PRINCIPAL_HEADER);
-    expect(
-      await verifyPrincipal([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_1'),
-    ).toMatchObject({ ...staff, session: 'ses_1' });
-    expect(await verifyCartGuest([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_1')).toBe(
-      null,
-    );
+  it('takes no sign-in: a staff session or token is no way onto a cart’s socket', async () => {
+    // Staff reach a cart's socket on the admin. Here only the cookie a start link set admits.
+    for (const headers of [
+      { authorization: 'Bearer cmw_live_x' } as Record<string, string>,
+      { cookie: 'ol_session=anything; ol_cart_1=forged' },
+    ]) {
+      expect((await socket('/agents/cart-agent/cart_1', headers)).status).toBe(401);
+    }
+    // Not a buyer's cookie for another cart's name either.
+    expect((await socket('/agents/cart-agent/cart_1?as=guest')).status).toBe(401);
+    expect(engineFetch).not.toHaveBeenCalled();
   });
 
-  it('forwards the buyer’s page as the guest when it asks, even with a staff sign-in', async () => {
-    const staff: Principal = { kind: 'user', id: 'usr_1', name: 'Sam', role: 'admin' };
-    principal.mockResolvedValue(staff);
-    const res = await socket('/agents/cart-agent/cart_1?as=guest', { cookie: await guestCookie() });
-    expect(res.status).toBe(200);
-    const header = engineFetch.mock.calls[0]![0].headers.get(PRINCIPAL_HEADER);
-    expect(await verifyCartGuest([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_1')).toEqual(
-      guest,
-    );
-    expect(await verifyPrincipal([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_1')).toBe(
-      null,
-    );
-    // Asking to be the guest without the buyer's cookie is refused, never answered as staff.
-    expect((await socket('/agents/cart-agent/cart_1?as=guest')).status).toBe(401);
-    expect(engineFetch).toHaveBeenCalledTimes(1);
+  it('serves no other agent’s socket', async () => {
+    // The order and assistant sockets are the admin's: they are not routes here.
+    for (const path of ['/agents/order-agent/ord_1', '/agents/assistant-agent/usr_1']) {
+      // They fall through to the app's own routes, which have none for them.
+      await socket(path, { cookie: await guestCookie() }).catch(() => null);
+    }
+    expect(engineFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-site socket upgrade even with the buyer’s cookie', async () => {
+    const res = await socket('/agents/cart-agent/cart_1', {
+      cookie: await guestCookie(),
+      origin: 'https://evil.example',
+    });
+    expect(res.status).toBe(403);
+    expect(engineFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -178,7 +160,7 @@ describe('the buyer’s pages refuse in a frame they can show', () => {
   it('a cart page without the buyer’s cookie', async () => {
     const r = await refusal(() =>
       cartBuy.loader({
-        request: new Request('https://app.test/cart/cart_1'),
+        request: new Request('https://shop.test/cart/cart_1'),
         params: { cartId: 'cart_1' },
       } as never),
     );
@@ -188,7 +170,7 @@ describe('the buyer’s pages refuse in a frame they can show', () => {
   });
 
   it('a cart that has closed, and one that went back to the buyer past its time', async () => {
-    const request = new Request('https://app.test/cart/cart_1', {
+    const request = new Request('https://shop.test/cart/cart_1', {
       headers: { cookie: await guestCookie() },
     });
     const load = () => cartBuy.loader({ request, params: { cartId: 'cart_1' } } as never);
@@ -211,5 +193,21 @@ describe('the buyer’s pages refuse in a frame they can show', () => {
       frameAncestors: ['https://buyer.example'],
       formAction: ['https://buyer.example/punchout;jsessionid=A'],
     });
+  });
+});
+
+describe('the buyer’s cart page', () => {
+  it('names the customer the cart is for, read here and never from the admin', async () => {
+    customers.mockResolvedValueOnce([{ id: 'cus_1', name: 'Contoso Ltd' }]);
+    cartSnapshot.mockResolvedValueOnce(snapshot({ customerId: 'cus_1' }));
+    const page = (await cartBuy.loader({
+      request: new Request('https://shop.test/cart/cart_1', {
+        headers: { cookie: await guestCookie() },
+      }),
+      params: { cartId: 'cart_1' },
+    } as never)) as unknown as { data: { customerName: string | null; guest: CartGuest } };
+    expect(customers).toHaveBeenCalledWith(['cus_1']);
+    expect(page.data.customerName).toBe('Contoso Ltd');
+    expect(page.data.guest).toEqual(guest);
   });
 });

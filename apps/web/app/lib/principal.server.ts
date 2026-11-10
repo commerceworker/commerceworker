@@ -1,6 +1,5 @@
 import { env } from 'cloudflare:workers';
 import {
-  type CartGuest,
   DEV_PRINCIPAL_KEY,
   PRINCIPAL_HEADER,
   type Principal,
@@ -8,7 +7,6 @@ import {
   pluginKey,
   type RpcActor,
   type SignedActor,
-  signCartGuest,
   signPrincipal,
   signRpcActor,
 } from '@commerceworker/core';
@@ -20,11 +18,6 @@ import {
  */
 export async function setPrincipalHeader(headers: Headers, p: ProxiedPrincipal, path: string) {
   headers.set(PRINCIPAL_HEADER, await signPrincipal(principalKey(), p, path));
-}
-
-/** The header for an external cart's buyer on that cart's socket (`signCartGuest`). */
-export async function setGuestHeader(headers: Headers, g: CartGuest, path: string) {
-  headers.set(PRINCIPAL_HEADER, await signCartGuest(principalKey(), g, path));
 }
 
 /**

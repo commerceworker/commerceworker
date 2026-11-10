@@ -5,7 +5,8 @@
  */
 
 import { BASE_CURRENCY, type FlowNode, type OrderState, toBase } from '@commerceworker/core';
-import { clock, money, orderRef, until } from './format';
+import { clock, money, until } from '@commerceworker/ui/lib/format';
+import { orderRef } from './format';
 
 /** Time a decision needs to reach the order before its step times out. */
 export const SEND_MS = 1500;

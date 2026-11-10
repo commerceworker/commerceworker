@@ -1,0 +1,20 @@
+{
+  "extends": "@commerceworker/typescript-config/react-app.json",
+  "compilerOptions": {
+    "types": ["vite/client"],
+    "rootDirs": [".", "./.react-router/types"],
+    "paths": { "~/*": ["./app/*"] },
+    "verbatimModuleSyntax": true
+  },
+  "include": [
+    ".react-router/types/**/*",
+    "app/**/*",
+    "workers/**/*",
+    "tests/**/*",
+    "e2e/**/*",
+    "playwright.config.ts",
+    "worker-configuration.d.ts",
+    "vite.config.ts",
+    "react-router.config.ts"
+  ]
+}

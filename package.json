@@ -13,6 +13,7 @@
     "check-types": "turbo run check-types",
     "commitlint": "commitlint --verbose",
     "web:dev": "pnpm --filter @commerceworker/web dev",
+    "storefront:dev": "pnpm --filter @commerceworker/storefront dev",
     "engine:dev": "pnpm --filter @commerceworker/engine dev",
     "docs:dev": "pnpm --filter @commerceworker/docs dev",
     "docs:build": "pnpm --filter @commerceworker/docs build",

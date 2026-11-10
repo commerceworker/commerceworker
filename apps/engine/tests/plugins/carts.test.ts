@@ -131,7 +131,7 @@ describe('the plugin host API', () => {
     const a = await open({ sessionRef, lines: [{ sku: 'WID-100', qty: 4 }] });
     const b = await open({ sessionRef });
     expect(b.cartId).toBe(a.cartId);
-    expect(b.startUrl).toBe(`https://com.commerceworker.test${b.startPath}`);
+    expect(b.startUrl).toBe(`https://shop.commerceworker.test${b.startPath}`);
     expect(b.token).not.toBe(a.token);
     const row = await db().select().from(carts).where(eq(carts.id, a.cartId)).get();
     expect(row).toMatchObject({ pluginId: 'example', sessionRef, createdBy: 'plugin:example' });

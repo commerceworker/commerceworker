@@ -8,9 +8,9 @@ import {
   PLUGIN_VIEW_MAX_BYTES,
   PLUGIN_VIEW_TYPE,
   runHealthChecks,
-  UCP_PATH,
-  UCP_PROFILE_PATH,
 } from '@commerceworker/core';
+import { withSecurityHeaders } from '@commerceworker/security/csp';
+import { crossOrigin } from '@commerceworker/security/origin';
 import { createRequestHandler, RouterContextProvider } from 'react-router';
 import {
   handleApi,
@@ -27,23 +27,20 @@ import {
   Throttled,
   TokenExpired,
 } from '../app/lib/auth.server';
-import { cartGuest } from '../app/lib/cart-guest.server';
-import { withSecurityHeaders } from '../app/lib/csp';
 import { demoRefusal } from '../app/lib/demo.server';
 import { docs, engine } from '../app/lib/env.server';
 import { writeHealth } from '../app/lib/health.server';
 import { mcpDiscovery } from '../app/lib/mcp-discovery';
 import { isOAuthPath, oauthFetch } from '../app/lib/oauth.server';
 import { openApiDocument } from '../app/lib/openapi';
-import { bearerApiCall, crossOrigin } from '../app/lib/origin';
+import { bearerApiCall } from '../app/lib/origin';
 import { pluginPageContext } from '../app/lib/plugin-view';
 import { isPluginPublicPath, pluginFetch, pluginPathId, unalias } from '../app/lib/plugins.server';
-import { setGuestHeader, setPrincipalHeader } from '../app/lib/principal.server';
+import { setPrincipalHeader } from '../app/lib/principal.server';
 import { overBudget } from '../app/lib/rate-limit';
 import { SCIM_PATH } from '../app/lib/scim';
 import { scimFetch } from '../app/lib/scim.server';
 import { handleStripeWebhook } from '../app/lib/stripe.server';
-import { ucpDiscovery, ucpFetch } from '../app/lib/ucp.server';
 
 /**
  * The deploy smoke test's check: this Worker's D1 and R2, and the engine's (over the service
@@ -213,12 +210,6 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   const discovered = await mcpDiscovery(request);
   if (discovered) return discovered;
 
-  // UCP (agentic checkout): the business profile is public; checkout and orders under /ucp take
-  // a registered platform's key (app/lib/ucp.server.ts).
-  if (url.pathname === UCP_PROFILE_PATH && request.method === 'GET') return ucpDiscovery(url);
-  if (url.pathname === UCP_PATH || url.pathname.startsWith(`${UCP_PATH}/`))
-    return ucpFetch(request);
-
   // MCP, A2A and their OAuth endpoints (discovery, registration, tokens). The consent page
   // itself, /oauth/authorize, is a page of the app below.
   if (isOAuthPath(url.pathname)) return oauthFetch(request, env, ctx);
@@ -286,35 +277,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     return handleApi(request, caller);
   }
 
-  // The order page's live connection to its OrderAgent, a cart page's to its CartAgent, and the
-  // assistant panel's to the person's own AssistantAgent (Agents SDK WebSocket + RPC, and the
-  // chat's message fetch).
+  // The order page's live connection to its OrderAgent, a staff cart page's to its CartAgent, and
+  // the assistant panel's to the person's own AssistantAgent (Agents SDK WebSocket + RPC, and the
+  // chat's message fetch). A cart's buyer reaches theirs on the storefront.
   const order = url.pathname.startsWith('/agents/order-agent/');
   const cart = url.pathname.startsWith('/agents/cart-agent/');
   const assistant = url.pathname.startsWith('/agents/assistant-agent/');
   if (order || cart || assistant) {
-    // The buyer's page asks to be the guest (`as=guest`) even if the browser also has a staff
-    // sign-in (staff trying a punchout, or local dev, where everyone is an admin): the guest can
-    // do less, and only what the buyer may, such as send the cart back.
-    const asGuest = cart && url.searchParams.get('as') === 'guest';
-    const caller = asGuest ? null : await principal(request);
-    // An external cart's buyer, on their own cart's socket only.
-    if (!caller && cart) {
-      // The raw segment: a cart id has nothing to decode, and cartGuest refuses anything else
-      // (decoding a malformed escape would throw before the refusal).
-      const guest = await cartGuest(request, url.pathname.split('/')[3] ?? '');
-      if (!guest) return new Response('Unauthorized', { status: 401 });
-      const headers = new Headers(request.headers);
-      headers.delete('cookie');
-      headers.delete('authorization');
-      await setGuestHeader(headers, guest, url.pathname);
-      return engine().fetch(
-        new Request(
-          `https://engine${url.pathname}${url.search}`,
-          new Request(request, { headers }),
-        ),
-      );
-    }
+    const caller = await principal(request);
     if (!caller) return new Response('Unauthorized', { status: 401 });
     const due = setupDue(caller);
     if (due) return new Response(due, { status: 403 });

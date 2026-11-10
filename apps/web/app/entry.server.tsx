@@ -1,8 +1,9 @@
+import { newNonce, pageHeaders } from '@commerceworker/security/csp';
+import { NonceContext } from '@commerceworker/ui/lib/nonce';
 import { isbot } from 'isbot';
 import { renderToReadableStream } from 'react-dom/server';
 import type { EntryContext, RouterContextProvider } from 'react-router';
 import { ServerRouter } from 'react-router';
-import { NonceContext, newNonce, pageHeaders } from './lib/csp';
 
 export const streamTimeout = 5_000;
 

@@ -122,7 +122,7 @@ and the code or account disagree, the code and account are right. Report the gap
      against `/api/v1`, `/mcp`, `/a2a`, `/ucp/*`, `/oauth/*`, `/scim/v2` and the webhook paths.
    - Rate Limiting bindings vs zone rules.
    - Turnstile or bot protection on `/login`, `/setup` and cart start links.
-   - CSP and headers (`apps/web/app/lib/csp.ts`, `entry.server.tsx`) on web, delivery and
+   - CSP and headers (`packages/security/src/csp.ts`, `entry.server.tsx`) on web, storefront, delivery and
      docs, and CORS on delivery and `/ucp`.
    - `workers_dev` and preview URLs off on every `commerceworker-*` script, live
      (`/workers/scripts/<name>/subdomain`), including orphans.

@@ -13,6 +13,7 @@ import {
   type GapKind,
   gapGroup,
 } from '@commerceworker/core/product';
+import { Ago } from '@commerceworker/ui/ago';
 import { Badge } from '@commerceworker/ui/badge';
 import { Button } from '@commerceworker/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@commerceworker/ui/card';
@@ -30,12 +31,13 @@ import {
   ItemTitle,
 } from '@commerceworker/ui/item';
 import { Kbd } from '@commerceworker/ui/kbd';
+import { count } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { Body, Empty, PageHeader } from '@commerceworker/ui/page';
 import { Segmented, SegmentedItem } from '@commerceworker/ui/segmented';
 import { ChevronRight, PackageCheck } from 'lucide-react';
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useFetcher, useLoaderData, useRevalidator, useSearchParams } from 'react-router';
-import { Ago } from '~/components/ago';
 import {
   COLUMN_LABEL,
   cardReason,
@@ -45,7 +47,6 @@ import {
 } from '~/components/catalog/labels';
 import { ProductSheetView } from '~/components/catalog/sheet';
 import { catalogWrite, refusal, useCatalogAction } from '~/components/catalog/use-action';
-import { Body, Empty, PageHeader } from '~/components/page';
 import { useAssistant } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
 import {
@@ -55,7 +56,6 @@ import {
   loadBoard,
   loadSheet,
 } from '~/lib/catalog-board.server';
-import { count } from '~/lib/format';
 import { EASE, MOTION } from '~/lib/motion';
 import { pageShortcut } from '~/lib/shortcuts';
 import { useCan } from '~/lib/use-me';

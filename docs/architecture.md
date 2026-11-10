@@ -2,10 +2,12 @@
 
 The Workers, the service binding between web and engine, the packages, the bindings and the connectors.
 
-CommerceWorker is two Workers in one pnpm monorepo, plus the product catalog's two Workers (see
+CommerceWorker is three Workers in one pnpm monorepo, plus the product catalog's two Workers (see
 [Product catalog](#product-catalog)). `commerceworker-web` serves the dashboard, the flow
-editor and the REST API; `commerceworker-engine` runs orders. The web app reaches the engine only
-through a service binding, and the engine has no public URL.
+editor and the REST API; `commerceworker-storefront` serves what buyers reach (a punchout cart's
+pages and agentic checkout) at its own host, so a buyer never loads the admin; `commerceworker-engine`
+runs orders. The web app and the storefront reach the engine only through a service binding, and the
+engine has no public URL.
 
 ```
 browser ──► commerceworker-web (apps/web, React Router on Workers)
@@ -23,6 +25,15 @@ browser ──► commerceworker-web (apps/web, React Router on Workers)
 inbound mail ── Email Routing ──email()────────────►├─ receiveEmail   email intake (email.ts)
                                                     ├─ Workers AI, D1, R2
                                                     └─ CATALOG ──RPC──► commerceworker-catalog (CatalogApi)
+
+buyer / AI shopping platform ──► commerceworker-storefront (apps/storefront, uncached, shop.<domain>)
+              │  D1: UCP platforms and settings, a cart's customer name (its own composition root)
+              │  R2: a cart's files
+              ├── ENGINE service binding ──RPC──► the engine, as above
+              ├── /cart/start/:cartId/:token, /cart/:cartId   the punchout buyer's pages
+              ├── /carts/:cartId/attachments*, /carts/:cartId/products   the buyer's files and search
+              ├── /agents/cart-agent/:id ─fetch─► CartAgent, for the buyer's cookie only
+              └── /.well-known/ucp, /ucp/* ─────► UCP, for a registered platform's key only
 ```
 
 ## Packages
@@ -33,11 +44,14 @@ inbound mail ── Email Routing ──email()───────────
 | `plugins/<id>` | Optional features, each its own Worker and D1 database or a sandboxed bundle the engine loads, installed per deployment; see [Plugins](plugins.md). `plugins/example` is a test-only fixture |
 | `packages/plugin-sdk` (`@commerceworker/plugin-sdk`) | What plugins are built with: `definePlugin` (the `PluginRpc` entrypoint), the `pluginContract` suite and `bundlePlugin` for tests; see [Plugins](plugins.md) |
 | `packages/db` (`@commerceworker/db`) | Drizzle schema for D1, numbered SQL migrations, demo seed data (`seed/`, local and tests only), flow persistence (`getFlowVersionJson`, `publishFlow`) |
-| `packages/ui` (`@commerceworker/ui`) | shadcn/ui primitives, consumed as raw `.tsx` |
+| `packages/ui` (`@commerceworker/ui`) | shadcn/ui primitives, consumed as raw `.tsx`, and what the admin and the storefront share of its look: `page` (`PageHeader`, `Body`, `Section`, `Empty`), `confirm`, `ago`, the time and money formatters (`lib/format`), `use-now` and `use-date-time`, and the CSP nonce (`lib/nonce`) |
+| `packages/cart` (`@commerceworker/cart`) | What the staff cart and the buyer's cart share: `CartView` (`view`, with its tick and typing helpers), and the cart's files and product search (`files`), which take who is asking from the Worker that authenticated them |
+| `packages/security` (`@commerceworker/security`) | Trust-boundary primitives for every Worker that serves pages: roles, the signed principal, credentials, the page Content-Security-Policy and security headers (`csp`) and the cross-site request check (`origin`) |
 | `apps/engine` (`@commerceworker/engine`) | `OrderAgent`, `AssistantAgent`, `CartAgent`, `CommerceWorker`, `Replenish`, node executors, connectors, AI calls, outbox, `EngineApi` |
 | `apps/catalog` (`@commerceworker/catalog`) | The product catalog Worker: `CatalogShard`, `CatalogMeta` and `CatalogPublisher` Durable Objects, the publisher, `CatalogApi` |
 | `apps/delivery` (`@commerceworker/delivery`) | The public delivery Worker: content (gateway and cached `Delivery`, on when its stack is bound) and the read-only catalog API (gateway, cached `CatalogDelivery`, purge queue consumer), served at `catalog.<domain>` by the fleet |
-| `apps/web` (`@commerceworker/web`) | Dashboard, editor, live order view, approvals inbox, Commerce page, Catalog page (the product editor's board, [Product editor](product-editor.md#the-catalog-page)), `/api/v1` |
+| `apps/web` (`@commerceworker/web`) | Dashboard, editor, live order view, approvals inbox, Commerce page, Catalog page (the product editor's board, [Product editor](product-editor.md#the-catalog-page)), `/api/v1`, `/mcp`, `/a2a`, OAuth and the staff carts |
+| `apps/storefront` (`@commerceworker/storefront`) | What buyers reach, uncached, at `shop.<domain>`: a punchout buyer's cart pages, files, product search and socket, and UCP (agentic checkout). See [Storefront routing](#storefront-routing) |
 | `apps/docs` (`@commerceworker/docs`) | This site |
 
 `packages/core` is pure TypeScript so its semantics can be unit tested in Node: anything that needs
@@ -70,7 +84,7 @@ inbound mail ── Email Routing ──email()───────────
 `EngineApi` (`apps/engine/src/api.ts`) implements it as a `WorkerEntrypoint`. Every method except
 `startOrder`, `startOrderOnce`, `copilot`, `intakeMailboxes`, `exportDataSubject`, `eraseDataSubject`, `ucpProfile`, `runReplenish`, `reindexProducts`, the tax certificate calls, `pluginCatalog`, `pluginUsage` and `pluginFetch` forwards to the order's agent via
 `orderAgent(env, orderId)` (`apps/engine/src/namespaces.ts`). `EngineApi` trusts its caller: authorization happens in the web
-app before the call. The forwarded requests (sockets, `/mcp`, `/a2a`, `/ucp/*`) carry a principal the engine believes only when it is signed with `PRINCIPAL_KEY` for that path and unexpired (`forwardedPrincipal`). The web app types its `ENGINE` binding with `EngineRpc` and never imports
+app before the call. The forwarded requests (sockets, `/mcp`, `/a2a`, and the storefront's `/ucp/*` and cart socket) carry a principal the engine believes only when it is signed with `PRINCIPAL_KEY` for that path and unexpired (`forwardedPrincipal`). The web app types its `ENGINE` binding with `EngineRpc` and never imports
 engine source.
 
 ## Request routing
@@ -92,7 +106,6 @@ engine source.
 | `/agents/order-agent/*`, `/agents/cart-agent/*`, `/agents/assistant-agent/*` (a cart's socket with no staff sign-in, or asking `as=guest` as the buyer's page does, takes its buyer's cookie instead and is signed as a `CartGuest`, never falling back to staff; see [External carts](#external-carts)) | `principal`, then proxied to the engine's `fetch` (`routeAgentRequest`) with the caller signed into `x-commerceworker-principal` (replacing any the browser sent) and `cookie` and `authorization` deleted, carrying the Agents SDK WebSocket. For the assistant the instance name is replaced with the caller's id, so everyone reaches only their own |
 | `GET /.well-known/agent-card.json` | `agentCard(origin)` from core, public, `cache-control: public, max-age=300` |
 | `GET /mcp/server-card`, `GET /.well-known/ai-catalog.json` | `mcpDiscovery` (`apps/web/app/lib/mcp-discovery.ts`), public: the MCP Server Card (SEP-2127; name `<reversed host>/mcp`, the `/mcp` remote and `MCP_PROTOCOL_VERSIONS`, no tools or capabilities) and the AI Catalog entry that links it. `application/mcp-server-card+json` / `application/ai-catalog+json`, `Access-Control-Allow-Origin: *`, `public, max-age=3600`, an `ETag` honoured with `304`, `OPTIONS` `204`, other methods `405` |
-| `GET /.well-known/ucp`, `/ucp`, `/ucp/*` | `ucpDiscovery` and `ucpFetch` (`apps/web/app/lib/ucp.server.ts`), before the OAuth paths. See [UCP](#ucp-agentic-checkout) |
 | `/mcp`, `/a2a`, `/.well-known/oauth-*`, `/oauth/*` | `oauthFetch` (`apps/web/app/lib/oauth.server.ts`), before everything else. `/oauth/authorize` is excluded: it is the consent page, a React Router route |
 | `/docs/orders/*` | `principal`, then the R2 object, served with `content-security-policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` (without `sandbox` for a PDF, which the browser's viewer couldn't show sandboxed) and `x-content-type-options: nosniff`, its `etag` and `cache-control: private, no-cache` (so each view checks the sign-in); a matching `If-None-Match` is a `304` without the body (R2 `onlyIf`) |
 | `GET /login/sso`, `GET /login/sso/callback`, `/login/sso/link` | React Router loader routes for single sign-on (`apps/web/app/lib/sso.server.ts`; rules in `sso.ts`). `/login/sso` redirects to `/login` unless `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` are all set, spends the `API_LIMIT` budget per address, fetches the issuer's discovery document (cached an hour; its `issuer` must match, its endpoints must be https) and redirects to the authorization endpoint: code flow, PKCE `S256`, `state` and `nonce`, kept with the code verifier and the next path in the 10-minute `__Host-cmw_sso` cookie (`SameSite=Lax`, so the provider's top-level redirect carries it), sealed with `PRINCIPAL_KEY` as its own `sf1` envelope (`signSsoFlow` / `verifySsoFlow` in `packages/core/src/roles.ts`; `PRINCIPAL_KEY_PREVIOUS` also accepted), so an edited or expired one is refused as no sign-in in progress. The callback checks the cookie and `state`, swaps the code at the token endpoint (`client_secret_basic`, or the secret in the body when the provider lists methods without it), verifies the ID token with `jose` (signature from `jwks_uri`, issuer, audience, `nonce`, expiry with 60 seconds of tolerance), then `decideSso` picks the person: linked `external_sub`, else the same verified email (then linked, `auth.sso_linked`; when that person has a password, the callback instead sets the 10-minute `__Host-cmw_sso_link` cookie, an `sl1` envelope (`signSsoLink` in `packages/core/src/roles.ts`) holding the user id and subject, and redirects to `/login/sso/link`, which takes the account's password through `signInToLink` (the sign-in throttles; not refused under `ssoOnly`) and, without two-factor sign-in, links before starting the session (`auth.sign_in` with `method: "sso-link"`); with it, the two-factor page sends them back and the loader links once that person is signed in (`finishSsoLink`, only while `external_sub` is still null and no one else has the subject); a link that can't finish is audited as `auth.sign_in_failed` (`SSO link refused`)), else a new person when `jitRole` is set and the domain is listed (`team.user_added` with `via: "sso"`). Only `email_verified: true` keeps the email; a token without the claim keeps it only with `OIDC_TRUST_EMAIL` (Entra ID). The ID token must carry `exp`, `iat` and `sub`. It starts the same session as a password (`startSession`) and audits `auth.sign_in` with `method: "sso"`; a failure is `auth.sign_in_failed` with `method: "sso"` and a redirect to `/login?sso=failed`, `refused` or `disabled`. `/login/sso?reauth=1` from someone signed in is a step-up: it adds `prompt=login` and `max_age=0`, and the callback needs `auth_time` no earlier than a minute before the flow began and within the flow's ten minutes of the server's clock, keeps the session, and stamps `sessions.reauth_at` (`recordReauth`, audited `auth.reauthenticated`) only when the subject is the one linked to the signed-in person. With `ssoOnly` in effect (`ssoOnlyInEffect`: saved and a provider configured), `checkCredentials` and passkey sign-in refuse (`SSO only`), and `principal` no longer asks for two-factor setup or a password change from anyone (`passwordInUse`); someone with no password is never asked for two-factor sign-in either |
@@ -112,6 +125,31 @@ row, started by a password, a passkey or single sign-on) or a bearer token. `pri
 `workers_dev: false` and no routes it is reachable only through the binding. Its `email` handler
 receives messages from Email Routing and hands them to `receiveEmail`; see
 [Email intake](https://docs.commerceworker.com/guides/email-intake/).
+
+### Storefront routing
+
+`apps/storefront/workers/app.ts` is the buyer's side. It serves no admin, has no sign-in and holds no
+session: a buyer's only credential is the cookie a start link sets, and a platform's only one is its key.
+
+| Path | Handling |
+|---|---|
+| `GET /health`, `GET /health/deep` | `{ ok: true, service: "commerceworker-storefront" }`; the deep check (the deploy smoke test's) tries this Worker's D1 and R2 and the engine over the service binding, `503` when any is down |
+| `GET /.well-known/ucp` | `ucpDiscovery` (`apps/storefront/app/lib/ucp.server.ts`), public: the profile the engine builds for this host. See [UCP](#ucp-agentic-checkout) |
+| `/ucp`, `/ucp/*` | `ucpFetch`, by a registered platform's key, before the cross-site check (a platform is no browser and holds no cookie) |
+| any state-changing request or WebSocket upgrade | `crossOrigin` (`@commerceworker/security/origin`): its `Origin` must be this host, or `403`. The buyer's cookie is `SameSite=None` (their system frames the cart), so this is what stops another site posting with it |
+| `/agents/cart-agent/:id` | the buyer's cookie for that cart (`cartGuest`), else `401`; forwarded to the engine with `cookie` and `authorization` removed and the guest signed for that path (`setGuestHeader`). No other agent's socket is served here |
+| everything else | React Router: `/cart/start/:cartId/:token`, `/cart/:cartId`, `/carts/:cartId/attachments`, `/carts/:cartId/attachments/:attachmentId` and `/carts/:cartId/products` (a page without its own `cache-control` gets `private, no-cache`) |
+
+The two Workers each authenticate their own kind of caller and share the rules after it: the cart's
+files and product search are `@commerceworker/cart/files` (`uploadAttachment`, `downloadAttachment`,
+`searchProducts`), which both call with a `CartActor` (`staff` from the admin's session, `guest` from the
+buyer's cookie), so what a cart may hold, when a buyer's access has lapsed and what a download runs
+under are written once. The admin's `/carts/:cartId/attachments*` and `/carts/:cartId/products` admit
+a signed-in person only (`cartStaff`, `apps/web/app/lib/cart-files.server.ts`); the storefront's admit
+the buyer's cookie only (`cartBuyer`). A staff session is no way onto the storefront and a buyer's
+cookie is no way onto the admin: they are different hosts, and neither Worker looks for the other's
+credential. `apps/web/tests/buyer-surfaces.test.ts` holds the admin to serving none of the buyer's
+routes.
 
 ## REST API
 
@@ -354,17 +392,17 @@ message signatures (`signature.ts`, ES256 and `Content-Digest`), RFC 8941 struct
 schemas. The engine serves it from `apps/engine/src/ucp/`.
 
 **Boundary.** A platform is not a `Principal`: it has no role and acts only on its own checkouts
-and orders. The web Worker (`ucpFetch`) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_` and the
+and orders. The storefront Worker (`ucpFetch`, `apps/storefront/app/lib/ucp.server.ts`; platforms are registered on the admin) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_` and the
 SHA-256 in `ucp_platforms.key_hash`, revoked rows excluded), requires `UCP-Agent` to equal the
 registered `profile_url` (MCP may omit the header; the engine checks `meta["ucp-agent"]` against the
-same profile), answers `404` while `checkoutFlowId` is unset (`ucpSettings`, kept 30 seconds per isolate; the admin API reads it fresh), spends the `AGENT_LIMIT` budget per
+same profile), answers `404` while `checkoutFlowId` is unset (`ucpSettings`, kept 30 seconds per isolate, so a change an admin saves reaches the storefront within that time; a revoked key is refused at once, as keys are read from D1 on every call), spends the `AGENT_LIMIT` budget per
 platform (`/ucp:<platform id>`), deletes `authorization`, `x-api-key` and `cookie`, and signs a
 `PlatformCaller` onto `x-commerceworker-principal` with `signPlatform`. That is a separate envelope
 (`u1`, not `v1`) over the same key, path and 60-second expiry, so `verifyPrincipal` never accepts it
 and `verifyPlatform` never accepts a principal: a platform's header is refused at `/mcp`, `/a2a` and
 the sockets, and a person's at `/ucp`. The engine's `handleUcp` (`rest.ts`) believes only that
-header. The engine does not import web code; the web Worker reaches the profile through
-`EngineRpc.ucpProfile(origin)`.
+header. The engine does not import web or storefront code; the storefront reaches the profile through
+`EngineRpc.ucpProfile(origin)`, so the profile's URLs are on the storefront's host.
 
 **Discovery.** `ucpProfile` (`config.ts`) builds the business profile for the request's origin:
 services, `UCP_CAPABILITIES`, the payment handlers (`paymentHandlers`: `com.commerceworker.stripe` with
@@ -1270,7 +1308,7 @@ the rest is in its SQL, paged by `history`).
   `eraseSubject` and `eraseFromEvents`) delete the cart's deliveries and drop what's queued. Edits send none: they come
   on every keystroke-sized op, and the ending event carries what the cart came to.
 - **Typing.** The chat's composer calls `typing()` as its person writes, at most every
-  `CART_TYPING_EVERY_MS` (2 s, `apps/web/app/lib/cart-typing.ts`); the agent ignores a socket's
+  `CART_TYPING_EVERY_MS` (2 s, `packages/cart/src/cart-typing.ts`); the agent ignores a socket's
   call sooner than that before checking anything, then checks the caller as `say` does (anyone who
   may post chat) and sends a `CartTyping` (`{ type: 'cart_typing', memberId, name, until }`, five
   seconds on) to every other socket with a member, the same sockets the state reaches. The id and
@@ -1283,7 +1321,8 @@ the rest is in its SQL, paged by `history`).
   cart (`quoteCheckout` reads the step's `promotionsRefused`), and so does a cart whose flow has no
   such step; warnings never block submitting.
 - **Finding products.** The cart page's search (`/carts/<cartId>/products?q=`,
-  `routes/cart-products.ts`, staff or the cart's own buyer by `cartActor`) asks
+  `routes/cart-products.ts` on the admin for staff and on the storefront for the cart's own buyer, both
+  through `searchProducts` in `packages/cart/src/files.ts`) asks
   `EngineRpc.searchCartProducts` with the caller signed for `cart:<cartId>`. The engine
   (`apps/engine/src/cart/search.ts`) answers only someone who may change the cart while it is open
   and unexpired, with at most `CART_SEARCH_LIMIT` (20) `CartProduct`s (`sku`, `name`, `unitPrice`)
@@ -1297,12 +1336,12 @@ the rest is in its SQL, paged by `history`).
   `ucp/quote.ts`, the same draft the quote uses: contract prices and price rules, before
   promotions, shipping and tax). A flow that prices at cost shows a guest no prices, and a search
   never returns cost, stock or supplier. The SKU box stays for a SKU the person knows.
-- **Files.** The web app stores an upload (at most 10 MB, `ATTACHMENT_TYPES` only, 20 a cart) at
+- **Files.** The admin or the storefront (`uploadAttachment`, `packages/cart/src/files.ts`) stores an upload (at most 10 MB, `ATTACHMENT_TYPES` only, 20 a cart) at
   `carts/<cartId>/<id>` in `DOCS` and hands it to `EngineRpc.attachToCart`, which the agent
   (`attachAs`) refuses for anyone who may not change the cart, a cart that has ended or a key not
   under the cart; a refused file is deleted. `detach` (whoever added it, or an operator) removes and
-  deletes it. Downloads (`/carts/<cartId>/attachments/<id>`) go to staff and to the cart's own buyer
-  (`cartActor`), as attachments under a sandboxing CSP.
+  deletes it. Downloads (`/carts/<cartId>/attachments/<id>`, `downloadAttachment`) go to staff on the admin and to the
+  cart's own buyer on the storefront, as attachments under a sandboxing CSP.
 - **Ops.** `applyCartOp` applies one at a time: add (into the line with that SKU), set quantity
   (0 removes), set several quantities (`set_qtys`: one version and one reprice for the lot, refused
   whole if any line is gone or named twice, bounded by `MAX_CHECKOUT_LINES` in `applyCartOp` itself
@@ -1357,7 +1396,7 @@ or not), or the plugin loses its grant; the buyer's page and file downloads refu
 its alarm runs, and an alarm that fires mid-return looks again 10 seconds later. A cart whose plugin set
 `idleMs` stays open while its buyer works on it: the guest of that cart connecting to its socket
 or calling it, searching it, adding a file or downloading one (`keepOpen`; `keepOpenFor` from
-`attachAs`, `EngineRpc.searchCartProducts` and `EngineRpc.keepCartOpen`, which the web app calls
+`attachAs`, `EngineRpc.searchCartProducts` and `EngineRpc.keepCartOpen`, which the storefront calls
 for a buyer's download) moves `expiresAt` to `idleMs` from now (`extendedCartExpiry`:
 only by a minute or more, `CART_EXTEND_STEP_MS`, or the last step to the cap; never past
 `createdAt + MAX_EXTERNAL_CART_MS`, `externalCartCap`; never once it has ended or closed), without
@@ -1370,13 +1409,15 @@ time it had. An `expire` alarm that fires before `expiresAt` schedules itself ag
 closes at the time it opened with. `transfer` (the buyer only) sends the cart back: the core holds it, calls the plugin's
 `renderReturn`, keeps the fields (`returnForm` returns them again) and marks the cart `returned`.
 
-In the web app the start path is the route `/cart/start/:cartId/:token`: it redeems the link
+On the storefront the start path is the route `/cart/start/:cartId/:token`, and `startUrl` is on its origin
+(`STOREFRONT_ORIGIN`; a plugin's redirect to it is the one place off its own pages the admin lets one send
+anyone): it redeems the link
 (`EngineRpc.redeemCartStart`) and sets a cookie for that cart alone (`ol_<cartId>`, the `gs1`
 envelope `signCartGuestSession`, `HttpOnly; Secure; SameSite=None; Partitioned`, until the latest the cart can stay open,
 `externalCartEnd`: its `expiresAt`, or its cap when it has `idleMs`, so no extension outlives the
 cookie; the cart's own time still decides whether the gate, the page and its downloads admit them,
 returned or not), then goes to `/cart/:cartId`, the cart without staff controls (`CartView` in
-`apps/web/app/components/cart-view.tsx`, shared with the staff page). That page's CSP lets the
+`packages/cart/src/cart-view.tsx`, shared with the staff page). That page's CSP lets the
 cart's `frameOrigins` frame it and its form post to the cart's `returnUrl` (`EMBED_HEADER`, folded
 in by `entry.server.tsx`; `withSecurityHeaders` then leaves out `X-Frame-Options`). Its socket is
 proxied with the cookie's guest signed for the path (`setGuestHeader`). Sending the cart back
@@ -1385,9 +1426,9 @@ start. While the cart is open the page says when its session ends, and how to ke
 has `idleMs`; in the last 10 minutes, or at its cap, that turns into a warning (`SessionEnds`).
 
 The return URL goes into `form-action` as its origin and path (`parseEmbed` in
-`apps/web/app/lib/csp.ts`; CSP ignores the query), with `;` `,` and `'` in the path
+`packages/security/src/csp.ts`; CSP ignores the query), with `;` `,` and `'` in the path
 percent-encoded, which CSP decodes before matching, so a URL like `/punchout;jsessionid=…` still
-admits the post. Both routes' refusals (`cartRefusal` in `apps/web/app/lib/cart-guest.server.ts`:
+admits the post. Both routes' refusals (`cartRefusal` in `apps/storefront/app/lib/cart-guest.server.ts`:
 a used or expired start link `410`, no cookie `401`, a cart that has closed `410`, which the page
 checks as `cartGate` does) are shown by their own `CartRefusal` boundary and may be framed by any
 https page (`frame-ancestors https:`): they carry only the message, and the buyer would otherwise

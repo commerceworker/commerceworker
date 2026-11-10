@@ -68,6 +68,10 @@
     { "name": "WEBHOOK_LIMIT", "namespace_id": "1005", "simple": { "limit": 1200, "period": 60 } }
   ],
   "vars": {
+    // The storefront's origin (apps/storefront): where an external cart's buyer and agentic checkout
+    // are served. A plugin may redirect there to a cart's start link (app/lib/plugins.server.ts).
+    // scripts/fleet.ts sets it per deployment; local dev overrides it in vite.config.ts.
+    "STOREFRONT_ORIGIN": "https://shop.commerceworker.com",
     // Plugins' other paths, JSON of alias → plugin id (e.g. "/punchout/" → punchout): a request
     // under the alias is answered as under /plugins/<id>/. scripts/fleet.ts renders it from the
     // registry's plugins.<id>.alias; this is app.commerceworker.com's (deployments/commerceworker.jsonc).

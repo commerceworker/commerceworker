@@ -1,26 +1,9 @@
-import { createContext, useContext } from 'react';
-
-/** The per-response nonce for inline scripts, set by `entry.server.tsx`; absent in the browser. */
-export const NonceContext = createContext<string | undefined>(undefined);
-
 /**
- * The nonce this page was served with, read back in the browser from a script that carries it.
- * Under a CSP header the browser empties the `nonce` attribute (so no injected markup can read it)
- * and keeps the value in the property, which is also what React compares when it hydrates.
+ * The Content-Security-Policy and security headers every Worker that serves pages sends: the admin
+ * (`apps/web`) and the storefront (`apps/storefront`) differ only in what a page asks for. A route
+ * names it in a response header (`EMBED_HEADER`, `TURNSTILE_HEADER`), which `pageHeaders` folds into
+ * the policy and drops. Pure, so both Workers and their tests share it.
  */
-export function documentNonce(
-  doc: Pick<Document, 'querySelector'> | undefined = globalThis.document,
-) {
-  return doc?.querySelector<HTMLScriptElement>('script[nonce]')?.nonce || undefined;
-}
-
-/**
- * The nonce for the root's inline scripts and links: the server's, or the same one in the browser.
- * Rendering none in the browser would make every one of them a hydration mismatch.
- */
-export function useNonce(): string | undefined {
-  return useContext(NonceContext) ?? documentNonce();
-}
 
 /** A fresh nonce for one HTML response. */
 export function newNonce(): string {
@@ -154,7 +137,7 @@ export function pageHeaders(headers: Headers, nonce?: string): Headers {
  */
 export function withSecurityHeaders(res: Response, url: URL): Response {
   // A WebSocket upgrade's response can't be rebuilt, and has no body to protect.
-  if (res.status === 101 || res.webSocket) return res;
+  if (res.status === 101 || (res as Response & { webSocket?: unknown }).webSocket) return res;
   const out = new Response(res.body, res);
   // A route's notes to entry.server.tsx also reach React Router's `.data` answers, which never
   // pass through it.

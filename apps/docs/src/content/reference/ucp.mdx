@@ -13,9 +13,13 @@ runs through a [flow](/start/concepts/) of your choosing, like any other, on the
 
 | | |
 |---|---|
-| Discovery | `GET https://app.commerceworker.com/.well-known/ucp` |
-| REST | `https://app.commerceworker.com/ucp/v1` |
-| MCP | `https://app.commerceworker.com/ucp/mcp` |
+| Discovery | `GET https://shop.commerceworker.com/.well-known/ucp` |
+| REST | `https://shop.commerceworker.com/ucp/v1` |
+| MCP | `https://shop.commerceworker.com/ucp/mcp` |
+
+These are on the workspace's **storefront** host, `shop.` followed by its domain (`shop.commerceworker.com`
+for CommerceWorker's own workspace), which also serves buyers' pages and has no admin. Settings and
+platforms are managed on the workspace's app host, below.
 
 This is the platform-facing surface. It is separate from the workspace's own
 [MCP server](/reference/mcp/) and [A2A endpoint](/reference/a2a/), which are for your team's tools:

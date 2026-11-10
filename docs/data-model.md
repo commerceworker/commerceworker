@@ -262,7 +262,7 @@ The documents port (`documentStore(env).put`) writes to `orders/<orderId>/<kind>
 The web app serves them at `/docs/<key>` to signed-in users only.
 
 Cart files are at `carts/<cartId>/<attachmentId>` (`cartAttachmentKey`; `cartAttachmentPrefix` lists
-a cart's), written by the web app (`apps/web/app/lib/cart-attachments.server.ts`) with the file's
+a cart's), written by the admin or the storefront (`uploadAttachment` in `packages/cart/src/files.ts`) with the file's
 type and, as custom metadata, the cart id and name. They're listed in the cart's agent
 (`CartState.attachments`), not in `documents`, and served at `/carts/<cartId>/attachments/<id>` to
 staff and to that cart's buyer. Removing one deletes it. A cart that ended 90 days ago loses its

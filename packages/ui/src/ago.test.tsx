@@ -1,7 +1,7 @@
+import { Ago } from '@commerceworker/ui/ago';
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Ago } from '../app/components/ago';
 
 describe('Ago', () => {
   it('server-renders a machine-readable time with the UTC time as its tooltip', () => {

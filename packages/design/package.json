@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Ledger design tokens, as data: the palette and faces both admins author in apps/web/app/app.css and apps/studio/app/app.css, held to them by a test, with WCAG contrast checks, and the builders for the docs sites generated Starlight, Scalar and Mermaid themes.",
+  "description": "Ledger design tokens, as data: the palette and faces the admins and the storefront author in apps/web/app/app.css, apps/studio/app/app.css and apps/storefront/app/app.css, held to them by a test, with WCAG contrast checks, and the builders for the docs sites generated Starlight, Scalar and Mermaid themes.",
   "exports": {
     "./*": "./src/*.ts"
   },

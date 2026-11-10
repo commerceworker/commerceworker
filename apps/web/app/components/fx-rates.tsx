@@ -1,10 +1,10 @@
 import { BASE_CURRENCY, FX_LARGE_CHANGE, fxRateChange } from '@commerceworker/core';
+import { Ago } from '@commerceworker/ui/ago';
 import { Button } from '@commerceworker/ui/button';
 import { Input } from '@commerceworker/ui/input';
 import { Table, TableBody, TableEmpty, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { useId, useState } from 'react';
 import { useRevalidator } from 'react-router';
-import { Ago } from '~/components/ago';
 import { ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { useCan } from '~/lib/use-me';

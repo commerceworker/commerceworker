@@ -13,7 +13,7 @@
  */
 
 import { env } from 'cloudflare:workers';
-import { TURNSTILE_HEADER } from './csp';
+import { TURNSTILE_HEADER } from '@commerceworker/security/csp';
 
 /** What each form's widget says it protects; Siteverify must echo it back. */
 export type TurnstileAction = 'login' | 'setup';

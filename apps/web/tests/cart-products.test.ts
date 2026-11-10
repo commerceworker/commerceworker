@@ -12,7 +12,7 @@ const searchCartProducts = vi.fn();
 const principal = vi.fn(async (_r: Request): Promise<Principal | null> => null);
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
-vi.mock('~/lib/env.server', () => ({ engine: () => ({ searchCartProducts }) }));
+vi.mock('~/lib/env.server', () => ({ engine: () => ({ searchCartProducts }), docs: () => ({}) }));
 vi.mock('~/lib/auth.server', () => ({
   principal,
   setupDue: () => null,
@@ -84,34 +84,14 @@ describe('searching products from a cart', () => {
     expect(await verifyRpcActor([env.PRINCIPAL_KEY], actor, 'cart:cart_2')).toBeNull();
   });
 
-  it('asks as the buyer a cart admitted, for that cart only', async () => {
+  it('takes no buyer’s cookie: a buyer reaches their search on the storefront', async () => {
     searchCartProducts.mockResolvedValue(found);
-    expect(await get('widget', { cookie: await guestCookie() })).toMatchObject({ status: 200 });
-    const actor = searchCartProducts.mock.calls[0]![2];
-    expect(await verifyRpcActor([env.PRINCIPAL_KEY], actor, 'cart:cart_1')).toEqual({
-      kind: 'guest',
-      id: 'guest:b1',
-      name: 'Pat Buyer',
-    });
-    // Their cookie for cart_1 opens no other cart's search.
-    expect(await get('widget', { cookie: await guestCookie() }, 'cart_2')).toMatchObject({
-      status: 401,
-    });
-    // Nor does a cookie named for cart_2 that was signed for cart_1.
-    const moved = (await guestCookie()).replace('cmw_cart_1=', 'cmw_cart_2=');
-    expect(await get('widget', { cookie: moved }, 'cart_2')).toMatchObject({ status: 401 });
-    expect(searchCartProducts).toHaveBeenCalledTimes(1);
+    expect(await get('widget', { cookie: await guestCookie() })).toMatchObject({ status: 401 });
+    expect(searchCartProducts).not.toHaveBeenCalled();
   });
 
-  it('refuses a stranger, a forged cookie and an expired one without asking the engine', async () => {
+  it('refuses a stranger without asking the engine', async () => {
     expect(await get('widget')).toMatchObject({ status: 401 });
-    expect(await get('widget', { cookie: 'cmw_cart_1=forged.value' })).toMatchObject({
-      status: 401,
-    });
-    const lapsed = `cmw_cart_1=${await signCartGuestSession(env.PRINCIPAL_KEY, guest, Date.now() - 1)}`;
-    expect(await get('widget', { cookie: lapsed })).toMatchObject({ status: 401 });
-    const otherKey = `cmw_cart_1=${await signCartGuestSession('another-key', guest, Date.now() + 60_000)}`;
-    expect(await get('widget', { cookie: otherKey })).toMatchObject({ status: 401 });
     expect(searchCartProducts).not.toHaveBeenCalled();
   });
 
@@ -125,7 +105,7 @@ describe('searching products from a cart', () => {
       data: { error: "You can't change this cart." },
     });
     searchCartProducts.mockResolvedValueOnce({ ok: false, error: 'The cart has closed.' });
-    expect(await get('widget', { cookie: await guestCookie() })).toMatchObject({ status: 403 });
+    expect(await get('widget')).toMatchObject({ status: 403 });
   });
 
   it('passes an empty search on as one, and only so much of a long one', async () => {
@@ -148,24 +128,20 @@ describe('searching products from a cart', () => {
     expect(call.slice(0, 2)).toEqual(['cart_1', 'w']);
   });
 
-  it('spends a budget of its own per person, and a buyer’s per cart, refusing past it', async () => {
+  it('spends a budget of its own per person, refusing past it', async () => {
     principal.mockResolvedValue(staff);
     searchCartProducts.mockResolvedValue(found);
     await get('widget');
-    principal.mockResolvedValue(null);
-    await get('widget', { cookie: await guestCookie() });
     // Not the /api/v1 key (the person's id alone), so searching never spends the API's budget.
-    expect(limit.mock.calls.map((c) => c[0].key)).toEqual([
-      'cart-search:usr_1',
-      'cart-search:cart_1:guest:b1',
-    ]);
+    expect(limit.mock.calls.map((c) => c[0].key)).toEqual(['cart-search:usr_1']);
     searchCartProducts.mockClear();
     limit.mockResolvedValue({ success: false });
-    const r = await get('widget', { cookie: await guestCookie() });
+    const r = await get('widget');
     expect(r).toMatchObject({ status: 429, headers: { 'retry-after': '60' } });
     expect(r.data).toMatchObject({ error: expect.stringMatching(/Too many requests/) });
     expect(searchCartProducts).not.toHaveBeenCalled();
     // A stranger is refused before spending anyone's budget.
+    principal.mockResolvedValue(null);
     limit.mockClear();
     expect(await get('widget')).toMatchObject({ status: 401 });
     expect(limit).not.toHaveBeenCalled();

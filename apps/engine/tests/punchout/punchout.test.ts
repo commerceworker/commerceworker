@@ -124,7 +124,7 @@ describe('punchout, end to end', () => {
     expect(setup.status).toBe(200);
     const startUrl = /<URL>([^<]+)<\/URL>/.exec(await setup.text())![1]!;
     const [, cartId, token] = /\/cart\/start\/(cart_[a-z0-9]+)\/([0-9a-f]+)$/.exec(startUrl)!;
-    expect(startUrl.startsWith('https://com.commerceworker.test/cart/start/')).toBe(true);
+    expect(startUrl.startsWith('https://shop.commerceworker.test/cart/start/')).toBe(true);
 
     // 2. The buyer's browser opens the start page; the web app redeems it once.
     const redeemed = await api().redeemCartStart(cartId!, token!);

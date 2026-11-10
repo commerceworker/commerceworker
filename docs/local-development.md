@@ -25,11 +25,20 @@ pnpm install
 pnpm db:migrate:local      # applies packages/db/migrations to the local D1
 pnpm db:seed:local         # loads the demo data from packages/db/seed (optional, safe to re-run)
 pnpm web:dev               # web, engine and catalog in one Vite session
+pnpm storefront:dev        # the storefront (buyers' pages, UCP) on :5174, with an engine and local database of its own
 ```
 
 Open the URL Vite prints (`http://localhost:5173` by default). With no people added, the dashboard and the API are
 open (on localhost only; a deployed host redirects to `/setup` until its first admin exists); **Set up sign-in** in the account menu creates the first admin and turns sign-in on; that admin (and any operator) must then set up two-factor sign-in on the Account page before using anything else, unless an admin sets the requirement to Nobody on the Team page (see
 [Team and roles](https://docs.commerceworker.com/guides/team-and-roles/)).
+
+The storefront (`apps/storefront`: a punchout buyer's pages, their cart's socket, files and search, and
+UCP) is its own Worker, so `pnpm storefront:dev` runs it in a Vite session of its own on `:5174`, with an
+engine and local database of its own under `apps/storefront/.wrangler/state` (apply its migrations with
+`pnpm --filter @commerceworker/storefront db:migrate:local`). It signs and checks with the same dev keys as
+the web app, but a cart opened in `pnpm web:dev`'s engine is not in that one, so a start link from there
+won't redeem here: to see a buyer's page end to end, open the cart in the storefront's engine. Its device
+tests (`pnpm --filter @commerceworker/storefront e2e`) run an engine of their own the same way.
 
 The first request that needs a flow seeds the [built-in flows](https://docs.commerceworker.com/guides/templates/) and publishes
 each as a new version when its content hasn't been published before (version 1 on a fresh database).

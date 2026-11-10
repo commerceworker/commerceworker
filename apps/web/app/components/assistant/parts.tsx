@@ -24,6 +24,7 @@ import {
 } from '@commerceworker/ui/card';
 import { Input } from '@commerceworker/ui/input';
 import { Item, ItemContent, ItemDescription, ItemTitle } from '@commerceworker/ui/item';
+import { plural } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
 import {
   type DynamicToolUIPart,
@@ -72,7 +73,6 @@ import {
   TraceTitle,
 } from '~/components/ai-elements/trace';
 import { useAssistant } from '~/lib/assistant';
-import { plural } from '~/lib/format';
 
 type Part = ToolUIPart | DynamicToolUIPart;
 

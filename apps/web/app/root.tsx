@@ -17,7 +17,7 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
 import './app.css';
-import { useNonce } from './lib/csp';
+import { useNonce } from '@commerceworker/ui/lib/nonce';
 
 /** Running text and titles: fetched with the page rather than once the stylesheet is parsed. */
 const fontPreload = (href: string) =>

@@ -1,0 +1,52 @@
+{
+  "name": "@commerceworker/storefront",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "What buyers reach: the punchout cart pages, their cart's socket, files and product search, and agentic checkout (UCP). React Router on Workers, uncached, at its own host so a buyer never loads the admin.",
+  "scripts": {
+    "dev": "react-router dev --port 5174",
+    "build": "react-router build",
+    "deploy": "pnpm build && wrangler deploy",
+    "types": "wrangler types && react-router typegen",
+    "db:migrate:local": "wrangler d1 migrations apply commerceworker --local",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "check-types": "react-router typegen && tsc --noEmit",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@commerceworker/application": "workspace:*",
+    "@commerceworker/cart": "workspace:*",
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/db": "workspace:*",
+    "@commerceworker/ports": "workspace:*",
+    "@commerceworker/security": "workspace:*",
+    "@commerceworker/ui": "workspace:*",
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource/ibm-plex-mono": "catalog:",
+    "agents": "catalog:",
+    "isbot": "catalog:",
+    "lucide-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-decorators": "catalog:",
+    "@cloudflare/vite-plugin": "catalog:",
+    "@commerceworker/test-kit": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@react-router/dev": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "tw-animate-css": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

@@ -1,6 +1,6 @@
+import { Empty } from '@commerceworker/ui/page';
 import { ShoppingCart, TriangleAlert } from 'lucide-react';
 import { isRouteErrorResponse, useRouteError } from 'react-router';
-import { Empty } from '~/components/page';
 
 /**
  * The error boundary of the pages an external cart's buyer sees: the reason a loader refused

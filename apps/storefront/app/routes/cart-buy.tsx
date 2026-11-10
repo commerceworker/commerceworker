@@ -6,14 +6,14 @@
  * to the cart's return URL (`EMBED_HEADER`, folded into the CSP by entry.server.tsx).
  */
 
+import { CartView } from '@commerceworker/cart/view';
 import { guestCartOpen } from '@commerceworker/core';
+import { EMBED_HEADER } from '@commerceworker/security/csp';
 import { data, type ShouldRevalidateFunctionArgs, useLoaderData } from 'react-router';
 import { CartRefusal } from '~/components/cart-refusal';
-import { CartView } from '~/components/cart-view';
 import { cartGuest, cartRefusal } from '~/lib/cart-guest.server';
-import { EMBED_HEADER } from '~/lib/csp';
 import { engine } from '~/lib/env.server';
-import { customerNames } from '~/lib/orders.server';
+import { pricingStore } from '~/lib/wire.server';
 import type { Route } from './+types/cart-buy';
 
 export const meta = ({ loaderData: d }: Route.MetaArgs) => [
@@ -35,12 +35,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       'This cart has closed. Go back to your purchasing system and open the catalog again.',
       410,
     );
-  const names = await customerNames([cart.customerId]);
+  const customer = cart.customerId ? (await pricingStore().customers([cart.customerId]))[0] : null;
   return data(
     {
       snapshot,
       guest,
-      customerName: cart.customerId ? (names[cart.customerId] ?? null) : null,
+      customerName: customer?.name ?? null,
     },
     {
       headers: {

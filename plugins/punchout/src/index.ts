@@ -93,7 +93,7 @@ async function cxmlSetup(request: Request, env: Env): Promise<Response> {
       ...session,
     });
   if (!opened.ok) return refuse(400, opened.error);
-  if (!opened.cart.startUrl) return refuse(500, 'The app’s origin is not configured');
+  if (!opened.cart.startUrl) return refuse(500, 'The storefront’s origin is not configured');
   await recordSession(env, {
     cartId: opened.cart.cartId,
     partnerId: partner.id,
@@ -314,6 +314,7 @@ async function ociSetup(request: Request, env: Env): Promise<Response> {
     returnUrl: setup.hookUrl,
   });
   if (!opened.ok) return page(400, `<p>${escapeHtml(opened.error)}</p>`);
+  if (!opened.cart.startUrl) return page(500, '<p>The storefront’s origin is not configured.</p>');
   await recordSession(env, {
     cartId: opened.cart.cartId,
     partnerId: partner.id,
@@ -321,11 +322,12 @@ async function ociSetup(request: Request, env: Env): Promise<Response> {
     operation: 'create',
     ociControl: setup.control,
   });
-  // To the cart's start link: the one place off its own pages a plugin may redirect, so a system
-  // that frames the catalog lands on the cart's page, which the partner's frame origins may frame.
+  // To the cart's start link on the storefront: the one place off its own pages a plugin may
+  // redirect, so a system that frames the catalog lands on the cart's page, which the partner's
+  // frame origins may frame.
   return new Response(null, {
     status: 302,
-    headers: { location: opened.cart.startPath, 'cache-control': 'no-store' },
+    headers: { location: opened.cart.startUrl, 'cache-control': 'no-store' },
   });
 }
 

@@ -1,5 +1,6 @@
 import type { RecordOrder } from '@commerceworker/ports/commerce';
-import { humanize, money } from './format';
+import { money } from '@commerceworker/ui/lib/format';
+import { humanize } from './format';
 import { type RecordKind, type RecordRow, stepOf } from './records';
 import { orderBoard } from './wire.server';
 

@@ -1,0 +1,33 @@
+{
+  "name": "@commerceworker/cart",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "What the admin's staff carts and the storefront's buyer carts share: the live cart view, and the cart's files and product search behind it, each taking who is asking from the Worker that authenticated them.",
+  "exports": {
+    "./typing": "./src/cart-typing.ts",
+    "./view": "./src/cart-view.tsx",
+    "./files": "./src/files.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/ui": "workspace:*",
+    "agents": "catalog:",
+    "lucide-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
+  },
+  "devDependencies": {
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

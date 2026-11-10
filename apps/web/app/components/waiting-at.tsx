@@ -1,25 +1,8 @@
+import { useDateTime } from '@commerceworker/ui/hooks/use-date-time';
+import { useNow } from '@commerceworker/ui/hooks/use-now';
 import { cn } from '@commerceworker/ui/lib/utils';
-import { ago, duration, waitLabel } from '~/lib/format';
-import { useDateTime } from '~/lib/use-date-time';
-import { useNow } from '~/lib/use-now';
+import { duration, waitLabel } from '~/lib/format';
 import { isOverdue } from '~/lib/where';
-
-/**
- * "3m ago" that stays true. The server and the browser compute it from different clocks, so the
- * hydrating render may be a unit off: the mismatch is allowed on this one element and corrected
- * right after hydration, then refreshed every 30 seconds. The full time is in the tooltip.
- */
-export function Ago({ ms }: { ms: number | null | undefined }) {
-  // Seconds matter while something is fresh; after a minute, refresh twice a minute.
-  const now = useNow(ms && Date.now() - ms < 60_000 ? 1000 : 30_000);
-  const formatTime = useDateTime();
-  if (!ms) return <>{ago(ms)}</>;
-  return (
-    <time dateTime={new Date(ms).toISOString()} title={formatTime(ms)} suppressHydrationWarning>
-      {ago(ms, now)}
-    </time>
-  );
-}
 
 /**
  * Where an order is held and for how long: "Sales approval · 24h". Orders indexed before steps were

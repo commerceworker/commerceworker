@@ -67,6 +67,28 @@ test('the web composition root does bind the D1 adapters', () => {
   assert.match(readFileSync(WEB_ROOT, 'utf8'), D1_ADAPTERS);
 });
 
+// The storefront follows the same rule: its composition root is apps/storefront/app/lib/wire.server.ts,
+// the one storefront file that imports the D1 adapters, calls `createDb` or touches the `DB`
+// binding. The buyer's Worker reads only agentic checkout's platforms and settings and a customer's
+// name; everything else goes to the engine (`EngineRpc`).
+const STOREFRONT = 'apps/storefront/app';
+const STOREFRONT_ROOT = join(STOREFRONT, 'lib/wire.server.ts');
+
+test('the storefront reaches D1 only through its composition root', () => {
+  const reaching = files(STOREFRONT)
+    .filter((f) => f !== STOREFRONT_ROOT)
+    .filter((f) => WEB_D1(readFileSync(f, 'utf8')));
+  assert.deepEqual(
+    reaching,
+    [],
+    `Reach D1 through a port bound in apps/storefront/app/lib/wire.server.ts:\n${reaching.join('\n')}`,
+  );
+});
+
+test('the storefront composition root does bind the D1 adapters', () => {
+  assert.match(readFileSync(STOREFRONT_ROOT, 'utf8'), D1_ADAPTERS);
+});
+
 // The HTTP surface (packages/http) is a library: it takes its adapters as deps and binds none.
 // `wireEdge` and `platform/in-memory` build the import sources, the space export reader, the
 // remote fetcher and the assistant's model, and `platform/media` the media routes' R2 transfers,

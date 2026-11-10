@@ -1,10 +1,11 @@
 /**
  * One cart, live, for staff: the loader renders the agent's snapshot and `CartView` keeps it current
- * over the cart's socket (components/cart-view.tsx).
+ * over the cart's socket (packages/cart/src/cart-view.tsx).
  */
 
+import { CartView } from '@commerceworker/cart/view';
 import { data, type ShouldRevalidateFunctionArgs, useLoaderData } from 'react-router';
-import { CartView } from '~/components/cart-view';
+import { useAssistantIfAny } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
 import { engine } from '~/lib/env.server';
 import { customerNames } from '~/lib/orders.server';
@@ -35,6 +36,7 @@ export default function CartPage() {
   const { snapshot, customerName } = useLoaderData<typeof loader>();
   const canOperate = useCan('operator');
   const me = useMe();
+  const assistant = useAssistantIfAny();
   return (
     <CartView
       key={snapshot.cart!.id}
@@ -43,6 +45,7 @@ export default function CartPage() {
       mode="staff"
       meId={me?.id ?? null}
       canOperate={canOperate}
+      assistant={assistant}
     />
   );
 }

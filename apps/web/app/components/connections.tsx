@@ -8,9 +8,9 @@ import { type FlowGraph, type FlowNode, isBackEdge } from '@commerceworker/core'
 import { Button } from '@commerceworker/ui/button';
 import { Item, ItemActions, ItemContent, ItemTitle } from '@commerceworker/ui/item';
 import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
+import { Section } from '@commerceworker/ui/page';
 import { X } from 'lucide-react';
 import { useId, useState } from 'react';
-import { Section } from '~/components/page';
 import { useNodes } from '~/lib/nodes';
 import { edgeId, wouldCycle } from './flow-canvas';
 

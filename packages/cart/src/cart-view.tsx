@@ -1,11 +1,13 @@
 /**
- * The live cart, for staff on the Carts page (`routes/cart.tsx`) and for the buyer an external cart
- * was opened for (`routes/cart-buy.tsx`). `useAgent` connects to the cart's CartAgent over the
+ * The live cart, for staff on the admin's Carts page (`apps/web/app/routes/cart.tsx`) and for the
+ * buyer an external cart was opened for, on the storefront (`apps/storefront/app/routes/cart-buy.tsx`),
+ * each over its own Worker's routes for the socket, files and product search. `useAgent` connects to the cart's CartAgent over the
  * proxied socket, and every change anyone makes re-renders the lines, the quote, who is here and
  * the chat. Every change is an agent call; the agent checks who is calling and prices the cart.
  */
 
 import {
+  type AssistantContext,
   ATTACHMENT_TYPES,
   attachmentProblem,
   CART_CHAT_BROADCAST,
@@ -29,6 +31,7 @@ import {
   SHIP_TO_LIMITS,
   type ShipAddress,
 } from '@commerceworker/core';
+import { Ago } from '@commerceworker/ui/ago';
 import { Alert, AlertDescription } from '@commerceworker/ui/alert';
 import {
   AlertDialog,
@@ -43,6 +46,7 @@ import {
 } from '@commerceworker/ui/alert-dialog';
 import { Badge } from '@commerceworker/ui/badge';
 import { Button } from '@commerceworker/ui/button';
+import { Confirm } from '@commerceworker/ui/confirm';
 import {
   Field,
   FieldContent,
@@ -50,6 +54,8 @@ import {
   FieldLabel,
   FieldTitle,
 } from '@commerceworker/ui/field';
+import { useDateTime } from '@commerceworker/ui/hooks/use-date-time';
+import { useNow } from '@commerceworker/ui/hooks/use-now';
 import { Input } from '@commerceworker/ui/input';
 import {
   Item,
@@ -59,7 +65,9 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@commerceworker/ui/item';
+import { money, plural, until } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { Body, Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Spinner } from '@commerceworker/ui/spinner';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { Textarea } from '@commerceworker/ui/textarea';
@@ -67,11 +75,7 @@ import { useAgent } from 'agents/react';
 import { CircleAlert, Clock, FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { Ago } from '~/components/ago';
-import { Confirm } from '~/components/confirm';
-import { Body, Empty, PageHeader, Section } from '~/components/page';
-import { useAssistantIfAny } from '~/lib/assistant';
-import { type CartTicks, keepTicks, NO_TICKS, tick, tickAll, ticked } from '~/lib/cart-ticks';
+import { type CartTicks, keepTicks, NO_TICKS, tick, tickAll, ticked } from './cart-ticks';
 import {
   NO_TYPISTS,
   nextTypingEnd,
@@ -80,12 +84,20 @@ import {
   typingDue,
   typingLabel,
   typingSeen,
-} from '~/lib/cart-typing';
-import { money, plural, until } from '~/lib/format';
-import { useDateTime } from '~/lib/use-date-time';
-import { useNow } from '~/lib/use-now';
+} from './cart-typing';
 
 type Result = { ok: true } | { ok: false; error: string };
+
+/**
+ * What a staff cart uses of the admin's assistant panel, which the admin's shell provides (its
+ * `useAssistantIfAny`): the cart's own edits go through it, and its chat is read there. A buyer's
+ * page has none and calls the cart directly.
+ */
+export type CartAssistant = {
+  register: (read: () => AssistantContext) => () => void;
+  act: (tool: 'change_cart' | 'submit_cart' | 'cancel_cart', input: unknown) => Promise<unknown>;
+  openThread: () => void;
+};
 
 export type CartViewProps = {
   snapshot: CartState;
@@ -96,6 +108,8 @@ export type CartViewProps = {
   meId: string | null;
   /** Staff only: whether they may change the cart (the agent checks every call regardless). */
   canOperate?: boolean;
+  /** Staff only: the assistant panel, where the shell has one. */
+  assistant?: CartAssistant | null;
 };
 
 export function CartView({
@@ -104,6 +118,7 @@ export function CartView({
   mode,
   meId,
   canOperate = false,
+  assistant = null,
 }: CartViewProps) {
   const guest = mode === 'guest';
   const [returning, setReturning] = useState<ReturnPost | null>(null);
@@ -118,8 +133,6 @@ export function CartView({
   const agent = useAgent<CartState>({
     agent: 'cart-agent',
     name: cart.id,
-    // The buyer connects as the guest of this cart, whatever else this browser is signed in as.
-    ...(guest ? { query: { as: 'guest' } } : {}),
     onStateUpdate: (s) => {
       setState(s);
       // Against each state as it arrives, so a line removed and added again (taking the same id)
@@ -169,7 +182,6 @@ export function CartView({
   }
   // Staff edit through the assistant, as its own tool calls (a submit stops at its confirm card);
   // the buyer, who has no assistant, calls the cart directly.
-  const assistant = useAssistantIfAny();
   // The assistant knows which cart this is, so its Thread shows this cart's chat. By id only: a
   // cart's title is people's words.
   const register = assistant?.register;

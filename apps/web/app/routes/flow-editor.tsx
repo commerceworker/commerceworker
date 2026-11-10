@@ -12,6 +12,7 @@ import {
 } from '@commerceworker/core';
 import { Button } from '@commerceworker/ui/button';
 import { Card, CardContent } from '@commerceworker/ui/card';
+import { Confirm } from '@commerceworker/ui/confirm';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -23,6 +24,7 @@ import { Input } from '@commerceworker/ui/input';
 import { Item, ItemContent, ItemMedia, ItemTitle } from '@commerceworker/ui/item';
 import { cn } from '@commerceworker/ui/lib/utils';
 import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
+import { Section } from '@commerceworker/ui/page';
 import { Textarea } from '@commerceworker/ui/textarea';
 import {
   AlertTriangle,
@@ -38,11 +40,9 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { data, Link, useBlocker, useLoaderData, useNavigate } from 'react-router';
-import { Confirm } from '~/components/confirm';
 import { Connections } from '~/components/connections';
 import { FlowCanvas, makeNode } from '~/components/flow-canvas';
 import { Inspector } from '~/components/inspector';
-import { Section } from '~/components/page';
 import { Palette } from '~/components/palette';
 import { useAssistant, usePageContext } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';

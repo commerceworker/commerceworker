@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commerceworker-storefront",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Every request is logged and traced (sampling 1 = all of them); lower the rate once traffic
+  // makes the volume or cost matter.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "issues": { "enabled": true },
+    "traces": { "enabled": true }
+  },
+  // A runaway request stops at 5 s of CPU (the default is 30 s). A cart page renders in well under
+  // a second.
+  "limits": { "cpu_ms": 5000 },
+  // Runs near D1 and the engine rather than near the buyer: every request calls the engine.
+  "placement": { "mode": "smart" },
+  "upload_source_maps": true,
+  // Trace events also go to Workers Logpush, like the web Worker's (docs/operations.md, "Logs").
+  "logpush": true,
+  // Served only at shop.commerceworker.com, so the zone's rules apply to every request: no workers.dev or
+  // preview URL as a second way in.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "shop.commerceworker.com", "custom_domain": true }],
+  // Only agentic checkout's platforms and settings are read from D1 (app/lib/wire.server.ts).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  // Same bucket as the engine and the web app: a cart's files are stored here, as the buyer adds them.
+  "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
+  "services": [
+    { "binding": "ENGINE", "service": "commerceworker-engine", "entrypoint": "EngineApi" }
+  ],
+  // Per caller (app/lib/rate-limit.ts): a cart's buyer on product search, each UCP platform. The
+  // registry's `limits` changes them per deployment, as it does the web Worker's.
+  "ratelimits": [
+    { "name": "API_LIMIT", "namespace_id": "1006", "simple": { "limit": 600, "period": 60 } },
+    { "name": "AGENT_LIMIT", "namespace_id": "1007", "simple": { "limit": 300, "period": 60 } }
+  ]
+  // Secrets (wrangler secret put): PRINCIPAL_KEY — signs what this Worker forwards to the engine
+  // (a cart's buyer, a UCP platform) and the cookie a start link sets; the same key as the web
+  // Worker's and the engine's.
+}

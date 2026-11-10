@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { dateTime } from './format';
+import { dateTime } from '../lib/format';
 
 const subscribe = () => () => {};
 

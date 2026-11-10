@@ -7,7 +7,7 @@ candidate finding that still needs a concrete attacker before it is reported.
 
 - Does every new forwarded route set the header with `signPrincipal(key, p, path)` for **its own
   path**, after deleting any copy the caller sent? (`apps/web/app/lib/principal.server.ts`,
-  `ucp.server.ts` `ucpFetch`.)
+  `apps/storefront/app/lib/ucp.server.ts` `ucpFetch`, `principal.server.ts` `setGuestHeader`.)
 - Does every new engine entry point call `verifyPrincipal` (or `verifyPlatform` on `/ucp/*`) with
   the current and previous keys, and refuse on null, rather than reading the header raw?
   `grep -rn "PRINCIPAL_HEADER" apps/engine/src`.
