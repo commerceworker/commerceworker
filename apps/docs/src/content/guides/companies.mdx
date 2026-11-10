@@ -16,8 +16,9 @@ the [REST API](/reference/rest-api/) and through the [assistant](/guides/assista
 
 **New customer** on **Commerce** opens a form: name, email, kind, pricing tier, payment terms and,
 for a business customer, an optional legal name and tax id. A business customer is added with its
-company, **active** at once. It starts with no credit limit, and the credit limit isn't edited
-here. Two customers can't share an email.
+company, **active** at once. It starts with a credit limit of zero, so orders on account fail the
+[credit check](/guides/commerce-models/#credit-accounts) until an admin sets the limit on the customer's page
+(**Credit**), which is the only place it is edited. Two customers can't share an email.
 
 **Edit** on the customer's page changes the name, email, kind, tier and terms. A new tier or kind
 applies to orders from then on; orders already priced keep their price. A consumer made a business

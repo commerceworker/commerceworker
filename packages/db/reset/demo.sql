@@ -9,6 +9,7 @@ PRAGMA defer_foreign_keys = ON;
 
 DELETE FROM approvals;
 DELETE FROM balance_entries;
+DELETE FROM credit_holds;
 DELETE FROM documents;
 DELETE FROM entitlements;
 DELETE FROM inbound_emails;

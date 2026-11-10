@@ -20,6 +20,7 @@ import {
   updateCustomerInput,
 } from './b2b/companies';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
+import { CREDIT_ENTRY_KINDS, MAX_CREDIT_ADJUSTMENT } from './credit';
 import { FX_SOURCES } from './fx';
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
@@ -482,6 +483,32 @@ export const TOOL_INPUTS = {
     memberId: z.string().max(100),
   }),
   put_company_team: companyTeamInput,
+  get_credit_account: z.object({
+    customerId: z.string().max(100),
+    after: z
+      .string()
+      .max(200)
+      .optional()
+      .describe('The `next` of the previous page, to read the entries before it'),
+    limit: z.number().int().min(1).max(100).optional().describe('Default 25'),
+  }),
+  set_credit_limit: z.object({
+    customerId: z.string().max(100),
+    limit: z
+      .number()
+      .min(0)
+      .max(MAX_CREDIT_ADJUSTMENT)
+      .describe('In the base currency; 0 for none'),
+  }),
+  adjust_credit: z.object({
+    customerId: z.string().max(100),
+    amount: z
+      .number()
+      .min(-MAX_CREDIT_ADJUSTMENT)
+      .max(MAX_CREDIT_ADJUSTMENT)
+      .describe('In the base currency: negative for a credit memo or a payment received'),
+    reason: z.string().min(1).max(500).describe('What the ledger shows beside the entry'),
+  }),
   set_member_role: z.object({ userId: z.string().max(60), role: z.enum(ROLES) }),
   set_approval_separation: z.object({ on: z.boolean() }),
   set_assistant_routing: z.object({ on: z.boolean() }),
@@ -957,6 +984,29 @@ export const TOOL_OUTPUTS = {
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
+  get_credit_account: row({
+    customerId: z.string(),
+    limit: z.number(),
+    balance: z.number(),
+    held: z.number().describe('What open orders have claimed of the limit'),
+    available: z.number().describe('The limit less the balance and what is held'),
+    currency: z.string(),
+    entries: z.array(
+      row({
+        id: z.string(),
+        at: z.number(),
+        kind: z.enum(CREDIT_ENTRY_KINDS),
+        orderId: z.string().nullable(),
+        amount: z.number().describe('Positive adds to what is owed'),
+        balanceAfter: z.number(),
+        reference: z.string().nullable(),
+        note: z.string().nullable(),
+      }),
+    ),
+    next: z.string().nullable().describe('Pass as after for the earlier entries; null at the end'),
+  }),
+  set_credit_limit: actionOutput,
+  adjust_credit: actionOutput,
 } satisfies Record<AssistantTool, z.ZodObject>;
 
 /**
@@ -987,6 +1037,9 @@ export const REST_OPERATION_TOOLS = [
   'put_company_members',
   'remove_company_member',
   'put_company_team',
+  'get_credit_account',
+  'set_credit_limit',
+  'adjust_credit',
   'run_stock_review',
   'find_products',
   'assess_order',

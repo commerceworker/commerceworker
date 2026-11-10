@@ -10,6 +10,7 @@ import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
 import { d1AuthStore } from '@commerceworker/db/auth-store';
 import { d1BackOffice } from '@commerceworker/db/back-office';
+import { d1BalanceStore } from '@commerceworker/db/balance-store';
 import { d1CartRecords } from '@commerceworker/db/cart-records';
 import { d1CompanyDirectory } from '@commerceworker/db/company-directory';
 import { d1FlowStore } from '@commerceworker/db/flow-store';
@@ -30,6 +31,7 @@ import type {
   AuditLog,
   AuthStore,
   BackOffice,
+  BalanceStore,
   CartRecords,
   CompanyDirectory,
   FlowStore,
@@ -54,6 +56,9 @@ export const workspaceStore = (): WorkspaceStore => d1WorkspaceStore(env.DB, sys
 
 /** Customers, products, promotions and the price chain. */
 export const pricingStore = (): PricingStore => d1PricingStore(env.DB, systemClock);
+
+/** A business customer's credit: its limit, balance, holds and ledger. */
+export const balanceStore = (): BalanceStore => d1BalanceStore(env.DB, systemClock);
 
 /** The carts index: one row per cart. */
 export const cartRecords = (): CartRecords => d1CartRecords(env.DB, systemClock);

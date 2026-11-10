@@ -72,7 +72,8 @@ The order page shows `Guest · <email>` in place of a customer.
 - [Credit check](/reference/nodes/#commerce.credit_check): a guest, or a customer whose `kind` is not
   `business`, has no credit account. The node takes the branch set by `noAccount` (`over_limit` by
   default, `ok` to let them through) and reports "Guest checkout (no credit account)" or
-  "No credit account (consumer)".
+  "No credit account (consumer)". A business customer's order is held against their
+  [credit account](#credit-accounts).
 - [Generate invoice](/reference/nodes/#commerce.invoice): only an invoice to a business customer that is not
   yet paid in full is added to their balance, and its summary ends "· on account".
   Set `onAccount` to `false` to never add it. `terms` defaults to `due_on_receipt`. With
@@ -84,6 +85,42 @@ The order page shows `Guest · <email>` in place of a customer.
   and 30 for an order with neither customer nor contact ("Unknown customer").
 - The Commerce page's customers table shows each customer's `kind`; a consumer or internal customer
   reads "Pays at checkout" in place of payment terms.
+
+## Credit accounts
+
+A business customer buys on account up to a **credit limit**. What they can still order is the limit
+less what they owe (the **balance**, which moves when an order is invoiced) and less what their open
+orders have **held**: **available = limit − balance − held**. All of it is in USD.
+
+The [credit check](/reference/nodes/#commerce.credit_check) is also the hold. When an order passes, its
+total is claimed from the limit in the same step that checks it, so two orders checked at the same
+time can't both pass and together exceed the limit: exactly one takes `ok` and the other takes
+`over_limit`. Set the node's `hold` to `false` to only compare, as the check did before holds. A hold
+ends one of three ways:
+
+- **Charged.** The [invoice](/reference/nodes/#commerce.invoice) converts the order's hold into its charge
+  on the balance, so the same credit is never counted twice.
+- **Released.** A rollback releases it, as do cancelling the order and every end of the order that
+  doesn't invoice it (declined, cancelled or completed without an invoice). Releasing twice does nothing.
+- **Expired.** A hold nothing gave back stops counting after the node's `holdFor` (30 days by default).
+
+An order that goes to an approval over its limit holds nothing until it passes a check, and a person's
+approval lets it go on without one. Releasing and expiring never move the balance.
+
+A new business customer starts with a limit of zero, so its orders on account take `over_limit` until an
+admin sets one. A company that is not active (pending, suspended, rejected or closed) takes no credit:
+the check refuses to hold, and its limit can't be changed until the company is reinstated. Recording a
+payment or a memo still works.
+
+The customer's page has a **Credit** section with the limit, balance, held and available, and the
+ledger behind the balance, newest first with the balance after each entry: invoices, payments,
+reversals and adjustments. An admin can **set the limit** or **adjust the balance** (a credit memo or a
+payment received outside CommerceWorker lowers what is owed; a debit raises it). Each stops at the
+assistant's confirm card, which shows the account now and after, and an adjustment needs a reason. An
+adjustment is an entry that is never edited: undo one with another. The same reads and changes are
+`GET /api/v1/customers/:customerId/credit`, `POST …/credit/limit` and `POST …/credit/adjustments` over
+[REST](/reference/rest-api/#workspace-operations), and `get_credit_account`, `set_credit_limit` and
+`adjust_credit` over [MCP](/reference/mcp/#credit-accounts).
 
 ## Starting a flow for a model
 

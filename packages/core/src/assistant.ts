@@ -132,6 +132,9 @@ export type AssistantTool =
   | 'put_company_members'
   | 'remove_company_member'
   | 'put_company_team'
+  | 'get_credit_account'
+  | 'set_credit_limit'
+  | 'adjust_credit'
   | 'set_member_role'
   | 'set_approval_separation'
   | 'set_plugin_enabled'
@@ -729,6 +732,30 @@ export const ASSISTANT_TOOLS: Record<
     description:
       'Add a team to a company, or rename or move one under another team. Teams nest up to six deep.',
   },
+  get_credit_account: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a credit account',
+    title: 'Get a customer’s credit account',
+    description:
+      'A business customer’s credit: the limit, the balance owed, what open orders hold, what is available, and the ledger of charges, payments, reversals and adjustments, newest first with the balance after each. Page back with after (the `next` of the last page).',
+  },
+  set_credit_limit: {
+    role: 'admin',
+    confirm: true,
+    label: 'Set a credit limit',
+    title: 'Set a customer’s credit limit',
+    description:
+      'Set a business customer’s credit limit, in the base currency. It decides what they can order on account from now on; orders already holding credit keep it. A limit under what is owed and held blocks new orders until it is paid down.',
+  },
+  adjust_credit: {
+    role: 'admin',
+    confirm: true,
+    label: 'Adjust a credit balance',
+    title: 'Adjust a customer’s balance',
+    description:
+      'Record a credit memo or a payment received off the platform (a negative amount, lowering what is owed) or a debit (positive), with a reason. It is an immutable ledger entry; undo one with another adjustment.',
+  },
   // The Team and Plugins pages' changes, for admins. Those the pages ask a step-up for need one on
   // the card too (`ActionPreview.stepUp`).
   set_member_role: {
@@ -956,6 +983,9 @@ export const PERSON_CONFIRMS_TOOLS: readonly AssistantTool[] = [
   'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',
+  // What a customer may owe: their limit and balance.
+  'set_credit_limit',
+  'adjust_credit',
   // Who outside may reach the workspace: a webhook's receiver, an integration, an AI platform.
   'delete_webhook_subscription',
   'revoke_integration',

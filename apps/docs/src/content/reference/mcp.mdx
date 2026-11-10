@@ -103,7 +103,7 @@ unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
 
 An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order`, `submit_cart`,
 `publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, `set_fx_rate`,
-`verify_tax_certificate`, `revoke_tax_certificate`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the admin tools (`set_member_role`,
+`verify_tax_certificate`, `revoke_tax_certificate`, `set_credit_limit`, `adjust_credit`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
 `uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
@@ -172,6 +172,8 @@ Annotations also tell a client when to confirm:
 | `set_fx_rate` | `destructiveHint: true` and `idempotentHint: true`: it replaces the rate buyers pay by, and the same rate again changes nothing |
 | `set_company_status`, `remove_company_member` | `destructiveHint: true` and `idempotentHint: true`: closing or rejecting a company and removing a member are final, and the same move again changes nothing |
 | `update_customer`, `put_company_members` | writes, not destructive, `idempotentHint: true`: the same input again changes nothing |
+| `set_credit_limit` | `destructiveHint: true` and `idempotentHint: true`: it replaces the limit a customer orders on account by, and the same limit again changes nothing |
+| `adjust_credit` | a write, not destructive and not idempotent: each confirmed call adds one ledger entry, which another adjustment undoes |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
 `assess_order` set `openWorldHint: true` (a started order runs its flow for real):
@@ -212,6 +214,24 @@ All need the `operator` role, and an API token may use them.
 
 Each write confirms, as [above](#actions-wait-for-the-person). The preview says what the move does to orders and
 counts members without naming them, and the audit entry does the same.
+
+## Credit accounts
+
+`get_credit_account` (viewer and above, `readOnlyHint: true`), `set_credit_limit` and `adjust_credit` (admin)
+are REST's `GET /api/v1/customers/:customerId/credit`, `POST …/credit/limit` and `POST …/credit/adjustments`,
+and the customer page's **Credit** section runs the same code, so they refuse what REST refuses and write the same
+audit entries (`credit.limit_set` and `credit.adjusted`). `get_credit_account` takes `{ customerId, after?, limit? }`
+and returns the `limit`, the `balance` owed, `held` (what open orders have claimed), `available` (limit less balance
+less held), all in USD, and a page of the ledger, newest first: each entry has its `kind` (`charge`, `settle`,
+`reverse` or `adjust`), `amount`, the `balanceAfter` it left, its order, and for an adjustment its `reference` (who)
+and `note` (the reason). `next` is the cursor for the earlier entries; pass it as `after`. `set_credit_limit` takes
+`{ customerId, limit }` and `adjust_credit` takes `{ customerId, amount, reason }`: a negative `amount` lowers what is
+owed (a credit memo, or a payment received outside CommerceWorker) and a positive one raises it. A reason is required,
+since it is what the ledger shows. Both confirm, as [above](#actions-wait-for-the-person): the preview shows the account
+now and after, and a limit under what is owed and held warns that new orders on account are refused until it is paid
+down. They are refused up front for an unknown customer or one that isn't a business customer, and `set_credit_limit` for a company that is suspended, closed or rejected. Only a person confirms
+them: over REST an API token is refused (`403`), and a typed A2A skill never runs them. Over REST an `Idempotency-Key`
+makes a retried adjustment record once.
 
 ## Exchange rates
 

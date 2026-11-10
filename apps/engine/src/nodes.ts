@@ -14,10 +14,12 @@ import {
   bookReturnLabel,
   bookShipment,
   handOverOrder,
+  holdCredit,
   MissingExchangeRateError,
   MissingLabelError,
   priceOrder,
   rateShipping,
+  releaseCredit,
   routeFulfillment,
   schedulePayouts,
   splitBySeller,
@@ -32,7 +34,6 @@ import {
   budgetCheck,
   CUSTOMER_MATCHED_BY,
   checkAddress,
-  creditCheck,
   DEFAULT_ORDER_BUDGET,
   describeAnswers,
   digitalLines,
@@ -397,24 +398,50 @@ export const EXECUTORS: Record<string, Exec> = {
     };
   },
 
-  'commerce.credit_check': async ({ env, ctx, config }) => {
-    const c = await pricingStore(env).customer(ctx.order.customerId);
-    const r = creditCheck(c, ctx.order, {
-      noAccount: str(config.noAccount, 'over_limit') === 'ok' ? 'ok' : 'over_limit',
-    });
-    if (!r.account || !c)
+  'commerce.credit_check': async ({ env, ctx, config, stepKey }) => {
+    // The check is the hold: one atomic claim on the limit, keyed by this step, so orders checked
+    // at the same time can't together exceed it and a retry finds its own hold. The expiry is
+    // from the run's clock, so a replay computes the same one.
+    const r = await holdCredit(
+      {
+        balances: balanceStore(env),
+        pricing: pricingStore(env),
+        companies: companyDirectory(env),
+      },
+      ctx.order,
+      stepKey,
+      {
+        noAccount: str(config.noAccount, 'over_limit') === 'ok' ? 'ok' : 'over_limit',
+        hold: config.hold !== false,
+        expiresAt: ctx.now + durationMs(str(config.holdFor, '30 days')),
+      },
+    );
+    if (!r.account)
       return {
         branches: [r.ok ? 'ok' : 'over_limit'],
-        summary: c ? `No credit account (${c.kind})` : 'Guest checkout (no credit account)',
+        summary: r.kind ? `No credit account (${r.kind})` : 'Guest checkout (no credit account)',
         output: { available: 0 },
+      };
+    if (r.refused)
+      return {
+        branches: ['over_limit'],
+        output: {
+          limit: r.limit,
+          balance: r.balance,
+          available: 0,
+          held: false,
+          currency: BASE_CURRENCY,
+        },
+        summary: r.refused,
       };
     const local = (n: number) => cash(fromBase(n, ctx.order.fxRate), ctx);
     return {
       branches: [r.ok ? 'ok' : 'over_limit'],
       output: {
-        limit: c.creditLimit,
-        balance: c.balance,
+        limit: r.limit,
+        balance: r.balance,
         available: r.available,
+        held: r.held,
         currency: BASE_CURRENCY,
       },
       summary: r.ok
@@ -1110,6 +1137,8 @@ export const ROLLBACKS: Record<
     const restored = await inventoryStore(env).restoreShipped(orderId);
     return `Cancelled ${ids.join(', ')}${voided ? `, voided ${plural(voided, 'label')}` : ''}${failed ? `; ${plural(failed, 'label')} could not be voided with the label provider (retried daily)` : ''}${restored ? `, restocked ${plural(restored, 'line')}` : ''}`;
   },
+  'commerce.credit_check': async (env, orderId) =>
+    `Released ${plural(await releaseCredit({ balances: balanceStore(env) }, orderId), 'credit hold')}`,
   'commerce.invoice': async (env, orderId) => {
     // Void first: an invoice Stripe reports paid keeps its account charge, which the payment settles.
     const { voided, paid } = await billing.voidInvoices(env, orderId);

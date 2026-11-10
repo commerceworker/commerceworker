@@ -153,6 +153,71 @@ describe('running a workspace tool for the REST API', () => {
     });
   });
 
+  it('reads a credit account for a viewer, and lets only an admin person change it', async () => {
+    const id = `cus_ops_credit_${crypto.randomUUID().slice(0, 8)}`;
+    await createDb(env.DB)
+      .insert(customers)
+      .values({
+        id,
+        name: `Credit ${id}`,
+        email: `${id}@example.com`,
+        kind: 'business',
+        creditLimit: 500,
+        balance: 50,
+      });
+    expect(await run('get_credit_account', { customerId: id }, staff('viewer'))).toMatchObject({
+      ok: true,
+      value: { limit: 500, balance: 50, held: 0, available: 450, entries: [], next: null },
+    });
+    expect(await run('get_credit_account', { customerId: 'cus_nobody' }, staff('viewer'))).toEqual({
+      ok: false,
+      error: 'No such customer.',
+    });
+    const limit = { customerId: id, limit: 800 };
+    const adjust = { customerId: id, amount: -20, reason: 'Credit memo 3' };
+    // A token never changes what a customer owes, even an admin's.
+    for (const [tool, input] of [
+      ['set_credit_limit', limit],
+      ['adjust_credit', adjust],
+    ] as const) {
+      expect(await run(tool, input, staff('admin'))).toEqual({
+        ok: false,
+        status: 403,
+        error: PERSON_CONFIRMS,
+      });
+      expect(await run(tool, input, person('operator'))).toEqual({
+        ok: false,
+        error: 'This needs the Admin role.',
+      });
+    }
+    expect(await run('set_credit_limit', limit, person('admin'))).toMatchObject({
+      ok: true,
+      value: { id },
+    });
+    // A retried REST call with the same Idempotency-Key records one adjustment.
+    const call = async () =>
+      api().runOperation(
+        'adjust_credit',
+        adjust,
+        await signedActor(person('admin'), await operationCall('adjust_credit', adjust)),
+        'retry-1',
+      );
+    expect(await call()).toMatchObject({ ok: true });
+    expect(await call()).toMatchObject({ ok: true });
+    expect(await run('get_credit_account', { customerId: id }, staff('viewer'))).toMatchObject({
+      ok: true,
+      value: {
+        limit: 800,
+        balance: 30,
+        entries: [{ kind: 'adjust', amount: -20, balanceAfter: 30, note: 'Credit memo 3' }],
+      },
+    });
+    expect(await run('adjust_credit', { ...adjust, reason: '' }, person('admin'))).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+  });
+
   it('lets only a person verify or revoke a tax certificate, as over MCP', async () => {
     const id = `cus_ops_${crypto.randomUUID().slice(0, 8)}`;
     await createDb(env.DB)

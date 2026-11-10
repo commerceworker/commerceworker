@@ -140,6 +140,7 @@ suite('audit vocabulary', () => {
       'tax_certificate',
       'customer',
       'company',
+      'credit',
       'catalog',
       'plugin',
       'personal_data',

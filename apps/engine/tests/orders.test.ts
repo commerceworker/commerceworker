@@ -1840,21 +1840,22 @@ describe('pricing chain', () => {
         terms: 'net_30',
       })
       .onConflictDoNothing();
-    const check = (total: number, currency: string, fxRate: number) =>
+    const check = (total: number, currency: string, fxRate: number, id: string) =>
       EXECUTORS['commerce.credit_check']!({
         env,
         node: {
           id: 'credit',
           type: 'commerce.credit_check',
           label: 'Credit',
-          config: {},
+          config: { hold: false },
           position: { x: 0, y: 0 },
         },
-        config: {},
+        // Only the currency is under test here; holds are checked where the order races a limit.
+        config: { hold: false },
         ctx: {
           order: {
             ...input({ model: 'b2b', customerId: 'cus_fx', currency }),
-            id: 'ord_credit',
+            id,
             createdAt: 0,
             subtotal: total,
             shipping: 0,
@@ -1871,9 +1872,9 @@ describe('pricing chain', () => {
         },
         stepKey: 'credit#1',
       });
-    expect((await check(85_000, 'USD', 1)).branches).toEqual(['ok']);
+    expect((await check(85_000, 'USD', 1, 'ord_credit_usd')).branches).toEqual(['ok']);
     // 85,000 GBP is 107,594.94 USD: 19,594.94 over, reported in pounds.
-    const gbp = await check(85_000, 'GBP', 0.79);
+    const gbp = await check(85_000, 'GBP', 0.79, 'ord_credit_gbp');
     expect(gbp.branches).toEqual(['over_limit']);
     expect(gbp.summary).toBe('Over limit by £15,480.00');
   });

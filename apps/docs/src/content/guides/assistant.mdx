@@ -26,7 +26,7 @@ line that says what it did and links to what it changed, such as **Ran a demo sc
 #nxb697**.
 
 - **An action** stops at its confirm card in the panel. The panel opens if it was closed. This
-  covers adding, pausing or resuming a promotion, verifying or revoking a tax certificate,
+  covers adding, pausing or resuming a promotion, verifying or revoking a tax certificate, setting a customer's credit limit or adjusting its balance,
   publishing the catalog, publishing or test-running a flow, deciding approvals (one or a batch), cancelling an order, delivering an event, starting
   an order from **New order** (the form checks its fields first), restarting an order,
   submitting or cancelling a cart and running the stock review. The page waits until you answer, and declining leaves everything as it
@@ -96,7 +96,7 @@ waits at and since when, steps run, recent activity),
 [cart's](/guides/carts/) lines with their ids, its price with shipping and tax, promotion codes,
 its ship-to and the shipping options on offer, the problems its price
 found, and why it can't be submitted yet), `list_flows` and `get_flow` (a saved
-draft with its validation problems). Operators and admins can read [companies](/guides/companies/) (`list_companies`, `get_company`, `list_company_members`), as the REST API shows them. Every role can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), integrations (`list_integrations`) and agentic checkout (`get_ucp_settings`), as the REST API shows them, never with a secret or a key. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
+draft with its validation problems). Operators and admins can read [companies](/guides/companies/) (`list_companies`, `get_company`, `list_company_members`), as the REST API shows them. Every role can read a business customer's [credit account](/guides/commerce-models/#credit-accounts) with `get_credit_account` (limit, balance, what open orders hold, what is available and the ledger), and can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), integrations (`list_integrations`) and agentic checkout (`get_ucp_settings`), as the REST API shows them, never with a secret or a key. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
 conversation: what it is doing while the reply streams, then what it found. An order's line names
 the step it waits at or stopped at, and opens that step on the order's graph; answers about an order
 say the same. A line for one cart, flow or assessment links to it too, and a reply that opened
@@ -135,8 +135,10 @@ sent until you press the confirm button, and declining leaves everything as it w
 | `put_company_members` | `operator` | Adds up to 100 members to a company by email, or changes those already there. The card counts them and names no one |
 | `remove_company_member` | `operator` | Removes a member for good; their record stays for the orders they placed |
 | `put_company_team` | `operator` | Adds a team to a company, or renames or moves one under another team |
+| `set_credit_limit` | `admin` | Sets a business customer's credit limit, in USD. The card shows the account now and after: limit, owed, held by open orders and available, and warns when the new limit is under what is owed and held, which refuses new orders on account until it is paid down |
+| `adjust_credit` | `admin` | Records a credit memo or a payment received outside CommerceWorker (a negative amount, lowering what is owed) or a debit (positive), with a required reason. It is an immutable ledger entry; undo one with another adjustment |
 
-These four change what buyers pay or owe in tax, so a person always confirms them: on the panel's
+These change what buyers pay, owe in tax or may owe on account, so a person always confirms them: on the panel's
 card, through an MCP confirmation, or with `{ "confirm": true }` in an A2A chat. They aren't typed
 A2A skills. Only a signed-in person verifies a certificate, never an API token.
 | `set_member_role` | `admin` | Changes a person's role. Lowering it revokes their API tokens above the new role; making someone an admin needs a step-up |
