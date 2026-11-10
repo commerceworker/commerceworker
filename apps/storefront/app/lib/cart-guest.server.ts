@@ -22,26 +22,38 @@ function cookie(request: Request, name: string): string | undefined {
 const COOKIE_RE = /^cart_[a-z0-9]+$/;
 
 /**
- * One cookie per cart, so a buyer with two carts open keeps both. `__Host-`: set only by this
- * host over https with `Path=/` and no `Domain`, so a sibling subdomain can't plant one.
+ * One cookie per cart, so a buyer with two carts open keeps both. Over https, which is every
+ * deployment, it is `__Host-ol_<cartId>` and `Secure`: set only by this host with `Path=/` and no
+ * `Domain`, so a sibling subdomain can't plant one. Plain http is local development only, where a
+ * browser may refuse a `Secure` cookie (WebKit on Linux does on localhost), so there it is
+ * `ol_<cartId>`. The name is read by the request's own scheme, so neither stands in for the other.
  */
-const cookieName = (cartId: string) => `__Host-ol_${cartId}`;
+const secure = (url: string) => new URL(url).protocol === 'https:';
+const cookieName = (cartId: string, https: boolean) => `${https ? '__Host-' : ''}ol_${cartId}`;
 
 /**
  * The cookie for a redeemed start link. `SameSite=None` and `Partitioned` because the buyer's
  * procurement system usually frames the cart (or opens it from its own page), so it is a
  * third-party cookie there, kept in that site's partition.
  */
-export async function guestCookie(g: CartGuest, expiresAt: number): Promise<string> {
+export async function guestCookie(
+  request: Request,
+  g: CartGuest,
+  expiresAt: number,
+): Promise<string> {
   const value = await signCartGuestSession(await signingKey(), g, expiresAt);
   const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-  return `${cookieName(g.cartId)}=${value}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=${maxAge}`;
+  const https = secure(request.url);
+  // A non-Secure cookie can't be SameSite=None or Partitioned: plain http dev frames nothing.
+  const site = https ? 'Secure; SameSite=None; Partitioned' : 'SameSite=Lax';
+  return `${cookieName(g.cartId, https)}=${value}; Path=/; HttpOnly; ${site}; Max-Age=${maxAge}`;
 }
 
 /** The buyer this request carries for `cartId`, or null. */
 export async function cartGuest(request: Request, cartId: string): Promise<CartGuest | null> {
   if (!COOKIE_RE.test(cartId)) return null;
-  return verifyCartGuestSession(await verifyingKeys(), cookie(request, cookieName(cartId)), cartId);
+  const name = cookieName(cartId, secure(request.url));
+  return verifyCartGuestSession(await verifyingKeys(), cookie(request, name), cartId);
 }
 
 /**

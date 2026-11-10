@@ -11,7 +11,7 @@ import { cartRefusal, guestCookie } from '~/lib/cart-guest.server';
 import { engine } from '~/lib/env.server';
 import type { Route } from './+types/cart-start';
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, request }: Route.LoaderArgs) {
   const redeemed = /^cart_[a-z0-9]+$/.test(params.cartId)
     ? await engine().redeemCartStart(params.cartId, params.token)
     : null;
@@ -22,7 +22,7 @@ export async function loader({ params }: Route.LoaderArgs) {
     );
   return redirect(`/cart/${params.cartId}`, {
     headers: {
-      'set-cookie': await guestCookie(redeemed.guest, redeemed.expiresAt),
+      'set-cookie': await guestCookie(request, redeemed.guest, redeemed.expiresAt),
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
     },

@@ -25,6 +25,7 @@ vi.mock('~/lib/env.server', () => ({
 const { default: worker } = await import('../workers/app');
 const cartStart = await import('../app/routes/cart-start');
 const cartBuy = await import('../app/routes/cart-buy');
+const guestLib = await import('../app/lib/cart-guest.server');
 
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
@@ -150,6 +151,60 @@ const snapshot = (cart: Partial<Cart>): CartState => ({
   cart: { id: 'cart_1', status: 'open', customerId: null, external, ...cart } as Cart,
   members: [],
   chat: [],
+});
+
+describe('the buyer’s cookie, by scheme', () => {
+  const later = Date.now() + 60_000;
+  const nameOf = (setCookie: string) => setCookie.split('=')[0];
+
+  it('is __Host- and Secure over https, every deployment', async () => {
+    const set = await guestLib.guestCookie(
+      new Request('https://shop.test/cart/start/cart_1/t'),
+      guest,
+      later,
+    );
+    expect(nameOf(set)).toBe('__Host-ol_cart_1');
+    expect(set).toMatch(/; Secure; SameSite=None; Partitioned;/);
+    const pair = set.split(';')[0]!;
+    expect(
+      await guestLib.cartGuest(
+        new Request('https://shop.test/cart/cart_1', { headers: { cookie: pair } }),
+        'cart_1',
+      ),
+    ).toEqual(guest);
+    // The plain-http form is never read over https.
+    const plain = pair.replace('__Host-ol_', 'ol_');
+    expect(
+      await guestLib.cartGuest(
+        new Request('https://shop.test/cart/cart_1', { headers: { cookie: plain } }),
+        'cart_1',
+      ),
+    ).toBeNull();
+  });
+
+  it('is plain ol_ and not Secure over http, local development only, and read only there', async () => {
+    const set = await guestLib.guestCookie(
+      new Request('http://localhost/cart/start/cart_1/t'),
+      guest,
+      later,
+    );
+    expect(nameOf(set)).toBe('ol_cart_1');
+    expect(set).not.toMatch(/Secure|SameSite=None|Partitioned/);
+    const pair = set.split(';')[0]!;
+    expect(
+      await guestLib.cartGuest(
+        new Request('http://localhost/cart/cart_1', { headers: { cookie: pair } }),
+        'cart_1',
+      ),
+    ).toEqual(guest);
+    const host = `__Host-${pair}`;
+    expect(
+      await guestLib.cartGuest(
+        new Request('http://localhost/cart/cart_1', { headers: { cookie: host } }),
+        'cart_1',
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('the buyer’s pages refuse in a frame they can show', () => {
