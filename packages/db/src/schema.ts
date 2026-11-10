@@ -1088,15 +1088,17 @@ export const carts = sqliteTable(
 );
 
 /**
- * Promotion codes the `commerce.discount` node applies. `kind` is `pct` (`value` a percentage),
- * `amount` (`value` off the subtotal) or `free_shipping`; `skus` a JSON array the discount is
- * limited to, or null for every line.
+ * Promotions the `commerce.discount` node applies: a code buyers enter, or none (automatic).
+ * `kind` is `pct` (`value` a percentage), `amount` (`value` off the subtotal) or `free_shipping`;
+ * `skus` a JSON array the discount is limited to, or null for every line. `priority` (higher is
+ * considered first), `stacking` (`exclusive` or `stackable`) and `max_discount` (a cap per order,
+ * in the base currency) decide how promotions combine.
  */
 export const promotions = sqliteTable(
   'promotions',
   {
     id: text('id').primaryKey(),
-    code: text('code').notNull(),
+    code: text('code'),
     name: text('name').notNull().default(''),
     kind: text('kind').notNull(),
     value: real('value').notNull().default(0),
@@ -1112,8 +1114,14 @@ export const promotions = sqliteTable(
     createdBy: text('created_by'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    priority: integer('priority').notNull().default(0),
+    stacking: text('stacking').notNull().default('exclusive'),
+    maxDiscount: real('max_discount'),
   },
-  (t) => [uniqueIndex('promotions_code').on(t.code)],
+  (t) => [
+    uniqueIndex('promotions_code').on(t.code),
+    index('promotions_automatic').on(t.status).where(sql`${t.code} IS NULL`),
+  ],
 );
 
 /** One per promotion per order, written by the discount node's step, so a retry redeems once. */

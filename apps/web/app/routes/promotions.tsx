@@ -1,9 +1,11 @@
 /**
- * Promotion codes: what each takes off, its limits and how often it has been used. Codes reach an
- * order from a cart (or `meta.promoCodes`); a flow applies them with an Apply promotions step.
+ * Promotions: what each takes off, how it combines with the others, its limits and how often it
+ * has been used. A code reaches an order from a cart (or `meta.promoCodes`); an automatic
+ * promotion has no code and applies to any order it fits. A flow applies both with an Apply
+ * promotions step.
  */
 
-import { BASE_CURRENCY } from '@commerceworker/core';
+import { BASE_CURRENCY, promotionLabel } from '@commerceworker/core';
 import { Button } from '@commerceworker/ui/button';
 import {
   Field,
@@ -33,8 +35,8 @@ import { ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
 import { customerNames } from '~/lib/orders.server';
-import { promotionState } from '~/lib/promotions';
-import { listPromotions, promotionFrom } from '~/lib/promotions.server';
+import { promotionFrom, promotionState } from '~/lib/promotions';
+import { listPromotions } from '~/lib/promotions.server';
 import { useCan } from '~/lib/use-me';
 import type { Route } from './+types/promotions';
 
@@ -57,10 +59,22 @@ export async function action({ request }: Route.ActionArgs) {
   // says what the code does, and the person confirms it there.
   const p = promotionFrom(await request.formData());
   if (typeof p === 'string') return { error: p };
-  const { customerId, minSubtotal, skus, validTo, maxRedemptions, perCustomerLimit, ...rest } = p;
+  const {
+    code,
+    customerId,
+    minSubtotal,
+    skus,
+    validTo,
+    maxRedemptions,
+    perCustomerLimit,
+    maxDiscount,
+    ...rest
+  } = p;
   return {
     create: {
       ...rest,
+      ...(code ? { code } : {}),
+      ...(maxDiscount !== null ? { maxDiscount } : {}),
       ...(customerId ? { customerId } : {}),
       ...(minSubtotal !== null ? { minSubtotal } : {}),
       ...(skus ? { skus } : {}),
@@ -121,7 +135,7 @@ export default function Promotions() {
             Commerce
           </Link>
         }
-        subtitle="Codes buyers and staff enter on a cart. A flow applies them with an Apply promotions step, after Price lines and before Calculate tax."
+        subtitle="Codes buyers and staff enter on a cart, and automatic promotions that need none. A flow applies them with an Apply promotions step, after Price lines and before Calculate tax."
         actions={
           canOperate ? (
             <FormSheet open={sheet.open} onOpenChange={sheet.onOpenChange} label="New promotion">
@@ -135,16 +149,17 @@ export default function Promotions() {
       />
       <Body className="grid gap-4">
         <Section
-          title="Codes"
-          description="What each code takes off, its limits and how often it has been used."
+          title="Promotions"
+          description="What each takes off, how it combines with the others, its limits and how often it has been used."
           flush
         >
           {promotions.length ? (
-            <Table stack="cards" caption="Promotion codes">
+            <Table stack="cards" caption="Promotions">
               <TableHead>
                 <Tr>
-                  <Th>Code</Th>
+                  <Th>Promotion</Th>
                   <Th>Takes off</Th>
+                  <Th>Combines</Th>
                   <Th>Limits</Th>
                   <Th numeric>Used</Th>
                   <Th className="w-0">
@@ -164,6 +179,7 @@ export default function Promotions() {
                         {customers[p.customerId] ?? p.customerId}
                       </Link>
                     ) : null,
+                    p.maxDiscount ? `at most ${money(p.maxDiscount)} per order` : null,
                     p.maxRedemptions ? plural(p.maxRedemptions, 'use') : null,
                     p.perCustomerLimit ? `${p.perCustomerLimit} per customer` : null,
                     p.validTo
@@ -173,17 +189,31 @@ export default function Promotions() {
                   return (
                     <Tr key={p.id} className={cn(state !== 'active' && 'text-muted-foreground')}>
                       <Td>
-                        <span className="font-mono">{p.code}</span>
+                        {p.code ? (
+                          <span className="font-mono">{p.code}</span>
+                        ) : (
+                          <span>{p.name}</span>
+                        )}
                         {state !== 'active' ? (
                           <span className="ml-2 align-[0.0625em]">
                             <ToneBadge tone="idle" label={state === 'ended' ? 'Ended' : 'Paused'} />
                           </span>
                         ) : null}
-                        {p.name ? (
-                          <div className="text-muted-foreground text-xs">{p.name}</div>
-                        ) : null}
+                        {p.code ? (
+                          p.name ? (
+                            <div className="text-muted-foreground text-xs">{p.name}</div>
+                          ) : null
+                        ) : (
+                          <div className="text-muted-foreground text-xs">
+                            Automatic: applies to any order it fits
+                          </div>
+                        )}
                       </Td>
                       <Td label="Takes off">{describe(p)}</Td>
+                      <Td label="Combines" className="text-muted-foreground text-xs">
+                        {p.stacking === 'stackable' ? 'Stackable' : 'Exclusive'}
+                        {p.priority ? ` · priority ${p.priority}` : ''}
+                      </Td>
                       <Td label="Limits" className="text-muted-foreground text-xs">
                         {limits.length
                           ? limits.map((l, i) => (
@@ -201,13 +231,13 @@ export default function Promotions() {
                       <Td className="max-md:-ml-3 max-md:basis-full">
                         {state === 'ended' ? (
                           // Pausing or resuming it would change nothing, and its dates can't be
-                          // edited: the way to run it again is a new code.
+                          // edited: the way to run it again is a new promotion.
                           <p className="max-w-48 text-muted-foreground text-xs max-md:pl-3 md:text-right">
                             Ended, so it no longer applies.
-                            {canOperate ? ' To run it again, add a new code.' : null}
+                            {canOperate ? ' To run it again, add a new promotion.' : null}
                           </p>
                         ) : canOperate ? (
-                          <StatusButton id={p.id} code={p.code} paused={paused} />
+                          <StatusButton id={p.id} label={promotionLabel(p)} paused={paused} />
                         ) : null}
                       </Td>
                     </Tr>
@@ -225,7 +255,7 @@ export default function Promotions() {
 }
 
 /**
- * The fields of a new code: the code and what it takes off, then its limits, grouped. The action
+ * The fields of a new promotion: its code (or none) and what it takes off, how it combines, then its limits, grouped. The action
  * checks them (`promotionFrom`).
  */
 function NewPromotion({ error, busy }: { error?: string | null; busy: boolean }) {
@@ -233,8 +263,8 @@ function NewPromotion({ error, busy }: { error?: string | null; busy: boolean })
     <Form method="post">
       <FieldGroup className="gap-5">
         {[
-          ['code', 'Code', 'WELCOME15'],
-          ['name', 'Name (optional)', 'Welcome offer'],
+          ['code', 'Code (leave empty for an automatic promotion)', 'WELCOME15'],
+          ['name', 'Name (needed without a code)', 'Welcome offer'],
         ].map(([k, label, ph]) => (
           <Field key={k} className="gap-2">
             <FieldLabel htmlFor={`promo-${k}`}>{label}</FieldLabel>
@@ -255,6 +285,30 @@ function NewPromotion({ error, busy }: { error?: string | null; busy: boolean })
             <Input id="promo-value" name="value" inputMode="decimal" />
           </Field>
         </div>
+        <FieldSet className="gap-4">
+          <FieldLegend variant="label" className="mb-0">
+            Combining
+          </FieldLegend>
+          <div className="grid grid-cols-2 gap-3">
+            <Field className="gap-2">
+              <FieldLabel htmlFor="promo-stacking">Combines</FieldLabel>
+              <NativeSelect id="promo-stacking" name="stacking">
+                <NativeSelectOption value="exclusive">Never with another</NativeSelectOption>
+                <NativeSelectOption value="stackable">With stackable ones</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <Field className="gap-2">
+              <FieldLabel htmlFor="promo-priority">Priority</FieldLabel>
+              <Input id="promo-priority" name="priority" inputMode="numeric" placeholder="0" />
+            </Field>
+          </div>
+          <Field className="gap-2">
+            <FieldLabel htmlFor="promo-maxDiscount">
+              Most it takes off one order ({BASE_CURRENCY}, optional)
+            </FieldLabel>
+            <Input id="promo-maxDiscount" name="maxDiscount" inputMode="decimal" />
+          </Field>
+        </FieldSet>
         <FieldSet className="gap-4">
           <FieldLegend variant="label" className="mb-0">
             Limits
@@ -287,8 +341,8 @@ function NewPromotion({ error, busy }: { error?: string | null; busy: boolean })
   );
 }
 
-/** Pauses or resumes a code through the assistant: its card says what changes for buyers. */
-function StatusButton({ id, code, paused }: { id: string; code: string; paused: boolean }) {
+/** Pauses or resumes a promotion through the assistant: its card says what changes for buyers. */
+function StatusButton({ id, label, paused }: { id: string; label: string; paused: boolean }) {
   const { act } = useAssistant();
   const { revalidate } = useRevalidator();
   const [busy, setBusy] = useState(false);
@@ -314,7 +368,7 @@ function StatusButton({ id, code, paused }: { id: string; code: string; paused: 
         variant="ghost"
         size="sm"
         disabled={busy}
-        aria-label={`${paused ? 'Resume' : 'Pause'} ${code}`}
+        aria-label={`${paused ? 'Resume' : 'Pause'} ${label}`}
         onClick={() => void run()}
       >
         {busy ? 'Confirm it in the assistant' : paused ? 'Resume' : 'Pause'}

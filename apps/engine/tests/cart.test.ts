@@ -24,7 +24,7 @@ import {
   sessions,
   users,
 } from '@commerceworker/db';
-import { eq } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EngineApi } from '../src/api';
 import { PROMO_TRIES } from '../src/cart/agent';
@@ -408,6 +408,63 @@ describe('promotion codes on a cart', () => {
         content: "NOPE isn't a promotion.",
       }),
     );
+  });
+
+  it('takes several codes and an automatic promotion off the price, and names what a code is not combined with', async () => {
+    const flow = { ...b2bOrderFlow(), id: 'test-cart-promos-many' };
+    await publishFlow(db(), flow);
+    const at = Date.now();
+    const rows = [
+      {
+        id: 'promo_cm_auto',
+        code: null,
+        name: 'Sitewide',
+        value: 5,
+        stacking: 'stackable',
+        priority: 9,
+      },
+      { id: 'promo_cm_a', code: 'CMTEN', name: '', value: 10, stacking: 'stackable' },
+      { id: 'promo_cm_b', code: 'CMFIVE', name: '', value: 5, stacking: 'stackable' },
+      // Exclusive, and worth less than the stackable set.
+      { id: 'promo_cm_c', code: 'CMALONE', name: '', value: 8 },
+    ].map((r) => ({ ...r, kind: 'pct', createdAt: at, updatedAt: at }));
+    await db().insert(promotions).values(rows).onConflictDoNothing();
+    try {
+      const made = await api().createCart({
+        title: 'Many codes',
+        flowId: flow.id,
+        customerId: 'cus_northwind',
+        createdBy: 'usr_cart_ada',
+      });
+      if (!made.ok) throw new Error(made.error);
+      const ada = staff(await who('operator', 'ada'));
+      await cart(made.id).applyAs(ada, { op: 'add', sku: 'WID-100', qty: 10 });
+      // The automatic promotion needs no code.
+      const auto = (await state(made.id)).cart!.quote!;
+      expect(auto.discounts?.applied.map((a) => [a.code, a.title])).toEqual([[null, 'Sitewide']]);
+      for (const code of ['cmten', 'cmfive', 'cmalone'])
+        expect((await cart(made.id).applyAs(ada, { op: 'promo_add', code })).ok).toBe(true);
+      const priced = (await state(made.id)).cart!;
+      expect(priced.promoCodes).toEqual(['CMTEN', 'CMFIVE', 'CMALONE']);
+      expect(priced.quote!.discounts?.applied.map((a) => a.code)).toEqual([
+        null,
+        'CMTEN',
+        'CMFIVE',
+      ]);
+      expect(priced.issues.filter((i) => i.code === 'promotion')).toEqual([
+        expect.objectContaining({
+          content: "CMALONE isn't combined with Sitewide, CMTEN, CMFIVE.",
+        }),
+      ]);
+      // Removing a code gives the price back, and leaves the others applied.
+      await cart(made.id).applyAs(ada, { op: 'promo_remove', code: 'CMTEN' });
+      expect((await state(made.id)).cart!.quote!.discounts?.applied.map((a) => a.code)).toEqual([
+        null,
+        'CMFIVE',
+      ]);
+    } finally {
+      await db().delete(promotions).where(like(promotions.id, 'promo_cm_%'));
+    }
   });
 
   it('limits how many promotion codes one cart may try in an hour', async () => {

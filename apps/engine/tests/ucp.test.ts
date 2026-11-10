@@ -630,6 +630,94 @@ describe('UCP discounts', () => {
     expect(state.order!.meta?.promoCodes).toEqual([SAVE]);
     expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
   });
+
+  describe('with promotions that combine', () => {
+    const at = Date.now();
+    const rows = [
+      // 5% off every order, with no code; it combines with the code below.
+      {
+        id: 'promo_UCPAUTO',
+        code: null,
+        name: 'Sitewide',
+        kind: 'pct',
+        value: 5,
+        stacking: 'stackable',
+        priority: 9,
+      },
+      {
+        id: 'promo_UCPSTACK',
+        code: 'UCPSTACK',
+        name: 'Ten off',
+        kind: 'amount',
+        value: 10,
+        stacking: 'stackable',
+      },
+      // Never combined, and worth less than the two together.
+      { id: 'promo_UCPALONE', code: 'UCPALONE', name: 'Alone', kind: 'amount', value: 12 },
+    ].map((r) => ({ ...r, createdAt: at, updatedAt: at }));
+    beforeAll(async () => {
+      await db().insert(promotions).values(rows).onConflictDoNothing();
+      // SAVE would be exclusive and worth more than the pair; take it out of play.
+      await db().update(promotions).set({ status: 'paused' }).where(eq(promotions.code, SAVE));
+    });
+    afterAll(async () => {
+      await db().delete(promotions).where(eq(promotions.id, 'promo_UCPAUTO'));
+      await db().delete(promotions).where(eq(promotions.id, 'promo_UCPSTACK'));
+      await db().delete(promotions).where(eq(promotions.id, 'promo_UCPALONE'));
+      await db().update(promotions).set({ status: 'active' }).where(eq(promotions.code, SAVE));
+    });
+
+    it('applies several codes and an automatic promotion, and names what a code is not combined with', async () => {
+      const { body: c } = await ucp(
+        disc,
+        'POST',
+        '/ucp/v1/checkout-sessions',
+        withCodes(['ucpstack', 'ucpalone']),
+      );
+      // The automatic 5% (349.00 -> 17.45) is first by priority, then 10 off the rest.
+      expect(c.discounts.applied).toEqual([
+        expect.objectContaining({ title: 'Sitewide', automatic: true, amount: 1745 }),
+        expect.objectContaining({ code: 'UCPSTACK', title: 'Ten off', amount: 1000 }),
+      ]);
+      expect(c.discounts.applied[0]).not.toHaveProperty('code');
+      expect(amountOf(c, 'discount')).toBe(-2745);
+      expect(sums(c)).toBe(amountOf(c, 'total'));
+      expect(c.messages).toEqual([
+        expect.objectContaining({
+          path: '$.discounts.codes[1]',
+          content: "UCPALONE isn't combined with Sitewide, UCPSTACK.",
+        }),
+      ]);
+    });
+
+    it('prices an automatic promotion with no codes sent, and the order charges the quoted total', async () => {
+      introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
+      await introspector.modifyAll(async (m) => {
+        await m.disableSleeps();
+        await m.disableRetryDelays();
+      });
+      const { body: c } = await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', withCodes());
+      expect(c.discounts.applied).toEqual([
+        expect.objectContaining({ title: 'Sitewide', automatic: true, amount: 1745 }),
+      ]);
+      const done = await ucp(disc, 'POST', `/ucp/v1/checkout-sessions/${c.id}/complete`, pay(), {
+        'idempotency-key': key(),
+      });
+      const orderId = done.body.order.id;
+      const state = await until(async () => {
+        const s = (await env.ORDER_AGENT.getByName(orderId).snapshot()) as OrderState;
+        return s.status === 'waiting' ? s : false;
+      }, 'the return window');
+      // No code was handed on; the flow's discount step applied the promotion itself.
+      expect(state.order!.meta?.promoCodes).toBeUndefined();
+      expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
+      const redeemed = await db()
+        .select()
+        .from(promotionRedemptions)
+        .where(eq(promotionRedemptions.orderId, orderId));
+      expect(redeemed.map((r) => r.promotionId)).toEqual(['promo_UCPAUTO']);
+    });
+  });
 });
 
 describe('UCP pickup on a flow without a pickup path', () => {

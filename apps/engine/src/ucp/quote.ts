@@ -183,7 +183,7 @@ export async function quoteCheckout(
         discounts = {
           applied: out.applied.map((a) => ({
             code: a.code,
-            title: a.name,
+            title: a.name || a.code || 'Discount',
             kind: a.kind,
             amount: a.amount,
           })),

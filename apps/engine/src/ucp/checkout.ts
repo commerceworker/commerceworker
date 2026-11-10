@@ -325,6 +325,9 @@ export async function completeCheckout(
 
   const q = claimed.quote!;
   const name = [claimed.buyer.firstName, claimed.buyer.lastName].filter(Boolean).join(' ');
+  const appliedCodes = (q.discounts?.applied ?? []).flatMap((a) =>
+    a.code === null ? [] : [a.code],
+  );
   let orderId: string;
   try {
     const started = await startOrderOnce(env, {
@@ -356,10 +359,9 @@ export async function completeCheckout(
         meta: {
           // Only the codes the quote applied: the flow's discount step takes them off again, so
           // the total it authorizes is the one that was held. A code the quote refused isn't
-          // handed on, or it could apply now and move the total off the hold.
-          ...(q.discounts?.applied.length
-            ? { promoCodes: q.discounts.applied.map((a) => a.code) }
-            : {}),
+          // handed on, or it could apply now and move the total off the hold. An automatic
+          // promotion has no code to hand on; the step applies it again by itself.
+          ...(appliedCodes.length ? { promoCodes: appliedCodes } : {}),
           ...(claimed.shipTo ? { shipTo: claimed.shipTo } : {}),
           ucp: { platformId: ctx.caller.id, checkoutId: claimed.id, origin: ctx.caller.origin },
         },

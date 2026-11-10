@@ -195,17 +195,9 @@ export const NODE_SPECS = [
     category: 'commerce',
     label: 'Apply promotions',
     description:
-      'Applies the promotion codes the order carries (from a cart, say): lowers the covered lines’ prices, or makes shipping free, and records each redemption against its limits.',
+      'Applies the promotions that fit the order: its promotion codes (from a cart, say) and the automatic promotions that need none. Each promotion’s own priority, stacking and cap decide what combines. Lowers the covered lines’ prices, or makes shipping free, and records each redemption against its limits. Place after Price lines (and after Shipping rate for free shipping), before Calculate tax.',
     icon: 'TicketPercent',
-    fields: [
-      {
-        key: 'stack',
-        label: 'Stack codes',
-        kind: 'boolean',
-        default: false,
-        hint: 'Off applies only the code worth the most. Place after Price lines (and after Shipping rate for free shipping), before Calculate tax',
-      },
-    ],
+    fields: [],
     outputs: OUT,
     rollback: true,
   }),

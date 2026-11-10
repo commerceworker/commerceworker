@@ -67,6 +67,9 @@ export const PRICING_FIXTURE: PricingFixture = {
       maxRedemptions: 1,
       perCustomerLimit: null,
       status: 'active',
+      priority: 0,
+      stacking: 'exclusive',
+      maxDiscount: null,
     },
     {
       id: 'pc_promo_paused',
@@ -83,7 +86,38 @@ export const PRICING_FIXTURE: PricingFixture = {
       maxRedemptions: null,
       perCustomerLimit: 1,
       status: 'paused',
+      priority: 0,
+      stacking: 'exclusive',
+      maxDiscount: null,
     },
+    // Automatic promotions (no code): one live, and one each paused, not yet valid and ended.
+    ...(
+      [
+        ['live', {}],
+        ['paused', { status: 'paused' as const }],
+        ['future', { validFrom: 5_000 }],
+        ['ended', { validTo: 1_000 }],
+      ] as const
+    ).map(([name, over]) => ({
+      id: `pc_promo_auto_${name}`,
+      code: null,
+      name: `Automatic ${name}`,
+      kind: 'amount' as const,
+      value: 3,
+      currency: null,
+      minSubtotal: null,
+      skus: null,
+      customerId: null,
+      validFrom: null,
+      validTo: null,
+      maxRedemptions: null,
+      perCustomerLimit: null,
+      status: 'active' as const,
+      priority: 7,
+      stacking: 'stackable' as const,
+      maxDiscount: 12,
+      ...over,
+    })),
   ],
   fxRates: [{ currency: 'EUR', rate: 0.92 }],
   priceSources: [
@@ -164,6 +198,31 @@ export function describePricingStoreContract(
       expect(last).toMatchObject({ id: 'pc_promo_last', skus: ['PC-SKU-1'], maxRedemptions: 1 });
       const [paused] = await s.promotionsByCode(['PCPAUSED']);
       expect(paused).toMatchObject({ status: 'paused', skus: null, perCustomerLimit: 1 });
+      // The rules every promotion carries: older ones are exclusive, uncapped, priority 0.
+      expect(last).toMatchObject({ priority: 0, stacking: 'exclusive', maxDiscount: null });
+    });
+
+    it('reads automatic promotions live at a time, and never by code', async () => {
+      const s = await store();
+      const ids = async (at: number) =>
+        (await s.automaticPromotions(at))
+          .filter((p) => p.id.startsWith('pc_'))
+          .map((p) => p.id)
+          .sort();
+      // Inside its dates, not paused: the live one; the future one from its start, never the ended
+      // one after its end (a promotion ends at validTo, as the node judges it).
+      expect(await ids(500)).toEqual(['pc_promo_auto_ended', 'pc_promo_auto_live']);
+      expect(await ids(2_000)).toEqual(['pc_promo_auto_live']);
+      expect(await ids(5_000)).toEqual(['pc_promo_auto_future', 'pc_promo_auto_live']);
+      const [live] = await s.automaticPromotions(2_000);
+      expect(live).toMatchObject({
+        code: null,
+        priority: 7,
+        stacking: 'stackable',
+        maxDiscount: 12,
+      });
+      // A codeless promotion has nothing to look up.
+      expect((await s.promotionsByCode(['PCLAST'])).every((p) => p.code !== null)).toBe(true);
     });
 
     it('lets one order hold the last redemption, idempotently, until it gives it back', async () => {
@@ -300,6 +359,9 @@ export function describePricingStoreContract(
         validTo: null,
         maxRedemptions: 5,
         perCustomerLimit: null,
+        priority: 3,
+        stacking: 'stackable' as const,
+        maxDiscount: 25,
       };
       expect(await s.createPromotion(promo, 'usr_ada')).toBe(true);
       expect(await s.createPromotion({ ...promo, id: 'pc_promo_dup' }, 'usr_ada')).toBe(false);
@@ -308,12 +370,42 @@ export function describePricingStoreContract(
         skus: ['PC-SKU-1'],
         status: 'active',
         maxRedemptions: 5,
+        priority: 3,
+        stacking: 'stackable',
+        maxDiscount: 25,
       });
       expect(await s.promotion('pc_promo_dup')).toBeUndefined();
       const listed = (await s.listPromotions()).filter((p) => p.id.startsWith('pc_'));
       expect(listed[0]).toMatchObject({ id: 'pc_promo_new', redeemed: 0 });
       await s.setPromotionStatus('pc_promo_new', 'paused');
       expect((await s.promotionsByCode(['PC-NEW10']))[0]?.status).toBe('paused');
+    });
+
+    it('adds any number of automatic promotions, which have no code to clash', async () => {
+      const s = await store();
+      const auto = {
+        id: 'pc_promo_auto_a',
+        code: null,
+        name: 'Ten off orders',
+        kind: 'pct' as const,
+        value: 10,
+        minSubtotal: null,
+        skus: null,
+        customerId: null,
+        validTo: null,
+        maxRedemptions: 100,
+        perCustomerLimit: null,
+        priority: 0,
+        stacking: 'exclusive' as const,
+        maxDiscount: null,
+      };
+      expect(await s.createPromotion(auto, 'usr_ada')).toBe(true);
+      expect(await s.createPromotion({ ...auto, id: 'pc_promo_auto_b' }, 'usr_ada')).toBe(true);
+      // The same id is still a clash.
+      expect(await s.createPromotion(auto, 'usr_ada')).toBe(false);
+      const ours = (await s.automaticPromotions(2_000)).filter((p) => /_auto_[ab]$/.test(p.id));
+      expect(ours.map((p) => p.id).sort()).toEqual(['pc_promo_auto_a', 'pc_promo_auto_b']);
+      expect(ours[0]).toMatchObject({ code: null, maxRedemptions: 100 });
     });
 
     it("builds a customer's price chain: active sources, rules, their contract prices, their tier", async () => {

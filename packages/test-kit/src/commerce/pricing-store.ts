@@ -80,7 +80,17 @@ export class InMemoryPricingStore implements PricingStore {
   }
 
   async promotionsByCode(codes: readonly string[]) {
-    return this.allPromotions().filter((p) => codes.includes(p.code));
+    return this.allPromotions().filter((p) => p.code !== null && codes.includes(p.code));
+  }
+
+  async automaticPromotions(at: number) {
+    return this.allPromotions().filter(
+      (p) =>
+        p.code === null &&
+        p.status === 'active' &&
+        (p.validFrom === null || p.validFrom <= at) &&
+        (p.validTo === null || p.validTo > at),
+    );
   }
 
   async listPromotions() {
@@ -96,7 +106,7 @@ export class InMemoryPricingStore implements PricingStore {
 
   async createPromotion(p: Omit<Promotion, 'status' | 'currency' | 'validFrom'>) {
     const all = this.allPromotions();
-    if (all.some((x) => x.code === p.code || x.id === p.id)) return false;
+    if (all.some((x) => (p.code !== null && x.code === p.code) || x.id === p.id)) return false;
     all.push({
       ...p,
       skus: p.skus?.length ? p.skus : null,

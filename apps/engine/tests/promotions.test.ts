@@ -42,22 +42,31 @@ const node = {
   config: {},
   position: { x: 0, y: 0 },
 };
-async function discount(o: Order, config: Record<string, unknown> = {}, extra = {}) {
+async function discount(o: Order, extra = {}) {
   const ctx: RunContext = { order: o, nodes: {}, vars: {}, input: {}, now, ref: o.id };
   return EXECUTORS['commerce.discount']!({
     env,
     node,
-    config: withDefaults('commerce.discount', config),
+    config: withDefaults('commerce.discount', {}),
     ctx,
     stepKey: 'promo#1',
     ...extra,
   });
 }
 
-async function addPromotion(p: Partial<typeof promotions.$inferInsert> & { code: string }) {
+async function addPromotion(
+  p: Partial<typeof promotions.$inferInsert> & { code: string | null; name?: string },
+) {
   await db()
     .insert(promotions)
-    .values({ id: `promo_${p.code}`, kind: 'pct', value: 10, createdAt: now, updatedAt: now, ...p })
+    .values({
+      id: `promo_${p.code ?? p.name}`,
+      kind: 'pct',
+      value: 10,
+      createdAt: now,
+      updatedAt: now,
+      ...p,
+    })
     .onConflictDoNothing();
 }
 
@@ -95,7 +104,7 @@ describe('commerce.discount', () => {
 
   it('never redeems when pricing a quote', async () => {
     await addPromotion({ code: 'SAVE10' });
-    const r = await discount(order(), {}, { dryRun: true });
+    const r = await discount(order(), { dryRun: true });
     expect(r.order?.subtotal).toBe(180);
     expect(await redemptions('SAVE10')).toEqual([]);
   });
@@ -115,17 +124,62 @@ describe('commerce.discount', () => {
     expect(await redemptions('ONCE')).toHaveLength(1);
   });
 
-  it('makes shipping free, and applies only the best code unless they stack', async () => {
+  it('applies only the best code unless the promotions stack themselves', async () => {
     await addPromotion({ code: 'SHIP', kind: 'free_shipping', value: 0 });
     await addPromotion({ code: 'SAVE10' });
-    const best = await discount(order({ meta: { promoCodes: ['SHIP', 'SAVE10'] } }));
-    expect((best.output as { applied: { code: string }[] }).applied.map((a) => a.code)).toEqual([
-      'SAVE10',
-    ]);
-    const both = await discount(order({ meta: { promoCodes: ['SHIP', 'SAVE10'] } }), {
-      stack: true,
-    });
+    const codes = { meta: { promoCodes: ['SHIP', 'SAVE10'] } };
+    // Exclusive by default: the code worth the most is applied, and the other is told why.
+    const best = await discount(order(codes));
+    const out = best.output as { applied: { code: string }[]; refused: unknown[] };
+    expect(out.applied.map((a) => a.code)).toEqual(['SAVE10']);
+    expect(out.refused).toEqual([{ code: 'SHIP', reason: "SHIP isn't combined with SAVE10." }]);
+
+    await db().update(promotions).set({ stacking: 'stackable' });
+    const both = await discount(order(codes));
     expect(both.order).toMatchObject({ subtotal: 180, shipping: 0, total: 180 });
+  });
+
+  it('applies an automatic promotion with no code, and an order carrying none', async () => {
+    await addPromotion({ code: null, name: 'Spring sale', value: 10 });
+    const r = await discount(order({ meta: {} }));
+    expect(r.order).toMatchObject({ subtotal: 180, total: 195 });
+    expect(r.summary).toBe('Spring sale · $20.00 off');
+    expect((await redemptions('Spring sale'))[0]).toMatchObject({ amount: 20 });
+    // Paused, it applies to nothing and nothing is said about it.
+    await db().update(promotions).set({ status: 'paused' });
+    const paused = await discount(order({ meta: {} }));
+    expect(paused.order).toBeUndefined();
+    expect(paused.summary).toBe('No promotions');
+  });
+
+  it('combines stackable promotions by priority and caps each', async () => {
+    await addPromotion({
+      code: null,
+      name: 'Sitewide',
+      value: 50,
+      maxDiscount: 20,
+      stacking: 'stackable',
+      priority: 9,
+    });
+    await addPromotion({ code: 'SAVE10', stacking: 'stackable' });
+    const r = await discount(order());
+    const out = r.output as { applied: { name: string; code: string | null; amount: number }[] };
+    // The 50% is capped at 20, then SAVE10 takes 10% of the 180 left.
+    expect(out.applied.map((a) => [a.code, a.amount])).toEqual([
+      [null, 20],
+      ['SAVE10', 18],
+    ]);
+    expect(r.order?.subtotal).toBe(162);
+  });
+
+  it('lets an exclusive automatic promotion beat a code and names it in the refusal', async () => {
+    await addPromotion({ code: null, name: 'Sitewide', value: 30 });
+    await addPromotion({ code: 'SAVE10' });
+    const r = await discount(order());
+    expect((r.output as { refused: unknown[] }).refused).toEqual([
+      { code: 'SAVE10', reason: "SAVE10 isn't combined with Sitewide." },
+    ]);
+    expect(await redemptions('SAVE10')).toEqual([]);
   });
 
   it('gives redemptions back when the order rolls back', async () => {
@@ -138,6 +192,16 @@ describe('commerce.discount', () => {
     expect(await ROLLBACKS['commerce.discount']!(env, o.id, undefined, 'promo#1')).toBe(
       'No promotions to give back',
     );
+  });
+
+  it('gives back an automatic promotion’s redemption too', async () => {
+    await addPromotion({ code: null, name: 'Spring sale', maxRedemptions: 1 });
+    const o = order({ meta: {} });
+    await discount(o);
+    // Used up for the next order until this one rolls back.
+    expect((await discount(order({ meta: {} }))).order?.subtotal).toBe(200);
+    await ROLLBACKS['commerce.discount']!(env, o.id, undefined, 'promo#1');
+    expect((await discount(order({ meta: {} }))).order?.subtotal).toBe(180);
   });
 });
 
@@ -245,6 +309,48 @@ describe('through the assistant', () => {
     expect(row?.status).toBe('paused');
     expect((await previewAction(env, ops, 'set_promotion_status', pause)).blocked).toBe(
       'SPRING10 is already paused.',
+    );
+  });
+
+  it('adds an automatic promotion that needs a name, on a card that says how it combines', async () => {
+    await db().delete(promotions);
+    const { TOOL_INPUTS } = await import('@commerceworker/core');
+    const { previewAction, runAction } = await import('../src/assistant/data');
+    // Without a code it needs a name.
+    expect(() => TOOL_INPUTS.create_promotion.parse({ kind: 'pct', value: 5 })).toThrow();
+    const input = TOOL_INPUTS.create_promotion.parse({
+      name: 'Spring sale',
+      kind: 'pct',
+      value: 15,
+      priority: 5,
+      stacking: 'stackable',
+      maxDiscount: 40,
+    });
+    const card = await previewAction(env, ops, 'create_promotion', input);
+    expect(card.title).toBe('Add the automatic promotion “Spring sale”');
+    expect(card.consequences).toEqual(
+      expect.arrayContaining([
+        '15% off',
+        'Takes off at most $40.00 from one order',
+        'Combines with other stackable promotions · priority 5',
+        'Active at once: it applies to every order it fits, with no code to enter',
+      ]),
+    );
+    const made = (await runAction(env, ops, 'create_promotion', input, 'assistant')) as {
+      id: string;
+    };
+    const row = await db().select().from(promotions).where(eq(promotions.id, made.id)).get();
+    expect(row).toMatchObject({
+      code: null,
+      stacking: 'stackable',
+      priority: 5,
+      maxDiscount: 40,
+    });
+    // A second one is no clash: automatic promotions have no code to repeat.
+    expect((await previewAction(env, ops, 'create_promotion', input)).blocked).toBeUndefined();
+    const pause = { promotionId: made.id, status: 'paused' as const };
+    expect((await previewAction(env, ops, 'set_promotion_status', pause)).title).toBe(
+      'Pause Spring sale',
     );
   });
 });

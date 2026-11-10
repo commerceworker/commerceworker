@@ -606,9 +606,9 @@ export const ASSISTANT_TOOLS: Record<
     role: 'operator',
     confirm: true,
     label: 'Add a promotion',
-    title: 'Add a promotion code',
+    title: 'Add a promotion',
     description:
-      'Add a promotion code buyers and staff enter on carts and at checkout: a percentage or amount off, or free shipping, optionally limited by subtotal, SKUs, customer, end date and uses. Active at once.',
+      'Add a promotion: a code buyers and staff enter on carts and at checkout, or an automatic one (no code, named) that applies to any order it fits. A percentage or amount off, or free shipping, optionally limited by subtotal, SKUs, customer, end date and uses, capped per order, with a priority and exclusive or stackable combining. Active at once.',
   },
   set_promotion_status: {
     role: 'operator',
