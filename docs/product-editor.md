@@ -98,5 +98,6 @@ publishes. Cards glide to their new column (a FLIP, 200ms), at once with reduced
 
 - "The last feed" on the board is the most recent finished import; a running one shows separately.
 - An override can be cleared back to the feed value (a staged `clear`).
+- Media `src` is an absolute `https` URL, or `asset:<assetId>` where the assets service is deployed (the catalog's `MEDIA_ORIGIN` is set); a bare key is refused at write, feed import and edit (`mediaSrcProblem`, `packages/core/src/product/validate.ts`). Media stay with the feed, so the editor has no media field or preview, and its sheet only counts them. `asset:` references publish as written: turning one into the media host's URL is open (ROADMAP P3).
 - Media alt text is keyed by `src`: a feed that renames an image makes its alt override a conflict.
 - Whether **Published today** gets an undo (republishing the previous revision) is open.

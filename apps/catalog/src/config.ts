@@ -3,7 +3,7 @@
  * channels. Callers hold it per isolate and refresh when `rev` moves, so the hot path never waits
  * on the metadata object.
  */
-import type { Channel, ProductType } from '@commerceworker/core/product';
+import type { Channel, MediaRules, ProductType } from '@commerceworker/core/product';
 import { productShard } from '@commerceworker/core/product';
 
 export type CatalogConfig = {
@@ -30,6 +30,15 @@ export function typeResolver(config: CatalogConfig): TypeResolver {
     return version === undefined ? list[list.length - 1] : list.find((t) => t.version === version);
   };
 }
+
+/**
+ * What a product's media may be here. The fleet sets `MEDIA_ORIGIN` (the assets service's origin)
+ * only for a deployment that has the service; without it only absolute https URLs are accepted
+ * (`mediaSrcProblem`). Read through a cast: the var is in no base config, so it isn't in `Env`.
+ */
+export const mediaRules = (env: Env): MediaRules => ({
+  assets: Boolean((env as { MEDIA_ORIGIN?: string }).MEDIA_ORIGIN),
+});
 
 const JURISDICTIONS = ['eu', 'fedramp'] as const;
 

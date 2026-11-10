@@ -51,7 +51,15 @@ import {
   type WriteOptions,
   type WriteResult,
 } from '@commerceworker/core/product';
-import { type CatalogConfig, feeds, meta, shard, shardFor, typeResolver } from './config';
+import {
+  type CatalogConfig,
+  feeds,
+  mediaRules,
+  meta,
+  shard,
+  shardFor,
+  typeResolver,
+} from './config';
 import { probeBucket } from './health';
 import { storeStream } from './upload';
 
@@ -123,11 +131,15 @@ export class CatalogApi extends WorkerEntrypoint<Env> implements ProductCatalogR
   async putProducts(items: ProductInput[], opts: WriteOptions): Promise<WriteResult[]> {
     if (items.length > MAX_WRITE) throw new RangeError(`at most ${MAX_WRITE} products per call`);
     let config = await this.config();
-    let validated = items.map((item) => validateProduct(item, typeResolver(config)));
+    let validated = items.map((item) =>
+      validateProduct(item, typeResolver(config), mediaRules(this.env)),
+    );
     // A type added a moment ago may not be in this isolate's copy yet: look once more.
     if (validated.some((v) => !v.ok && v.issues[0]?.path === 'type')) {
       config = await this.config(true);
-      validated = items.map((item) => validateProduct(item, typeResolver(config)));
+      validated = items.map((item) =>
+        validateProduct(item, typeResolver(config), mediaRules(this.env)),
+      );
     }
     const results: WriteResult[] = new Array(items.length);
     const groups = new Map<number, { i: number; data: ProductData }[]>();

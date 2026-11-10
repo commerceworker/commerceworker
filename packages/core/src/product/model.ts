@@ -154,7 +154,7 @@ export const channelSchema = z.object({
 export type Channel = z.infer<typeof channelSchema>;
 
 export const mediaSchema = z.object({
-  /** R2 key or absolute https URL. */
+  /** An absolute https URL, or `asset:<assetId>` on a deployment with the assets service (`mediaSrcProblem`). */
   src: z.string().max(1024),
   alt: localizedSchema.optional(),
   width: z.number().int().positive().optional(),

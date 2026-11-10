@@ -1315,6 +1315,9 @@ export function renderCatalog(base: Config, d: Deployment): Config {
   };
   // The shards keep their data where the deployment's other data lives.
   if (d.jurisdiction) config.vars = { ...config.vars, DATA_JURISDICTION: d.jurisdiction };
+  // The assets service's origin, only where the deployment has the service: with it set the catalog
+  // accepts `asset:` media; without it only absolute https URLs (`mediaSrcProblem` in core).
+  if (d.content) config.vars = { ...config.vars, MEDIA_ORIGIN: `https://${contentHosts(d).media}` };
   return config;
 }
 

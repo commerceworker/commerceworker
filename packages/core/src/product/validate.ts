@@ -21,6 +21,39 @@ export type Validated = { ok: true; data: ProductData } | { ok: false; issues: I
 
 type Check = (value: unknown) => string | undefined;
 
+/** What a deployment lets a media `src` be: `assets` is whether it has the assets service. */
+export type MediaRules = { assets: boolean };
+
+/** An asset reference: `asset:` and the assets service's asset id. */
+const ASSET_REF = /^asset:[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Why `src` isn't a media source this deployment accepts, or undefined. An absolute `https:` URL
+ * always is (the merchant's own DAM or CDN, kept as written); `asset:<assetId>` only with the
+ * assets service. Anything else, a bare R2 key included, is refused: nothing could turn it into a
+ * URL, and a published document holds only absolute ones.
+ */
+export function mediaSrcProblem(src: string, rules: MediaRules): string | undefined {
+  if (ASSET_REF.test(src)) {
+    return rules.assets
+      ? undefined
+      : 'asset references need the assets service, which this deployment does not have: use an absolute https URL';
+  }
+  if (src.startsWith('asset:')) return 'an asset reference is `asset:` and the asset id';
+  let url: URL;
+  try {
+    url = new URL(src);
+  } catch {
+    return rules.assets
+      ? 'must be an absolute https URL or `asset:<assetId>`'
+      : 'must be an absolute https URL (this deployment has no assets service)';
+  }
+  if (url.protocol !== 'https:' || src.slice(0, 8).toLowerCase() !== 'https://')
+    return 'must be an absolute https URL';
+  if (url.username || url.password) return 'must not carry credentials';
+  return undefined;
+}
+
 export type CompiledType = {
   type: ProductType;
   product: Map<string, { def: AttributeDef; check: Check }>;
@@ -144,10 +177,13 @@ function checkAttributes(
 /**
  * Checks a product against its type and returns it with defaults applied and the type version
  * pinned. `resolveType` returns the named version, or the latest when `version` is undefined.
+ * `media` says whether the deployment has the assets service; without it only absolute https URLs
+ * are media sources.
  */
 export function validateProduct(
   input: ProductInput | unknown,
   resolveType: (code: string, version?: number) => ProductType | undefined,
+  media: MediaRules = { assets: false },
 ): Validated {
   const parsed = productInputSchema.safeParse(input);
   if (!parsed.success)
@@ -181,6 +217,16 @@ export function validateProduct(
         issues.push({ path: `variants.${i}`, message: 'same options as another variant' });
       combos.add(combo);
     }
+  });
+  const checkMedia = (list: { src: string }[] | undefined, path: string) => {
+    list?.forEach((m, i) => {
+      const problem = mediaSrcProblem(m.src, media);
+      if (problem) issues.push({ path: `${path}.${i}.src`, message: problem });
+    });
+  };
+  checkMedia(p.media, 'media');
+  p.variants.forEach((v, i) => {
+    checkMedia(v.media, `variants.${i}.media`);
   });
   for (const [locale, slug] of Object.entries(p.slug ?? {}))
     if (slug.length > 200 || !SLUG.test(slug))

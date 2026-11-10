@@ -1971,3 +1971,29 @@ test('the registry refuses two deployments on one host or one queue', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the catalog knows the assets service's origin only on a content deployment", () => {
+  // Commerce-only: no var at all, so the catalog accepts only absolute https media.
+  assert.equal('MEDIA_ORIGIN' in renderCatalog(base('catalog'), acme).vars, false);
+  assert.equal(renderCatalog(base('catalog'), acme).vars.MEDIA_ORIGIN, undefined);
+  // Content: the registry's media host.
+  assert.equal(
+    renderCatalog(base('catalog'), withContent).vars.MEDIA_ORIGIN,
+    'https://media.acme.commerceworker.com',
+  );
+  const own = toDeployment({
+    id: 'own',
+    ring: 'canary',
+    slot: 3,
+    d1Id: 'd1-own',
+    catalogKvId: 'c'.repeat(32),
+    content: true,
+    contentD1Id: 'content-d1-own',
+    contentKvId: 'd'.repeat(32),
+    mediaDomain: 'assets.shop.example.com',
+  });
+  assert.equal(
+    renderCatalog(base('catalog'), own).vars.MEDIA_ORIGIN,
+    'https://assets.shop.example.com',
+  );
+});

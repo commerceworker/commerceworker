@@ -28,7 +28,7 @@ describe('field ids', () => {
       { field: 'slug' },
       { field: 'status' },
       { field: 'attribute', code: 'care' },
-      { field: 'mediaAlt', src: 'media/tee.jpg' },
+      { field: 'mediaAlt', src: 'https://img.example/tee.jpg' },
     ] as const)
       expect(parseFieldId(fieldId(ref))).toEqual(ref);
     expect(fieldId({ field: 'mediaAlt', src: 'https://x/a:b.jpg' })).toBe('alt:https://x/a:b.jpg');
@@ -51,10 +51,12 @@ describe('field values', () => {
     expect(fieldValue(feed, { field: 'description', locale: 'en' })).toBeNull();
     expect(fieldValue(feed, { field: 'attribute', code: 'care', locale: 'en' })).toBe('Wash cold');
     expect(fieldValue(feed, { field: 'attribute', code: 'material', locale: 'en' })).toBeNull();
-    expect(fieldValue(feed, { field: 'mediaAlt', src: 'media/tee.jpg', locale: 'en' })).toBe(
-      'A tee',
-    );
-    expect(fieldValue(feed, { field: 'mediaAlt', src: 'gone.jpg', locale: 'en' })).toBeNull();
+    expect(
+      fieldValue(feed, { field: 'mediaAlt', src: 'https://img.example/tee.jpg', locale: 'en' }),
+    ).toBe('A tee');
+    expect(
+      fieldValue(feed, { field: 'mediaAlt', src: 'https://img.example/gone.jpg', locale: 'en' }),
+    ).toBeNull();
     expect(fieldValue(feed, { field: 'status' })).toBe('active');
   });
 });
@@ -67,7 +69,10 @@ describe('overrides', () => {
       { ref: { field: 'title', locale: 'fr' }, value: null },
       { ref: { field: 'slug', locale: 'fr' }, value: 'tee-classique' },
       { ref: { field: 'attribute', code: 'care', locale: 'fr' }, value: 'Lavage à froid' },
-      { ref: { field: 'mediaAlt', src: 'media/tee.jpg', locale: 'fr' }, value: 'Un t-shirt' },
+      {
+        ref: { field: 'mediaAlt', src: 'https://img.example/tee.jpg', locale: 'fr' },
+        value: 'Un t-shirt',
+      },
       { ref: { field: 'status' }, value: 'draft' },
     ]);
     expect(out.description).toEqual({ fr: 'Un t-shirt en coton.' });
@@ -84,7 +89,7 @@ describe('overrides', () => {
     const out = applyOverrides(feed, [
       { ref: { field: 'slug', locale: 'en' }, value: null },
       { ref: { field: 'attribute', code: 'care', locale: 'en' }, value: null },
-      { ref: { field: 'mediaAlt', src: 'media/tee.jpg', locale: 'en' }, value: null },
+      { ref: { field: 'mediaAlt', src: 'https://img.example/tee.jpg', locale: 'en' }, value: null },
     ]);
     expect(out.slug).toBeUndefined();
     expect('care' in out.attributes).toBe(false);
@@ -93,7 +98,10 @@ describe('overrides', () => {
 
   it('skips an override whose media the feed no longer has', () => {
     const out = applyOverrides(feed, [
-      { ref: { field: 'mediaAlt', src: 'old.jpg', locale: 'en' }, value: 'Old' },
+      {
+        ref: { field: 'mediaAlt', src: 'https://img.example/old.jpg', locale: 'en' },
+        value: 'Old',
+      },
     ]);
     expect(out.media).toEqual(feed.media);
   });
@@ -143,7 +151,7 @@ describe('override conflicts', () => {
   });
 
   it('conflicts when the media it names is gone, even with no alt before', () => {
-    const ref = { field: 'mediaAlt' as const, src: 'old.jpg', locale: 'fr' };
+    const ref = { field: 'mediaAlt' as const, src: 'https://img.example/old.jpg', locale: 'fr' };
     expect(overrideConflict(feed, { ref, value: 'Ancien', base: null })).toBe(true);
   });
 });
@@ -155,9 +163,9 @@ describe('edit checks', () => {
   it('accepts content edits', () => {
     expect(issues({ field: 'description', locale: 'fr' }, 'Coton.')).toEqual([]);
     expect(issues({ field: 'attribute', code: 'care', locale: 'fr' }, 'Froid')).toEqual([]);
-    expect(issues({ field: 'mediaAlt', src: 'media/tee.jpg', locale: 'fr' }, 'Un t-shirt')).toEqual(
-      [],
-    );
+    expect(
+      issues({ field: 'mediaAlt', src: 'https://img.example/tee.jpg', locale: 'fr' }, 'Un t-shirt'),
+    ).toEqual([]);
     expect(issues({ field: 'slug', locale: 'fr' }, 'tee-classique')).toEqual([]);
     expect(issues({ field: 'title', locale: 'fr' }, null)).toEqual([]);
     expect(issues({ field: 'status' }, 'archived')).toEqual([]);
@@ -178,9 +186,9 @@ describe('edit checks', () => {
     expect(issues({ field: 'status' }, 'live')).toEqual([
       'status must be one of draft, active, archived',
     ]);
-    expect(issues({ field: 'mediaAlt', src: 'gone.jpg', locale: 'en' }, 'x')).toEqual([
-      'no such media',
-    ]);
+    expect(
+      issues({ field: 'mediaAlt', src: 'https://img.example/gone.jpg', locale: 'en' }, 'x'),
+    ).toEqual(['no such media']);
   });
 
   it('edits only product text with a value per locale', () => {
@@ -238,10 +246,20 @@ describe('content gaps', () => {
       { kind: 'missing_title', field: 'title', locale: 'de', channel: 'pos' },
       { kind: 'missing_description', field: 'description', locale: 'de', channel: 'pos' },
       { kind: 'missing_attribute', field: 'attr:care', locale: 'de', channel: 'pos' },
-      { kind: 'missing_alt', field: 'alt:media/tee.jpg', locale: 'de', channel: 'pos' },
+      {
+        kind: 'missing_alt',
+        field: 'alt:https://img.example/tee.jpg',
+        locale: 'de',
+        channel: 'pos',
+      },
       { kind: 'missing_description', field: 'description', locale: 'fr', channel: 'web' },
       { kind: 'missing_attribute', field: 'attr:care', locale: 'fr', channel: 'web' },
-      { kind: 'missing_alt', field: 'alt:media/tee.jpg', locale: 'fr', channel: 'web' },
+      {
+        kind: 'missing_alt',
+        field: 'alt:https://img.example/tee.jpg',
+        locale: 'fr',
+        channel: 'web',
+      },
     ]);
   });
 
@@ -256,7 +274,7 @@ describe('content gaps', () => {
     const p = stored(
       tee({
         title: { en: 'Classic tee', fr: 'T-shirt classique' },
-        media: [{ src: 'media/tee.jpg' }],
+        media: [{ src: 'https://img.example/tee.jpg' }],
         attributes: { material: 'cotton' },
       }),
     );
@@ -271,7 +289,10 @@ describe('content gaps', () => {
   it('closes a gap once an override fills it', () => {
     const p = applyOverrides(stored(tee()), [
       { ref: { field: 'attribute', code: 'care', locale: 'fr' }, value: 'Lavage à froid' },
-      { ref: { field: 'mediaAlt', src: 'media/tee.jpg', locale: 'fr' }, value: 'Un t-shirt' },
+      {
+        ref: { field: 'mediaAlt', src: 'https://img.example/tee.jpg', locale: 'fr' },
+        value: 'Un t-shirt',
+      },
     ]);
     expect(contentGaps(p, apparel, [web])).toEqual([]);
   });
@@ -288,7 +309,7 @@ describe('draft targets', () => {
   it("are a product's text gaps, once each, titles first, without what needs a person", () => {
     expect(
       draftTargets([
-        gap('missing_alt', 'alt:media/tee.jpg'),
+        gap('missing_alt', 'alt:https://img.example/tee.jpg'),
         gap('missing_attribute', 'attr:care', 'de'),
         gap('missing_title', 'title'),
         gap('missing_title', 'title', 'fr', 'pos'),
@@ -300,7 +321,7 @@ describe('draft targets', () => {
       targets: [
         { field: 'title', locale: 'fr' },
         { field: 'attribute', code: 'care', locale: 'de' },
-        { field: 'mediaAlt', src: 'media/tee.jpg', locale: 'fr' },
+        { field: 'mediaAlt', src: 'https://img.example/tee.jpg', locale: 'fr' },
       ],
       more: 0,
     });
