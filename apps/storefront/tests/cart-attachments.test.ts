@@ -38,7 +38,7 @@ const state = (c: Partial<Cart> = {}, attachments: CartAttachment[] = []) =>
   ({ cart: cart(c), members: [], chat: [], attachments }) as unknown as CartState;
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
-  `ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
+  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
 
 const post = (file: File | null, headers: Record<string, string> = {}, cartId = 'cart_1') => {
   const body = new FormData();

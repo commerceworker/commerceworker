@@ -658,6 +658,9 @@ describe('cart files', () => {
     expect(attachmentProblem({ type: 'application/pdf', size: 1 }, 0)).toBeNull();
     expect(attachmentProblem({ type: 'text/html', size: 1 }, 0)).toMatch(/Attach a PDF/);
     expect(attachmentProblem({ type: 'image/svg+xml', size: 1 }, 0)).toMatch(/Attach a PDF/);
+    // A key every object has is no file type.
+    for (const type of ['constructor', '__proto__', 'toString', 'hasOwnProperty'])
+      expect(attachmentProblem({ type, size: 1 }, 0), type).toMatch(/Attach a PDF/);
     expect(attachmentProblem({ type: 'application/pdf', size: 0 }, 0)).toMatch(/empty/);
     expect(attachmentProblem({ type: 'application/pdf', size: 10 * 1024 * 1024 + 1 }, 0)).toMatch(
       /10 MB/,

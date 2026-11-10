@@ -29,7 +29,7 @@ const cartBuy = await import('../app/routes/cart-buy');
 
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
-  `ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
+  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
 const socket = (path: string, headers: Record<string, string> = {}) =>
   worker.fetch(
     new Request(`https://shop.test${path}`, {
@@ -84,7 +84,7 @@ describe('an external cart’s buyer on its socket', () => {
     // Staff reach a cart's socket on the admin. Here only the cookie a start link set admits.
     for (const headers of [
       { authorization: 'Bearer cmw_live_x' } as Record<string, string>,
-      { cookie: 'ol_session=anything; ol_cart_1=forged' },
+      { cookie: 'ol_session=anything; __Host-ol_cart_1=forged' },
     ]) {
       expect((await socket('/agents/cart-agent/cart_1', headers)).status).toBe(401);
     }
@@ -108,6 +108,23 @@ describe('an external cart’s buyer on its socket', () => {
       origin: 'https://evil.example',
     });
     expect(res.status).toBe(403);
+    expect(engineFetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-site upload to the cart even with the buyer’s cookie', async () => {
+    const form = new FormData();
+    form.append('file', new File(['%PDF-1.7'], 'po.pdf', { type: 'application/pdf' }));
+    for (const origin of ['https://evil.example', 'null']) {
+      const res = await worker.fetch(
+        new Request('https://shop.test/carts/cart_1/attachments', {
+          method: 'POST',
+          headers: { cookie: await guestCookie(), origin },
+          body: form,
+        }) as never,
+        env as never,
+      );
+      expect(res.status, origin).toBe(403);
+    }
     expect(engineFetch).not.toHaveBeenCalled();
   });
 });

@@ -258,6 +258,17 @@ describe('plugin pages on the web Worker', () => {
     const start = await call('/plugins/example/form');
     expect(start.status).toBe(302);
     expect(start.headers.get('location')).toBe('https://buy.example/cart/start/cart_1/0a9f');
+    // Only the storefront's origin and the path go on: never a plugin's userinfo or fragment.
+    for (const location of [
+      'https://u:p@buy.example/cart/start/cart_1/0a9f',
+      'https://buy.example/cart/start/cart_1/0a9f#x',
+    ]) {
+      reply = () => new Response(null, { status: 302, headers: { location } });
+      const r = await call('/plugins/example/form');
+      expect(r.headers.get('location'), location).toBe(
+        'https://buy.example/cart/start/cart_1/0a9f',
+      );
+    }
     // With no storefront on the deployment there is no such place.
     delete env.STOREFRONT_ORIGIN;
     expect((await call('/plugins/example/form')).status).toBe(502);

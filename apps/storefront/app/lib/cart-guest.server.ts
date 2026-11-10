@@ -22,8 +22,11 @@ function cookie(request: Request, name: string): string | undefined {
 
 const COOKIE_RE = /^cart_[a-z0-9]+$/;
 
-/** One cookie per cart, so a buyer with two carts open keeps both. */
-const cookieName = (cartId: string) => `ol_${cartId}`;
+/**
+ * One cookie per cart, so a buyer with two carts open keeps both. `__Host-`: set only by this
+ * host over https with `Path=/` and no `Domain`, so a sibling subdomain can't plant one.
+ */
+const cookieName = (cartId: string) => `__Host-ol_${cartId}`;
 
 /**
  * The cookie for a redeemed start link. `SameSite=None` and `Partitioned` because the buyer's

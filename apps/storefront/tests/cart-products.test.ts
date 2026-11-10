@@ -11,7 +11,7 @@ const route = await import('../app/routes/cart-products');
 
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
-  `ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
+  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
 const found = {
   ok: true,
   currency: 'USD',
@@ -64,7 +64,7 @@ describe('searching products from a cart', () => {
       status: 401,
     });
     // Nor does a cookie named for cart_2 that was signed for cart_1.
-    const moved = (await guestCookie()).replace('ol_cart_1=', 'ol_cart_2=');
+    const moved = (await guestCookie()).replace('__Host-ol_cart_1=', '__Host-ol_cart_2=');
     expect(await get('widget', { cookie: moved }, 'cart_2')).toMatchObject({ status: 401 });
     expect(searchCartProducts).toHaveBeenCalledTimes(1);
   });
@@ -75,12 +75,12 @@ describe('searching products from a cart', () => {
     expect(await get('widget', { authorization: 'Bearer cmw_live_x' })).toMatchObject({
       status: 401,
     });
-    expect(await get('widget', { cookie: 'ol_cart_1=forged.value' })).toMatchObject({
+    expect(await get('widget', { cookie: '__Host-ol_cart_1=forged.value' })).toMatchObject({
       status: 401,
     });
-    const lapsed = `ol_cart_1=${await signCartGuestSession(env.PRINCIPAL_KEY, guest, Date.now() - 1)}`;
+    const lapsed = `__Host-ol_cart_1=${await signCartGuestSession(env.PRINCIPAL_KEY, guest, Date.now() - 1)}`;
     expect(await get('widget', { cookie: lapsed })).toMatchObject({ status: 401 });
-    const otherKey = `ol_cart_1=${await signCartGuestSession('another-key', guest, Date.now() + 60_000)}`;
+    const otherKey = `__Host-ol_cart_1=${await signCartGuestSession('another-key', guest, Date.now() + 60_000)}`;
     expect(await get('widget', { cookie: otherKey })).toMatchObject({ status: 401 });
     expect(searchCartProducts).not.toHaveBeenCalled();
   });

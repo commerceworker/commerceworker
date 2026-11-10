@@ -198,7 +198,8 @@ function sanitized(res: Response, id: string, origin: string): Response {
       !to.search;
     if (!start && (to.origin !== origin || pluginPathId(to.pathname) !== id))
       return new Response('A plugin may only redirect to its own pages', { status: 502 });
-    headers.set('location', start ? to.href : `${to.pathname}${to.search}`);
+    // The storefront's origin and the path alone: never a plugin's userinfo or fragment.
+    headers.set('location', start ? `${to.origin}${to.pathname}` : `${to.pathname}${to.search}`);
   }
   for (const [k, v] of Object.entries(PLUGIN_RESPONSE_HEADERS)) headers.set(k, v);
   headers.set(
