@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { gtin14, isGtin, productTypeSchema, typeChangeIssues } from '../src/product/model';
 import { renderForChannel } from '../src/product/render';
-import { claimedAlias, productAliases, validateProduct } from '../src/product/validate';
+import {
+  claimedAlias,
+  mediaSrcProblem,
+  productAliases,
+  validateProduct,
+} from '../src/product/validate';
 import { apparel, stored, tee, types, web } from './fixtures/product';
 
 describe('product types', () => {
@@ -198,6 +203,58 @@ describe('product validation', () => {
           types,
         ).ok,
       ).toBe(false);
+  });
+});
+
+describe('product media sources', () => {
+  const without = { assets: false };
+  const withAssets = { assets: true };
+
+  it('keeps an absolute https URL as written, with or without the assets service', () => {
+    for (const rules of [without, withAssets])
+      expect(mediaSrcProblem('https://cdn.example.com/a b/tee.jpg?v=2', rules)).toBeUndefined();
+  });
+
+  it('accepts an asset reference only with the assets service', () => {
+    expect(mediaSrcProblem('asset:ast_01-X', withAssets)).toBeUndefined();
+    expect(mediaSrcProblem('asset:ast_01-X', without)).toMatch(/assets service/);
+    expect(mediaSrcProblem('asset:', withAssets)).toMatch(/asset id/);
+    expect(mediaSrcProblem('asset:a/b', withAssets)).toMatch(/asset id/);
+  });
+
+  it('refuses a bare key, a relative path and any other scheme, naming the deployment', () => {
+    for (const src of ['media/tee.jpg', '/tee.jpg', '//cdn.example.com/a.jpg', 'tee.jpg'])
+      expect(mediaSrcProblem(src, without)).toMatch(/absolute https URL/);
+    expect(mediaSrcProblem('media/tee.jpg', withAssets)).toMatch(/asset:<assetId>/);
+    for (const src of ['http://cdn.example.com/a.jpg', 'ftp://x/a.jpg', 'javascript:alert(1)'])
+      expect(mediaSrcProblem(src, withAssets)).toBe('must be an absolute https URL');
+    expect(mediaSrcProblem('https://user:pw@cdn.example.com/a.jpg', without)).toMatch(
+      /credentials/,
+    );
+  });
+
+  it('refuses a product whose product or variant media has one, at the path of the bad one', () => {
+    const v = validateProduct(
+      tee({
+        media: [{ src: 'https://img.example/ok.jpg' }, { src: 'media/tee.jpg' }],
+        variants: [
+          { sku: 'A', attributes: { size: 'S', color: 'red' }, media: [{ src: 'asset:abc' }] },
+        ],
+      }),
+      types,
+    );
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.issues.map((i) => i.path)).toEqual(['media.1.src', 'variants.0.media.0.src']);
+    const ok = validateProduct(
+      tee({
+        media: [{ src: 'asset:abc' }],
+        variants: [{ sku: 'A', attributes: { size: 'S', color: 'red' } }],
+      }),
+      types,
+      withAssets,
+    );
+    expect(ok.ok).toBe(true);
   });
 });
 

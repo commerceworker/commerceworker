@@ -72,7 +72,7 @@ export function tee(over: Partial<ProductInput> = {}): ProductInput {
     slug: { en: 'classic-tee' },
     brand: 'Acme',
     categories: ['tops', 'tees'],
-    media: [{ src: 'media/tee.jpg', alt: { en: 'A tee' }, width: 800, height: 800 }],
+    media: [{ src: 'https://img.example/tee.jpg', alt: { en: 'A tee' }, width: 800, height: 800 }],
     attributes: {
       material: 'cotton',
       care: { en: 'Wash cold' },

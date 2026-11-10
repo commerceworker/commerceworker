@@ -37,6 +37,19 @@ beforeAll(async () => {
 });
 
 describe('documents', () => {
+  it('serves external media URLs exactly as the catalog published them, with no media service bound', async () => {
+    // A deployment without the assets service: the catalog accepts only absolute https media
+    // (apps/catalog/tests/media.test.ts), and this Worker has no media binding or origin.
+    const media = [{ src: 'https://cdn.merchant.example/tee front.jpg?v=3', alt: 'Front' }];
+    const body = JSON.stringify({ key: 'media-tee', title: 'Tee', version: 1, media });
+    await env.PUBLISHED.put(paths.doc(DOC_FORMAT, 'web', 'en', 'media-tee'), body, {
+      httpMetadata: { contentType: 'application/json; charset=utf-8' },
+    });
+    const r = await get('/v1/web/en/products/media-tee');
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe(body);
+  });
+
   it('serves a product document with its ETag, freshness and tags', async () => {
     const r = await get('/v1/web/fr/products/tee');
     expect(r.status).toBe(200);

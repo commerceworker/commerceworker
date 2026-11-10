@@ -34,7 +34,7 @@ import {
   productShard,
   validateProduct,
 } from '@commerceworker/core/product';
-import { feeds, meta, shard, typeResolver } from './config';
+import { feeds, mediaRules, meta, shard, typeResolver } from './config';
 import type { FeedError, PartCounts } from './feeds';
 import type { RejectedRow } from './shard';
 
@@ -132,7 +132,7 @@ export async function splitChunk(
     out.row = r.last + 1;
     if (r.error || !r.product) reject(r.row, r.error ?? 'empty row');
     else {
-      const v = validateProduct(r.product, resolve);
+      const v = validateProduct(r.product, resolve, mediaRules(env));
       if (!v.ok) {
         const key = r.product.key;
         reject(r.row, v.issues.map((i) => `${i.path}: ${i.message}`).join('; '), key);

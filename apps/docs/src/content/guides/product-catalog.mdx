@@ -73,6 +73,12 @@ product in `tees`, a child of `tops`, appears in the listings of both. `primaryC
 `categories`, defaulting to the first) is the breadcrumb category. If you move a category, products
 already published keep their old ancestors until a [reindex](#freshness).
 
+## Product media
+
+A product's or variant's `media` image is an absolute `https` URL, kept exactly as you wrote it, so you can keep your own DAM or CDN. Anything else, a bare file key included, is refused with the image's position (`media.0.src`) when you write the product, import its feed row or save the edit, so no published document holds a URL a shopper's browser can't load. A deployment without the assets service renders, publishes and serves products with external URLs only.
+
+Asset references are accepted but not yet turned into URLs: they publish as written until the assets service's public read URL is wired to the catalog, so use `https` URLs for images shoppers must see today.
+
 ## Writing products
 
 `POST /api/v1/catalog/products` takes `{ "products": [...], "urgent"?: true }` with 1 to 500 products
@@ -151,7 +157,7 @@ Row numbers in errors count the header as row 1.
 | Column | Meaning |
 |---|---|
 | `key`, `type`, `status`, `brand` | Product fields; `type` may be `code@version` |
-| `categories`, `media` | `\|`-separated lists of category codes and image URLs |
+| `categories`, `media` | `\|`-separated lists of category codes and image URLs (see [Product media](#product-media)) |
 | `title:<locale>`, `slug:<locale>`, `description:<locale>` | Localized text, one column per locale |
 | `price.<channel>`, `compareAt.<channel>` | Decimal prices in the channel's currency (`18.00`) |
 | `visible.<channel>` | `true` or `false`; a channel with a price column is visible unless this says otherwise |
