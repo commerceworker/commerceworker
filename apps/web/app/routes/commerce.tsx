@@ -27,11 +27,12 @@ import {
   useSearchParams,
 } from 'react-router';
 import { Ago, WaitingAt } from '~/components/ago';
+import { type FxRateRow, FxRates } from '~/components/fx-rates';
 import { Empty, PageHeader, Section } from '~/components/page';
 import { ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
-import { type CommercePage, commercePage } from '~/lib/commerce.server';
+import { type CommercePage, commercePage, fxRatesPage } from '~/lib/commerce.server';
 import { type Paged, pageHref, pricesKey, shown, storeKey } from '~/lib/commerce-pages';
 import { engine } from '~/lib/env.server';
 import { eventAction, eventWaiting } from '~/lib/events';
@@ -59,8 +60,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   await requireUser(request);
   const params = new URL(request.url).searchParams;
   const q = params.get('q')?.trim() ?? '';
-  const [office, waiting, emails, configured, flows, records] = await Promise.all([
+  const [office, fxRates, waiting, emails, configured, flows, records] = await Promise.all([
     commercePage(params),
+    fxRatesPage(),
     waitingOnEvents(CHECKED),
     recentInboundEmails(),
     // The engine owns INTAKE_MAILBOXES; ask it rather than assume the defaults.
@@ -105,6 +107,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   );
   return {
     ...office,
+    fxRates,
     events,
     // Every order waiting on one, not just those read: the header counts them all.
     waitingTotal: waiting.total,
@@ -146,6 +149,7 @@ export default function Commerce() {
     sellers,
     stores,
     pricing,
+    fxRates,
     events: allEvents,
     waitingTotal,
     waitingOverdue,
@@ -631,7 +635,7 @@ export default function Commerce() {
             <Pager list={sellers} listKey="sellers" hash="sellers" label="Sellers" />
           </Section>
         </div>
-        <Pricing pricing={pricing} />
+        <Pricing pricing={pricing} fxRates={fxRates} />
         <Section
           id="customers"
           title="Customers"
@@ -1011,7 +1015,7 @@ function EventRow({ e, onRecorded }: { e: EventItem; onRecorded: () => void }) {
 }
 
 /** The pricing chain, in the order `commerce.price` runs it, with each source's entries. */
-function Pricing({ pricing }: Pick<Office, 'pricing'>) {
+function Pricing({ pricing, fxRates }: Pick<Office, 'pricing'> & { fxRates: FxRateRow[] }) {
   const item = (sku: string | null, name: string | null) =>
     sku ? (name ? `${name} (${sku})` : sku) : null;
   const entries = (rows: Office['pricing']['sources'][number]['entries']['rows']) =>
@@ -1115,16 +1119,8 @@ function Pricing({ pricing }: Pick<Office, 'pricing'>) {
           </Link>{' '}
           page.
         </span>
-        <span className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 tabular">
-          {pricing.rates
-            .filter((r) => r.currency !== BASE_CURRENCY)
-            .map((r) => (
-              <span key={r.currency}>
-                1 {BASE_CURRENCY} = {r.rate} {r.currency}
-              </span>
-            ))}
-        </span>
       </p>
+      <FxRates rates={fxRates} />
     </Section>
   );
 }

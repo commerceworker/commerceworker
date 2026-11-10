@@ -2,6 +2,7 @@ export * from './addresses';
 export * from './apply-promotions';
 export * from './audit-trail';
 export * from './compensate-order';
+export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';
 export * from './payments';

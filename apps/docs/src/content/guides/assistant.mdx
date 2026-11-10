@@ -126,6 +126,7 @@ sent until you press the confirm button, and declining leaves everything as it w
 | `cancel_cart` | `operator` | Cancels an open or locked cart; nothing is ordered |
 | `create_promotion` | `operator` | Adds a promotion code, active at once: a percentage or amount off, or free shipping, optionally limited by subtotal, SKUs, customer, end date and uses |
 | `set_promotion_status` | `operator` | Pauses a promotion code or reactivates it |
+| `set_fx_rate` | `admin` | Sets a currency's exchange rate, in units per one USD. The card shows the rate now, the new one and the change as a percent, flags a change of 10% or more, and says that orders already priced keep their rate and that the next daily ECB refresh replaces it for a currency it covers. Blocked for `USD`, a currency nobody uses, or a rate out of bounds |
 | `verify_tax_certificate` | `operator` | Verifies a customer's tax exemption certificate, so their new orders are exempt in its regions. With approval separation on, whoever added it can't |
 | `revoke_tax_certificate` | `operator` | Revokes a customer's tax exemption certificate, so their new orders are taxed again |
 

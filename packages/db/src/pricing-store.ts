@@ -5,6 +5,7 @@
  */
 import {
   BASE_CURRENCY,
+  type FxSource,
   matchCustomerByName,
   PROMOTION_KINDS,
   type PriceRule,
@@ -285,26 +286,48 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
       return row?.rate ?? null;
     },
 
-    async setFxRates(rates, at) {
+    async fxRateRows() {
+      const rows = await db.select().from(fxRates).orderBy(fxRates.currency).all();
+      return rows
+        .filter((r) => r.currency !== BASE_CURRENCY)
+        .map((r) => ({
+          currency: r.currency,
+          rate: r.rate,
+          updatedAt: r.updatedAt,
+          source: r.source as FxSource,
+          updatedBy: r.updatedBy,
+        }));
+    },
+
+    async setFxRates(rates, at, source, by) {
       const rows = rates.filter(
         (r) => r.currency !== BASE_CURRENCY && Number.isFinite(r.rate) && r.rate > 0,
       );
       if (!rows.length) return 0;
-      // Three bound parameters a row, so at most 33 rows a statement (D1 allows 100); the
+      // Five bound parameters a row, so at most 20 rows a statement (D1 allows 100); the
       // statements go in one batch, so the rates change together or not at all.
       const writes = [];
-      for (let i = 0; i < rows.length; i += 33)
+      for (let i = 0; i < rows.length; i += 20)
         writes.push(
           db
             .insert(fxRates)
             .values(
-              rows
-                .slice(i, i + 33)
-                .map((r) => ({ currency: r.currency, rate: r.rate, updatedAt: at })),
+              rows.slice(i, i + 20).map((r) => ({
+                currency: r.currency,
+                rate: r.rate,
+                updatedAt: at,
+                source,
+                updatedBy: by ?? null,
+              })),
             )
             .onConflictDoUpdate({
               target: fxRates.currency,
-              set: { rate: sql`excluded.rate`, updatedAt: sql`excluded.updated_at` },
+              set: {
+                rate: sql`excluded.rate`,
+                updatedAt: sql`excluded.updated_at`,
+                source: sql`excluded.source`,
+                updatedBy: sql`excluded.updated_by`,
+              },
             }),
         );
       await db.batch(writes as unknown as Parameters<typeof db.batch>[0]);

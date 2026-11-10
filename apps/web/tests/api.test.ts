@@ -1090,6 +1090,60 @@ describe('operations REST runs as MCP does', () => {
     expect([tool, input]).toEqual(['find_products', { q: '123', belowReorder: true }]);
   });
 
+  it('lists exchange rates for an operator and sets one for an admin, the path naming the currency', async () => {
+    const admin: Principal = { ...person, role: 'admin' };
+    run.mockResolvedValueOnce({ ok: true, value: { base: 'USD', rates: [] } });
+    const listed = await handleApi(new Request('https://app.test/api/v1/fx-rates'), operator);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ base: 'USD', rates: [] });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual(['list_fx_rates', {}]);
+    expect((await handleApi(new Request('https://app.test/api/v1/fx-rates'), viewer)).status).toBe(
+      403,
+    );
+
+    run.mockResolvedValueOnce({ ok: true, value: { done: 'Set the EUR rate to 0.95 per USD' } });
+    const set = await handleApi(
+      new Request('https://app.test/api/v1/fx-rates/EUR', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rate: 0.95, currency: 'GBP' }),
+      }),
+      admin,
+    );
+    expect(set.status).toBe(200);
+    const [tool, input, signed] = run.mock.calls.at(-1)!;
+    expect([tool, input]).toEqual(['set_fx_rate', { currency: 'EUR', rate: 0.95 }]);
+    expect(
+      await actorOf(signed, await operationCall('set_fx_rate', { currency: 'EUR', rate: 0.95 })),
+    ).toMatchObject({ id: 'usr_1', person: true, role: 'admin' });
+
+    // An operator can't set one; the engine refuses an API token, and a rate it won't take.
+    const before = run.mock.calls.length;
+    expect((await post('fx-rates/EUR', { rate: 0.95 })).status).toBe(403);
+    expect(run).toHaveBeenCalledTimes(before);
+    run.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      error: 'A person signed in as themselves does this',
+    });
+    expect(
+      (await post('fx-rates/EUR', { rate: 0.95 }, { ...operator, role: 'admin' })).status,
+    ).toBe(403);
+    run.mockResolvedValueOnce({ ok: false, status: 400, error: 'rate: Invalid input' });
+    expect(
+      (
+        await handleApi(
+          new Request('https://app.test/api/v1/fx-rates/EUR', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ rate: 'high' }),
+          }),
+          admin,
+        )
+      ).status,
+    ).toBe(400);
+  });
+
   it("answers the engine's refusal, holds the tool's role, and leaves other paths alone", async () => {
     run.mockResolvedValueOnce({ ok: false, error: 'A person verifies a certificate…' });
     expect((await post('customers/cus_1/tax-certificates/txc_1/verify', {})).status).toBe(409);

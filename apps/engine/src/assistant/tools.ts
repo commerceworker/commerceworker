@@ -62,6 +62,7 @@ import {
   runAction,
 } from './data';
 import { createFlow, duplicateFlow, saveFlowDraft, setFlowArchived } from './flows';
+import { readFxRates } from './fx';
 import { startScenario } from './orders';
 import { catalog } from './product-draft';
 
@@ -117,6 +118,7 @@ export const ACTION_TOOLS: ActionTool[] = [
   'rebuild_catalog_gaps',
   'create_promotion',
   'set_promotion_status',
+  'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',
   'set_member_role',
@@ -318,6 +320,8 @@ export async function runTool<T extends AssistantTool>(
         ),
       };
     }
+    case 'list_fx_rates':
+      return readFxRates(env);
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

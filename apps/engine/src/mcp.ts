@@ -62,7 +62,9 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'start_catalog_feed',
   'cancel_catalog_feed',
   'discard_product_edits',
-  // Removing and revoking take access away for good; the settings replace what was there.
+  // A rate replaces the one buyers pay by; removing and revoking take access away for good, and the
+  // settings replace what was there.
+  'set_fx_rate',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -84,7 +86,9 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'rebuild_catalog_gaps',
   'stage_product_edits',
   'discard_product_edits',
-  // Again, there is nothing left to remove or revoke (the preview is blocked), or the same settings.
+  // Again, there is nothing left to remove or revoke (the preview is blocked), or the same settings
+  // or rate.
+  'set_fx_rate',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -181,7 +185,7 @@ async function createServer(p: Principal) {
       // narrows the list within a minute.
       cacheHints: { 'tools/list': { ttlMs: 60_000, cacheScope: 'private' } },
       instructions:
-        'CommerceWorker runs each commerce order as a flow graph of steps; people step in at approvals, events and exceptions. Start with needs_attention or find_orders. Orders are named by id (ord_…) or #reference. Carts (cart_…) are built with create_cart and change_cart and become orders with submit_cart. Actions (deciding, delivering an event, cancelling, submitting a cart, publishing, the stock review, catalog writes that go live or delete, and removing or revoking outside access) take two calls: the first returns a preview and a confirmation code and changes nothing; call again with the code only after the person agrees.',
+        'CommerceWorker runs each commerce order as a flow graph of steps; people step in at approvals, events and exceptions. Start with needs_attention or find_orders. Orders are named by id (ord_…) or #reference. Carts (cart_…) are built with create_cart and change_cart and become orders with submit_cart. Actions (deciding, delivering an event, cancelling, submitting a cart, publishing, the stock review, catalog writes that go live or delete, setting an exchange rate, and removing or revoking outside access) take two calls: the first returns a preview and a confirmation code and changes nothing; call again with the code only after the person agrees.',
     },
   );
   for (const name of Object.keys(ASSISTANT_TOOLS) as AssistantTool[]) {

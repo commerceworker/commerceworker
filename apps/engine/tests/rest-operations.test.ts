@@ -123,6 +123,36 @@ describe('running a workspace tool for the REST API', () => {
     expect(await run('create_promotion', promo, person('operator'))).toMatchObject({ ok: true });
   });
 
+  it('lists exchange rates for an operator, and lets only a person set one', async () => {
+    expect(await run('list_fx_rates', {}, staff('viewer'))).toEqual({
+      ok: false,
+      error: 'This needs the Operator role.',
+    });
+    expect(await run('list_fx_rates', {}, staff('operator'))).toMatchObject({
+      ok: true,
+      value: { base: 'USD', rates: expect.any(Array) },
+    });
+    const input = { currency: 'EUR', rate: 0.9 };
+    // A token, even an admin's, never changes what buyers pay.
+    expect(await run('set_fx_rate', input, staff('admin'))).toEqual({
+      ok: false,
+      status: 403,
+      error: PERSON_CONFIRMS,
+    });
+    expect(await run('set_fx_rate', input, person('operator'))).toEqual({
+      ok: false,
+      error: 'This needs the Admin role.',
+    });
+    expect(await run('set_fx_rate', input, person('admin'))).toMatchObject({
+      ok: true,
+      value: { id: 'EUR' },
+    });
+    expect(await run('set_fx_rate', { currency: 'USD', rate: 1 }, person('admin'))).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/base currency/),
+    });
+  });
+
   it('lets only a person verify or revoke a tax certificate, as over MCP', async () => {
     const id = `cus_ops_${crypto.randomUUID().slice(0, 8)}`;
     await createDb(env.DB)

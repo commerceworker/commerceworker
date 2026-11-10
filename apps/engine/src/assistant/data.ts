@@ -87,6 +87,7 @@ import {
   runPromotionStatus,
 } from './commerce';
 import { draftHash, heldToDraft, previewTestFlow, runTestFlow } from './flows';
+import { previewFxRate, runFxRate } from './fx';
 import { previewRestart, previewStart, runRestart, runStart, type StartInput } from './orders';
 
 export class Refused extends Error {}
@@ -429,6 +430,7 @@ export type ActionInput = {
   rollback_plugin: { pluginId: string; sha: string };
   uninstall_plugin: { pluginId: string };
   set_promotion_status: { promotionId: string; status: 'active' | 'paused' };
+  set_fx_rate: ToolInput<'set_fx_rate'>;
   verify_tax_certificate: { customerId: string; certificateId: string };
   revoke_tax_certificate: { customerId: string; certificateId: string };
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
@@ -660,6 +662,8 @@ export async function previewAction<T extends ActionTool>(
           input as ActionInput['verify_tax_certificate'],
           roleBlock,
         );
+      case 'set_fx_rate':
+        return await previewFxRate(env, input as ActionInput['set_fx_rate'], roleBlock);
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -950,6 +954,8 @@ export async function runAction<T extends ActionTool>(
         input as ActionInput['verify_tax_certificate'],
         trail,
       );
+    case 'set_fx_rate':
+      return runFxRate(env, p, input as ActionInput['set_fx_rate'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

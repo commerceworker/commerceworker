@@ -119,6 +119,8 @@ export type AssistantTool =
   | 'rebuild_catalog_gaps'
   | 'create_promotion'
   | 'set_promotion_status'
+  | 'list_fx_rates'
+  | 'set_fx_rate'
   | 'verify_tax_certificate'
   | 'revoke_tax_certificate'
   | 'set_member_role'
@@ -615,6 +617,22 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Pause or reactivate a promotion',
     description: 'Pause a promotion code so carts stop accepting it, or reactivate it.',
   },
+  list_fx_rates: {
+    role: 'operator',
+    confirm: false,
+    label: 'Listed exchange rates',
+    title: 'List exchange rates',
+    description:
+      'Each currency’s exchange rate (units per one USD, the base currency): when it was set and by whom, the daily ECB refresh or a person. A currency the deployment names but has no rate for yet shows with none.',
+  },
+  set_fx_rate: {
+    role: 'admin',
+    confirm: true,
+    label: 'Set an exchange rate',
+    title: 'Set an exchange rate',
+    description:
+      'Set a currency’s rate, in units per one USD. It changes what buyers pay in that currency from now on; orders already priced keep their rate. The next daily ECB refresh replaces it for a currency the deployment refreshes. A change of 10% or more is flagged.',
+  },
   verify_tax_certificate: {
     role: 'operator',
     confirm: true,
@@ -848,13 +866,14 @@ export const PAGE_ONLY_TOOLS: readonly AssistantTool[] = [
 export const isPageOnly = (name: AssistantTool) => PAGE_ONLY_TOOLS.includes(name);
 
 /**
- * Actions that change what buyers pay or owe in tax, or who outside may reach the workspace: a
+ * Actions that change what buyers pay (a price, a rate) or owe in tax, or who outside may reach the workspace: a
  * person always confirms them on a card (the panel, MCP's confirmation, A2A chat's
  * `{ confirm: true }`), never a typed A2A skill that runs as composed.
  */
 export const PERSON_CONFIRMS_TOOLS: readonly AssistantTool[] = [
   'create_promotion',
   'set_promotion_status',
+  'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',
   // Who outside may reach the workspace: a webhook's receiver, an integration, an AI platform.

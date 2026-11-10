@@ -102,7 +102,7 @@ unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
 ## Actions wait for the person
 
 An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order`, `submit_cart`,
-`publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`,
+`publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, `set_fx_rate`,
 `verify_tax_certificate`, `revoke_tax_certificate`, the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
 `uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
@@ -167,6 +167,7 @@ Annotations also tell a client when to confirm:
 | The [outside access](#outside-access) tools that remove or revoke, and `set_ucp_settings` | `destructiveHint: true` and `idempotentHint: true` |
 | The [catalog's writes](#catalog-writes) that go live or take something down, and `discard_product_edits` | `destructiveHint: true` |
 | `deliver_event`, `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow`, `create_promotion`, `set_promotion_status`, `verify_tax_certificate`, `revoke_tax_certificate`, `set_member_role`, `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin` | writes, not destructive |
+| `set_fx_rate` | `destructiveHint: true` and `idempotentHint: true`: it replaces the rate buyers pay by, and the same rate again changes nothing |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
 `assess_order` set `openWorldHint: true` (a started order runs its flow for real):
@@ -184,6 +185,21 @@ a plugin), and `list_webhook_subscriptions` and `list_webhook_deliveries`, `list
 `get_ucp_settings` (agentic checkout's settings and the platforms let in). None of them returns a
 signing secret, a key or anything sealed. Their annotations are `readOnlyHint: true`. Lower roles
 aren't offered them.
+
+## Exchange rates
+
+`list_fx_rates` (operator and above, `readOnlyHint: true`) and `set_fx_rate` (admin) are REST's
+`GET /api/v1/fx-rates` and `POST /api/v1/fx-rates/:currency`, and the Commerce page's **Exchange rates**
+table runs the same code, so they refuse what REST refuses and write the same audit entry
+(`fx.rate_set`, with the old and new rate and the change). `list_fx_rates` shows each currency's rate
+(units per one USD), when it was set and whether the daily ECB refresh or a person set it; a currency the
+workspace is set up to sell in but has no rate for yet shows with none. `set_fx_rate` takes
+`{ currency, rate }` and confirms, as [above](#actions-wait-for-the-person): the preview shows the rate now
+and the new one, the change as a percent, flags a change of 10% or more, and says that orders already
+priced keep their rate. It is refused up front for `USD`, a currency the workspace has no rate for and isn't
+set up to sell in, or a rate that isn't a positive number within bounds. Only a person confirms it: over
+REST an API token is refused (`403`), and a typed A2A skill never runs it. A rate set this way holds until
+someone changes it: the daily refresh leaves it and keeps refreshing the other currencies.
 
 ## Outside access
 

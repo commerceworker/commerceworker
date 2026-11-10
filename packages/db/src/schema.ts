@@ -409,6 +409,9 @@ export const fxRates = sqliteTable('fx_rates', {
   currency: text('currency').primaryKey(),
   rate: real('rate').notNull(),
   updatedAt: integer('updated_at').notNull(),
+  /** `ecb` (the daily refresh) or `person`; see `FxSource` in core. */
+  source: text('source').notNull().default('ecb'),
+  updatedBy: text('updated_by'),
 });
 
 /** The pricing chain's sources, run in `priority` order; see `resolvePrice` in core. */

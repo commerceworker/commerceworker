@@ -5,6 +5,7 @@
  */
 import {
   BASE_CURRENCY,
+  type FxSource,
   matchCustomerByName,
   type PriceRule,
   type PriceSource,
@@ -13,6 +14,7 @@ import {
 import type { Clock } from '@commerceworker/ports';
 import type {
   CustomerRecord,
+  FxRateRecord,
   PricingStore,
   ProductRecord,
   Redemption,
@@ -23,7 +25,7 @@ export interface PricingFixture {
   customers?: CustomerRecord[];
   products?: ProductRecord[];
   promotions?: Promotion[];
-  fxRates?: { currency: string; rate: number }[];
+  fxRates?: { currency: string; rate: number; updatedAt?: number; source?: FxSource }[];
   priceSources?: (PriceSource & { active?: boolean })[];
   priceRules?: PriceRule[];
   contractPrices?: { customerId: string; sku: string; price: number }[];
@@ -33,6 +35,7 @@ type Held = Redemption & { at: number };
 
 export class InMemoryPricingStore implements PricingStore {
   private readonly redemptions: Held[] = [];
+  private readonly fxBy = new Map<string, string>();
 
   constructor(
     private readonly fixture: PricingFixture,
@@ -146,15 +149,36 @@ export class InMemoryPricingStore implements PricingStore {
     return this.fixture.fxRates?.find((f) => f.currency === currency)?.rate ?? null;
   }
 
-  async setFxRates(rates: readonly { currency: string; rate: number }[], _at: number) {
+  async fxRateRows(): Promise<FxRateRecord[]> {
+    return (this.fixture.fxRates ?? [])
+      .filter((f) => f.currency !== BASE_CURRENCY)
+      .map((f) => ({
+        currency: f.currency,
+        rate: f.rate,
+        updatedAt: f.updatedAt ?? 0,
+        source: f.source ?? 'ecb',
+        updatedBy: this.fxBy.get(f.currency) ?? null,
+      }))
+      .sort((a, b) => a.currency.localeCompare(b.currency));
+  }
+
+  async setFxRates(
+    rates: readonly { currency: string; rate: number }[],
+    at: number,
+    source: FxSource,
+    by?: string,
+  ) {
     const rows = rates.filter(
       (r) => r.currency !== BASE_CURRENCY && Number.isFinite(r.rate) && r.rate > 0,
     );
     const all = [...(this.fixture.fxRates ?? [])];
     for (const r of rows) {
+      const next = { currency: r.currency, rate: r.rate, updatedAt: at, source };
       const i = all.findIndex((f) => f.currency === r.currency);
-      if (i >= 0) all[i] = { currency: r.currency, rate: r.rate };
-      else all.push({ currency: r.currency, rate: r.rate });
+      if (i >= 0) all[i] = next;
+      else all.push(next);
+      if (by) this.fxBy.set(r.currency, by);
+      else this.fxBy.delete(r.currency);
     }
     this.fixture.fxRates = all;
     return rows.length;
