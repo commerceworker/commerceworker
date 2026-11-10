@@ -57,6 +57,9 @@ export const ucpSettingsSchema = z.object({
 });
 export type UcpSettings = z.infer<typeof ucpSettingsSchema>;
 
+/** A registered platform as the storefront needs it: who it is and the profile it must name. */
+export type UcpPlatformRef = { id: string; name: string; profileUrl: string };
+
 export const UCP_OFF: UcpSettings = { checkoutFlowId: null, links: [], orderUrl: null };
 
 /** Settings as stored, or off when there are none or they don't parse. */

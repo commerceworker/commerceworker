@@ -18,8 +18,8 @@ Set in `vars` in `apps/engine/wrangler.jsonc`.
 | `AI_GATEWAY_LOGS` | `"true"` (commerceworker's; other deployments render their registry's, `false` unless set) | `"true"` keeps a log entry per model call in the AI Gateway (model, tokens, cost, duration and metadata, never the prompt or response: every call sends `cf-aig-collect-log-payload: false`); anything else keeps none. Sent with every call as the gateway's `collectLog`, so it holds whatever the gateway's default is. Rendered from the registry's `aiGatewayLogs` ([Operations](operations.md#the-registry)) |
 | `FX_CURRENCIES` | `"EUR,GBP,CAD"` (commerceworker's; other deployments render their registry's `fxCurrencies`, none unless set) | Comma-separated ISO 4217 codes whose exchange rates the daily cron refreshes from the ECB into `fx_rates` (`apps/engine/src/fx.ts`). Empty refreshes none |
 | `AI_PERSONAL_DATA` | `redact` | What the model sees of an order in the workflow AI nodes (Classify, Risk score, Agent router, Summarize, Assess) and the assistant's `assess_order`. `redact` sends the order's commercial facts only; any value but `send` redacts. `send` adds the contact, the unmasked title, `meta` and the customer's name and email. Never sent in either mode: `documentText`, payment ids and internal bookkeeping (`fxRate`, `taxRate`). The registry's `aiPersonalData` sets it per deployment. See [Personal data](data-model.md#personal-data) |
-| `APP_ORIGIN` | `https://app.commerceworker.com` | The app's own origin; an external cart's start link (`startUrl` from the plugin host API) is on it. `scripts/fleet.ts` sets `https://<domain>` per deployment; local dev uses `http://localhost:5173` |
-| `OWN_HOSTS` | `app.commerceworker.com,catalog.commerceworker.com` | Hosts the deployment serves, comma-separated: an external cart's `returnUrl` may not be one of them, so its return never posts into the app with someone's session. `scripts/fleet.ts` sets the domain and catalog domain per deployment |
+| `STOREFRONT_ORIGIN` | `https://shop.commerceworker.com` | The storefront's origin; an external cart's start link (`startUrl` from the plugin host API) is on it, since a buyer opens their cart there and never on the admin's host. `scripts/fleet.ts` sets `https://<storefrontDomain>` per deployment; local dev uses `http://localhost:5174` |
+| `OWN_HOSTS` | `app.commerceworker.com,shop.commerceworker.com,catalog.commerceworker.com` | Hosts the deployment serves, comma-separated: an external cart's `returnUrl` may not be one of them, so its return never posts into the app or the storefront with someone's session. `scripts/fleet.ts` sets the domain, storefront domain and catalog domain per deployment |
 | `ASSISTANT_DAILY_TOKENS` | `1000000` | Model tokens one person's assistant conversations (in the app and A2A chat) may use per UTC day, counted in D1 `ai_usage`; `"0"` is no limit, anything not a whole number is the default (`assistantDailyTokens`). The registry's `assistantDailyTokens` sets it per deployment |
 | `AI_MODE` | `live` | `live` calls the model; `mock` uses the deterministic heuristics only (tests, offline dev) |
 | `TIME_SCALE` | `1` | Divides every wait and timeout. `"1"` is real time; `pnpm web:dev` overrides it to `"1440"` (a day becomes a minute) in `apps/web/vite.config.ts`, and the engine tests use `"1"` |
@@ -84,12 +84,27 @@ Set in `vars` in `apps/web/wrangler.jsonc`.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `STOREFRONT_ORIGIN` | `https://shop.commerceworker.com` | The storefront's origin, from the registry's `storefrontDomain`. A plugin's page may redirect there, to an external cart's start link (`/cart/start/<cartId>/<token>`), and nowhere else off its own pages (`sanitized` in `app/lib/plugins.server.ts`); without it no such redirect is allowed. `pnpm web:dev` sets `http://localhost:5174` |
 | `ORDER_ROUTES` | `""` | Inbound orders: JSON object from `model:channel` or `model:*` to a flow id, overriding the built-in routes (`DEFAULT_ORDER_ROUTES` in `packages/core/src/inbound.ts`: `b2c:pos` and `d2c:pos` → `tpl-pos-sale`) key by key. Keys are lowercase letters, digits and underscores (`*` allowed after the colon); entries with another key or an empty flow id are dropped, as is a value that isn't a JSON object. A route that isn't set starts the model's default flow. See [Inbound orders](https://docs.commerceworker.com/guides/inbound-orders/#routing) |
 | `OIDC_TRUST_EMAIL` | `""` | `"true"` when the provider leaves out `email_verified` for addresses it owns (Entra ID), so such a token's email matches people (unless it carries Entra's `xms_edov: false`; add that optional claim in the app registration so a changed `email` on an unverified domain can't match anyone); otherwise only `email_verified: true` does. From the registry's `sso.trustEmail` |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID` | `""` | Single sign-on with an OpenID Connect provider (`app/lib/sso.server.ts`): the issuer (https; its `/.well-known/openid-configuration` is fetched, cached an hour, and must name the same issuer) and this deployment's client id. `scripts/fleet.ts` sets both from the registry's `sso` ([operations](operations.md#the-registry)). With the `OIDC_CLIENT_SECRET` secret all three put **Sign in with single sign-on** on the sign-in page; with any empty, `/login/sso` redirects to `/login`. The redirect URI to register at the provider is `https://<domain>/login/sso/callback`. Admins choose the rest on the Team page: the workspace setting `sso` ([data model](data-model.md#people-and-tokens)) |
 | `TURNSTILE_SITE_KEY` | `""` | The public site key of the deployment's [Turnstile](https://developers.cloudflare.com/turnstile/) widget, from the registry's `turnstileSiteKey` ([operations](operations.md#turnstile)). With it, the password form on `/login` and the form on `/setup` show a managed Turnstile challenge (`app/components/turnstile.tsx`), and their actions check its token with Siteverify before the password or setup code is looked at (`checkTurnstile`, `app/lib/turnstile.server.ts`): the token must pass, for action `login` or `setup`, on the host the form was posted to; `remoteip` is `cf-connecting-ip`. A missing token answers `400`, a failed one `403`, and Siteverify unreachable or erroring `503` (fail closed), each before the throttle counts anything. The secret `TURNSTILE_SECRET_KEY` is required with it: without the secret every attempt is refused with `503` and `turnstile_misconfigured` is logged. Refusals log `turnstile_refused` with the reason. Only those two pages' CSP adds `https://challenges.cloudflare.com` to `script-src` and `frame-src` (`TURNSTILE_HEADER`, folded in by `pageHeaders` in `app/lib/csp.ts`; `withSecurityHeaders` drops it from every response, `.data` answers included). Passkeys, single sign-on, the two-factor step, the SSO link page and the demo's one-click sign-in are not gated. Empty: no challenge, as in local dev and tests |
 | `DEMO_MODE` | `""` | `"true"` only on a demo deployment, where `scripts/fleet.ts` sets it (see [The demo](operations.md#the-demo)). The sign-in page offers one-click sign-in as the shared `demo@commerceworker.com` operator, who never owes two-factor setup; changes on Team and Account, `/oauth/authorize`, integrations and webhook subscriptions answer `403` (`apps/web/app/lib/demo.server.ts`); the flow templates are checked on every load, since the nightly reset removes them |
 | `EDI_PARTNERS` | `""` | EDI 850s: JSON object from a trading partner's ISA sender id to the customer id it orders for, e.g. `{ "NORTHWIND": "cus_northwind" }`. A sender not listed is refused with `403`. See [Channel adapters](https://docs.commerceworker.com/guides/channel-adapters/#edi-x12-850) |
+
+## Storefront variables and secrets
+
+`apps/storefront/wrangler.jsonc` has no variables, and no `PRINCIPAL_KEY`: the storefront is public, so a
+compromise of it must not be able to sign as staff. Its one secret is `STOREFRONT_KEY`, the HMAC-SHA256 of
+`PRINCIPAL_KEY` over the label `commerceworker-storefront` (`storefrontKey` in `packages/core/src/roles.ts`, mirrored
+in `scripts/fleet.ts`; the engine derives the same from its own `PRINCIPAL_KEY`). It signs the envelopes the
+storefront forwards to the engine (a cart's buyer, `signCartGuest`; a UCP platform, `signPlatform`; a buyer on
+one call, `signGuestActor`) and the cookie a start link sets (`signCartGuestSession`). `STOREFRONT_KEY_PREVIOUS`,
+derived from `PRINCIPAL_KEY_PREVIOUS`, verifies that cookie during a rotation, and is written only when that is set.
+`fleet.ts secrets storefront` derives both from the deployment's environment; the principal key itself is never
+written to the Worker. The engine takes these envelopes under the storefront key alone, and v1 principals and
+staff actors under `PRINCIPAL_KEY` alone. A platform's API key and a buyer's cookie never leave this Worker; the engine
+gets only the signed envelope (and a platform key's hash). In local dev the key is derived from `DEV_PRINCIPAL_KEY`.
 
 ## Web secrets
 
@@ -118,7 +133,7 @@ created through the API and stored in D1; they are not configuration.
 | Binding | Worker | Resource |
 |---|---|---|
 | `DB` | engine, web, catalog | D1 database `commerceworker`; migrations in `packages/db/migrations`. The catalog only writes `products.name`, `price` and `catalog_at`; a customer's database is rendered into the catalog's config at deploy (`renderCatalog`, which refuses a deployment without `d1Id`) |
-| `DOCS` | engine, web | R2 bucket `commerceworker-docs`: invoices, POs and inbound documents |
+| `DOCS` | engine, web | R2 bucket `commerceworker-docs`: invoices, POs and inbound documents; a cart's files are stored here as the staff or the buyer add them (the buyer's through the engine: the storefront has no bucket) |
 | `ORDER_AGENT` | engine | Durable Object `OrderAgent` (SQLite-backed), one per order |
 | `ASSISTANT_AGENT` | engine | Durable Object `AssistantAgent` (SQLite-backed, migration `v2`), one per person |
 | `A2A_AGENT` | engine | Durable Object `A2AAgent` (SQLite-backed, migration `v3`), one per [A2A](https://docs.commerceworker.com/reference/a2a/) caller |
@@ -150,7 +165,7 @@ created through the API and stored in D1; they are not configuration.
 | `ANALYTICS` | delivery | Analytics Engine dataset `commerceworker_catalog_delivery` (a customer's is `commerceworker_catalog_delivery_<id>`) |
 | Queue consumer | delivery | `commerceworker-catalog-purge` (`max_batch_size` 100, `max_batch_timeout` 12 seconds, `max_concurrency` 1, `max_retries` 10, `retry_delay` 30, dead-letter queue `commerceworker-catalog-purge-dlq`, consumed by the catalog) |
 | Workers Caching | delivery | `cache: { enabled: true, cross_version_cache: true }`, and `exports`: the default (gateway) entrypoint has the cache off, `CatalogDelivery` has it on |
-| `ENGINE` | web | Service binding to `commerceworker-engine`, entrypoint `EngineApi` |
+| `ENGINE` | web, storefront | Service binding to `commerceworker-engine`: the web app's has entrypoint `EngineApi`, the storefront's `StorefrontApi` (`StorefrontRpc`: the cart and UCP calls the buyer's side needs, and no other) |
 | `PLUGIN_<ID>` | engine, web | Service binding to `commerceworker-plugin-<id>` for each plugin in the registry's `plugins` whose `runtime` is `worker` (the default; a `sandboxed` one has no Worker or binding; `pluginServices` in `scripts/fleet.ts`; none in the base `wrangler.jsonc` files). A plugin's own Worker has a `DB` D1 binding and, as secrets, `PLUGIN_KEY` and, during a rotation, `PLUGIN_KEY_PREVIOUS` (`fleet.ts secrets plugin <out> <plugin>`), to verify the principal the web Worker signs for that plugin. See [Plugins](plugins.md) |
 | `PLUGIN_KEY`, `PLUGIN_KEY_PREVIOUS` | each plugin | Secrets, one pair per plugin Worker. `PLUGIN_KEY` is the plugin's own page-signing key: the hex HMAC-SHA256 of `PRINCIPAL_KEY` over `commerceworker-plugin:<id>` (`pluginKey` in `packages/core/src/plugins.ts`, mirrored in `scripts/fleet.ts`); for a plugin an admin installed at runtime, over `commerceworker-plugin:<id>@<sha>` (its running version's bundle), so a key that leaked opens nothing for any other version (it works again only if that same bundle runs again), and `PLUGIN_KEY_PREVIOUS` the same from `PRINCIPAL_KEY_PREVIOUS`, written only when that is set. The web Worker signs a plugin's page requests with it; the engine and other plugins refuse it, and a plugin never holds `PRINCIPAL_KEY`. CI writes one secrets file per plugin. In local dev `apps/web/vite.config.ts` derives it from `DEV_PRINCIPAL_KEY` |
 | `<NAME>` (each declared secret) | each plugin | The secrets a plugin's manifest declares in `secrets` (an outside service's API key, say), set in the deployment's GitHub environment as `PLUGIN_<ID>_<NAME>` (`pluginSecretVar` in `packages/core/src/plugins.ts`) and written to that plugin's secrets file under `<NAME>` (`pluginOwnSecrets` in `scripts/fleet.ts`). Only the plugin with that prefix gets it. A required one that is missing fails the plugin's manifest, so deep health fails. In local dev, `plugins/<id>/.dev.vars`. See [Plugins](plugins.md#secrets) |
@@ -163,6 +178,7 @@ created through the API and stored in D1; they are not configuration.
 | `ASSISTANT_PLUGINS` | engine | Var, `on` when the registry's `pluginInstalls.assistant` is `true` (absent otherwise; the base `wrangler.jsonc` carries commerceworker.com's `on`, which `fleet.ts` removes for every other deployment, and local dev gets it too): the assistant may draft business-rule plugins (`draft_plugin`) for an admin to review and approve, and drafted plugins run and may be approved, rolled back to and turned on; turning it off stops them. See [Plugins](plugins.md#assistant-drafted-plugins) |
 | `OAUTH_REGISTER_LIMIT`, `OAUTH_TOKEN_LIMIT` | web | Workers rate-limit bindings (`ratelimits` in `wrangler.jsonc`): 10 requests a minute to `/oauth/register` and 60 to `/oauth/token`, per address; over the limit answers `429 slow_down` |
 | `API_LIMIT`, `AGENT_LIMIT`, `WEBHOOK_LIMIT` | web | Per-caller budgets (`app/lib/rate-limit.ts`): 600 requests a minute per principal on `/api/v1` (after authentication), 300 per principal on each of `/mcp` and `/a2a` (keyed `<path>:<principal id>`) and 300 per registered UCP platform on `/ucp` (`/ucp:<platform id>`, `AGENT_LIMIT`), and 1,200 per integration on the signed webhooks (after the signature verifies, so a forged request can't spend a sender's budget) or per shop on Shopify's. Over the limit answers `429` with `Retry-After: 60`. A deployment's `limits` in the registry replace these numbers ([Operations](operations.md#the-registry)). Counted per Cloudflare location, so they stop a runaway client rather than meter it exactly. Without the binding (unit tests) nothing is limited |
+| `API_LIMIT`, `AGENT_LIMIT` | storefront | The storefront's own two budgets (`app/lib/rate-limit.ts`), in their own rate-limit namespaces (`<slot>006` and `<slot>007`) and set by the same registry `limits` keys as the web Worker's: 600 requests a minute per cart and buyer on product search (`cart-search:<cartId>:<buyer id>`) and 300 per registered UCP platform on `/ucp` (`/ucp:<platform id>`, `AGENT_LIMIT`) |
 | `OAUTH_KV` | web | KV namespace for [MCP](https://docs.commerceworker.com/reference/mcp/) and [A2A](https://docs.commerceworker.com/reference/a2a/) OAuth clients, grants and tokens (tokens hashed, grant data encrypted). `wrangler.jsonc` gives no id; the namespace is provisioned on deploy |
 
 The web Worker's compatibility flags are `nodejs_compat` and `global_fetch_strictly_public`. The
@@ -177,6 +193,14 @@ URLs: only the web app's service binding reaches it, plus Email Routing rules th
 (see [Email intake](deploy.md#email-intake)). The docs Worker (`apps/docs/wrangler.jsonc`)
 serves `docs.commerceworker.com`, and likewise sets `workers_dev` and `preview_urls` to `false`.
 
+The storefront Worker serves `shop.commerceworker.com` as a custom domain (a customer's is the registry's
+`storefrontDomain`, default `shop.<domain>`, rendered at deploy), with `workers_dev` and `preview_urls` off,
+like the web app: the buyer's pages, their cart's files, product search and socket, and UCP. It is uncached
+(no Workers Caching; an HTML page without its own `cache-control` gets `private, no-cache`) and has no
+sign-in. It answers `GET /health` with `{ ok: true, service }` and `GET /health/deep` with the checks of its
+D1, R2 and the engine. Its compatibility flag is `nodejs_compat`; `observability` is on at sampling 1, as
+the web app's, and `limits.cpu_ms` is 5,000.
+
 The catalog Worker has no routes, no `workers_dev` URL and no preview URLs, and only delivery
 (`SearchApi`) and the web app (`CatalogApi`) bind to it; it answers `GET /health` with `{ ok: true }` and `404` otherwise. CI doesn't smoke-test it.
 
@@ -187,7 +211,7 @@ compatibility flags are `nodejs_compat` and `global_fetch_strictly_public`; `obs
 with `head_sampling_rate` 0.05 (logs from 5% of requests; every request is still counted in Analytics
 Engine) and source maps are uploaded.
 
-Both app Workers answer `GET /health` with `{ ok: true, service }`. The web app's
+The web, storefront and engine Workers answer `GET /health` with `{ ok: true, service }`. The web app's
 `GET /health/deep` also checks D1, R2 and the engine, and `POST /health/write`, which only CI can
 sign, writes through every store (see [Request routing](architecture.md#request-routing)). The web app sets `workers_dev` and
 `preview_urls` to `false` too, so `app.commerceworker.com` is its only address and the zone's rules apply to
@@ -195,22 +219,22 @@ every request.
 
 ## Runtime limits and observability
 
-The catalog Worker turns `observability` on at the default sampling and sets `limits.cpu_ms` to 300,000, since a feed step parses and validates up to 25,000 products. Both app Workers log and trace every request (`observability` with `head_sampling_rate` 1, invocation logs
-and traces on); lower the rate once traffic makes the volume or cost matter. All four (web, engine,
+The catalog Worker turns `observability` on at the default sampling and sets `limits.cpu_ms` to 300,000, since a feed step parses and validates up to 25,000 products. The web, storefront and engine Workers log and trace every request (`observability` with `head_sampling_rate` 1, invocation logs
+and traces on); lower the rate once traffic makes the volume or cost matter. All five (web, storefront, engine,
 catalog, delivery) turn on Workers Issues (`observability.issues.enabled`), which groups
 uncaught exceptions, failed invocations, `5xx` responses and error-level logs into issues and is
-what the account's alerting watches; see [Alerting](operations.md#alerting). All four also set
+what the account's alerting watches; see [Alerting](operations.md#alerting). All five also set
 `observability.redact_query_string`, so OAuth codes and states and other query strings stay out of
 logs and traces. Each Workflow (`commerceworker-order`, `commerceworker-replenish`, `commerceworker-catalog-feed`,
 `commerceworker-catalog-backup`, `commerceworker-catalog-restore`)
 sets `default_retention`: finished instances are kept 7 days, errored ones 30, the most Workflows
 keeps. `limits.cpu_ms` stops a
-runaway invocation: 5,000 for the web app, 10,000 for the engine (the platform default is 30,000). I/O
-waits, such as model calls, don't count against it. Both app Workers set `placement.mode` to `smart`: the web
-app runs near D1 and the engine rather than near the visitor, and the engine runs near D1 rather
+runaway invocation: 5,000 for the web app and the storefront, 10,000 for the engine (the platform default is 30,000). I/O
+waits, such as model calls, don't count against it. The web, storefront and engine Workers set `placement.mode` to `smart`: the web
+app runs near D1 and the engine, and the storefront near the engine, rather than near the visitor, and the engine runs near D1 rather
 than near the web app (keep it only while Observability shows lower D1 latency).
 
-All four, and every plugin Worker (`renderPlugin` sets it), set `logpush: true`: their trace
+All five, and every plugin Worker (`renderPlugin` sets it), set `logpush: true`: their trace
 events go to Workers Logpush too, whose per-deployment job (`commerceworker-workers<suffix>`, made by
 `provision.sh`) keeps them in the logs bucket `commerceworker-logs<suffix>` for `logRetentionDays`.
 A deploy never waits on the job. Without it the logs are kept nowhere of ours, but another

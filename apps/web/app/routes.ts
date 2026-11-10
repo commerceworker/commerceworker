@@ -13,12 +13,8 @@ export default [
   route('setup', 'routes/setup.tsx'),
   // The consent page MCP clients send people to (lib/oauth.server.ts).
   route('oauth/authorize', 'routes/oauth-authorize.tsx'),
-  // An external cart's buyer (a punchout session): a one-time start link, then the cart itself,
-  // outside the app shell and its sign-in (lib/cart-guest.server.ts).
-  route('cart/start/:cartId/:token', 'routes/cart-start.tsx'),
-  route('cart/:cartId', 'routes/cart-buy.tsx'),
-  // A cart's files and its product search, for staff or the cart's buyer
-  // (lib/cart-attachments.server.ts).
+  // A cart's files and its product search, for staff (lib/cart-files.server.ts). A cart's buyer
+  // reaches theirs, and the cart page itself, on the storefront (apps/storefront).
   route('carts/:cartId/attachments', 'routes/cart-attachments.ts'),
   route('carts/:cartId/attachments/:attachmentId', 'routes/cart-attachment.ts'),
   route('carts/:cartId/products', 'routes/cart-products.ts'),

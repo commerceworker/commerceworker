@@ -67,6 +67,44 @@ test('the web composition root does bind the D1 adapters', () => {
   assert.match(readFileSync(WEB_ROOT, 'utf8'), D1_ADAPTERS);
 });
 
+// The storefront has no composition root: it is public, so it binds no database and no bucket, and
+// imports no store, adapter or use-case. What it needs from D1 or R2 (a platform's key, a customer's
+// name, a cart's files) it asks the engine for, through `StorefrontRpc` (`StorefrontApi` in
+// apps/engine/src/storefront-api.ts, which is bound in the engine's own composition root).
+const STOREFRONT = 'apps/storefront';
+const STOREFRONT_SOURCES = ['app', 'workers', 'tests', 'e2e'].flatMap((d) =>
+  files(join(STOREFRONT, d)),
+);
+const STOREFRONT_DATA =
+  /@commerceworker\/(?:db|ports|application|store|adapters|platform|test-kit)\b|\bcreateDb\(|\benv\.(?:DB|DOCS)\b|\bwire\.server\b/;
+
+test('the storefront imports no @commerceworker/db and reaches no database or bucket', () => {
+  const reaching = STOREFRONT_SOURCES.filter((f) =>
+    STOREFRONT_DATA.test(readFileSync(f, 'utf8')),
+  ).map((f) => relative('.', f));
+  assert.deepEqual(
+    reaching,
+    [],
+    `Ask the engine through StorefrontRpc (packages/core/src/api.ts) instead:\n${reaching.join('\n')}`,
+  );
+});
+
+test('the storefront declares no data dependency and binds no database or bucket', () => {
+  const pkg = JSON.parse(readFileSync(join(STOREFRONT, 'package.json'), 'utf8'));
+  const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  assert.deepEqual(
+    deps.filter((d) => /^@commerceworker\/(db|ports|application|store|adapters|platform)$/.test(d)),
+    [],
+  );
+  const wrangler = readFileSync(join(STOREFRONT, 'wrangler.jsonc'), 'utf8').replace(
+    /\/\/.*$/gm,
+    '',
+  );
+  assert.doesNotMatch(wrangler, /d1_databases|r2_buckets|kv_namespaces|"queues"|durable_objects/);
+  assert.match(wrangler, /"entrypoint": "StorefrontApi"/);
+  assert.doesNotMatch(wrangler, /"entrypoint": "EngineApi"/);
+});
+
 // The HTTP surface (packages/http) is a library: it takes its adapters as deps and binds none.
 // `wireEdge` and `platform/in-memory` build the import sources, the space export reader, the
 // remote fetcher and the assistant's model, and `platform/media` the media routes' R2 transfers,

@@ -3,11 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Dependency-free trust-boundary primitives shared by the web, api and media Workers: the deployment roles, the signed principal envelope (x-cw-principal) the web gateway forwards to the api, and the WebCrypto credential primitives (PBKDF2 passwords, tokens).",
+  "description": "Dependency-free trust-boundary primitives shared by the web, storefront, api and media Workers: the deployment roles, the signed principal envelope (x-cw-principal) the web gateway forwards to the api, the WebCrypto credential primitives (PBKDF2 passwords, tokens), and the page Content-Security-Policy and security headers the admin and the storefront send.",
   "exports": {
     ".": "./src/index.ts",
     "./assistant-key": "./src/assistant-key.ts",
     "./credentials": "./src/credentials.ts",
+    "./csp": "./src/csp.ts",
+    "./origin": "./src/origin.ts",
     "./principal": "./src/principal.ts",
     "./roles": "./src/roles.ts"
   },

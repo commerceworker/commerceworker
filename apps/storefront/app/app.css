@@ -1,0 +1,641 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/* `@commerceworker/ui` is consumed as raw source from outside this app's root, so Tailwind's
+   automatic content detection never sees it. */
+@source "../../../packages/ui/src";
+/* The cart view is shared with the admin, and lives in its own package. */
+@source "../../../packages/cart/src";
+
+/* Ledger, on shadcn's base-maia preset: neutral greys with no tint, Inter, generous radii and pill
+   controls (buttons and one-line fields are fully round). One blue accent for links and work in
+   progress, and signal colours reserved for order and step status. Green means "succeeded" and
+   nothing else; it is never the brand. This is the admin's stylesheet cut to what a buyer's page uses
+   (apps/web/app/app.css), its tokens held to the same set by packages/design. A buyer has no theme
+   switch: root.tsx leaves `data-theme` at light. */
+
+/* Dark tokens follow `data-theme` on <html>, not the OS directly. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Titles and the wordmark: Inter 600, set a touch tighter than running text. */
+  --tracking-title: -0.015em;
+  /* The console's two small steps under Tailwind's scale: chrome and controls (13px), and counts and
+     tags (11px). In rem, so they grow with the reader's text size. */
+  --text-ui: 0.8125rem;
+  --text-2xs: 0.6875rem;
+  /* A page's body and header width (components/page.tsx). */
+  --container-page: 87.5rem;
+  /* The measure for running text (`max-w-measure`): Inter's characters average about 0.8ch, so
+     55ch holds 65 to 75 of them a line at any size, page intros and xs helpers alike. */
+  --container-measure: 55ch;
+
+  /* Motion: quiet and exact. Things move only when state changes, by opacity, colour and a few
+     pixels, never by bouncing or scaling content. Three durations, by how far the eye travels:
+     instant for feedback and leaving, move for something appearing or changing state, travel for
+     pages and panels. Arrivals decelerate; exits are shorter and accelerate away. */
+  --ease-arrive: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-leave: cubic-bezier(0.4, 0, 1, 1);
+  --default-transition-duration: var(--motion-instant);
+  --default-transition-timing-function: var(--ease-arrive);
+  /* Something new in a list or a log: a fade and a 4px rise (no rise where motion is reduced). */
+  --animate-arrive: ol-arrive var(--motion-move) var(--ease-arrive) both;
+  @keyframes ol-arrive {
+    from {
+      opacity: 0;
+      translate: 0 var(--arrive-rise);
+    }
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-paper: var(--paper);
+  --color-rule: var(--rule);
+  --color-ink: var(--ink);
+  --color-link: var(--link);
+
+  /* shadcn's sidebar (packages/ui/src/sidebar.tsx). */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Status signals. */
+  --color-ok: var(--ok);
+  --color-run: var(--run);
+  --color-wait: var(--wait);
+  --color-bad: var(--bad);
+  --color-undo: var(--undo);
+  --color-idle: var(--idle);
+  --color-ai: var(--ai);
+
+  /* The preset's neutral chart ramp, lightest to darkest in light. */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Node categories (a small tag on each card, not a fill). */
+  --color-cat-trigger: var(--cat-trigger);
+  --color-cat-commerce: var(--cat-commerce);
+  --color-cat-control: var(--cat-control);
+  --color-cat-ai: var(--cat-ai);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+}
+
+:root {
+  --radius: 0.625rem;
+  --paper: oklch(1 0 0);
+  --background: var(--paper);
+  --ink: oklch(0.145 0 0);
+  --foreground: var(--ink);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--ink);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--ink);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  /* A step darker than the preset's 0.556, so it holds 4.5:1 on muted fills and tiles too. */
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.48 0.185 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --rule: oklch(0.922 0 0);
+  --border: var(--rule);
+  --input: oklch(0.922 0 0);
+  /* Links and live work. Focus is the preset's grey ring on fields and buttons, set dark enough that
+     its edge holds 3:1 on white and on muted fills (the preset's 0.708 doesn't); ink for the
+     page-wide outline. */
+  --link: oklch(0.47 0.13 256);
+  --ring: var(--brand);
+
+  --ok: oklch(0.455 0.105 152);
+  --run: var(--link);
+  --wait: oklch(0.49 0.115 62);
+  --bad: oklch(0.5 0.185 28);
+  --undo: oklch(0.485 0.135 42);
+  --idle: oklch(0.48 0 0);
+  --ai: var(--brand);
+
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+
+  --cat-trigger: var(--ink);
+  --cat-commerce: oklch(0.45 0.07 230);
+  --cat-control: var(--muted-foreground);
+  --cat-ai: var(--ai);
+
+  /* The sidebar: the preset's ground, half a step under the paper so the page reads as the surface
+     and the sidebar as its frame; its current page a step deeper than the preset's accent, so it
+     reads on that ground. */
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.945 0 0);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--rule);
+  --sidebar-ring: var(--ring);
+
+  /* The flow graph sheet. */
+  --sheet: oklch(0.985 0 0);
+  --sheet-grid: oklch(0.87 0 0);
+  --node: oklch(1 0 0);
+  --node-border: oklch(0.85 0 0);
+  --edge: oklch(0.62 0 0);
+  --edge-active: var(--ink);
+  --edge-idle: oklch(0.88 0 0);
+
+  color-scheme: light;
+  /* The brand accent: focus rings and AI provenance; never a button fill. */
+  --brand: oklch(0.49 0.16 310);
+  --brand-foreground: oklch(0.985 0 0);
+}
+
+:root[data-theme="dark"] {
+  --paper: oklch(0.145 0 0);
+  --ink: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --popover: oklch(0.205 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.78 0.12 22.216);
+  --rule: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --link: oklch(0.76 0.11 250);
+
+  --ok: oklch(0.77 0.1 152);
+  --wait: oklch(0.8 0.12 75);
+  --bad: oklch(0.71 0.16 28);
+  --undo: oklch(0.76 0.13 50);
+  --idle: oklch(0.67 0 0);
+
+  /* The preset keeps its light ramp in dark, where the dark end disappears on a dark card; here
+     it runs lightest at chart-5 so the series a chart draws strongest stay strongest. */
+  --chart-1: oklch(0.371 0 0);
+  --chart-2: oklch(0.439 0 0);
+  --chart-3: oklch(0.556 0 0);
+  --chart-4: oklch(0.708 0 0);
+  --chart-5: oklch(0.87 0 0);
+
+  --cat-commerce: oklch(0.76 0.07 230);
+
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+
+  --sheet: oklch(0.17 0 0);
+  --sheet-grid: oklch(0.27 0 0);
+  --node: oklch(0.205 0 0);
+  --node-border: oklch(0.37 0 0);
+  --edge: oklch(0.56 0 0);
+  --edge-idle: oklch(0.269 0 0);
+
+  color-scheme: dark;
+  --brand: oklch(0.75 0.09 305);
+  --brand-foreground: oklch(0.145 0 0);
+}
+
+/* Motion (see the @theme block above for the easings). Its own block: the palette `:root` above is
+   mirrored value for value in packages/design, and durations aren't part of that palette. */
+:root {
+  --motion-instant: 100ms;
+  --motion-move: 180ms;
+  --motion-travel: 240ms;
+  --arrive-rise: 4px;
+}
+
+@layer base {
+  * {
+    border-color: var(--rule);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    @apply antialiased;
+  }
+  ::selection {
+    background-color: color-mix(in oklch, var(--link) 24%, transparent);
+  }
+  /* One focus ring for every control, including raw buttons that skip the UI primitives. */
+  :where(a, button, summary, [role="tab"], [tabindex]):focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  input,
+  textarea {
+    caret-color: var(--link);
+  }
+  /* Checkboxes and radios stay native (they post with their form) but are drawn as the preset's:
+     an input-edged 16px box with 6px corners, round for a radio, filled with primary once
+     checked, the mark drawn in borders so no image loads. */
+  input:where([type="checkbox"], [type="radio"]) {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    border: 1px solid var(--input);
+    border-radius: 6px;
+    background-color: transparent;
+    color: var(--primary-foreground);
+    transition-property: background-color, border-color, box-shadow;
+    transition-duration: 100ms;
+    [data-theme="dark"] & {
+      background-color: color-mix(in oklch, var(--input) 30%, transparent);
+    }
+    &:checked {
+      border-color: var(--primary);
+      background-color: var(--primary);
+    }
+    &:focus-visible {
+      outline: none;
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
+    }
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+    &[aria-invalid="true"] {
+      border-color: var(--destructive);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--destructive) 20%, transparent);
+    }
+  }
+  input:where([type="checkbox"]):checked::before {
+    content: "";
+    width: 0.3125rem;
+    height: 0.5625rem;
+    margin-top: -0.125rem;
+    border: solid currentColor;
+    border-width: 0 2px 2px 0;
+    rotate: 45deg;
+  }
+  input:where([type="radio"]) {
+    border-radius: 9999px;
+  }
+  input:where([type="radio"]):checked::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background-color: currentColor;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* iPhone and iPad. root.tsx sets viewport-fit=cover, so an installed app or a phone on its side
+   draws under the status bar, the notch and the home indicator; these are their insets (0 elsewhere).
+   Read them through var(), never env() directly, so tests can fake a notch. */
+@layer base {
+  html {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    /* The top bar's height (shell.tsx) and, on phones, the tab bar's: what a full-height page
+       subtracts from the viewport and pads its foot with. */
+    --shell-h: calc(3rem + var(--safe-top));
+    --tabbar-h: 0px;
+    @media (width < 48rem) {
+      --tabbar-h: calc(3.5rem + var(--safe-bottom));
+    }
+    @media (width < 48rem) and (orientation: landscape) and (max-height: 32rem) {
+      --tabbar-h: calc(2.75rem + 1px + var(--safe-bottom));
+    }
+    /* What focus, find or a link scrolls into view stops above the tab bar, and above a phone's
+       floating New order button (shell.tsx) where there is one, rather than under them. */
+    scroll-padding-bottom: var(--tabbar-h);
+    @media (width < 48rem) {
+      &:has([data-float-action]) {
+        scroll-padding-bottom: calc(var(--tabbar-h) + 4.5rem);
+      }
+    }
+  }
+  /* Live order pages update themselves; pull-to-refresh and the rubber band only get in the way. */
+  body {
+    overscroll-behavior-y: none;
+  }
+  /* No double-tap-to-zoom delay on controls. */
+  :where(a, button, summary, select, label, [role="tab"], [role="button"]) {
+    touch-action: manipulation;
+  }
+}
+
+/* A phone on its side: too short for stacked chrome, too narrow for the lg layouts. */
+@custom-variant short {
+  @media (orientation: landscape) and (max-height: 32rem) and (width < 64rem) {
+    @slot;
+  }
+}
+/* What's pointing: a finger (`touch:`) or a mouse or trackpad (`fine:`). An iPad with a trackpad
+   reports fine. Size and hint by these, not by width. */
+@custom-variant touch (@media (pointer: coarse));
+@custom-variant fine (@media (pointer: fine));
+
+/* shadcn's state variants (its tailwind.css), which the radix-maia components are written in:
+   `data-open:` matches Radix's data-state="open", `data-horizontal:` its data-orientation. */
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-checked {
+  &:where([data-state="checked"]),
+  &:where([data-checked]:not([data-checked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-unchecked {
+  &:where([data-state="unchecked"]),
+  &:where([data-unchecked]:not([data-unchecked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-selected {
+  &:where([data-selected="true"]) {
+    @slot;
+  }
+}
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-active {
+  &:where([data-state="active"]),
+  &:where([data-active]:not([data-active="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-horizontal {
+  &:where([data-orientation="horizontal"]) {
+    @slot;
+  }
+}
+@custom-variant data-vertical {
+  &:where([data-orientation="vertical"]) {
+    @slot;
+  }
+}
+
+/* A page's own padding, or the inset when that's bigger: `pb-safe-3` is 0.75rem, or the home
+   indicator's height. */
+@utility pt-safe-* {
+  padding-top: max(--spacing(--value(integer)), var(--safe-top));
+}
+@utility pb-safe-* {
+  padding-bottom: max(--spacing(--value(integer)), var(--safe-bottom));
+}
+@utility px-safe-* {
+  padding-right: max(--spacing(--value(integer)), var(--safe-right));
+  padding-left: max(--spacing(--value(integer)), var(--safe-left));
+}
+@utility pr-safe-* {
+  padding-right: max(--spacing(--value(integer)), var(--safe-right));
+}
+@utility pl-safe-* {
+  padding-left: max(--spacing(--value(integer)), var(--safe-left));
+}
+
+/* A 44px target for a finger without changing how a small control looks: an invisible box centred
+   on it, grown to 2.75rem where the control is smaller. Mouse and trackpad keep the drawn size. */
+@utility hit-area {
+  @media (pointer: coarse) {
+    position: relative;
+    &::after {
+      content: "";
+      position: absolute;
+      inset: min(0px, calc((100% - 2.75rem) / 2));
+    }
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Section headings inside panels: sentence case, ink, one step above body. */
+@utility section-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+
+/* Field, column and fact labels: small capitals, as the preset's labels are set. Titles stay in
+   sentence case. */
+@utility caption {
+  /* 11px, in rem so it grows with the reader's text size. */
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* The preset's card: rounded, no border and no shadow, edged by a faint ring. */
+@utility card {
+  border-radius: var(--radius-2xl);
+  background-color: var(--card);
+  color: var(--card-foreground);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent);
+}
+
+/* A control floating over a scrolling page (a phone's New order): a soft lift so rows pass under
+   it. In dark the primary is light on a dark page and needs no lift. */
+@utility shadow-float {
+  box-shadow:
+    0 6px 12px -2px rgb(0 0 0 / 0.14),
+    0 3px 6px -3px rgb(0 0 0 / 0.1);
+  [data-theme="dark"] & {
+    box-shadow: none;
+  }
+}
+
+/* The sidebar opened over the page: the card's lift, a step deeper. */
+@utility shadow-overlay {
+  box-shadow:
+    0 10px 24px -6px rgb(0 0 0 / 0.16),
+    0 4px 8px -4px rgb(0 0 0 / 0.1);
+  [data-theme="dark"] & {
+    box-shadow: 0 10px 24px -6px rgb(0 0 0 / 0.6);
+  }
+}
+
+/* A tile inside a card: a muted, rounded step rather than a ruled cell. */
+@utility tile {
+  border-radius: var(--radius-xl);
+  background-color: color-mix(in oklch, var(--muted) 70%, transparent);
+}
+
+/* Accounting double rule under a total. */
+@utility double-rule {
+  border-bottom: 3px double var(--ink);
+}
+
+/* Tables (`Table` in packages/ui). The table pads its cells at zero specificity, so a cell's own
+   classes always win: a card table runs edge to edge, its outer columns inset from the card's
+   edge; a flush one lines them up with the panel's text. Every figure in a table is tabular. */
+@layer components {
+  :where([data-slot="table"]) {
+    font-variant-numeric: tabular-nums;
+  }
+  :where([data-slot="table"]) :where(th, td) {
+    padding: 0.375rem 0.5rem;
+    vertical-align: baseline;
+  }
+  :where([data-slot="table"]) :where(thead th) {
+    padding-block: 0.5rem;
+    vertical-align: bottom;
+  }
+  :where([data-slot="table"][data-edge="card"] :is(th, td):first-child) {
+    padding-left: 1rem;
+  }
+  :where([data-slot="table"][data-edge="card"] :is(th, td):last-child) {
+    padding-right: 1rem;
+  }
+  :where([data-slot="table"][data-edge="flush"] :is(th, td):first-child) {
+    padding-left: 0;
+  }
+  :where([data-slot="table"][data-edge="flush"] :is(th, td):last-child) {
+    padding-right: 0;
+  }
+  /* A stacked row pads itself on a phone, as a card does. */
+  @media (width < 48rem) {
+    :where([data-slot="table"][data-stack]) :where(th, td) {
+      padding: 0;
+    }
+  }
+}
+
+/* A table that stacks on a phone (`stack="cards"`): each row becomes a card, its first cell (the
+   thing the row is about) on a line of its own and the rest wrapping beneath it, each named by
+   its `data-label`. The label is drawn only: screen readers get the column's own header, which
+   the table keeps for them. Wider than md it's an ordinary table. */
+@utility table-stack {
+  @media (width < 48rem) {
+    & tr {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.125rem 1rem;
+      padding: 0.625rem 1rem;
+    }
+    & td {
+      display: block;
+      padding: 0;
+      text-align: left;
+    }
+    & td:first-child,
+    & td[colspan] {
+      flex-basis: 100%;
+    }
+    & td[data-label]::before {
+      content: attr(data-label) " ";
+      /* biome-ignore lint/suspicious/noDuplicateProperties: the line above is the fallback where
+         content's alt text (empty, so a screen reader skips the label) isn't supported. */
+      content: attr(data-label) " " / "";
+      color: var(--muted-foreground);
+      font-size: 0.75rem;
+      font-weight: 400;
+    }
+  }
+}
+
+/* iOS zooms the page into any field set under 16px when it's focused, and stays zoomed. On a
+   touch screen every field is 16px, whatever its classes say: this rule sits outside the cascade
+   layers on purpose, so it outranks Tailwind's `text-sm` and `text-xs` at every call site. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Reduced motion: nothing travels. Colour and state still change (they carry meaning), arrivals
+   fade without rising, and page changes (below) and the undo bar happen at once. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --arrive-rise: 0px;
+  }
+  /* Menus, dialogs and sheets (tw-animate's enter and exit) fade without sliding or zooming.
+     Unlayered, so it outranks the slide and zoom utilities however specific they are. */
+  :where([data-state]) {
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+  }
+}

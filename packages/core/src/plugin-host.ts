@@ -48,9 +48,9 @@ export type ExternalCartInput = {
 
 export type ExternalCartOpened = {
   cartId: string;
-  /** The path (on the app's origin) that admits the buyer, once, within `CART_START_TTL_MS`. */
+  /** The path (on the storefront's origin) that admits the buyer, once, within `CART_START_TTL_MS`. */
   startPath: string;
-  /** The same on the app's origin, where the deployment knows it (`APP_ORIGIN`). */
+  /** The same on the storefront's origin, where the deployment knows it (`STOREFRONT_ORIGIN`). */
   startUrl: string | null;
 };
 

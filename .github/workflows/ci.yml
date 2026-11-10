@@ -95,9 +95,10 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
-  # The web app in WebKit as an iPhone and an iPad, both ways up, and a desktop: layout, safe
-  # areas, touch targets and the on-screen keyboard (apps/web/e2e). The dev server runs offline
-  # (mock AI, no remote bindings, its own seeded database), so no Cloudflare account is needed.
+  # The web app and the storefront in WebKit as an iPhone and an iPad, both ways up, and a desktop:
+  # layout, safe areas, touch targets and the on-screen keyboard (apps/web/e2e, apps/storefront/e2e).
+  # The dev servers run offline (mock AI, no remote bindings, their own databases), so no Cloudflare
+  # account is needed.
   # Pinned: the cached WebKit links the image's own libraries (ICU), and ubuntu-latest moving to
   # 26.04 left it unable to start. Move it on purpose, once Playwright supports the new image.
   devices:
@@ -157,13 +158,20 @@ jobs:
       - name: Device tests
         timeout-minutes: 20
         run: pnpm --filter @commerceworker/web e2e
+      # The storefront's own, on its own port and engine; it runs even when the admin's failed.
+      - name: Storefront device tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: pnpm --filter @commerceworker/storefront e2e
       # A failure's traces (DOM, network, console at each step): open with `playwright show-trace`.
       - name: Keep the failures' traces
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: device-test-traces
-          path: apps/web/test-results/
+          path: |
+            apps/web/test-results/
+            apps/storefront/test-results/
           retention-days: 7
 
   # The fleet: every deployment in deployments/, grouped by ring. Each ring waits for the one

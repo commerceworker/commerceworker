@@ -1,14 +1,12 @@
 import { env } from 'cloudflare:workers';
 import {
-  type CartGuest,
   DEV_PRINCIPAL_KEY,
   PRINCIPAL_HEADER,
   type Principal,
   type ProxiedPrincipal,
   pluginKey,
-  type RpcActor,
   type SignedActor,
-  signCartGuest,
+  type StaffActor,
   signPrincipal,
   signRpcActor,
 } from '@commerceworker/core';
@@ -20,11 +18,6 @@ import {
  */
 export async function setPrincipalHeader(headers: Headers, p: ProxiedPrincipal, path: string) {
   headers.set(PRINCIPAL_HEADER, await signPrincipal(principalKey(), p, path));
-}
-
-/** The header for an external cart's buyer on that cart's socket (`signCartGuest`). */
-export async function setGuestHeader(headers: Headers, g: CartGuest, path: string) {
-  headers.set(PRINCIPAL_HEADER, await signCartGuest(principalKey(), g, path));
 }
 
 /**
@@ -52,12 +45,12 @@ export async function setPluginPrincipalHeader(
  * Who is acting on an `EngineRpc` call, signed for that one call (`decide:<orderId>`,
  * `cart:<cartId>`): the engine takes it from nothing else.
  */
-export function signedActor(actor: RpcActor, call: string): Promise<SignedActor> {
+export function signedActor(actor: StaffActor, call: string): Promise<SignedActor> {
   return signRpcActor(principalKey(), actor, call);
 }
 
 /** A person or token as the staff actor on an approval: the record names them as `by`. */
-export const decider = (p: Pick<Principal, 'id' | 'role'>, by: string): RpcActor => ({
+export const decider = (p: Pick<Principal, 'id' | 'role'>, by: string): StaffActor => ({
   kind: 'staff',
   id: p.id,
   name: by,

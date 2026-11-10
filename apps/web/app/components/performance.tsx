@@ -1,10 +1,11 @@
 import { ORDER_MODEL_LABELS, type OrderModel } from '@commerceworker/core';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@commerceworker/ui/card';
+import { count } from '@commerceworker/ui/lib/format';
+import { Empty } from '@commerceworker/ui/page';
 import { Progress } from '@commerceworker/ui/progress';
 import { Separator } from '@commerceworker/ui/separator';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
-import { Empty } from '~/components/page';
-import { count, duration } from '~/lib/format';
+import { duration } from '~/lib/format';
 import type { Performance as Figures } from '~/lib/metrics.server';
 import { useNodes } from '~/lib/nodes';
 

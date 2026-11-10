@@ -27,6 +27,8 @@ function fakeHost() {
     opened,
     started,
     ended: new Set<string>(),
+    /** Whether the deployment knows its storefront's origin (`STOREFRONT_ORIGIN`). */
+    storefront: true,
     async openExternalCart(input: ExternalCartInput) {
       if (this.ended.has(input.sessionRef))
         return { ok: false as const, error: 'That session’s cart is returned.' };
@@ -37,7 +39,9 @@ function fakeHost() {
         cart: {
           cartId,
           startPath: `/cart/start/${cartId}/tok`,
-          startUrl: `https://com.commerceworker.test/cart/start/${cartId}/tok`,
+          startUrl: this.storefront
+            ? `https://shop.commerceworker.test/cart/start/${cartId}/tok`
+            : null,
         },
       };
     },
@@ -171,7 +175,7 @@ describe('cXML punchout', () => {
     expect(res.status).toBe(200);
     const doc = parseXml(await res.text());
     expect(at(doc, 'Response/PunchOutSetupResponse/StartPage/URL')?.text).toBe(
-      'https://com.commerceworker.test/cart/start/cart_1/tok',
+      'https://shop.commerceworker.test/cart/start/cart_1/tok',
     );
     expect(host.opened[0]).toMatchObject({
       flowId: 'tpl-b2b-order',
@@ -565,11 +569,23 @@ describe('OCI punchout', () => {
       ...extra,
     });
 
+  it('sends no one to a start link it can’t name on the storefront', async () => {
+    // Without a storefront origin the host has only a path, which is the admin's host to a browser.
+    host.storefront = false;
+    const res = await plugin.fetch(
+      new Request(`https://plugin/plugins/punchout/oci/setup?${setup(await ociPartner())}`),
+    );
+    expect(res.status).toBe(500);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
   it('opens a cart from the setup GET and returns OCI fields', async () => {
     const q = setup(await ociPartner());
     const res = await plugin.fetch(new Request(`https://plugin/plugins/punchout/oci/setup?${q}`));
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('/cart/start/cart_1/tok');
+    expect(res.headers.get('location')).toBe(
+      'https://shop.commerceworker.test/cart/start/cart_1/tok',
+    );
     // A form POST works the same.
     const posted = await plugin.fetch(
       new Request('https://plugin/plugins/punchout/oci/setup', { method: 'POST', body: q }),

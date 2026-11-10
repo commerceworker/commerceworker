@@ -5,8 +5,12 @@ import { diagramColors, mermaidThemeJson } from '../src/mermaid';
 import { DARK_OVERRIDES, FONTS, LIGHT, palette, starlightThemeCss } from '../src/tokens';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
-/** Both admins author the Ledger tokens; each is held to the same set. */
-const ADMINS = ['apps/web/app/app.css', 'apps/studio/app/app.css'] as const;
+/** Both admins and the storefront author the Ledger tokens; each is held to the same set. */
+const ADMINS = [
+  'apps/web/app/app.css',
+  'apps/studio/app/app.css',
+  'apps/storefront/app/app.css',
+] as const;
 const appCss = read('../../../apps/studio/app/app.css');
 
 /** The custom properties one rule block in app.css declares, in source order. */

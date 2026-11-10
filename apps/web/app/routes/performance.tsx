@@ -1,6 +1,6 @@
+import { PageHeader } from '@commerceworker/ui/page';
 import { Segmented, SegmentedItem } from '@commerceworker/ui/segmented';
 import { useLoaderData, useNavigation, useSearchParams } from 'react-router';
-import { PageHeader } from '~/components/page';
 import { PerformanceDetail } from '~/components/performance';
 import { Trends } from '~/components/trends';
 import { requireUser } from '~/lib/auth.server';

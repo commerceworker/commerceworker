@@ -36,7 +36,9 @@ import {
   DropdownMenuTrigger,
 } from '@commerceworker/ui/dropdown-menu';
 import { Item, ItemContent, ItemMedia, ItemTitle } from '@commerceworker/ui/item';
+import { plural } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { Empty } from '@commerceworker/ui/page';
 import { useAgent } from 'agents/react';
 import { getToolName, isToolUIPart, type UIMessage } from 'ai';
 import {
@@ -83,10 +85,9 @@ import {
 import { Shimmer } from '~/components/ai-elements/shimmer';
 import { Suggestion, Suggestions } from '~/components/ai-elements/suggestion';
 import { Trace } from '~/components/ai-elements/trace';
-import { Empty } from '~/components/page';
 import { contextLabel, useAssistant } from '~/lib/assistant';
 import { coarse, useMedia, useShortcutLabel, useVisualViewport, WIDE } from '~/lib/device';
-import { orderRef, plural } from '~/lib/format';
+import { orderRef } from '~/lib/format';
 import { useMe } from '~/lib/use-me';
 import { CartThread } from './cart-thread';
 import {

@@ -1,25 +1,14 @@
-/**
- * One of a cart's files, downloaded, for staff or the cart's own buyer. Served as an attachment
- * under a CSP that runs nothing, so a file can't act on the app's origin.
- */
+/** One of a cart's files, downloaded, for staff (`downloadAttachment` sets the headers). */
 
-import { cartActor, readAttachment } from '~/lib/cart-attachments.server';
+import { downloadAttachment } from '@commerceworker/cart/files';
+import { cartFiles, cartStaff } from '~/lib/cart-files.server';
 import type { Route } from './+types/cart-attachment';
 
 export async function loader({ request, params }: Route.LoaderArgs) {
-  const actor = await cartActor(request, params.cartId);
+  const actor = await cartStaff(request);
   if (!actor) return new Response('Unauthorized', { status: 401 });
-  const found = await readAttachment(params.cartId, params.attachmentId, actor);
-  if (!found) return new Response('Not found', { status: 404 });
-  const { attachment: a, body } = found;
-  return new Response(body, {
-    headers: {
-      'content-type': a.type,
-      'content-length': String(a.size),
-      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(a.name)}`,
-      'content-security-policy': "default-src 'none'; sandbox",
-      'x-content-type-options': 'nosniff',
-      'cache-control': 'private, no-store',
-    },
-  });
+  return (
+    (await downloadAttachment(cartFiles(), params.cartId, params.attachmentId, actor)) ??
+    new Response('Not found', { status: 404 })
+  );
 }

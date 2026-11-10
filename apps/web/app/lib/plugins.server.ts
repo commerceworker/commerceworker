@@ -26,7 +26,7 @@ import {
 } from '@commerceworker/core';
 import { clientIp } from './audit.server';
 import { principal, setupDue } from './auth.server';
-import { engine } from './env.server';
+import { engine, storefrontOrigin } from './env.server';
 import { setPluginPrincipalHeader } from './principal.server';
 import { overBudget } from './rate-limit';
 
@@ -176,8 +176,8 @@ function capped(body: ReadableStream<Uint8Array>, max: number) {
 
 /**
  * The plugin's response with only what may reach the browser, under this app's rules. A redirect
- * may only lead to the plugin's own pages; any other is refused rather than followed from this
- * origin.
+ * may only lead to the plugin's own pages, or an external cart's start link on the storefront; any
+ * other is refused rather than followed from this origin.
  */
 function sanitized(res: Response, id: string, origin: string): Response {
   const headers = new Headers();
@@ -188,12 +188,18 @@ function sanitized(res: Response, id: string, origin: string): Response {
   const location = res.headers.get('location');
   if (location !== null) {
     const to = new URL(location, `${origin}/plugins/${id}/`);
-    // Its own pages, or an external cart's start link (which only the plugin that opened the cart
-    // was given): a punchout system opening the catalog in a frame follows it there.
-    const start = /^\/cart\/start\/cart_[a-z0-9]+\/[0-9a-f]+$/.test(to.pathname) && !to.search;
-    if (to.origin !== origin || (pluginPathId(to.pathname) !== id && !start))
+    // Its own pages, or an external cart's start link on the storefront (which only the plugin that
+    // opened the cart was given): a punchout system opening the catalog in a frame follows it there.
+    const storefront = storefrontOrigin();
+    const start =
+      !!storefront &&
+      to.origin === storefront &&
+      /^\/cart\/start\/cart_[a-z0-9]+\/[0-9a-f]+$/.test(to.pathname) &&
+      !to.search;
+    if (!start && (to.origin !== origin || pluginPathId(to.pathname) !== id))
       return new Response('A plugin may only redirect to its own pages', { status: 502 });
-    headers.set('location', `${to.pathname}${to.search}`);
+    // The storefront's origin and the path alone: never a plugin's userinfo or fragment.
+    headers.set('location', start ? `${to.origin}${to.pathname}` : `${to.pathname}${to.search}`);
   }
   for (const [k, v] of Object.entries(PLUGIN_RESPONSE_HEADERS)) headers.set(k, v);
   headers.set(

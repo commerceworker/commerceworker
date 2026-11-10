@@ -76,6 +76,7 @@ jobs:
       ID: ${{ fromJSON(inputs.deployment).id }}
       DOMAIN: ${{ fromJSON(inputs.deployment).domain }}
       CATALOG_DOMAIN: ${{ fromJSON(inputs.deployment).catalogDomain }}
+      STOREFRONT_DOMAIN: ${{ fromJSON(inputs.deployment).storefrontDomain }}
       # Rendered next to each app's wrangler.jsonc by the Render step.
       CONFIG: wrangler.${{ fromJSON(inputs.deployment).id }}.json
     # The Cloudflare API sometimes fails a request outright (codes 7403, 10013) and succeeds on
@@ -149,6 +150,7 @@ jobs:
           UCP_SIGNING_KEY: ${{ secrets.UCP_SIGNING_KEY }}
         run: |
           node scripts/fleet.ts secrets engine "$RUNNER_TEMP/engine-secrets.json" "$ID"
+          node scripts/fleet.ts secrets storefront "$RUNNER_TEMP/storefront-secrets.json" "$ID"
           node scripts/fleet.ts secrets web "$RUNNER_TEMP/web-secrets.json" "$ID"
       # Each Worker plugin gets its own key, derived from PRINCIPAL_KEY (never the key itself), and
       # the environment's PLUGIN_<ID>_* secrets under their own names; sandboxed plugins' secrets
@@ -276,6 +278,18 @@ jobs:
           secrets=()
           [ "$(cat "$RUNNER_TEMP/engine-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/engine-secrets.json")
           retry pnpm --filter @commerceworker/engine exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
+      # The storefront binds the engine's StorefrontApi (buyers' pages, UCP), so it follows it. Its
+      # only secrets are the keys derived from PRINCIPAL_KEY for it (never the key itself), and
+      # nothing the web app deploys depends on it.
+      - name: Build storefront
+        run: COMMERCEWORKER_WRANGLER_CONFIG="$CONFIG" pnpm --filter @commerceworker/storefront build
+      # `wrangler deploy` picks up the build's own config (.wrangler/deploy), made from $CONFIG.
+      - name: Deploy storefront
+        id: storefront
+        run: |
+          secrets=()
+          [ "$(cat "$RUNNER_TEMP/storefront-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/storefront-secrets.json")
+          retry pnpm --filter @commerceworker/storefront exec wrangler deploy "${secrets[@]}"
       - name: Build web
         run: COMMERCEWORKER_WRANGLER_CONFIG="$CONFIG" pnpm --filter @commerceworker/web build
       # `wrangler deploy` picks up the build's own config (.wrangler/deploy), made from $CONFIG.
@@ -312,6 +326,9 @@ jobs:
           curl -fsSL --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 -o /dev/null "https://$DOMAIN/login"
           # The public catalog API answers on its own host.
           curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$CATALOG_DOMAIN/health"
+          # The storefront answers on its own host, and reaches the engine (it binds nothing else).
+          curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$STOREFRONT_DOMAIN/health"
+          curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$STOREFRONT_DOMAIN/health/deep"
       # A latency budget on the deployed app, once it is up. It warns rather than fails: a slow
       # runner or network blip must not roll production back. The best of three runs counts, so a
       # cold start alone doesn't trip it.
@@ -332,12 +349,14 @@ jobs:
           check "https://$DOMAIN/login" 1.5
           check "https://$DOMAIN/health/deep" 1.0
           check "https://$CATALOG_DOMAIN/health" 0.5
+          check "https://$STOREFRONT_DOMAIN/health/deep" 1.0
       # Any failure once the catalog has shipped puts each Worker that deployed back on its
-      # previous version: the engine, then the web app, the plugins, delivery and the catalog.
+      # previous version: the engine, then the storefront and the web app, the plugins, delivery
+      # and the catalog.
       # The engine goes first because it is the one that can refuse (Cloudflare won't roll a Worker
       # back past a Durable Object migration). If it can't go back, nothing else is rolled back
-      # either: the web app, plugins and catalog stay on the versions the new engine was deployed
-      # with, so the deployment never runs a new engine behind an old web app, and the step fails
+      # either: the storefront, web app, plugins and catalog stay on the versions the new engine was
+      # deployed with, so the deployment never runs a new engine behind an old web app, and the step fails
       # with an error for a person to decide. A Worker's first deploy has no earlier version, which
       # wrangler reports as "Could not find stable Worker Version to rollback to": that one stays as
       # it is. Any other rollback failure is an error, after the rest are rolled back. The job ends
@@ -347,6 +366,7 @@ jobs:
         if: failure() && steps.catalog.outcome == 'success'
         env:
           ENGINE: ${{ steps.engine.outcome }}
+          STOREFRONT: ${{ steps.storefront.outcome }}
           WEB: ${{ steps.web.outcome }}
           DELIVERY: ${{ steps.delivery.outcome }}
         run: |
@@ -378,12 +398,16 @@ jobs:
             engine=0
             rollback engine @commerceworker/engine || engine=$?
             if [ "$engine" = 1 ]; then
-              echo "::error::The engine could not be rolled back (a Durable Object migration since its last version, for one, prevents it), so the web app, plugins and catalog were left on ${GITHUB_SHA::7} to match it. Fix forward, or roll back by hand once the cause is known."
+              echo "::error::The engine could not be rolled back (a Durable Object migration since its last version, for one, prevents it), so the storefront, web app, plugins and catalog were left on ${GITHUB_SHA::7} to match it. Fix forward, or roll back by hand once the cause is known."
               exit 1
             fi
           fi
           failed=0
-          # The web app follows the engine: back only if the engine went back (or never deployed).
+          # The storefront and the web app follow the engine: back only if the engine went back (or
+          # never deployed).
+          if [ "$STOREFRONT" = success ] && [ "${engine:-0}" = 0 ]; then
+            rollback storefront @commerceworker/storefront || [ $? = 2 ] || failed=1
+          fi
           if [ "$WEB" = success ] && [ "${engine:-0}" = 0 ]; then
             rollback web @commerceworker/web || [ $? = 2 ] || failed=1
           fi

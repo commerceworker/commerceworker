@@ -215,7 +215,7 @@ export async function openExternalCart(
     cart: {
       cartId: found.id,
       startPath,
-      startUrl: env.APP_ORIGIN ? `${env.APP_ORIGIN}${startPath}` : null,
+      startUrl: env.STOREFRONT_ORIGIN ? `${env.STOREFRONT_ORIGIN}${startPath}` : null,
     },
   };
 }

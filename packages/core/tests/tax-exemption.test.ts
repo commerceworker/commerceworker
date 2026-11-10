@@ -186,6 +186,8 @@ describe('adding a certificate', () => {
 
   it('takes a PDF or an image up to 10 MB', () => {
     expect(taxCertificateFileProblem({ type: 'application/pdf', size: 1 })).toBeNull();
+    for (const type of ['constructor', '__proto__'])
+      expect(taxCertificateFileProblem({ type, size: 1 }), type).toMatch(/Attach a PDF/);
     expect(taxCertificateFileProblem({ type: 'image/jpeg', size: 10 * 1024 * 1024 })).toBeNull();
     expect(taxCertificateFileProblem({ type: 'image/jpeg', size: 10 * 1024 * 1024 + 1 })).toBe(
       'A file is at most 10 MB.',

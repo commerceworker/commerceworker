@@ -6,7 +6,7 @@ vi.mock('cloudflare:workers', () => ({ env }));
 const { siteverify, checkTurnstile, withTurnstilePolicy, TOKEN_FIELD } = await import(
   '~/lib/turnstile.server'
 );
-const { TURNSTILE_HEADER } = await import('~/lib/csp');
+const { TURNSTILE_HEADER } = await import('@commerceworker/security/csp');
 
 /** A Siteverify that answers `body` (or fails), recording what it was sent. */
 function fakeSiteverify(body: unknown, init: ResponseInit = { status: 200 }) {

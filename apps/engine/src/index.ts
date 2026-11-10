@@ -37,6 +37,8 @@ export {
 } from './plugin-host';
 export { DryRunSecrets } from './plugin-installs';
 export { Replenish } from './replenish';
+// The public storefront's entrypoint: all it may ask of the engine (storefront-api.ts).
+export { StorefrontApi } from './storefront-api';
 export { OrderWorkflow } from './workflow';
 
 /** The hourly cron in wrangler.jsonc that runs `reindexProducts`. */

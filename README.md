@@ -18,7 +18,9 @@ browser ──► apps/web (React Router on Workers) ──RPC──► apps/eng
               ├─ /mcp (OAuth, MCP clients) ────────────────►│    its tools, served to MCP clients
               └─ /a2a (OAuth, A2A agents) ─────────────────►├─ A2AAgent DO (one per caller): A2A tasks that follow orders
                                                             ├─ Replenish Workflow (cron schedule): daily stock review
-AI shopping platforms ── /.well-known/ucp, /ucp/* (UCP, platform key) ── proxied to the engine's checkout
+buyers' procurement systems, AI shopping platforms ──► apps/storefront (shop.<domain>, uncached, no admin) ──RPC/fetch──► apps/engine
+   ├─ /cart/start/:cartId/:token, /cart/:cartId, /carts/:cartId/attachments*, /carts/:cartId/products, /agents/cart-agent/:id (a punchout buyer's cookie)
+   └─ /.well-known/ucp, /ucp/* (UCP, platform key) ── proxied to the engine's checkout
 storefront, marketplace, POS ── POST /api/v1/webhooks/orders (signed, on apps/web)
 Shopify, EDI X12 850 ── POST /api/v1/channels/shopify/orders, /api/v1/channels/edi/850
 Stripe events (invoice.paid…) ── POST /api/v1/webhooks/stripe ── EngineRpc.paymentEvent
@@ -55,13 +57,15 @@ See [ROADMAP.md](ROADMAP.md) for planned work.
 
 | Path | Role |
 |---|---|
-| `apps/web` (`@commerceworker/web`) | Dashboard, flow editor (palette, canvas, inspector, assistant), live order view, approvals inbox, Commerce page, REST API. React Router on Workers |
+| `apps/web` (`@commerceworker/web`) | Dashboard, flow editor (palette, canvas, inspector, assistant), live order view, approvals inbox, Commerce page, REST API, `/mcp`, `/a2a`, OAuth, staff carts. React Router on Workers |
+| `apps/storefront` (`@commerceworker/storefront`) | What buyers reach, at its own host (`shop.<domain>`), uncached and with no admin bundle: a punchout buyer's cart pages, files, product search and socket, and UCP (agentic checkout). React Router on Workers |
 | `apps/engine` (`@commerceworker/engine`) | OrderAgent and AssistantAgent DOs, CommerceWorker and Replenish Workflows, node executors, connectors, AI, `EngineApi` RPC |
 | `apps/docs` (`@commerceworker/docs`) | Documentation site (Starlight), deployed as a static-assets Worker. Reference pages render from `@commerceworker/core` at build time |
 | `packages/core` (`@commerceworker/core`) | No bindings: flow schema, node catalog, planner and validation, layout, JSON Logic expressions, templates, RPC contract |
-| `packages/design` (`@commerceworker/design`) | Ledger tokens as data, held to `apps/web/app/app.css` by a test; generates the docs theme (`pnpm sync:theme`) |
+| `packages/design` (`@commerceworker/design`) | Ledger tokens as data, held to `apps/web/app/app.css` (and the studio's and the storefront's) by a test; generates the docs theme (`pnpm sync:theme`) |
 | `packages/db` (`@commerceworker/db`) | D1 schema (Drizzle), migrations and seed data, flow persistence |
-| `packages/ui` (`@commerceworker/ui`) | shadcn/ui primitives, consumed as raw `.tsx` |
+| `packages/ui` (`@commerceworker/ui`) | shadcn/ui primitives and the page pieces the admin and the storefront share, consumed as raw `.tsx` |
+| `packages/cart` (`@commerceworker/cart`) | The live cart view and the cart's files and product search, shared by the admin's staff carts and the storefront's buyer carts |
 | `packages/typescript-config` | Shared tsconfig bases |
 
 ## Develop
@@ -73,6 +77,7 @@ pnpm db:seed:local      # demo customers, catalog, stores and rates (migrations 
 pnpm db:seed:volume     # optional: 20,000 generated orders, products and carts (docs/local-development.md)
 pnpm db:seed:all        # optional, with web:dev running: data on every page, a dev admin to sign in as
 pnpm web:dev            # web, engine and catalog in one Vite session (auxiliary Workers)
+pnpm storefront:dev     # optional: the buyer's pages on :5174, in a session of its own (own engine and local database)
 pnpm test               # core planner tests, engine Workflow e2e (workerd), web tests
 pnpm lint && pnpm check-types
 ```

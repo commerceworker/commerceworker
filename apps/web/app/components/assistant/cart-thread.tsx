@@ -5,11 +5,6 @@
  * until the person sends it.
  */
 
-import type { CartChatMessage, CartState, CartTyping } from '@commerceworker/core';
-import { useAgent } from 'agents/react';
-import { useEffect, useState } from 'react';
-import { Chat } from '~/components/cart-view';
-import { useAssistant } from '~/lib/assistant';
 import {
   NO_TYPISTS,
   nextTypingEnd,
@@ -17,7 +12,12 @@ import {
   typingAt,
   typingLabel,
   typingSeen,
-} from '~/lib/cart-typing';
+} from '@commerceworker/cart/typing';
+import { Chat } from '@commerceworker/cart/view';
+import type { CartChatMessage, CartState, CartTyping } from '@commerceworker/core';
+import { useAgent } from 'agents/react';
+import { useEffect, useState } from 'react';
+import { useAssistant } from '~/lib/assistant';
 import { useMe } from '~/lib/use-me';
 
 type Result = { ok: true } | { ok: false; error: string };

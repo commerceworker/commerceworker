@@ -12,6 +12,7 @@ import {
   pluginSecretVar,
   ROLE_LABELS,
 } from '@commerceworker/core';
+import { Ago } from '@commerceworker/ui/ago';
 import { Button } from '@commerceworker/ui/button';
 import {
   Field,
@@ -29,6 +30,7 @@ import {
   ItemTitle,
 } from '@commerceworker/ui/item';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { Body, Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Separator } from '@commerceworker/ui/separator';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { Textarea } from '@commerceworker/ui/textarea';
@@ -43,9 +45,7 @@ import {
   useNavigation,
   useRevalidator,
 } from 'react-router';
-import { Ago } from '~/components/ago';
 import { Code } from '~/components/code';
-import { Body, Empty, PageHeader, Section } from '~/components/page';
 import { StatusDot, ToneBadge } from '~/components/status';
 import { StepUpField } from '~/components/step-up-field';
 import { useAssistant } from '~/lib/assistant';

@@ -8,13 +8,13 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@commerceworker/ui/item';
+import { plural } from '@commerceworker/ui/lib/format';
+import { Body, PageHeader, Section } from '@commerceworker/ui/page';
 import { Play, TriangleAlert } from 'lucide-react';
 import { Link, useLoaderData } from 'react-router';
-import { Body, PageHeader, Section } from '~/components/page';
 import { useStartOrder } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
 import { ensureSeeded } from '~/lib/flows.server';
-import { plural } from '~/lib/format';
 import { demoAvailable, publishedFlows } from '~/lib/orders.server';
 import type { Route } from './+types/order-scenarios';
 

@@ -8,10 +8,10 @@ import {
   CardTitle,
 } from '@commerceworker/ui/card';
 import type { ChartConfig } from '@commerceworker/ui/chart';
+import { count, money, plural } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { Empty } from '@commerceworker/ui/page';
 import { lazy, Suspense } from 'react';
-import { Empty } from '~/components/page';
-import { count, money, plural } from '~/lib/format';
 import type { Performance } from '~/lib/metrics.server';
 
 const base = (n: number) => money(n, BASE_CURRENCY);

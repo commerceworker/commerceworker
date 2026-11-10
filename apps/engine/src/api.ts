@@ -33,7 +33,6 @@ import {
   type TaxCertificateInput,
   TOOL_INPUTS,
   type ToolInput,
-  UCP_PATH,
   verifyHealthCheck,
 } from '@commerceworker/core';
 import type { ProductDraftRequest } from '@commerceworker/core/product';
@@ -44,15 +43,7 @@ import { copilot } from './ai';
 import { Refused } from './assistant/data';
 import { draftProductContent } from './assistant/product-draft';
 import { runTool } from './assistant/tools';
-import {
-  cancelCart,
-  cartSnapshot,
-  changeCart,
-  createCart,
-  keepCartOpen,
-  redeemCartStart,
-  submitCart,
-} from './cart/carts';
+import { cancelCart, cartSnapshot, changeCart, createCart, submitCart } from './cart/carts';
 import { searchCartProducts } from './cart/search';
 import { probeBucket } from './health';
 import { handleMcp, MCP_PATH } from './mcp';
@@ -73,7 +64,6 @@ import {
   verifyTaxCertificate,
 } from './tax-certificates';
 import { ucpProfile } from './ucp/config';
-import { handleUcp } from './ucp/rest';
 import { d1Reachable, d1Writable, orderRecords } from './wire';
 
 /** A binding call without an actor the web app signed for it. */
@@ -82,7 +72,8 @@ const UNSIGNED = { ok: false as const, error: 'This call must name who is acting
 export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
   /**
    * The web app proxies the agent WebSockets (`/agents/order-agent/:id`,
-   * `/agents/assistant-agent/:id`), MCP (`/mcp`), A2A (`/a2a`) and UCP (`/ucp/*`) here.
+   * `/agents/assistant-agent/:id`, a staff cart's), MCP (`/mcp`) and A2A (`/a2a`) here. The
+   * storefront's cart sockets and UCP (`/ucp/*`) are `StorefrontApi.fetch`'s.
    */
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -90,8 +81,6 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
       return Response.json({ ok: true, service: 'commerceworker-engine' });
     if (url.pathname === MCP_PATH) return handleMcp(request);
     if (url.pathname === A2A_PATH) return handleA2A(request, this.env);
-    if (url.pathname === UCP_PATH || url.pathname.startsWith(`${UCP_PATH}/`))
-      return handleUcp(request, this.env);
     return routeAgents(request, this.env);
   }
 
@@ -386,13 +375,9 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
     return actor?.kind === 'staff' ? cancelCart(this.env, cartId, actor) : UNSIGNED;
   }
 
-  /** Who the web app signed this cart call for: never a caller's own say. */
+  /** The staff member the web app signed this cart call for: never a caller's own say. */
   private cartActor(cartId: string, signed: SignedActor) {
     return rpcActor(this.env, signed, `cart:${cartId}`);
-  }
-
-  redeemCartStart(cartId: string, token: string) {
-    return redeemCartStart(this.env, cartId, token);
   }
 
   async attachToCart(
@@ -410,14 +395,7 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
   async searchCartProducts(cartId: string, q: string, signed: SignedActor) {
     const actor = await this.cartActor(cartId, signed);
     if (!actor) return UNSIGNED;
-    const page = await searchCartProducts(this.env, cartId, actor, typeof q === 'string' ? q : '');
-    if (page.ok) await cartAgent(this.env, cartId).keepOpenFor(actor);
-    return page;
-  }
-
-  async keepCartOpen(cartId: string, signed: SignedActor) {
-    const actor = await this.cartActor(cartId, signed);
-    if (actor) await keepCartOpen(this.env, cartId, actor);
+    return searchCartProducts(this.env, cartId, actor, typeof q === 'string' ? q : '');
   }
 
   taxCertificates(customerId: string) {

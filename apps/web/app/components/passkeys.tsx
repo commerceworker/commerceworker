@@ -3,6 +3,7 @@
  * browser's own prompt) and removing one (after their password). Talks to `/account/passkeys`.
  */
 
+import { Ago } from '@commerceworker/ui/ago';
 import { Button } from '@commerceworker/ui/button';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@commerceworker/ui/field';
 import { Input } from '@commerceworker/ui/input';
@@ -14,12 +15,11 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@commerceworker/ui/item';
+import { Section } from '@commerceworker/ui/page';
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
 import { KeyRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useRevalidator } from 'react-router';
-import { Ago } from '~/components/ago';
-import { Section } from '~/components/page';
 
 export type PasskeyRow = {
   id: string;

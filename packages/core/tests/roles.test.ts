@@ -10,14 +10,18 @@ import {
   SSO_LINK_TTL_MS,
   signCartGuest,
   signCartGuestSession,
+  signGuestActor,
   signHealthCheck,
   signPlatform,
   signPrincipal,
   signRpcActor,
   signSsoFlow,
   signSsoLink,
+  storefrontKey,
+  storefrontKeys,
   verifyCartGuest,
   verifyCartGuestSession,
+  verifyGuestActor,
   verifyHealthCheck,
   verifyPlatform,
   verifyPrincipal,
@@ -213,10 +217,105 @@ describe('signed actors on binding calls', () => {
     expect(await verifyRpcActor([key], ann as never, 'decide:ord_1', now)).toBeNull();
     // The previous key during a rotation.
     expect(await verifyRpcActor(['new', key], a, 'decide:ord_1', now)).toEqual(ann);
+    // A guest-kind actor signed under the principal key is no staff actor, whoever signed it.
     const guest = { kind: 'guest' as const, id: 'guest:b', name: 'Bea' };
     expect(
-      await verifyRpcActor([key], await signRpcActor(key, guest, 'cart:c', now), 'cart:c', now),
-    ).toEqual(guest);
+      await verifyRpcActor(
+        [key],
+        await signRpcActor(key, guest as never, 'cart:c', now),
+        'cart:c',
+        now,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('the storefront key', () => {
+  const principal = 'test-principal-key';
+  const now = 1_000_000;
+  const ann = { kind: 'staff' as const, id: 'usr_1', name: 'ann@x.com', role: 'admin' as const };
+  const bea = { kind: 'guest' as const, id: 'guest:b', name: 'Bea' };
+  const g = { cartId: 'c', id: 'guest:b', name: 'Bea' };
+
+  it('is derived under its own label, the same vector as scripts/fleet.ts', async () => {
+    expect(await storefrontKey(principal)).toBe(
+      '58f5d0618f717f32946e47fdca333e17c0028a75a0f2db4c78f0bb57f17dad5d',
+    );
+    expect(await storefrontKey(principal)).not.toBe(principal);
+    expect(await storefrontKey(principal)).not.toBe(await healthCheckKey(principal));
+    expect(await storefrontKeys([principal, undefined, 'previous'])).toEqual([
+      await storefrontKey(principal),
+      await storefrontKey('previous'),
+    ]);
+  });
+
+  it('opens no staff envelope: a v1 principal or a staff actor signed with it is refused', async () => {
+    const sf = await storefrontKey(principal);
+    const user = { kind: 'user' as const, id: 'u', name: 'A', role: 'admin' as const };
+    expect(
+      await verifyPrincipal([principal], await signPrincipal(sf, user, '/mcp', now), '/mcp', now),
+    ).toBeNull();
+    expect(
+      await verifyRpcActor([principal], await signRpcActor(sf, ann, 'cart:c', now), 'cart:c', now),
+    ).toBeNull();
+    // Nor a staff actor under the storefront's own verifier, whoever signed it.
+    for (const k of [sf, principal])
+      expect(
+        await verifyGuestActor([sf], await signRpcActor(k, ann, 'cart:c', now), 'cart:c', now),
+      ).toBeNull();
+    // And the key is no health check's.
+    expect(
+      await verifyHealthCheck(
+        [principal],
+        await signHealthCheck(sf, '/health/write', now),
+        '/health/write',
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it('takes the buyer only under the storefront key, never the principal key', async () => {
+    const sf = await storefrontKey(principal);
+    const actor = await signGuestActor(sf, bea, 'cart:c', now);
+    expect(await verifyGuestActor([sf], actor, 'cart:c', now)).toEqual(bea);
+    expect(await verifyGuestActor([sf], actor, 'cart:d', now)).toBeNull();
+    expect(await verifyGuestActor([principal], actor, 'cart:c', now)).toBeNull();
+    // The previous key verifies during a rotation.
+    expect(await verifyGuestActor(['new', sf], actor, 'cart:c', now)).toEqual(bea);
+    // A guest signed with PRINCIPAL_KEY is refused: as a guest actor, as a socket header, as a
+    // platform and as the cookie, once the verifier holds only the storefront's key.
+    const header = await signCartGuest(principal, g, '/agents/cart-agent/c', now);
+    expect(await verifyCartGuest([sf], header, '/agents/cart-agent/c', now)).toBeNull();
+    expect(
+      await verifyCartGuest(
+        [sf],
+        await signCartGuest(sf, g, '/agents/cart-agent/c', now),
+        '/agents/cart-agent/c',
+        now,
+      ),
+    ).toEqual(g);
+    const platform = { id: 'p', name: 'P', profileUrl: 'u', origin: 'o' };
+    expect(
+      await verifyPlatform(
+        [sf],
+        await signPlatform(principal, platform, '/ucp/mcp', now),
+        '/ucp/mcp',
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      await verifyPlatform(
+        [sf],
+        await signPlatform(sf, platform, '/ucp/mcp', now),
+        '/ucp/mcp',
+        now,
+      ),
+    ).toEqual(platform);
+    const cookie = await signCartGuestSession(principal, g, now + 60_000);
+    expect(await verifyCartGuestSession([sf], cookie, 'c', now)).toBeNull();
+    // A guest actor is not a principal or a staff actor under any key.
+    expect(await verifyRpcActor([principal, sf], actor, 'cart:c', now)).toBeNull();
+    expect(await verifyPrincipal([principal, sf], actor, 'cart:c', now)).toBeNull();
   });
 });
 

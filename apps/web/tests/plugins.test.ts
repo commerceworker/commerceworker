@@ -27,6 +27,7 @@ let reply: () => Response = () =>
 const pluginFetch = vi.fn(async (_r: Request) => reply());
 const env: Record<string, unknown> = {
   PRINCIPAL_KEY: 'web-test-key',
+  STOREFRONT_ORIGIN: 'https://buy.example',
   PLUGIN_EXAMPLE: { fetch: pluginFetch },
 };
 const manifest: PluginManifest = {
@@ -77,6 +78,7 @@ let limited = false;
 vi.mock('cloudflare:workers', () => ({ env }));
 vi.mock('~/lib/env.server', () => ({
   engine: () => ({ pluginCatalog, pluginFetch: enginePluginFetch }),
+  storefrontOrigin: () => env.STOREFRONT_ORIGIN,
 }));
 vi.mock('~/lib/auth.server', () => ({
   principal: async () => caller,
@@ -235,19 +237,42 @@ describe('plugin pages on the web Worker', () => {
       '/account',
       '//evil.example/x',
       '/plugins/other/',
-      '/cart/start/cart_1/abc?x=1',
-      '/cart/start/../account',
+      // This host never serves a start link: it is the storefront's.
+      '/cart/start/cart_1/abc',
+      'https://buy.example/cart/start/cart_1/abc?x=1',
+      'https://buy.example/cart/start/../account',
+      'https://buy.example/account',
+      'https://buy.example.evil.example/cart/start/cart_1/abc',
       'https://evil.example/cart/start/cart_1/abc',
     ]) {
       reply = () => new Response(null, { status: 302, headers: { location: away } });
       expect((await call('/plugins/example/form')).status, away).toBe(502);
     }
-    // An external cart's start link is the one place off its pages a plugin may send someone.
+    // An external cart's start link, on the storefront, is the one place off its pages a plugin
+    // may send someone.
     reply = () =>
-      new Response(null, { status: 302, headers: { location: '/cart/start/cart_1/0a9f' } });
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://buy.example/cart/start/cart_1/0a9f' },
+      });
     const start = await call('/plugins/example/form');
     expect(start.status).toBe(302);
-    expect(start.headers.get('location')).toBe('/cart/start/cart_1/0a9f');
+    expect(start.headers.get('location')).toBe('https://buy.example/cart/start/cart_1/0a9f');
+    // Only the storefront's origin and the path go on: never a plugin's userinfo or fragment.
+    for (const location of [
+      'https://u:p@buy.example/cart/start/cart_1/0a9f',
+      'https://buy.example/cart/start/cart_1/0a9f#x',
+    ]) {
+      reply = () => new Response(null, { status: 302, headers: { location } });
+      const r = await call('/plugins/example/form');
+      expect(r.headers.get('location'), location).toBe(
+        'https://buy.example/cart/start/cart_1/0a9f',
+      );
+    }
+    // With no storefront on the deployment there is no such place.
+    delete env.STOREFRONT_ORIGIN;
+    expect((await call('/plugins/example/form')).status).toBe(502);
+    env.STOREFRONT_ORIGIN = 'https://buy.example';
     reply = () => Response.json({ ok: true });
   });
 

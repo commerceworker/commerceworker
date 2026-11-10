@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
@@ -26,11 +27,14 @@ import {
   renderDelivery,
   renderEngine,
   renderPlugin,
+  renderStorefront,
   renderWeb,
   sandboxedPlugins,
   secretsProblem,
   shellVars,
   signHealthCheck,
+  storefrontKey,
+  storefrontSecrets,
   toDeployment,
   tokenMatches,
   WRITE_CHECK_ATTEMPT_MS,
@@ -225,6 +229,84 @@ test('the web config binds its own engine, domain and rate-limit namespaces', ()
   assert.equal(c.d1_databases[0].migrations_dir, '../../packages/db/migrations');
 });
 
+test('the storefront config binds the engine’s narrow entrypoint and its own host, and no data', () => {
+  const c = renderStorefront(base('storefront'), acme);
+  assert.equal(acme.storefrontDomain, 'shop.acme.commerceworker.com');
+  assert.equal(c.name, 'commerceworker-storefront-acme');
+  assert.deepEqual(c.routes, [{ pattern: 'shop.acme.commerceworker.com', custom_domain: true }]);
+  // Reached only at its own host: no workers.dev or preview URL as a second way in.
+  assert.equal(c.workers_dev, false);
+  assert.equal(c.preview_urls, false);
+  assert.deepEqual(c.services, [
+    { binding: 'ENGINE', service: 'commerceworker-engine-acme', entrypoint: 'StorefrontApi' },
+  ]);
+  // It is public, so nothing but the engine's StorefrontApi: no database, no bucket, no queue, no
+  // other Worker, in the template or in what a deployment renders.
+  for (const config of [c, base('storefront')])
+    for (const binding of [
+      'd1_databases',
+      'r2_buckets',
+      'kv_namespaces',
+      'queues',
+      'durable_objects',
+      'workflows',
+      'vectorize',
+      'ai',
+    ])
+      assert.equal(config[binding], undefined, `the storefront binds ${binding}`);
+  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 and <slot>007.
+  assert.deepEqual(
+    c.ratelimits.map((r: { name: string; namespace_id: string }) => [r.name, r.namespace_id]),
+    [
+      ['API_LIMIT', '2006'],
+      ['AGENT_LIMIT', '2007'],
+    ],
+  );
+  // No two Workers of the fleet share a rate-limit namespace.
+  const seen = new Map<string, string>();
+  for (const d of [...loadDeployments().filter((x) => x.d1Id), acme])
+    for (const [app, render] of [
+      ['web', renderWeb],
+      ['storefront', renderStorefront],
+    ] as const)
+      for (const r of render(base(app), d).ratelimits) {
+        const key = r.namespace_id as string;
+        assert.equal(seen.get(key), undefined, `${d.id} ${app} ${r.name} reuses ${key}`);
+        seen.set(key, `${d.id} ${app} ${r.name}`);
+      }
+  // It binds nothing the buyer's pages don't need: no catalog, KV, queue or Durable Object.
+  for (const key of ['kv_namespaces', 'queues', 'durable_objects', 'vectorize', 'ai'])
+    assert.equal(c[key], undefined, key);
+  // The web Worker is told where it is, to send a buyer to a cart's start link and nowhere else.
+  assert.equal(
+    renderWeb(base('web'), acme).vars.STOREFRONT_ORIGIN,
+    'https://shop.acme.commerceworker.com',
+  );
+});
+
+test('a storefront host is a host name, and the registry may name it', () => {
+  assert.equal(
+    toDeployment({ ...acme, storefrontDomain: 'buy.acme.example' }).storefrontDomain,
+    'buy.acme.example',
+  );
+  const d = toDeployment({ ...acme, storefrontDomain: 'buy.acme.example' });
+  assert.deepEqual(renderStorefront(base('storefront'), d).routes, [
+    { pattern: 'buy.acme.example', custom_domain: true },
+  ]);
+  assert.equal(renderEngine(base('engine'), d).vars.STOREFRONT_ORIGIN, 'https://buy.acme.example');
+  assert.match(renderEngine(base('engine'), d).vars.OWN_HOSTS, /buy\.acme\.example/);
+  for (const bad of ['https://buy.acme.example', 'buy', 'Buy.Acme.Example', 7])
+    assert.throws(() => toDeployment({ ...acme, storefrontDomain: bad }), /storefrontDomain/);
+  // Defaults to shop.<domain>, following a customer's own domain.
+  assert.equal(
+    toDeployment({ ...acme, domain: 'orders.acme.example', storefrontDomain: undefined })
+      .storefrontDomain,
+    'shop.orders.acme.example',
+  );
+  assert.equal(shellVars(d).STOREFRONT_DOMAIN, 'buy.acme.example');
+  assert.equal(shellVars(d).STOREFRONT, 'commerceworker-storefront-acme');
+});
+
 test("a customer's limits replace the base budgets they name", () => {
   const big = toDeployment({ ...acme, limits: { webhooks: 6000 } });
   const limit = (c: {
@@ -233,6 +315,11 @@ test("a customer's limits replace the base budgets they name", () => {
   const c = limit(renderWeb(base('web'), big));
   assert.deepEqual(c.WEBHOOK_LIMIT, { limit: 6000, period: 60 });
   assert.deepEqual(c.API_LIMIT, limit(base('web')).API_LIMIT);
+  // The storefront's two budgets follow the same keys.
+  const agents = toDeployment({ ...acme, limits: { agents: 900 } });
+  const s = limit(renderStorefront(base('storefront'), agents));
+  assert.deepEqual(s.AGENT_LIMIT, { limit: 900, period: 60 });
+  assert.deepEqual(s.API_LIMIT, limit(base('storefront')).API_LIMIT);
   assert.throws(() => toDeployment({ ...acme, limits: { mcp: 10 } }), /limits.mcp/);
   assert.throws(() => toDeployment({ ...acme, limits: { api: 0 } }), /positive/);
 });
@@ -243,6 +330,7 @@ test("app.commerceworker.com's own deployment renders the base configs unchanged
   assert.deepEqual(renderDelivery(base('delivery'), d), base('delivery'));
   assert.deepEqual(renderEngine(base('engine'), d), base('engine'));
   assert.deepEqual(renderWeb(base('web'), d), base('web'));
+  assert.deepEqual(renderStorefront(base('storefront'), d), base('storefront'));
   // Its punchout cancels the POs a buyer calls off: the grant ships in the same engine deploy as
   // the check, and the pinned bundle whose manifest asks for it.
   assert.deepEqual(JSON.parse(base('engine').vars.PLUGIN_GRANTS).punchout.capabilities, [
@@ -267,6 +355,7 @@ test('rendering never changes Durable Object bindings or migrations', () => {
     }
     for (const [app, render] of [
       ['web', renderWeb],
+      ['storefront', renderStorefront],
       ['delivery', renderDelivery],
     ] as const) {
       const c = render(base(app), d);
@@ -538,6 +627,83 @@ test('a demo may use a Turnstile test key', () => {
   );
 });
 
+test("the storefront's secrets file holds its derived keys and never the principal key", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'storefront-secrets-'));
+  try {
+    const out = join(dir, 'storefront-secrets.json');
+    const key = 'a'.repeat(64);
+    const previous = 'b'.repeat(64);
+    const run = (extra: Record<string, string>) =>
+      execFileSync('node', ['scripts/fleet.ts', 'secrets', 'storefront', out, 'commerceworker'], {
+        cwd: join(import.meta.dirname, '..'),
+        env: {
+          PATH: process.env.PATH,
+          PRINCIPAL_KEY: key,
+          DATA_KEY: key,
+          PASSWORD_PEPPER: key,
+          STRIPE_SECRET_KEY: 'sk_test_x',
+          TURNSTILE_SECRET_KEY: 'x',
+          SETUP_TOKEN: 'x',
+          ...extra,
+        },
+        stdio: 'pipe',
+      });
+    run({ PRINCIPAL_KEY_PREVIOUS: previous });
+    // The storefront's key and its previous one (which verifies the buyer's cookie during a
+    // rotation), derived; no principal key, and nothing of the admin's: no data key, pepper, setup
+    // code or payment secret.
+    const written = JSON.parse(readFileSync(out, 'utf8'));
+    assert.deepEqual(written, {
+      STOREFRONT_KEY: storefrontKey(key),
+      STOREFRONT_KEY_PREVIOUS: storefrontKey(previous),
+    });
+    assert.ok(!readFileSync(out, 'utf8').includes(key));
+    assert.ok(!('PRINCIPAL_KEY' in written));
+    // Outside a rotation there is no previous key.
+    run({});
+    assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), { STOREFRONT_KEY: storefrontKey(key) });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // Like the web Worker's, it is never held back by another app's secret.
+  assert.equal(
+    secretsProblem(toDeployment({ ...acme, payments: 'stripe' }), {}, 'storefront'),
+    null,
+  );
+});
+
+test('the storefront is rendered with no PRINCIPAL_KEY secret and no D1 binding', () => {
+  for (const d of loadDeployments().filter((x) => x.d1Id)) {
+    const c = renderStorefront(base('storefront'), d);
+    assert.equal(c.d1_databases, undefined, d.id);
+    assert.equal(c.r2_buckets, undefined, d.id);
+    // A secret is never in the config; the template's comments name the one it expects.
+    assert.ok(!JSON.stringify(c).includes('PRINCIPAL_KEY'), d.id);
+  }
+  const template = readFileSync(
+    join(import.meta.dirname, '..', 'apps', 'storefront', 'wrangler.jsonc'),
+    'utf8',
+  );
+  assert.ok(!/\bDB\b|\bDOCS\b/.test(template.replace(/\/\/.*$/gm, '')));
+  // The deploy's secrets for it are derived: PRINCIPAL_KEY is not among them.
+  const secrets = storefrontSecrets({ PRINCIPAL_KEY: 'p'.repeat(40) });
+  assert.deepEqual(Object.keys(secrets), ['STOREFRONT_KEY']);
+});
+
+test("the storefront's key is derived as core derives it, and is neither the principal key nor another derived one", () => {
+  // The same vector as packages/core/tests/roles.test.ts.
+  assert.equal(
+    storefrontKey('test-principal-key'),
+    '58f5d0618f717f32946e47fdca333e17c0028a75a0f2db4c78f0bb57f17dad5d',
+  );
+  assert.notEqual(storefrontKey('test-principal-key'), 'test-principal-key');
+  assert.notEqual(storefrontKey('test-principal-key'), healthCheckKey('test-principal-key'));
+  assert.notEqual(
+    storefrontKey('test-principal-key'),
+    pluginKey('test-principal-key', 'storefront'),
+  );
+});
+
 test('a deployment with a Turnstile site key needs its secret to deploy', () => {
   const guarded = toDeployment({ ...acme, turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY' });
   assert.match(
@@ -803,8 +969,13 @@ test('capabilities are granted by the registry, and bind the host API as the plu
     },
   ]);
   const vars = renderEngine(base('engine'), d).vars;
-  assert.equal(vars.APP_ORIGIN, 'https://acme.commerceworker.com');
-  assert.equal(vars.OWN_HOSTS, 'acme.commerceworker.com,catalog.acme.commerceworker.com');
+  // An external cart's start link is on the storefront; its return never posts to any host we serve.
+  assert.equal(vars.STOREFRONT_ORIGIN, 'https://shop.acme.commerceworker.com');
+  assert.equal(vars.APP_ORIGIN, undefined);
+  assert.equal(
+    vars.OWN_HOSTS,
+    'acme.commerceworker.com,shop.acme.commerceworker.com,catalog.acme.commerceworker.com',
+  );
   // No capability, no host binding.
   assert.equal(renderPlugin(pluginBase, d, 'qbd').services, undefined);
   assert.throws(
@@ -994,7 +1165,7 @@ test('the reserved path segments cover every top-level path the web app serves',
   const segments = new Set<string>();
   for (const m of routes.matchAll(/route\('([a-z0-9-]+)/g)) segments.add(m[1]!);
   for (const m of worker.matchAll(/'\/([a-z0-9-]+)[/']/g)) segments.add(m[1]!);
-  for (const s of ['ucp', 'scim', 'mcp', 'a2a', 'oauth']) segments.add(s); // via *_PATH constants
+  for (const s of ['scim', 'mcp', 'a2a', 'oauth']) segments.add(s); // via *_PATH constants
   const missing = [...segments].filter((s) => !RESERVED_PATH_SEGMENTS.has(s));
   assert.deepEqual(missing, []);
 });
@@ -1032,6 +1203,7 @@ test("every Worker of a deployment sends its trace events to Logpush, plugins' t
     for (const [app, render] of [
       ['engine', renderEngine],
       ['web', renderWeb],
+      ['storefront', renderStorefront],
       ['catalog', renderCatalog],
       ['delivery', renderDelivery],
     ] as const)
@@ -1057,6 +1229,7 @@ test("a deployment's Logpush job takes only its own Workers, without the request
   // A sandboxed plugin runs in the engine: no Worker of its own to name.
   assert.deepEqual(job.scripts, [
     'commerceworker-web-acme',
+    'commerceworker-storefront-acme',
     'commerceworker-engine-acme',
     'commerceworker-catalog-acme',
     'commerceworker-delivery-acme',

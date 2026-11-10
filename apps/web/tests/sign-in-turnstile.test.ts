@@ -29,7 +29,7 @@ vi.mock('~/lib/team.server', () => ({ TeamError }));
 
 const login = await import('~/routes/login');
 const setup = await import('~/routes/setup');
-const { TURNSTILE_HEADER } = await import('~/lib/csp');
+const { TURNSTILE_HEADER } = await import('@commerceworker/security/csp');
 
 const siteverify = vi.fn();
 const post = (path: string, fields: Record<string, string>) => {

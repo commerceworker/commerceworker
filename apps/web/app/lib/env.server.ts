@@ -31,3 +31,12 @@ export function docs() {
 export function afterResponse(work: PromiseLike<unknown>) {
   waitUntil(Promise.resolve(work).catch((err) => console.error('background write failed', err)));
 }
+
+/**
+ * The storefront's origin (`STOREFRONT_ORIGIN`), where buyers' pages and agentic checkout are
+ * served: an external cart's start link is there, not on this app's host. Unset where the
+ * deployment has none (nothing off this origin is then a place a plugin may send anyone).
+ */
+export function storefrontOrigin(): string | undefined {
+  return (env as { STOREFRONT_ORIGIN?: string }).STOREFRONT_ORIGIN || undefined;
+}

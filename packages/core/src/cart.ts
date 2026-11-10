@@ -778,7 +778,8 @@ export function attachmentName(raw: string): string {
 
 /** Why a file can't go on a cart, or null. */
 export function attachmentProblem(f: { type: string; size: number }, count: number): string | null {
-  if (!(f.type in ATTACHMENT_TYPES))
+  // Own keys only: `in` would let a type like `constructor` through, from the object's prototype.
+  if (!Object.hasOwn(ATTACHMENT_TYPES, f.type))
     return 'Attach a PDF, an image (PNG, JPEG, WebP), a CSV or text file, or an Excel or Word file.';
   if (f.size <= 0) return 'The file is empty.';
   if (f.size > MAX_ATTACHMENT_BYTES) return 'A file is at most 10 MB.';

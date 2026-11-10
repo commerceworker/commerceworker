@@ -209,13 +209,16 @@ const PLATFORM_VERSION = 'u1';
  * The buyer an external cart was opened for (by a plugin, say a punchout session), on that cart's
  * socket. Not a Principal: no role, and admitted only to the one cart, so its header is its own
  * envelope (`g1`) that `verifyPrincipal` and `verifyPlatform` never accept, signed for that cart's
- * path alone.
+ * path alone. Like every envelope the storefront signs (the platform's `u1`, the cookie `gs1`, a
+ * guest's `a1`), it is under the storefront key (`storefrontKey`), never `PRINCIPAL_KEY`: the
+ * storefront holds only that, so it can't mint a staff envelope.
  */
 export type CartGuest = { cartId: string; id: string; name: string };
 
 const GUEST_VERSION = 'g1';
 
 export function signCartGuest(
+  /** The storefront key (`storefrontKey`). */
   secret: string,
   g: CartGuest,
   path: string,
@@ -231,6 +234,7 @@ const GUEST_SESSION_VERSION = 'gs1';
  * sent to the engine): its own envelope (`gs1`), bound to that cart and expiring with it.
  */
 export function signCartGuestSession(
+  /** The storefront key (`storefrontKey`). */
   secret: string,
   g: CartGuest,
   expiresAt: number,
@@ -279,7 +283,7 @@ export async function verifySsoFlow(
     : null;
 }
 
-/** The cart guest a forwarded request is from, or null (see `verifyPrincipal`). */
+/** The cart guest a forwarded request is from, or null (see `verifyPrincipal`); `secrets` are storefront keys. */
 export async function verifyCartGuest(
   secrets: readonly (string | undefined)[],
   header: string | null | undefined,
@@ -293,8 +297,9 @@ export async function verifyCartGuest(
   return { cartId: g.cartId, id: g.id, name: g.name };
 }
 
-/** The header value for a platform calling `path` (same header and key as `signPrincipal`). */
+/** The header value for a platform calling `path` (same header as `signPrincipal`, under the storefront key). */
 export function signPlatform(
+  /** The storefront key (`storefrontKey`). */
   secret: string,
   c: PlatformCaller,
   path: string,
@@ -303,7 +308,7 @@ export function signPlatform(
   return seal(secret, PLATFORM_VERSION, { c, path, exp: now + PRINCIPAL_TTL_MS });
 }
 
-/** The platform a forwarded `/ucp/*` request is from, or null (see `verifyPrincipal`). */
+/** The platform a forwarded `/ucp/*` request is from, or null (see `verifyPrincipal`); `secrets` are storefront keys. */
 export async function verifyPlatform(
   secrets: readonly (string | undefined)[],
   header: string | null | undefined,
@@ -355,54 +360,98 @@ export async function verifySsoLink(
 /**
  * Who is acting on an approval or a cart over the engine's binding (`EngineRpc.decide`,
  * `changeCart`, `submitCart`, `cancelCart`, `attachToCart`): a staff member (their principal id,
- * the name the record shows, their role) or an external cart's buyer. The web app signs it (`a1`)
- * for that one call and the engine believes nothing else for those calls. The binding's other
+ * the name the record shows, their role). The web app signs it (`a1`) for that one call, under
+ * `PRINCIPAL_KEY`, and the engine believes nothing else for those calls. The binding's other
  * methods (plugin installs, data subjects) still trust their caller: only the web app holds it.
+ * An external cart's buyer is the storefront's (`GuestActor`), under its own key.
  */
-export type RpcActor =
+export type StaffActor = {
+  kind: 'staff';
+  id: string;
+  name: string;
+  role: Role;
   /** `person`: a person signed in as themselves, not an API token (some actions need one). */
-  | { kind: 'staff'; id: string; name: string; role: Role; person?: true }
-  | { kind: 'guest'; id: string; name: string };
+  person?: true;
+};
 
-/** An `RpcActor` signed for one call (`signRpcActor`), as `EngineRpc` takes it. */
+/** An external cart's buyer acting on that cart over `StorefrontRpc`, signed by the storefront. */
+export type GuestActor = { kind: 'guest'; id: string; name: string };
+
+export type RpcActor = StaffActor | GuestActor;
+
+/** An `RpcActor` signed for one call (`signRpcActor`, `signGuestActor`). */
 export type SignedActor = string;
 
 const ACTOR_VERSION = 'a1';
 
-/** `call` names the call and what it acts on, e.g. `decide:<orderId>` or `cart:<cartId>`. */
+/**
+ * A staff actor signed for `call` under `PRINCIPAL_KEY`; `call` names the call and what it acts
+ * on, e.g. `decide:<orderId>` or `cart:<cartId>`.
+ */
 export function signRpcActor(
   secret: string,
-  actor: RpcActor,
+  actor: StaffActor,
   call: string,
   now = Date.now(),
 ): Promise<SignedActor> {
   return seal(secret, ACTOR_VERSION, { a: actor, path: call, exp: now + PRINCIPAL_TTL_MS });
 }
 
-/** The actor a call was signed for, or null (see `verifyPrincipal`). */
+/**
+ * The staff actor a call was signed for under one of `secrets` (`PRINCIPAL_KEY`, then its
+ * previous), or null (see `verifyPrincipal`). A guest actor is refused whatever signed it: only
+ * the storefront's key vouches for one (`verifyGuestActor`).
+ */
 export async function verifyRpcActor(
   secrets: readonly (string | undefined)[],
   signed: string | null | undefined,
   call: string,
   now = Date.now(),
-): Promise<RpcActor | null> {
+): Promise<StaffActor | null> {
   // Anything but the string a1 envelope (an actor object from an older web app) is refused.
   if (typeof signed !== 'string') return null;
   const body = await unseal(secrets, ACTOR_VERSION, signed, call, now);
   const a = body?.a as
     | Partial<{ kind: string; id: string; name: string; role: Role; person: unknown }>
     | undefined;
-  if (!a || typeof a.id !== 'string' || typeof a.name !== 'string') return null;
-  if (a.kind === 'staff' && isRole(a.role))
-    return {
-      kind: 'staff',
-      id: a.id,
-      name: a.name,
-      role: a.role,
-      ...(a.person === true ? { person: true as const } : {}),
-    };
-  if (a.kind === 'guest') return { kind: 'guest', id: a.id, name: a.name };
-  return null;
+  if (a?.kind !== 'staff' || typeof a.id !== 'string' || typeof a.name !== 'string') return null;
+  if (!isRole(a.role)) return null;
+  return {
+    kind: 'staff',
+    id: a.id,
+    name: a.name,
+    role: a.role,
+    ...(a.person === true ? { person: true as const } : {}),
+  };
+}
+
+/** A cart's buyer signed for `call` (`cart:<cartId>`) under the storefront key. */
+export function signGuestActor(
+  /** The storefront key (`storefrontKey`). */
+  secret: string,
+  actor: GuestActor,
+  call: string,
+  now = Date.now(),
+): Promise<SignedActor> {
+  return seal(secret, ACTOR_VERSION, { a: actor, path: call, exp: now + PRINCIPAL_TTL_MS });
+}
+
+/**
+ * The guest a call was signed for under one of the storefront keys `secrets`, or null. A staff
+ * actor is refused whatever signed it: only `PRINCIPAL_KEY` vouches for one.
+ */
+export async function verifyGuestActor(
+  secrets: readonly (string | undefined)[],
+  signed: string | null | undefined,
+  call: string,
+  now = Date.now(),
+): Promise<GuestActor | null> {
+  if (typeof signed !== 'string') return null;
+  const a = (await unseal(secrets, ACTOR_VERSION, signed, call, now))?.a as
+    | Partial<GuestActor>
+    | undefined;
+  if (a?.kind !== 'guest' || typeof a.id !== 'string' || typeof a.name !== 'string') return null;
+  return { kind: 'guest', id: a.id, name: a.name };
 }
 
 /**
@@ -413,7 +462,22 @@ export const HEALTH_CHECK_HEADER = 'x-commerceworker-health-check';
 
 const HEALTH_CHECK_VERSION = 'h1';
 const HEALTH_CHECK_LABEL = 'commerceworker-health-check';
-const healthKeys = new Map<string, Promise<string>>();
+const STOREFRONT_LABEL = 'commerceworker-storefront';
+const derived = new Map<string, Promise<string>>();
+
+/** An HMAC of `principalKey` under `label`, as hex: a key derived for one purpose. */
+function derive(label: string, principalKey: string): Promise<string> {
+  const id = `${label}\0${principalKey}`;
+  let key = derived.get(id);
+  if (!key) {
+    key = (async () => {
+      const mac = await crypto.subtle.sign('HMAC', await hmacKey(principalKey), enc.encode(label));
+      return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, '0')).join('');
+    })();
+    derived.set(id, key);
+  }
+  return key;
+}
 
 /**
  * The key the write check is signed with: an HMAC of the deployment's principal key with its own
@@ -422,19 +486,27 @@ const healthKeys = new Map<string, Promise<string>>();
  * opens nothing else, nor anything else a write check. scripts/fleet.ts derives the same value.
  */
 export function healthCheckKey(principalKey: string): Promise<string> {
-  let key = healthKeys.get(principalKey);
-  if (!key) {
-    key = (async () => {
-      const mac = await crypto.subtle.sign(
-        'HMAC',
-        await hmacKey(principalKey),
-        enc.encode(HEALTH_CHECK_LABEL),
-      );
-      return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, '0')).join('');
-    })();
-    healthKeys.set(principalKey, key);
-  }
-  return key;
+  return derive(HEALTH_CHECK_LABEL, principalKey);
+}
+
+/**
+ * The key the public storefront signs with, and the only one it holds: an HMAC of the deployment's
+ * principal key with its own label. The engine derives the same from its `PRINCIPAL_KEY`, and
+ * accepts under it the storefront's envelopes alone (a cart's buyer `g1`, a UCP platform `u1`, a
+ * guest's `a1`; the storefront's own cookie `gs1` is checked only by the storefront), while v1
+ * principals and staff `a1` actors verify only under `PRINCIPAL_KEY`. A compromised storefront can
+ * therefore speak as a buyer or a platform but never mint a staff envelope. scripts/fleet.ts
+ * derives the same value for the storefront's secret.
+ */
+export function storefrontKey(principalKey: string): Promise<string> {
+  return derive(STOREFRONT_LABEL, principalKey);
+}
+
+/** `storefrontKey` of each of `principalKeys` that is set (the current, then the previous). */
+export async function storefrontKeys(
+  principalKeys: readonly (string | undefined)[],
+): Promise<string[]> {
+  return Promise.all(principalKeys.filter((k): k is string => !!k).map(storefrontKey));
 }
 
 /** The write check's header value for `path`, good for `PRINCIPAL_TTL_MS`: its own envelope (`h1`). */

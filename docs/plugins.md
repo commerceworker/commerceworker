@@ -437,7 +437,7 @@ takes effect at once and a runtime install of the same id never inherits it.
 
 | Method | Needs | Does |
 |---|---|---|
-| `openExternalCart(input)` | `carts:external` | Opens a [cart](architecture.md#carts) for a buyer the plugin has authenticated (`ExternalCartInput`: `sessionRef`, `title`, `flowId`, `customerId`, `buyer`, an https `returnUrl`, https `frameOrigins`, `expiresAt` within 24 hours, an optional `idleMs` from 5 minutes to 24 hours (`MIN_EXTERNAL_CART_IDLE_MS`, `MAX_EXTERNAL_CART_MS`: the cart then stays open while its buyer works on it, closing `idleMs` after their last activity (their socket, searches and files; staff activity doesn't count) and never later than 24 hours from opening; without it the cart closes at `expiresAt`), optional starting `lines`), checked by `externalCartProblem` (types too, and a `returnUrl` on none of the deployment's `OWN_HOSTS`) and like a staff cart (a flow that prices, an existing customer). The same `sessionRef` finds the same cart (unique `(plugin_id, session_ref)` in `carts`). Answers the cart id, a one-time `startPath` (`/cart/start/<cartId>/<token>`, `CART_START_TTL_MS`, 5 minutes) and the same as `startUrl` on `APP_ORIGIN`; a session whose cart has ended or expired is refused |
+| `openExternalCart(input)` | `carts:external` | Opens a [cart](architecture.md#carts) for a buyer the plugin has authenticated (`ExternalCartInput`: `sessionRef`, `title`, `flowId`, `customerId`, `buyer`, an https `returnUrl`, https `frameOrigins`, `expiresAt` within 24 hours, an optional `idleMs` from 5 minutes to 24 hours (`MIN_EXTERNAL_CART_IDLE_MS`, `MAX_EXTERNAL_CART_MS`: the cart then stays open while its buyer works on it, closing `idleMs` after their last activity (their socket, searches and files; staff activity doesn't count) and never later than 24 hours from opening; without it the cart closes at `expiresAt`), optional starting `lines`), checked by `externalCartProblem` (types too, and a `returnUrl` on none of the deployment's `OWN_HOSTS`) and like a staff cart (a flow that prices, an existing customer). The same `sessionRef` finds the same cart (unique `(plugin_id, session_ref)` in `carts`). Answers the cart id, a one-time `startPath` (`/cart/start/<cartId>/<token>`, `CART_START_TTL_MS`, 5 minutes) and the same as `startUrl` on `STOREFRONT_ORIGIN`, the storefront's origin (where a buyer opens it; the admin's host serves no start link); a session whose cart has ended or expired is refused |
 | `checkExternalCart(input)` | `carts:external` | What `openExternalCart` would make of the same input, read-only (`checkExternalCart` in `apps/engine/src/cart/carts.ts`): `{ ok: true, problems: { input, flow, customer } }` (`ExternalCartProblems`), each null or the message opening the cart would refuse it with (`externalCartProblem` and the title; a flow with no published version or no Price lines step; no such customer). The flow and customer are looked up only for an input with no problem (otherwise both are null), so a probe with a bad input learns nothing about which ids exist. It opens, finds and wakes no cart, issues no start link and sends no event; punchout's partner self-test uses it |
 | `getCart(cartId)` | `carts:external` | The cart as `PluginCart`, or null for one another plugin (or a person) opened |
 | `orderStatus({ key })` | `orders:start` | Where an order this plugin started is now, found by the key it started it under as `cancelOrder` finds it: its `status` (read from the order's agent, not the index row) and `ended` (one of `TERMINAL_ORDER_STATUSES`) |
@@ -794,8 +794,8 @@ throws when the plugin is gone, since there is nothing to undo it with.
   Only the headers in `RESPONSE_ALLOWED` pass from the plugin's response, so none that acts on the
   whole origin (`set-cookie`, HSTS, service-worker scope, reporting, site-data clearing,
   permissions); a redirect must lead to `/plugins/<id>/…` on the app's origin, or to an external cart's start
-  link (`/cart/start/<cartId>/<token>`, which only the plugin that opened the cart holds), or the
-  response is `502`.
+  link on the storefront's origin (`STOREFRONT_ORIGIN`, `/cart/start/<cartId>/<token>`, which only the plugin
+  that opened the cart holds), or the response is `502`.
 - An outbound event reaches a plugin only while it is installed and subscribed when the event is
   emitted; there is no replay for a plugin installed later.
 
@@ -847,7 +847,7 @@ throws when the plugin is gone, since there is nothing to undo it with.
   - Out: only `cache-control`, `content-disposition`, `content-language`, `content-length`,
     `content-type`, `etag`, `expires`, `last-modified` and `vary` pass (`RESPONSE_ALLOWED`). A
     `location` is kept only if it resolves to `/plugins/<id>/…` on the app's origin, rewritten to a
-    path; any other redirect is a `502`. The response gets the app's own `content-security-policy`
+    path, or to an external cart's start link on the storefront's origin, kept whole; any other redirect is a `502`. The response gets the app's own `content-security-policy`
     (no script at all, see Limits and hardening), `x-frame-options: DENY`, `x-content-type-options`,
     `referrer-policy`, `cross-origin-opener-policy` and `cross-origin-resource-policy:
     same-origin`, whatever the plugin set. A plugin's page therefore can't run script.

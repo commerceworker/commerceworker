@@ -1,10 +1,10 @@
 /**
  * The fleet: one CommerceWorker deployment per customer, each listed in deployments/<id>.jsonc.
  *
- *   node scripts/fleet.ts render <id>             write apps/{catalog,delivery,engine,web}/wrangler.<id>.json
+ *   node scripts/fleet.ts render <id>             write apps/{catalog,delivery,engine,storefront,web}/wrangler.<id>.json
  *                                                 and plugins/<plugin>/wrangler.<id>.json for each plugin
  *   node scripts/fleet.ts matrix                  print the deployments of each ring for CI
- *   node scripts/fleet.ts secrets <engine|web> <out> [id]  write this app's secrets from the
+ *   node scripts/fleet.ts secrets <engine|storefront|web> <out> [id]  write this app's secrets from the
  *                                                 environment, refusing ones deployment <id> can't run on
  *   node scripts/fleet.ts secrets plugin <out> <plugin> [id]  write a plugin's own keys, derived, and
  *                                                 its PLUGIN_<ID>_* secrets from ENV_SECRETS (none
@@ -75,6 +75,7 @@ type Ring = (typeof RINGS)[number];
 
 /** Each app's secrets, read from the deploy job's environment (a GitHub environment's secrets). */
 const SECRETS = {
+  // (The storefront's are derived, not read as they are: `storefrontSecrets`.)
   web: [
     'PRINCIPAL_KEY',
     'DATA_KEY',
@@ -148,6 +149,8 @@ export type Deployment = {
   domain: string;
   /** The public catalog API's host. Defaults to `catalog.<domain>`. */
   catalogDomain: string;
+  /** The storefront's host: buyers' pages and agentic checkout. Defaults to `shop.<domain>`. */
+  storefrontDomain: string;
   /** Appended to every resource name. Defaults to `-<id>`; app.commerceworker.com's own is `""`. */
   suffix: string;
   /** The GitHub environment holding this deployment's secrets. Defaults to `deploy-<id>`. */
@@ -253,7 +256,8 @@ const PLUGIN_CAPABILITIES = ['carts:external', 'orders:start', 'orders:cancel'];
 /**
  * Top-level path segments the web app serves itself: its pages (apps/web/app/routes.ts) and what
  * its Worker answers before them (apps/web/workers/app.ts). A plugin alias may not be one of them;
- * fleet.test.ts reads both files so a new route can't be missed.
+ * fleet.test.ts reads both files so a new route can't be missed. A plugin's aliases are served by
+ * the web Worker alone: the storefront's paths (`/cart`, `/ucp`) are on another host.
  */
 export const RESERVED_PATH_SEGMENTS = new Set([
   'account',
@@ -263,7 +267,6 @@ export const RESERVED_PATH_SEGMENTS = new Set([
   'assets',
   'audit',
   'a2a',
-  'cart',
   'carts',
   'catalog',
   'commerce',
@@ -282,7 +285,6 @@ export const RESERVED_PATH_SEGMENTS = new Set([
   'scim',
   'setup',
   'team',
-  'ucp',
 ]);
 
 /** A plugin alias: one lowercase path segment, as `/<segment>/`. */
@@ -362,6 +364,12 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     (typeof raw.catalogDomain !== 'string' || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(raw.catalogDomain))
   )
     throw new Error(`${file}: catalogDomain must be a host name`);
+  if (
+    raw.storefrontDomain !== undefined &&
+    (typeof raw.storefrontDomain !== 'string' ||
+      !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(raw.storefrontDomain))
+  )
+    throw new Error(`${file}: storefrontDomain must be a host name`);
   if (
     raw.catalogKvId !== undefined &&
     (typeof raw.catalogKvId !== 'string' || !/^[0-9a-f]{32}$/.test(raw.catalogKvId))
@@ -593,6 +601,10 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
       typeof raw.catalogDomain === 'string'
         ? raw.catalogDomain
         : `catalog.${typeof raw.domain === 'string' ? raw.domain : `${id}.commerceworker.com`}`,
+    storefrontDomain:
+      typeof raw.storefrontDomain === 'string'
+        ? raw.storefrontDomain
+        : `shop.${typeof raw.domain === 'string' ? raw.domain : `${id}.commerceworker.com`}`,
     suffix: typeof raw.suffix === 'string' ? raw.suffix : `-${id}`,
     environment: typeof raw.environment === 'string' ? raw.environment : `deploy-${id}`,
     ...(raw.d1Id ? { d1Id: raw.d1Id as string } : {}),
@@ -657,6 +669,7 @@ export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
 /** Resource names: the base name plus the deployment's suffix. */
 export const names = (d: Deployment) => ({
   web: `commerceworker-web${d.suffix}`,
+  storefront: `commerceworker-storefront${d.suffix}`,
   engine: `commerceworker-engine${d.suffix}`,
   d1: `commerceworker${d.suffix}`,
   r2: `commerceworker-docs${d.suffix}`,
@@ -712,7 +725,14 @@ const LOGPUSH_FILTER_MAX = 1000;
  */
 export function logpushJob(d: Deployment) {
   const n = names(d);
-  const scripts = [n.web, n.engine, n.catalog, n.delivery, ...workerPlugins(d).map(n.plugin)];
+  const scripts = [
+    n.web,
+    n.storefront,
+    n.engine,
+    n.catalog,
+    n.delivery,
+    ...workerPlugins(d).map(n.plugin),
+  ];
   const filter = JSON.stringify({ where: { key: 'ScriptName', operator: 'in', value: scripts } });
   if (filter.length > LOGPUSH_FILTER_MAX)
     throw new Error(`${d.id}: its Logpush filter (${filter.length} bytes) is too long`);
@@ -1020,12 +1040,12 @@ export function renderEngine(base: Config, d: Deployment): Config {
     AI_GATEWAY_LOGS: String(d.aiGatewayLogs),
     FX_CURRENCIES: d.fxCurrencies.join(','),
   };
-  // The app's own origin (for links the engine hands out, an external cart's start link) and the
-  // hosts it serves, which an external cart must never post back to.
+  // The storefront's origin (where an external cart's buyer opens their start link) and the hosts
+  // the deployment serves, which an external cart must never post back to.
   config.vars = {
     ...config.vars,
-    APP_ORIGIN: `https://${d.domain}`,
-    OWN_HOSTS: [d.domain, d.catalogDomain].join(','),
+    STOREFRONT_ORIGIN: `https://${d.storefrontDomain}`,
+    OWN_HOSTS: [d.domain, d.storefrontDomain, d.catalogDomain].join(','),
   };
   if (d.auditRetentionDays)
     config.vars = { ...config.vars, AUDIT_RETENTION_DAYS: String(d.auditRetentionDays) };
@@ -1131,6 +1151,41 @@ export function renderDelivery(base: Config, d: Deployment): Config {
   return config;
 }
 
+/**
+ * The rate-limit bindings with this deployment's namespaces and budgets. Namespaces are per
+ * account: slot 1 keeps the base ids (the web Worker's 1001 to 1005, the storefront's 1006 and
+ * 1007), slot 2 uses 2001 and so on. The registry's `limits` replace a binding's requests a
+ * minute; the period stays 60 seconds.
+ */
+function rateLimits(ratelimits: Config[], d: Deployment): Config[] {
+  const budgets = new Map(
+    Object.entries(d.limits ?? {}).map(([k, v]) => [LIMITS[k as LimitKey] as string, v]),
+  );
+  return ratelimits.map((r: Config) => ({
+    ...r,
+    namespace_id: String(d.slot * 1000 + (Number(r.namespace_id) % 1000)),
+    ...(budgets.has(r.name) ? { simple: { ...r.simple, limit: budgets.get(r.name) } } : {}),
+  }));
+}
+
+/**
+ * The storefront: buyers' pages and agentic checkout at its own host, on the deployment's engine.
+ * It is public, so it binds nothing else: no database, no documents bucket (the engine's
+ * `StorefrontApi` does that work) and no principal key. It has no resource of its own to provision.
+ */
+export function renderStorefront(base: Config, d: Deployment): Config {
+  const config = structuredClone(base);
+  config.name = names(d).storefront;
+  config.routes = [{ pattern: d.storefrontDomain, custom_domain: true }];
+  config.workers_dev = false;
+  config.preview_urls = false;
+  config.services = config.services.map((s: Config) =>
+    s.binding === 'ENGINE' ? { ...s, service: names(d).engine } : s,
+  );
+  config.ratelimits = rateLimits(config.ratelimits, d);
+  return config;
+}
+
 export function renderWeb(base: Config, d: Deployment): Config {
   const config = structuredClone(base);
   const n = names(d);
@@ -1148,18 +1203,10 @@ export function renderWeb(base: Config, d: Deployment): Config {
     ),
     ...pluginServices(d),
   ];
-  // Rate-limit namespaces are per account: slot 1 keeps the base ids (1001, 1002), slot 2 uses
-  // 2001, 2002, and so on.
-  // The registry's `limits` replace a binding's requests a minute; the period stays 60 seconds.
-  const budgets = new Map(
-    Object.entries(d.limits ?? {}).map(([k, v]) => [LIMITS[k as LimitKey] as string, v]),
-  );
-  config.ratelimits = config.ratelimits.map((r: Config) => ({
-    ...r,
-    namespace_id: String(d.slot * 1000 + (Number(r.namespace_id) % 1000)),
-    ...(budgets.has(r.name) ? { simple: { ...r.simple, limit: budgets.get(r.name) } } : {}),
-  }));
+  config.ratelimits = rateLimits(config.ratelimits, d);
   storage(config, d);
+  // The storefront's origin: where a plugin may send a buyer to their cart's start link.
+  config.vars = { ...config.vars, STOREFRONT_ORIGIN: `https://${d.storefrontDomain}` };
   // Plugins' aliases, alias → plugin id; always set, so one deployment's never carries over.
   const aliases = Object.fromEntries(
     Object.entries(d.plugins).flatMap(([p, v]) => (v.alias ? [[v.alias, p]] : [])),
@@ -1193,6 +1240,7 @@ function render(id: string | undefined) {
     ['catalog', renderCatalog],
     ['delivery', renderDelivery],
     ['engine', renderEngine],
+    ['storefront', renderStorefront],
     ['web', renderWeb],
   ] as const) {
     const out = join(ROOT, 'apps', app, `wrangler.${d.id}.json`);
@@ -1232,13 +1280,15 @@ export function matrix(list: Deployment[]): Record<Ring, Deployment[]> {
  * Why the environment's secrets can't run `app` for `d`, or null. The engine of a Stripe
  * deployment needs STRIPE_SECRET_KEY, in the same mode (test or live) as its publishable key. The
  * web Worker of a deployment with a Turnstile site key needs TURNSTILE_SECRET_KEY: without it every
- * password sign-in would be refused.
+ * password sign-in would be refused. The storefront needs only the principal key every app needs,
+ * which it is given as a derived key.
  */
 export function secretsProblem(
   d: Deployment,
   env: Record<string, string | undefined>,
-  app: 'engine' | 'web',
+  app: 'engine' | 'storefront' | 'web',
 ) {
+  if (app === 'storefront') return null;
   if (app === 'web')
     return d.turnstileSiteKey && !env.TURNSTILE_SECRET_KEY
       ? `${d.id} has a turnstileSiteKey: add its widget's secret as TURNSTILE_SECRET_KEY to the ${d.environment} GitHub environment`
@@ -1253,9 +1303,27 @@ export function secretsProblem(
   return null;
 }
 
+/**
+ * The storefront's secrets: `storefrontKey` of the principal key and of the previous one while a
+ * rotation finishes. The principal key itself never reaches it.
+ */
+export function storefrontSecrets(env: Record<string, string | undefined>) {
+  const [current, previous] = [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS];
+  return {
+    ...(current ? { STOREFRONT_KEY: storefrontKey(current) } : {}),
+    ...(previous ? { STOREFRONT_KEY_PREVIOUS: storefrontKey(previous) } : {}),
+  };
+}
+
 function secrets(app: string | undefined, out: string | undefined, id?: string, more?: string) {
-  const usage = 'secrets <engine|web|plugin|sandboxed> <out> [id | plugin id]';
-  if (app !== 'web' && app !== 'engine' && app !== 'plugin' && app !== 'sandboxed')
+  const usage = 'secrets <engine|storefront|web|plugin|sandboxed> <out> [id | plugin id]';
+  if (
+    app !== 'web' &&
+    app !== 'storefront' &&
+    app !== 'engine' &&
+    app !== 'plugin' &&
+    app !== 'sandboxed'
+  )
     throw new Error(usage);
   if (!out) throw new Error(usage);
   if (app === 'plugin') return pluginSecrets(out, id, more);
@@ -1270,9 +1338,12 @@ function secrets(app: string | undefined, out: string | undefined, id?: string, 
   const problem = id ? secretsProblem(byId(id), process.env, app) : null;
   if (problem) throw new Error(problem);
   // Only the ones set: `--secrets-file` adds to a Worker's secrets and never removes one.
-  const values = Object.fromEntries(
-    SECRETS[app].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : [])),
-  );
+  const values =
+    app === 'storefront'
+      ? storefrontSecrets(process.env)
+      : Object.fromEntries(
+          SECRETS[app].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : [])),
+        );
   writeFileSync(out, JSON.stringify(values), { mode: 0o600 });
   console.log(`${app}: ${Object.keys(values).join(', ') || 'no secrets set'}`);
 }
@@ -1408,6 +1479,7 @@ export function shellVars(d: Deployment): Record<string, string> {
   const n = names(d);
   return {
     WEB: n.web,
+    STOREFRONT: n.storefront,
     D1: n.d1,
     R2: n.r2,
     AI_GATEWAY: n.aiGateway,
@@ -1423,6 +1495,7 @@ export function shellVars(d: Deployment): Record<string, string> {
     CATALOG_CHANGES_DLQ: n.catalogChangesDlq,
     CATALOG_DOMAIN: d.catalogDomain,
     DOMAIN: d.domain,
+    STOREFRONT_DOMAIN: d.storefrontDomain,
     // The registry's Turnstile site key, to compare with the widget provision.sh finds or creates.
     TURNSTILE_SITE_KEY: d.turnstileSiteKey ?? '',
     ENVIRONMENT: d.environment,
@@ -1556,6 +1629,14 @@ const HEALTH_CHECK_HEADER = 'x-commerceworker-health-check';
  */
 export const healthCheckKey = (principalKey: string) =>
   createHmac('sha256', principalKey).update('commerceworker-health-check').digest('hex');
+
+/**
+ * The key the storefront signs and verifies with: the HMAC of the deployment's principal key with
+ * the storefront's own label, as `storefrontKey` in @commerceworker/core derives it (fleet.test.ts
+ * holds the two to the same vector). The storefront gets this and never the principal key itself.
+ */
+export const storefrontKey = (principalKey: string) =>
+  createHmac('sha256', principalKey).update('commerceworker-storefront').digest('hex');
 
 /** The write check's header value, good for a minute (`signHealthCheck` in @commerceworker/core). */
 export function signHealthCheck(principalKey: string, now = Date.now()): string {

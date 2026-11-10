@@ -5,6 +5,7 @@ import {
   PRODUCT_STATUSES,
   type ProductSheet,
 } from '@commerceworker/core/product';
+import { Ago } from '@commerceworker/ui/ago';
 import { Button } from '@commerceworker/ui/button';
 import {
   Card,
@@ -29,7 +30,6 @@ import {
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { Textarea } from '@commerceworker/ui/textarea';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Ago } from '~/components/ago';
 import { ToneBadge } from '~/components/status';
 import { useMedia } from '~/lib/device';
 import { humanize } from '~/lib/format';

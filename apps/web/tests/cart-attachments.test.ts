@@ -115,27 +115,20 @@ describe('adding a file to a cart', () => {
     expect(objects.size).toBe(0);
   });
 
-  it('refuses a stranger, a wrong type, and a guest on a cart that isn’t theirs', async () => {
+  it('refuses a stranger and a wrong type', async () => {
     expect(await post(pdf())).toMatchObject({ status: 401 });
     principal.mockResolvedValue(staff);
     cartSnapshot.mockResolvedValue(state());
     const html = new File(['<script>'], 'x.html', { type: 'text/html' });
     expect(await post(html)).toMatchObject({ status: 400 });
-    principal.mockResolvedValue(null);
-    // A buyer's cookie for cart_1 says nothing about cart_2.
-    expect(await post(pdf(), { cookie: await guestCookie() }, 'cart_2')).toMatchObject({
-      status: 401,
-    });
     expect(objects.size).toBe(0);
   });
 
-  it('lets an external cart’s buyer add one', async () => {
+  it('takes no buyer’s cookie: a buyer adds files on the storefront', async () => {
     cartSnapshot.mockResolvedValue(state({ external: {} as Cart['external'] }));
-    attachToCart.mockResolvedValue({ ok: true });
-    expect(await post(pdf(), { cookie: await guestCookie() })).toEqual({ ok: true });
-    expect(
-      await verifyRpcActor([env.PRINCIPAL_KEY], attachToCart.mock.calls[0]![2], 'cart:cart_1'),
-    ).toEqual({ kind: 'guest', id: 'guest:b1', name: 'Pat Buyer' });
+    expect(await post(pdf(), { cookie: await guestCookie() })).toMatchObject({ status: 401 });
+    expect(attachToCart).not.toHaveBeenCalled();
+    expect(objects.size).toBe(0);
   });
 });
 
@@ -173,33 +166,12 @@ describe('downloading a cart’s file', () => {
     expect((await get('att_1')).status).toBe(401);
   });
 
-  it('lets the buyer download while the cart is open or returned until its time, not once it closed', async () => {
+  it('takes no buyer’s cookie, though the cart is theirs', async () => {
     objects.set(file.key, { body: new TextEncoder().encode('%PDF').buffer as ArrayBuffer });
-    const external = (expiresAt: number) => ({ expiresAt }) as Cart['external'];
-    const as = async (c: Partial<Cart>) => {
-      cartSnapshot.mockResolvedValue(state(c, [file]));
-      return (await get('att_1', { cookie: await guestCookie() })).status;
-    };
-    const later = Date.now() + 60_000;
-    expect(await as({ external: external(later) })).toBe(200);
-    expect(await as({ external: external(later), status: 'returned' })).toBe(200);
-    // A returned cart past its time is closed to the buyer, though their cookie lasts longer.
-    expect(await as({ external: external(0), status: 'returned' })).toBe(404);
-    expect(await as({ external: external(later), status: 'canceled' })).toBe(404);
-    expect(await as({ external: external(later), status: 'submitted' })).toBe(404);
-    expect(await as({ external: external(0) })).toBe(404);
-    // Each download the buyer got counts as working on the cart, signed as them for it alone.
-    expect(keepCartOpen).toHaveBeenCalledTimes(2);
-    const [cartId, actor] = keepCartOpen.mock.calls[0]!;
-    expect(cartId).toBe('cart_1');
-    expect(await verifyRpcActor([env.PRINCIPAL_KEY], actor, 'cart:cart_1')).toMatchObject({
-      kind: 'guest',
-      id: guest.id,
-    });
-  });
-
-  it('keeps a staff cart’s files from a buyer’s cookie', async () => {
-    cartSnapshot.mockResolvedValue(state({}, [file]));
-    expect((await get('att_1', { cookie: await guestCookie() })).status).toBe(404);
+    cartSnapshot.mockResolvedValue(
+      state({ external: { expiresAt: Date.now() + 60_000 } as Cart['external'] }, [file]),
+    );
+    expect((await get('att_1', { cookie: await guestCookie() })).status).toBe(401);
+    expect(keepCartOpen).not.toHaveBeenCalled();
   });
 });

@@ -14,8 +14,8 @@ import type {
   BoardFilter,
   Undone,
 } from '@commerceworker/ports/commerce';
+import { plural } from '@commerceworker/ui/lib/format';
 import type { OrderCursor } from './cursor';
-import { plural } from './format';
 import { backOffice, flowStore, orderBoard, pricingStore } from './wire.server';
 
 export type { ApprovalCursor, ApprovalScope, Undone };

@@ -12,6 +12,7 @@ import {
   type OrderModel,
   taxCertificateState,
 } from '@commerceworker/core';
+import { Ago } from '@commerceworker/ui/ago';
 import { Button } from '@commerceworker/ui/button';
 import { Card, CardContent, CardDescription, CardTitle } from '@commerceworker/ui/card';
 import {
@@ -21,6 +22,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@commerceworker/ui/field';
+import { useNow } from '@commerceworker/ui/hooks/use-now';
 import { Input } from '@commerceworker/ui/input';
 import {
   Item,
@@ -29,7 +31,9 @@ import {
   ItemDescription,
   ItemTitle,
 } from '@commerceworker/ui/item';
+import { count, dateTime, money } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { Body, Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { useState } from 'react';
 import {
@@ -41,20 +45,17 @@ import {
   useNavigation,
   useRevalidator,
 } from 'react-router';
-import { Ago } from '~/components/ago';
 import { FormSheet, useFormSheet } from '~/components/form-sheet';
-import { Body, Empty, PageHeader, Section } from '~/components/page';
 import { StatusBadge, ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { audit } from '~/lib/audit.server';
 import { requireUser } from '~/lib/auth.server';
 import { addCertificate, addressesOf, customerById } from '~/lib/customers.server';
 import { engine } from '~/lib/env.server';
-import { count, dateTime, humanize, liveStatus, money, orderRef } from '~/lib/format';
+import { humanize, liveStatus, orderRef } from '~/lib/format';
 import { countOrders, listOrders } from '~/lib/orders.server';
 import { CERTIFICATE_STATES, expiryDay, placesLabel } from '~/lib/tax-certificates';
 import { useCan } from '~/lib/use-me';
-import { useNow } from '~/lib/use-now';
 import type { Route } from './+types/customer';
 
 export const meta = ({ loaderData: d }: Route.MetaArgs) => [

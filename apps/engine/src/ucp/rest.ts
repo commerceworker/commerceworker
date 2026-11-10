@@ -23,6 +23,7 @@ import {
   verifyPlatform,
 } from '@commerceworker/core';
 import { idempotencyKeyProblem, readCappedText } from '../body';
+import { storefrontKeysOf } from '../principal';
 import {
   cancelCheckout,
   completeCheckout,
@@ -50,10 +51,10 @@ const refuse = (status: number, code: string, content: string): UcpResult => ({
   body: ucpError(code, content),
 });
 
-/** The platform the web Worker signed onto this request, or null. */
-export function platformOf(env: Env, request: Request): Promise<PlatformCaller | null> {
+/** The platform the storefront signed onto this request, or null. */
+export async function platformOf(env: Env, request: Request): Promise<PlatformCaller | null> {
   return verifyPlatform(
-    [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS],
+    await storefrontKeysOf(env),
     request.headers.get(PRINCIPAL_HEADER),
     new URL(request.url).pathname,
   );

@@ -10,11 +10,14 @@
 import * as uc from '@commerceworker/application/commerce';
 import {
   type CartGuest,
+  type GuestActor,
   PRINCIPAL_HEADER,
   type Principal,
   type ProxiedPrincipal,
-  type RpcActor,
+  type StaffActor,
+  storefrontKeys,
   verifyCartGuest,
+  verifyGuestActor,
   verifyPrincipal,
   verifyRpcActor,
 } from '@commerceworker/core';
@@ -30,15 +33,34 @@ export function forwardedPrincipal(env: Env, request: Request): Promise<ProxiedP
   );
 }
 
-/** Who the web app signed a binding call for (`signRpcActor`), or null. */
-export function rpcActor(env: Env, signed: string, call: string): Promise<RpcActor | null> {
+/** Who the web app signed a binding call for (`signRpcActor`, under `PRINCIPAL_KEY`), or null. */
+export function rpcActor(env: Env, signed: string, call: string): Promise<StaffActor | null> {
   return verifyRpcActor([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS], signed, call);
 }
 
-/** The external cart's buyer the web app signed onto this request, or null (see `verifyCartGuest`). */
-export function forwardedGuest(env: Env, request: Request): Promise<CartGuest | null> {
+/**
+ * The keys the storefront's envelopes are checked under: `storefrontKey` of `PRINCIPAL_KEY`, then
+ * of the previous one. The storefront holds these and nothing else, so a staff envelope (a v1
+ * principal, a staff actor) is never accepted under them, nor a storefront one under
+ * `PRINCIPAL_KEY`.
+ */
+export function storefrontKeysOf(env: Env): Promise<string[]> {
+  return storefrontKeys([env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS]);
+}
+
+/** The buyer the storefront signed for a binding call (`signGuestActor`), or null. */
+export async function guestActor(
+  env: Env,
+  signed: string,
+  call: string,
+): Promise<GuestActor | null> {
+  return verifyGuestActor(await storefrontKeysOf(env), signed, call);
+}
+
+/** The external cart's buyer the storefront signed onto this request, or null (see `verifyCartGuest`). */
+export async function forwardedGuest(env: Env, request: Request): Promise<CartGuest | null> {
   return verifyCartGuest(
-    [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS],
+    await storefrontKeysOf(env),
     request.headers.get(PRINCIPAL_HEADER),
     new URL(request.url).pathname,
   );

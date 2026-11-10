@@ -161,7 +161,8 @@ punchout configuration.
 1. The buyer clicks your catalog in their system. Their system sends the setup request; CommerceWorker
    checks the partner's identity and secret and that the return URL is one of its hosts, and
    answers with a one-time link to a new cart.
-2. The buyer's browser opens the cart. A cXML `edit` session starts with the lines their system
+2. The buyer's browser opens the cart, on your storefront host (`shop.` followed by your domain, not
+   the app your team signs in to). A cXML `edit` session starts with the lines their system
    sent back. They add and change lines, see prices for their company as they go, and can chat
    with your team, who see the same cart on the [Carts](/guides/carts/) page.
 3. **Return cart to your system** sends the priced lines back. Each line carries its cart and line

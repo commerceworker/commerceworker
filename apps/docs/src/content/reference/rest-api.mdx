@@ -447,7 +447,7 @@ These aren't part of `/api/v1`.
   are the [MCP server](/reference/mcp/), the [A2A endpoint](/reference/a2a/) and their OAuth
   endpoints.
 - `GET /.well-known/agent-card.json` is the A2A Agent Card, public and cached for five minutes.
-- `/ucp/*` and `GET /.well-known/ucp` are [agentic checkout](/reference/ucp/): the business profile is public and cached for five minutes (`404` while the feature is off); the rest takes a registered platform's `cmw_ucp_` key, not an API token.
+- `/ucp/*` and `GET /.well-known/ucp` are [agentic checkout](/reference/ucp/), served on the storefront host (`shop.` and the workspace's domain), not on this API's host: the business profile is public and cached for five minutes (`404` while the feature is off); the rest takes a registered platform's `cmw_ucp_` key, not an API token.
 - `/agents/order-agent/:id` and `/agents/assistant-agent/:name` are the dashboard's live sockets
   for a signed-in person. They are not a public API; the assistant route always reaches the
   caller's own assistant.

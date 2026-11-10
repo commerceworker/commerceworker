@@ -1,8 +1,8 @@
+import { EMBED_HEADER, TURNSTILE_HEADER, withSecurityHeaders } from '@commerceworker/security/csp';
 import { createElement } from 'react';
 import { createRequestHandler, type ServerBuild } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as entry from '../app/entry.server';
-import { EMBED_HEADER, TURNSTILE_HEADER, withSecurityHeaders } from '../app/lib/csp';
 
 /**
  * React Router with the app's own entry.server.tsx and one route whose `headers` asks for

@@ -9,6 +9,7 @@ import {
   type PlatformCaller,
   PRINCIPAL_HEADER,
   signPlatform,
+  storefrontKey,
   UCP_SETTINGS_KEY,
   UCP_VERSION,
 } from '@commerceworker/core';
@@ -18,7 +19,8 @@ import worker from '../src/index';
 export const ORIGIN = 'https://shop.example';
 export const HOOK = 'https://platform.example/hooks/orders';
 export const db = () => createDb(env.DB);
-export const principalKey = (env as { PRINCIPAL_KEY?: string }).PRINCIPAL_KEY!;
+/** The key the storefront signs a platform's header with (`storefrontKey`); the engine derives it. */
+export const platformKey = await storefrontKey((env as { PRINCIPAL_KEY?: string }).PRINCIPAL_KEY!);
 
 const entry = (name: string) => ({
   version: UCP_VERSION,
@@ -71,7 +73,7 @@ export async function platform(
   return caller;
 }
 
-/** A request to /ucp as the web Worker forwards it for `caller`. */
+/** A request to /ucp as the storefront forwards it for `caller`. */
 export async function ucp(
   caller: PlatformCaller | null,
   method: string,
@@ -83,7 +85,7 @@ export async function ucp(
   if (caller)
     h.set(
       PRINCIPAL_HEADER,
-      await signPlatform(principalKey, caller, new URL(path, 'https://engine').pathname),
+      await signPlatform(platformKey, caller, new URL(path, 'https://engine').pathname),
     );
   const res = await worker.fetch(
     new Request(`https://engine${path}`, {

@@ -7,7 +7,13 @@
 
 import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { PRINCIPAL_HEADER, pluginKey, signCartGuest, signPrincipal } from '@commerceworker/core';
+import {
+  PRINCIPAL_HEADER,
+  pluginKey,
+  signCartGuest,
+  signPrincipal,
+  storefrontKey,
+} from '@commerceworker/core';
 import { createDb, orders } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -16,6 +22,7 @@ import setupXml from '../../../../plugins/punchout/tests/fixtures/setup-request.
 import { EngineApi } from '../../src/api';
 import { ensureTemplates } from '../../src/flows';
 import worker from '../../src/index';
+import { storefrontApi } from '../principal';
 
 type Bundles = Record<string, { sha: string; body: string }>;
 const bundles = JSON.parse((env as unknown as { TEST_BUNDLES: string }).TEST_BUNDLES) as Bundles;
@@ -91,7 +98,7 @@ async function guestSocket(cartId: string, guest: { cartId: string; id: string; 
     new Request(`http://engine${path}`, {
       headers: {
         Upgrade: 'websocket',
-        [PRINCIPAL_HEADER]: await signCartGuest(key(), guest, path),
+        [PRINCIPAL_HEADER]: await signCartGuest(await storefrontKey(key()), guest, path),
       },
     }),
     env,
@@ -124,12 +131,12 @@ describe('punchout, end to end', () => {
     expect(setup.status).toBe(200);
     const startUrl = /<URL>([^<]+)<\/URL>/.exec(await setup.text())![1]!;
     const [, cartId, token] = /\/cart\/start\/(cart_[a-z0-9]+)\/([0-9a-f]+)$/.exec(startUrl)!;
-    expect(startUrl.startsWith('https://com.commerceworker.test/cart/start/')).toBe(true);
+    expect(startUrl.startsWith('https://shop.commerceworker.test/cart/start/')).toBe(true);
 
     // 2. The buyer's browser opens the start page; the web app redeems it once.
-    const redeemed = await api().redeemCartStart(cartId!, token!);
+    const redeemed = await storefrontApi().redeemCartStart(cartId!, token!);
     expect(redeemed?.guest).toMatchObject({ cartId, name: 'Ann & Co. Buyer' });
-    expect(await api().redeemCartStart(cartId!, token!)).toBeNull();
+    expect(await storefrontApi().redeemCartStart(cartId!, token!)).toBeNull();
     // The partner's idle timeout (two hours by default) keeps the cart open while they work,
     // and their cookie lasts as long as the cart could: a day from when it opened.
     const opened = (await api().cartSnapshot(cartId!))!.cart!;

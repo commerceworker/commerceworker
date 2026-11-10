@@ -6,6 +6,8 @@
 /* `@commerceworker/ui` is consumed as raw source from outside this app's root, so Tailwind's
    automatic content detection never sees it. */
 @source "../../../packages/ui/src";
+/* The live cart view is shared with the storefront, and lives in its own package. */
+@source "../../../packages/cart/src";
 /* Streamdown renders the assistant's markdown with Tailwind classes of its own. */
 @source "../node_modules/streamdown/dist/*.js";
 

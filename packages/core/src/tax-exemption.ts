@@ -97,7 +97,8 @@ export const taxCertificateFileMatches = (type: string, head: Uint8Array) =>
 
 /** Why a file can't be a certificate's, or null. */
 export function taxCertificateFileProblem(f: { type: string; size: number }): string | null {
-  if (!(f.type in TAX_CERTIFICATE_FILE_TYPES)) return 'Attach a PDF or an image (PNG, JPEG, WebP).';
+  if (!Object.hasOwn(TAX_CERTIFICATE_FILE_TYPES, f.type))
+    return 'Attach a PDF or an image (PNG, JPEG, WebP).';
   if (f.size <= 0) return 'The file is empty.';
   if (f.size > MAX_TAX_CERTIFICATE_BYTES) return 'A file is at most 10 MB.';
   return null;
