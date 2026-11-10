@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
+import { deriveAssistantKey } from './derive-assistant-key.ts';
 import {
+  CONTENT_QUEUES,
+  CONTENT_SECRETS,
+  contentHosts,
+  contentSecretValues,
   foreignJobsReaching,
   healthCheckKey,
   keysProblem,
@@ -23,11 +28,15 @@ import {
   pluginOwnSecrets,
   postWriteCheck,
   RESERVED_PATH_SEGMENTS,
+  renderApi,
   renderCatalog,
   renderDelivery,
   renderEngine,
+  renderMedia,
+  renderPipeline,
   renderPlugin,
   renderStorefront,
+  renderStudio,
   renderWeb,
   sandboxedPlugins,
   secretsProblem,
@@ -56,6 +65,10 @@ const base = (app: string) =>
       'utf8',
     ),
   );
+
+/** An app's content-stack template: for delivery, `wrangler.jsonc`, where `base` reads the catalog-only one. */
+const contentTemplate = (app: string) =>
+  parse(readFileSync(join(import.meta.dirname, '..', 'apps', app, 'wrangler.jsonc'), 'utf8'));
 
 const acme = toDeployment({
   id: 'acme',
@@ -1414,4 +1427,547 @@ test("Logpush's R2 token writes objects in the logs bucket and nothing else", ()
     false,
   );
   assert.equal(tokenMatches(details([{ ...named(t.policies[0]!), effect: 'deny' }]), t), false);
+});
+
+// ---- The content stack (`content`) -----------------------------------------------------------
+
+const ROOT = join(import.meta.dirname, '..');
+const withContent = toDeployment({
+  id: 'acme',
+  ring: 'canary',
+  slot: 2,
+  d1Id: 'd1-acme',
+  catalogKvId: 'a'.repeat(32),
+  content: true,
+  contentD1Id: 'content-d1-acme',
+  contentKvId: 'b'.repeat(32),
+});
+
+/** Every content Worker's rendered config, by app. */
+const contentConfigs = (d: ReturnType<typeof toDeployment>) => ({
+  pipeline: renderPipeline(contentTemplate('pipeline'), d),
+  media: renderMedia(contentTemplate('media'), d),
+  api: renderApi(contentTemplate('api'), d),
+  delivery: renderDelivery(base('delivery'), d, contentTemplate('delivery')),
+  studio: renderStudio(contentTemplate('studio'), d),
+});
+
+test('the content stack is off unless the registry turns it on, and then every host has a default', () => {
+  assert.equal(acme.content, false);
+  assert.equal(acme.studioDomain, undefined);
+  assert.throws(() => contentHosts(acme), /content stack off/);
+  assert.deepEqual(contentHosts(withContent), {
+    studio: 'studio.acme.commerceworker.com',
+    api: 'api.acme.commerceworker.com',
+    cdn: 'cdn.acme.commerceworker.com',
+    media: 'media.acme.commerceworker.com',
+  });
+  // The commerce hosts are unchanged beside them.
+  assert.equal(withContent.domain, 'acme.commerceworker.com');
+  assert.equal(withContent.catalogDomain, 'catalog.acme.commerceworker.com');
+  assert.equal(withContent.storefrontDomain, 'shop.acme.commerceworker.com');
+  // Each follows a customer's own domain, and each can be named.
+  const own = toDeployment({
+    ...acme,
+    domain: 'orders.acme.example',
+    content: true,
+    apiDomain: 'content-api.acme.example',
+  });
+  assert.equal(own.studioDomain, 'studio.orders.acme.example');
+  assert.equal(own.apiDomain, 'content-api.acme.example');
+  assert.equal(own.cdnDomain, 'cdn.orders.acme.example');
+});
+
+test('content hosts and ids are refused with the content stack off, and checked with it on', () => {
+  for (const [k, v] of [
+    ['studioDomain', 'studio.acme.example'],
+    ['apiDomain', 'api.acme.example'],
+    ['cdnDomain', 'cdn.acme.example'],
+    ['mediaDomain', 'media.acme.example'],
+    ['contentD1Id', 'x'],
+    ['contentKvId', 'b'.repeat(32)],
+  ] as const) {
+    assert.throws(
+      () => toDeployment({ ...acme, [k]: v }),
+      new RegExp(`${k} needs "content": true`),
+    );
+    assert.throws(
+      () => toDeployment({ ...acme, content: false, [k]: v }),
+      new RegExp(`${k} needs "content": true`),
+    );
+  }
+  assert.throws(() => toDeployment({ ...acme, content: 'yes' }), /content must be true or false/);
+  for (const k of ['studioDomain', 'apiDomain', 'cdnDomain', 'mediaDomain'])
+    assert.throws(
+      () => toDeployment({ ...withContent, [k]: 'nope' }),
+      new RegExp(`${k} must be a host`),
+    );
+  assert.throws(() => toDeployment({ ...withContent, contentKvId: 'short' }), /contentKvId/);
+  assert.throws(() => toDeployment({ ...withContent, contentD1Id: '' }), /contentD1Id/);
+  // Two of one deployment's Workers can't share a host.
+  assert.throws(
+    () => toDeployment({ ...withContent, cdnDomain: withContent.catalogDomain }),
+    /catalog\.acme\.commerceworker\.com is the host of two/,
+  );
+  assert.throws(
+    () => toDeployment({ ...withContent, mediaDomain: 'api.acme.commerceworker.com' }),
+    /is the host of two/,
+  );
+});
+
+test('a commerce-only deployment renders exactly what it did, with or without content templates', () => {
+  const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
+  assert.equal(d.content, false);
+  // Delivery stays the catalog-only config whatever template is passed beside it.
+  assert.deepEqual(renderDelivery(base('delivery'), d), base('delivery'));
+  assert.deepEqual(
+    renderDelivery(base('delivery'), d, contentTemplate('delivery')),
+    base('delivery'),
+  );
+  assert.equal(
+    renderDelivery(base('delivery'), acme, contentTemplate('delivery')).main,
+    'src/catalog/worker.ts',
+  );
+  // Nothing about the content stack reaches provisioning or the Logpush job.
+  const vars = shellVars(acme);
+  assert.equal(vars.CONTENT, 'false');
+  for (const k of [
+    'CONTENT_D1',
+    'CONTENT_KV',
+    'CONTENT_MEDIA',
+    'CONTENT_VECTORS',
+    'CONTENT_QUEUES',
+  ])
+    assert.equal(vars[k], '', k);
+  assert.ok(!logpushJob(acme).scripts.some((s) => /pipeline|-api-|media|studio/.test(s)));
+  assert.throws(() => renderPipeline(contentTemplate('pipeline'), acme), /content stack off/);
+});
+
+test('`render` writes the content Workers only for a deployment with the content stack', () => {
+  const apps = ['catalog', 'delivery', 'engine', 'storefront', 'web'];
+  const content = ['pipeline', 'media', 'api', 'studio'];
+  const written = (id: string) =>
+    execFileSync('node', ['scripts/fleet.ts', 'render', id], { cwd: ROOT, encoding: 'utf8' })
+      .trim()
+      .split('\n')
+      .map((f) => f.split('/').at(-2)!)
+      .sort();
+  const files = () =>
+    [...apps, ...content].map((a) => join(ROOT, 'apps', a, 'wrangler.commerceworker.json'));
+  try {
+    assert.deepEqual(written('commerceworker'), [...apps].sort());
+    for (const a of content)
+      assert.throws(
+        () => readFileSync(join(ROOT, 'apps', a, 'wrangler.commerceworker.json')),
+        /ENOENT/,
+      );
+  } finally {
+    for (const f of files()) rmSync(f, { force: true });
+  }
+});
+
+test("a content deployment's Workers all bind its content database, and no other", () => {
+  const configs = contentConfigs(withContent);
+  assert.deepEqual(Object.keys(configs).sort(), ['api', 'delivery', 'media', 'pipeline', 'studio']);
+  for (const [app, c] of Object.entries(configs)) {
+    assert.equal(c.d1_databases.length, 1, app);
+    assert.deepEqual(
+      { ...c.d1_databases[0], migrations_dir: undefined },
+      {
+        binding: 'DB',
+        database_name: 'commerceworker-content-acme',
+        database_id: 'content-d1-acme',
+        migrations_dir: undefined,
+      },
+      app,
+    );
+    // The commerce database isn't a binding of any of them.
+    assert.ok(!JSON.stringify(c).includes('"d1-acme"'), `${app} binds the commerce database`);
+    assert.equal(c.workers_dev, false, app);
+    assert.equal(c.preview_urls, false, app);
+    assert.equal(c.logpush, true, app);
+    // Only the deployment's own resources: nothing the templates keep for local work.
+    assert.ok(!JSON.stringify(c).includes('"remote"'), `${app} keeps a remote binding`);
+    assert.ok(!JSON.stringify(c).includes('012fecad'), app);
+    assert.ok(!JSON.stringify(c).includes('staging'), `${app} names a staging resource`);
+  }
+  // The migrations come from the content store, applied through the pipeline's config.
+  assert.equal(configs.pipeline.d1_databases[0].migrations_dir, '../../packages/store/migrations');
+  // The commerce database keeps its own: engine, web and catalog are rendered as before.
+  assert.equal(renderEngine(base('engine'), withContent).d1_databases[0].database_id, 'd1-acme');
+});
+
+test("every content Worker's name, bucket, index, cache and routes carry the deployment", () => {
+  const n = names(withContent);
+  const c = contentConfigs(withContent);
+  assert.deepEqual(
+    [c.pipeline.name, c.media.name, c.api.name, c.delivery.name, c.studio.name],
+    [
+      'commerceworker-pipeline-acme',
+      'commerceworker-media-acme',
+      'commerceworker-api-acme',
+      'commerceworker-delivery-acme',
+      'commerceworker-studio-acme',
+    ],
+  );
+  assert.equal(c.pipeline.routes, undefined);
+  assert.deepEqual(c.api.routes, [{ pattern: 'api.acme.commerceworker.com', custom_domain: true }]);
+  assert.deepEqual(c.media.routes, [
+    { pattern: 'media.acme.commerceworker.com', custom_domain: true },
+  ]);
+  assert.deepEqual(c.studio.routes, [
+    { pattern: 'studio.acme.commerceworker.com', custom_domain: true },
+  ]);
+  for (const app of ['pipeline', 'media', 'api'] as const) {
+    assert.deepEqual(c[app].kv_namespaces, [{ binding: 'KV_CACHE', id: 'b'.repeat(32) }], app);
+    assert.deepEqual(
+      c[app].r2_buckets,
+      [{ binding: 'MEDIA_BUCKET', bucket_name: n.mediaBucket }],
+      app,
+    );
+  }
+  assert.equal(n.contentD1, 'commerceworker-content-acme');
+  assert.equal(c.studio.kv_namespaces, undefined);
+  for (const app of ['pipeline', 'api'] as const)
+    assert.deepEqual(c[app].vectorize, [
+      { binding: 'VECTORIZE', index_name: 'commerceworker-vectors-acme' },
+    ]);
+  assert.equal(c.api.vars.OAUTH_ISSUER, 'https://studio.acme.commerceworker.com');
+  assert.equal(c.api.vars.MEDIA_BASE_URL, 'https://api.acme.commerceworker.com');
+  assert.equal(c.pipeline.vars.MEDIA_PUBLIC_URL, 'https://media.acme.commerceworker.com');
+  assert.equal(c.pipeline.vars.QUEUE_SUFFIX, '-acme');
+  assert.equal(c.pipeline.vars.AI_GATEWAY_ID, 'commerceworker-acme');
+  // The studio fronts the api and delivery by their rendered names.
+  assert.deepEqual(c.studio.services, [
+    { binding: 'API', service: 'commerceworker-api-acme' },
+    { binding: 'DELIVERY', service: 'commerceworker-delivery-acme' },
+  ]);
+});
+
+test('the pipeline owns the content Durable Objects and Workflows, and the others bind it by name', () => {
+  const c = contentConfigs(withContent);
+  // Classes, bindings and migrations come from the base alone (scripts/do-migrations.test.ts).
+  assert.deepEqual(c.pipeline.migrations, contentTemplate('pipeline').migrations);
+  assert.deepEqual(c.pipeline.durable_objects, contentTemplate('pipeline').durable_objects);
+  for (const app of ['api', 'delivery'] as const)
+    for (const b of c[app].durable_objects.bindings)
+      assert.equal(b.script_name, 'commerceworker-pipeline-acme', `${app} ${b.name}`);
+  for (const w of c.api.workflows) assert.equal(w.script_name, 'commerceworker-pipeline-acme');
+  // Workflow names are account-wide.
+  const workflows = [
+    ...c.pipeline.workflows,
+    ...renderCatalog(base('catalog'), withContent).workflows,
+    ...renderEngine(base('engine'), withContent).workflows,
+  ].map((w: { name: string }) => w.name);
+  assert.equal(new Set(workflows).size, workflows.length);
+  for (const w of workflows) assert.ok(w.endsWith('-acme'), w);
+});
+
+test("the content queues are the deployment's own, every producer and consumer by name", () => {
+  const n = names(withContent);
+  const mine = new Set(CONTENT_QUEUES.map(n.contentQueue));
+  assert.equal(mine.size, 10);
+  const c = contentConfigs(withContent);
+  const used = [
+    ...c.pipeline.queues.producers,
+    ...c.pipeline.queues.consumers,
+    ...c.api.queues.producers,
+    ...c.media.queues.consumers,
+    ...c.delivery.queues.consumers.filter((q: { queue: string }) => !q.queue.includes('catalog')),
+  ].flatMap((q: { queue: string; dead_letter_queue?: string }) => [
+    q.queue,
+    ...(q.dead_letter_queue ? [q.dead_letter_queue] : []),
+  ]);
+  for (const q of used) assert.ok(mine.has(q), `${q} isn't provisioned for the deployment`);
+  // Every provisioned queue is used by some Worker.
+  for (const q of mine) assert.ok(used.includes(q), `${q} is provisioned but no Worker binds it`);
+  // The catalog's queues keep their own names beside them.
+  const all = new Set([...mine, n.catalogPurge, n.catalogPurgeDlq, n.catalogChanges]);
+  assert.equal(all.size, mine.size + 3);
+  assert.ok(c.delivery.queues.consumers.some((q: { queue: string }) => q.queue === n.catalogPurge));
+});
+
+test('delivery with content is the dispatcher at both hosts, with the catalog and content bindings', () => {
+  const d = contentConfigs(withContent).delivery;
+  assert.equal(d.main, 'src/index.ts');
+  assert.deepEqual(d.routes, [
+    { pattern: 'catalog.acme.commerceworker.com', custom_domain: true },
+    { pattern: 'cdn.acme.commerceworker.com', custom_domain: true },
+  ]);
+  assert.deepEqual(Object.keys(d.exports).sort(), ['CatalogDelivery', 'Delivery', 'default']);
+  assert.deepEqual(d.r2_buckets.map((b: { binding: string }) => b.binding).sort(), [
+    'MEDIA_BUCKET',
+    'PUBLISHED',
+  ]);
+  assert.deepEqual(d.kv_namespaces.map((k: { binding: string }) => k.binding).sort(), [
+    'CARDS',
+    'KV_CACHE',
+  ]);
+  assert.deepEqual(d.services, [
+    { binding: 'CATALOG', service: 'commerceworker-catalog-acme', entrypoint: 'SearchApi' },
+  ]);
+  assert.deepEqual(
+    d.analytics_engine_datasets.map((a: { dataset: string }) => a.dataset),
+    ['commerceworker_metrics_acme', 'commerceworker_catalog_delivery_acme'],
+  );
+  // The catalog's side is what the catalog-only config has.
+  const only = renderDelivery(base('delivery'), { ...withContent, content: false });
+  assert.deepEqual(d.r2_buckets.at(-1), only.r2_buckets[0]);
+  assert.deepEqual(d.kv_namespaces.at(-1), only.kv_namespaces[0]);
+  assert.deepEqual(d.queues.consumers.at(-1), only.queues.consumers[0]);
+  assert.throws(() => renderDelivery(base('delivery'), withContent), /needs its content template/);
+});
+
+test("rate-limit namespaces never repeat across a deployment's Workers, or across deployments", () => {
+  const ids = (d: ReturnType<typeof toDeployment>) =>
+    [
+      renderWeb(base('web'), d),
+      renderStorefront(base('storefront'), d),
+      ...Object.values(contentConfigs(d)),
+    ].flatMap((c) => (c.ratelimits ?? []).map((r: { namespace_id: string }) => r.namespace_id));
+  const other = toDeployment({ ...withContent, id: 'beta', slot: 3 });
+  const first = ids(withContent);
+  assert.equal(new Set(first).size, first.length, first.join());
+  const second = ids(other);
+  assert.equal(new Set([...first, ...second]).size, first.length + second.length);
+  assert.deepEqual(first.slice(0, 2), ['2001', '2002']);
+  assert.ok(first.includes('2501') && first.includes('2506'));
+});
+
+test('a content deployment gets the content secrets, each Worker only its own', () => {
+  const key = 'a'.repeat(64);
+  const env = {
+    PRINCIPAL_KEY: key,
+    PRINCIPAL_KEY_PREVIOUS: 'b'.repeat(64),
+    DATA_KEY: 'c'.repeat(64),
+    TOKEN_PEPPER: 'd'.repeat(64),
+    MEDIA_SIGNING_SECRET: 'e'.repeat(64),
+    PASSWORD_PEPPER: 'f'.repeat(64),
+    SETUP_TOKEN: 'setup-code',
+    ADMIN_TOKEN: 'admin',
+    STRIPE_SECRET_KEY: 'sk_test_commerce_only',
+  };
+  const values = (app: keyof typeof CONTENT_SECRETS, over: Record<string, string> = {}) =>
+    contentSecretValues(withContent, { ...env, ...over }, app);
+  // The pipeline never holds PRINCIPAL_KEY: its assistant keys are derived from it (and from the
+  // previous one), as the security package derives them.
+  const pipeline = values('pipeline');
+  assert.deepEqual(Object.keys(pipeline).sort(), [
+    'ASSISTANT_PRINCIPAL_KEY',
+    'ASSISTANT_PRINCIPAL_KEY_PREVIOUS',
+    'DATA_KEY',
+    'MEDIA_SIGNING_SECRET',
+    'TOKEN_PEPPER',
+  ]);
+  assert.equal(pipeline.ASSISTANT_PRINCIPAL_KEY, deriveAssistantKey(key));
+  assert.equal(pipeline.ASSISTANT_PRINCIPAL_KEY_PREVIOUS, deriveAssistantKey('b'.repeat(64)));
+  assert.notEqual(pipeline.ASSISTANT_PRINCIPAL_KEY, key);
+  // The rest, each its own.
+  assert.deepEqual(Object.keys(values('media')), ['MEDIA_SIGNING_SECRET']);
+  assert.deepEqual(Object.keys(values('delivery')).sort(), [
+    'DATA_KEY',
+    'MEDIA_SIGNING_SECRET',
+    'TOKEN_PEPPER',
+  ]);
+  assert.deepEqual(Object.keys(values('api')).sort(), [
+    'ADMIN_TOKEN',
+    'DATA_KEY',
+    'MEDIA_SIGNING_SECRET',
+    'PRINCIPAL_KEY',
+    'PRINCIPAL_KEY_PREVIOUS',
+    'TOKEN_PEPPER',
+  ]);
+  assert.deepEqual(Object.keys(values('studio')).sort(), [
+    'DATA_KEY',
+    'PASSWORD_PEPPER',
+    'PRINCIPAL_KEY',
+    'PRINCIPAL_KEY_PREVIOUS',
+    'SETUP_TOKEN',
+  ]);
+  // None carries a commerce-only secret, and no Worker gets another's.
+  for (const app of Object.keys(CONTENT_SECRETS) as (keyof typeof CONTENT_SECRETS)[])
+    assert.ok(!('STRIPE_SECRET_KEY' in values(app)), app);
+  // A content deployment can't deploy without the secrets only content uses, or with a short key.
+  assert.throws(
+    () => values('api', { TOKEN_PEPPER: '' }),
+    /TOKEN_PEPPER not set: add it to the deploy-acme/,
+  );
+  assert.throws(
+    () => values('media', { MEDIA_SIGNING_SECRET: '' }),
+    /MEDIA_SIGNING_SECRET not set/,
+  );
+  assert.throws(() => values('studio', { DATA_KEY: '' }), /DATA_KEY not set/);
+  assert.throws(() => values('api', { TOKEN_PEPPER: 'short' }), /TOKEN_PEPPER must be at least 32/);
+  assert.throws(
+    () => contentSecretValues(acme, env, 'api'),
+    /content stack off: no api to collect secrets for/,
+  );
+});
+
+test('the secrets command takes a content Worker and its deployment, and refuses one with content off', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'content-secrets-'));
+  try {
+    const run = (...args: string[]) =>
+      execFileSync('node', ['scripts/fleet.ts', 'secrets', ...args], {
+        cwd: ROOT,
+        env: { PATH: process.env.PATH, PRINCIPAL_KEY: 'a'.repeat(64), DATA_KEY: 'c'.repeat(64) },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    assert.throws(
+      () => run('pipeline', join(dir, 'p.json')),
+      /secrets pipeline <out> <deployment id>/,
+    );
+    assert.throws(
+      () => run('pipeline', join(dir, 'p.json'), 'commerceworker'),
+      /content stack off/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('secrets per content app: the pipeline holds derived keys and never PRINCIPAL_KEY', () => {
+  assert.deepEqual(Object.keys(CONTENT_SECRETS).sort(), [
+    'api',
+    'delivery',
+    'media',
+    'pipeline',
+    'studio',
+  ]);
+  assert.ok(!(CONTENT_SECRETS.pipeline as readonly string[]).includes('PRINCIPAL_KEY'));
+  assert.ok(!(CONTENT_SECRETS.delivery as readonly string[]).includes('PRINCIPAL_KEY'));
+  assert.deepEqual([...CONTENT_SECRETS.media], ['MEDIA_SIGNING_SECRET']);
+  // Only the studio hashes passwords and takes the setup code; only the api holds API tokens' secrets.
+  assert.ok((CONTENT_SECRETS.studio as readonly string[]).includes('PASSWORD_PEPPER'));
+  assert.ok(!(CONTENT_SECRETS.api as readonly string[]).includes('PASSWORD_PEPPER'));
+});
+
+test("provisioning knows the content stack's resource names, and only for a content deployment", () => {
+  const v = shellVars(withContent);
+  assert.equal(v.CONTENT, 'true');
+  assert.equal(v.CONTENT_D1, 'commerceworker-content-acme');
+  assert.equal(v.CONTENT_KV, 'commerceworker-content-cache-acme');
+  assert.equal(v.CONTENT_MEDIA, 'commerceworker-media-acme');
+  assert.equal(v.CONTENT_VECTORS, 'commerceworker-vectors-acme');
+  assert.equal(v.ASSET_EVENTS, 'commerceworker-asset-events-acme');
+  assert.deepEqual(v.CONTENT_QUEUES.split(' '), [
+    'commerceworker-events-acme',
+    'commerceworker-events-dlq-acme',
+    'commerceworker-bulk-acme',
+    'commerceworker-agents-acme',
+    'commerceworker-purge-acme',
+    'commerceworker-purge-dlq-acme',
+    'commerceworker-media-purge-acme',
+    'commerceworker-media-purge-dlq-acme',
+    'commerceworker-asset-events-acme',
+    'commerceworker-asset-events-dlq-acme',
+  ]);
+  assert.equal(v.STUDIO_DOMAIN, 'studio.acme.commerceworker.com');
+  assert.equal(v.CDN_DOMAIN, 'cdn.acme.commerceworker.com');
+  // The commerce resources are named as before beside them.
+  assert.equal(v.D1, 'commerceworker-acme');
+  // A demo has no vector index.
+  assert.equal(shellVars({ ...withContent, demo: true }).CONTENT_VECTORS, '');
+  // Every variable provision.sh reads is one it was given, set by the script, or from the environment.
+  const script = readFileSync(join(ROOT, 'scripts', 'provision.sh'), 'utf8');
+  const assigned = new Set([
+    ...[...script.matchAll(/(?:^|[\s(])([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]!),
+    ...[...script.matchAll(/for ([A-Z][A-Z0-9_]*) in/g)].map((m) => m[1]!),
+  ]);
+  const known = new Set([
+    ...Object.keys(v),
+    ...assigned,
+    'CLOUDFLARE_API_TOKEN',
+    'CLOUDFLARE_ACCOUNT_ID',
+    'ROTATE_LOGPUSH_KEY',
+  ]);
+  const used = new Set([...script.matchAll(/\$\{?([A-Z][A-Z0-9_]+)/g)].map((m) => m[1]!));
+  for (const name of used)
+    assert.ok(known.has(name), `provision.sh reads $${name}, which nothing sets`);
+});
+
+test('a content deployment needs its content database and cache to be in the matrix', () => {
+  assert.doesNotThrow(() => matrix([withContent]));
+  for (const missing of ['contentD1Id', 'contentKvId'] as const) {
+    const d = { ...withContent, [missing]: undefined };
+    assert.throws(() => matrix([d]), /not provisioned/);
+    assert.throws(
+      () => renderPipeline(contentTemplate('pipeline'), d),
+      new RegExp(`no ${missing}: run scripts/provision.sh acme`),
+    );
+    // Held, it is left out.
+    assert.deepEqual(matrix([{ ...d, hold: true }]).canary, []);
+  }
+  // The studio takes no KV namespace.
+  assert.doesNotThrow(() =>
+    renderStudio(contentTemplate('studio'), { ...withContent, contentKvId: undefined }),
+  );
+});
+
+test("a content deployment's Logpush job takes the content Workers too, and nothing else's", () => {
+  assert.deepEqual(logpushJob(withContent).scripts, [
+    'commerceworker-web-acme',
+    'commerceworker-storefront-acme',
+    'commerceworker-engine-acme',
+    'commerceworker-catalog-acme',
+    'commerceworker-delivery-acme',
+    'commerceworker-pipeline-acme',
+    'commerceworker-media-acme',
+    'commerceworker-api-acme',
+    'commerceworker-studio-acme',
+  ]);
+});
+
+test('a content demo mocks its models and has no vector index', () => {
+  const demo = toDeployment({ ...withContent, id: 'acme-demo', demo: true });
+  const c = contentConfigs(demo);
+  for (const app of ['pipeline', 'api'] as const) {
+    assert.equal(c[app].vectorize, undefined, app);
+    assert.equal(c[app].vars.AI_MODE, 'mock', app);
+    assert.equal(c[app].vars.ALLOW_FAKE_ADAPTERS, 'ai,vectors', app);
+  }
+  assert.equal(c.api.vars.DEMO_STARTERS, 'true');
+  assert.equal(c.studio.vars.AI_MODE, undefined);
+  // A persistent deployment allows no fakes.
+  assert.equal(contentConfigs(withContent).api.vars.ALLOW_FAKE_ADAPTERS, '');
+  assert.equal(contentConfigs(withContent).api.vars.AI_MODE, 'live');
+});
+
+test("an EU deployment's content Durable Objects, bucket and database are in the EU", () => {
+  const eu = toDeployment({ ...withContent, jurisdiction: 'eu' });
+  const c = contentConfigs(eu);
+  for (const app of ['pipeline', 'api', 'delivery', 'media'] as const) {
+    assert.equal(c[app].vars.DATA_JURISDICTION, 'eu', app);
+    const bucket = c[app].r2_buckets.find((b: { binding: string }) => b.binding === 'MEDIA_BUCKET');
+    assert.equal(bucket.jurisdiction, 'eu', app);
+  }
+  assert.equal(c.studio.vars.DATA_JURISDICTION, undefined);
+  assert.equal(shellVars(eu).JURISDICTION, 'eu');
+});
+
+test('the registry refuses two deployments on one host or one queue', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  try {
+    const write = (name: string, v: object) => writeFileSync(join(dir, name), JSON.stringify(v));
+    const a = { id: 'aa', ring: 'canary', slot: 1, content: true };
+    write('aa.jsonc', a);
+    write('bb.jsonc', {
+      id: 'bb',
+      ring: 'canary',
+      slot: 2,
+      content: true,
+      mediaDomain: 'media.aa.commerceworker.com',
+    });
+    assert.throws(() => loadDeployments(dir), /share the host media\.aa\.commerceworker\.com/);
+    // Queue names are account-wide: a suffix "-dlq" would name the events dead letters of a
+    // deployment with no suffix.
+    write('aa.jsonc', { ...a, suffix: '' });
+    write('bb.jsonc', { id: 'bb', ring: 'canary', slot: 2, content: true });
+    assert.doesNotThrow(() => loadDeployments(dir));
+    write('bb.jsonc', { id: 'bb', ring: 'canary', slot: 2, content: true, suffix: '-dlq' });
+    assert.throws(() => loadDeployments(dir), /share the queue/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

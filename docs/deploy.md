@@ -197,13 +197,13 @@ commitlint (`commitlint.config.ts`) over every commit the PR adds. On `main`, on
 `DEPLOY_ENABLED` is `true` (Settings → Secrets and variables → Actions → Variables), it then deploys
 every deployment in `deployments/`, ring by ring ([Operations](operations.md#rings)). Each
 deployment's job (`.github/workflows/deploy.yml`) records a D1 Time Travel bookmark, migrates its
-D1, deploys its catalog, deploys its delivery, deploys each [plugin](plugins.md) (its D1 migrations, then its Worker; a sandboxed plugin's bundle is published and pinned instead), deploys its engine, deploys its storefront, deploys its web app, smoke-tests `/health`, `/health/deep` and `/login` on the app's host, `https://$CATALOG_DOMAIN/health` on the catalog's and `/health` and `/health/deep` on the storefront's (`$STOREFRONT_DOMAIN`), then runs the [write check](#the-write-check),
+D1, deploys its catalog, deploys its delivery (for a deployment with the [content stack](#the-content-stack), its pipeline, media and api come before it), deploys each [plugin](plugins.md) (its D1 migrations, then its Worker; a sandboxed plugin's bundle is published and pinned instead), deploys its engine, deploys its storefront, deploys its web app (then, with content, its studio), smoke-tests `/health`, `/health/deep` and `/login` on the app's host, `https://$CATALOG_DOMAIN/health` on the catalog's and `/health` and `/health/deep` on the storefront's (`$STOREFRONT_DOMAIN`), then runs the [write check](#the-write-check) (and, with content, the content stack's own smoke test),
 checks their latency (the best of three requests to `/login`, `/health/deep`, the catalog's
 `/health` and the storefront's `/health/deep` against budgets of 1.5 s, 1 s, 0.5 s and 1 s; over budget is a warning on the run, never a
 failure or a rollback) and, for `commerceworker` only, deploys these docs, in that order, so a change never reaches a
 deployment before its migration. If anything fails once the catalog has deployed (the engine deploy,
 the web deploy or the smoke test), the job runs `wrangler rollback` for each Worker that deployed:
-the engine first, then the storefront and the web app, the plugins, delivery and the catalog. The engine goes
+the engine first, then (with content) the pipeline, then the storefront and the web app, the plugins, the studio, api and media, delivery and the catalog. The engine goes
 first because it is the one that can refuse (Cloudflare won't roll a Worker back past a Durable
 Object migration): if it can't go back, the step fails with an error and leaves every other Worker
 on the new version, so the storefront and the web app never run against an engine they weren't built with, and a person
@@ -235,6 +235,18 @@ because the Cloudflare API occasionally fails a request outright (codes `7403`, 
 step is safe to repeat. If the job still fails, re-run its failed jobs in GitHub Actions rather
 than deploying from a laptop. The manual commands under [First deploy](#first-deploy) are for
 setting up a new account.
+
+### The content stack
+
+A deployment whose registry entry has `"content": true` also deploys the content Workers, and a commerce-only one skips every content step below (each has `if: fromJSON(inputs.deployment).content`):
+
+1. **Collect content secrets**: one secrets file per content Worker (`pipeline`, `media`, `api`, `delivery`, `studio`; [Configuration](configuration.md#content-stack-secrets)), before anything changes. Without `TOKEN_PEPPER` or `MEDIA_SIGNING_SECRET` in the environment the deploy stops here.
+2. **Record content D1 bookmark** and **Migrate content D1**: the content database `commerceworker-content<suffix>`, from `packages/store/migrations`, applied through the pipeline's rendered config, right after the commerce database is migrated from `packages/db/migrations`. Both are expand-only, and a failed smoke test rolls the Workers back but not either database.
+3. Deploy in dependency order: the **pipeline** (it owns every content Durable Object and Workflow class that the api, delivery and studio bind by its script name), **media**, **api**, then **delivery** (with content it is the dispatcher at `catalog.<domain>` and `cdn.<domain>`, with its own secrets file), then the commerce Workers as before, and last the **studio** (it binds the api and delivery). The gitignored embeds the bundles import are generated first (`pnpm generate`).
+4. **Smoke test content** (a step of its own, 20 minutes at most, each request retried for five minutes): the studio's `/health`, `/health/deep` and `/login`, the api's `/health` and `/openapi.json`, `https://<cdnDomain>/health`, the media origin's `/health`, an unknown media URL answering `404` and an anonymous delivery read answering `401`. The latency check adds the studio's `/login` and the cdn's `/health`.
+5. A failure rolls back what deployed, as above: the pipeline has the engine's rule (a Durable Object migration since its last version can stop its rollback, and then the api, media, delivery and studio stay with it), and delivery goes back only when neither engine is stuck.
+
+The content database has its own Time Travel bookmark in the run summary: restore it as in [Restoring D1](#restoring-d1) with `commerceworker-content<suffix>`. `./scripts/provision.sh <id>` creates the content resources first, and a content deployment without `contentD1Id` and `contentKvId` in the registry stops the plan ([Operations](operations.md#the-content-stack)). The `deploy.yml` job's timeout is 75 minutes for every deployment.
 
 ### The write check
 
@@ -290,7 +302,7 @@ after a migration that corrupted rows, restore to that bookmark:
 pnpm --filter @commerceworker/web exec wrangler d1 time-travel restore commerceworker --bookmark=<bookmark>
 ```
 
-For a customer's deployment the database is `commerceworker-<id>`.
+For a customer's deployment the database is `commerceworker-<id>`; the content stack's is `commerceworker-content` (`commerceworker-content-<id>`), restored from its own bookmark, `pnpm --filter @commerceworker/pipeline exec wrangler d1 time-travel restore …` against its rendered config.
 
 A restore replaces the whole database, so every write since the bookmark is lost: orders started,
 approvals decided and audit events after that point. Roll the Workers back first if the deployed

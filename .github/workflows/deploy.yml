@@ -56,13 +56,17 @@ jobs:
     # Also when there are no plugins (plugin-bundles skipped), never after it failed.
     if: ${{ !cancelled() && (needs.plugin-bundles.result == 'success' || needs.plugin-bundles.result == 'skipped') }}
     runs-on: ubuntu-latest
-    # The deploys, the Smoke test step's 28 minutes at most, and the rollback after it.
-    timeout-minutes: 45
+    # The deploys, the Smoke test step's 28 minutes at most, and the rollback after it. A deployment
+    # with the content stack (`content`) has five more Workers to build and deploy and its own smoke
+    # step of up to 20 minutes, so the limit is the same for every deployment: a commerce-only one
+    # is bounded by the steps' own timeouts long before it.
+    timeout-minutes: 75
     # The deployment's GitHub environment holds its secrets (PRINCIPAL_KEY and DATA_KEY, required,
     # and PRINCIPAL_KEY_PREVIOUS and DATA_KEY_PREVIOUS during a rotation; SETUP_TOKEN, SHOPIFY_WEBHOOK_SECRET,
     # STRIPE_WEBHOOK_SECRET, OIDC_CLIENT_SECRET, INTAKE_ALLOWLIST, SHIPPING_CARRIER_AUTH, STRIPE_SECRET_KEY,
-    # UCP_SIGNING_KEY; and each installed plugin's PLUGIN_<ID>_<NAME>, docs/plugins.md) and, if it
-    # should, a required reviewer.
+    # UCP_SIGNING_KEY; with the content stack also TOKEN_PEPPER and MEDIA_SIGNING_SECRET, required,
+    # and STREAM_WEBHOOK_SECRET, MCP_TOKEN and ADMIN_TOKEN; and each installed plugin's
+    # PLUGIN_<ID>_<NAME>, docs/plugins.md) and, if it should, a required reviewer.
     # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID can be repository secrets.
     environment:
       name: ${{ fromJSON(inputs.deployment).environment }}
@@ -77,6 +81,14 @@ jobs:
       DOMAIN: ${{ fromJSON(inputs.deployment).domain }}
       CATALOG_DOMAIN: ${{ fromJSON(inputs.deployment).catalogDomain }}
       STOREFRONT_DOMAIN: ${{ fromJSON(inputs.deployment).storefrontDomain }}
+      # The content stack: `true` for a deployment whose registry entry has "content": true, which
+      # also deploys the pipeline, media, api and studio Workers and delivery's content side. The
+      # hosts are empty without it.
+      CONTENT: ${{ fromJSON(inputs.deployment).content }}
+      STUDIO_DOMAIN: ${{ fromJSON(inputs.deployment).studioDomain }}
+      API_DOMAIN: ${{ fromJSON(inputs.deployment).apiDomain }}
+      CDN_DOMAIN: ${{ fromJSON(inputs.deployment).cdnDomain }}
+      MEDIA_DOMAIN: ${{ fromJSON(inputs.deployment).mediaDomain }}
       # Rendered next to each app's wrangler.jsonc by the Render step.
       CONFIG: wrangler.${{ fromJSON(inputs.deployment).id }}.json
     # The Cloudflare API sometimes fails a request outright (codes 7403, 10013) and succeeds on
@@ -152,6 +164,29 @@ jobs:
           node scripts/fleet.ts secrets engine "$RUNNER_TEMP/engine-secrets.json" "$ID"
           node scripts/fleet.ts secrets storefront "$RUNNER_TEMP/storefront-secrets.json" "$ID"
           node scripts/fleet.ts secrets web "$RUNNER_TEMP/web-secrets.json" "$ID"
+      # The content stack's Workers, each with only its own secrets. The pipeline gets the
+      # assistant's keys derived from PRINCIPAL_KEY (never the key itself). A content deployment
+      # also needs TOKEN_PEPPER and MEDIA_SIGNING_SECRET: without them the deploy stops here,
+      # before anything is migrated.
+      - name: Collect content secrets
+        if: fromJSON(inputs.deployment).content
+        env:
+          PRINCIPAL_KEY: ${{ secrets.PRINCIPAL_KEY }}
+          PRINCIPAL_KEY_PREVIOUS: ${{ secrets.PRINCIPAL_KEY_PREVIOUS }}
+          DATA_KEY: ${{ secrets.DATA_KEY }}
+          DATA_KEY_PREVIOUS: ${{ secrets.DATA_KEY_PREVIOUS }}
+          TOKEN_PEPPER: ${{ secrets.TOKEN_PEPPER }}
+          MEDIA_SIGNING_SECRET: ${{ secrets.MEDIA_SIGNING_SECRET }}
+          STREAM_WEBHOOK_SECRET: ${{ secrets.STREAM_WEBHOOK_SECRET }}
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          SETUP_TOKEN: ${{ secrets.SETUP_TOKEN }}
+          PASSWORD_PEPPER: ${{ secrets.PASSWORD_PEPPER }}
+          OIDC_CLIENT_SECRET: ${{ secrets.OIDC_CLIENT_SECRET }}
+        run: |
+          for app in pipeline media api delivery studio; do
+            node scripts/fleet.ts secrets "$app" "$RUNNER_TEMP/$app-secrets.json" "$ID"
+          done
       # Each Worker plugin gets its own key, derived from PRINCIPAL_KEY (never the key itself), and
       # the environment's PLUGIN_<ID>_* secrets under their own names; sandboxed plugins' secrets
       # go to the engine as PLUGIN_SECRETS. With a Secrets Store, plugin secrets are bound from it
@@ -206,11 +241,27 @@ jobs:
           bookmark=$(jq -er .bookmark "$RUNNER_TEMP/d1-bookmark.json")
           echo "D1 bookmark for $ID before ${GITHUB_SHA::7}: \`$bookmark\`" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::D1 bookmark for $ID before this deploy: $bookmark"
+      # The content database's restore point, as above (its own D1 Time Travel bookmark). Read through
+      # the pipeline's config, whose DB binding is the content database.
+      - name: Record content D1 bookmark
+        if: fromJSON(inputs.deployment).content
+        run: |
+          # shellcheck disable=SC2016 # the inner shell expands $CONFIG and $RUNNER_TEMP
+          retry bash -c 'pnpm --filter @commerceworker/pipeline exec wrangler d1 time-travel info DB --json --config "$CONFIG" > "$RUNNER_TEMP/content-d1-bookmark.json"'
+          bookmark=$(jq -er .bookmark "$RUNNER_TEMP/content-d1-bookmark.json")
+          echo "Content D1 bookmark for $ID before ${GITHUB_SHA::7}: \`$bookmark\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::Content D1 bookmark for $ID before this deploy: $bookmark"
       # Migrations run before the new code, and old code runs against the new schema until the
       # Workers below are live: a migration must be additive (expand), and a destructive one
       # (contract) ships in a later change, once no deployed code needs what it removes.
       - name: Migrate D1
         run: retry pnpm --filter @commerceworker/web exec wrangler d1 migrations apply DB --remote --config "$CONFIG"
+      # The content database is its own, migrated from packages/store/migrations (the commerce
+      # one from packages/db/migrations above), under the same expand-only rule. The pipeline's
+      # config carries its migrations_dir.
+      - name: Migrate content D1
+        if: fromJSON(inputs.deployment).content
+        run: retry pnpm --filter @commerceworker/pipeline exec wrangler d1 migrations apply DB --remote --config "$CONFIG"
       # A demo carries the demo data (INSERT OR IGNORE: loading it again changes nothing).
       - name: Load demo data
         if: fromJSON(inputs.deployment).demo
@@ -220,12 +271,48 @@ jobs:
       - name: Deploy catalog
         id: catalog
         run: retry pnpm --filter @commerceworker/catalog exec wrangler deploy --config "$CONFIG"
-      # The delivery Worker as the public catalog API (the content stack is off: apps/delivery/
-      # wrangler.catalog.jsonc), reading what the catalog publishes; it consumes the purge queue the
-      # catalog sends to.
+      # The content stack, in dependency order. The pipeline first: it owns every content Durable
+      # Object and Workflow class, which the api, delivery and studio bind by its script name. Then
+      # media, so it already verifies the signed URLs the api and delivery hand out, and the api.
+      # Delivery (content side) and the studio follow below. The embeds the bundles import
+      # (gitignored) are generated first.
+      - name: Generate embeds
+        if: fromJSON(inputs.deployment).content
+        run: pnpm generate
+      - name: Deploy pipeline
+        id: pipeline
+        if: fromJSON(inputs.deployment).content
+        run: |
+          secrets=()
+          [ "$(cat "$RUNNER_TEMP/pipeline-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/pipeline-secrets.json")
+          retry pnpm --filter @commerceworker/pipeline exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
+      - name: Deploy media
+        id: media
+        if: fromJSON(inputs.deployment).content
+        run: |
+          secrets=()
+          [ "$(cat "$RUNNER_TEMP/media-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/media-secrets.json")
+          retry pnpm --filter @commerceworker/media exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
+      - name: Deploy api
+        id: api
+        if: fromJSON(inputs.deployment).content
+        run: |
+          secrets=()
+          [ "$(cat "$RUNNER_TEMP/api-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/api-secrets.json")
+          retry pnpm --filter @commerceworker/api exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
+      # The delivery Worker: the public catalog API at catalog.<domain>, reading what the catalog
+      # publishes (apps/delivery/wrangler.catalog.jsonc), and it consumes the purge queue the
+      # catalog sends to. With the content stack it is the dispatcher instead (src/index.ts), which
+      # adds the content API at cdn.<domain> and its bindings (the pipeline's Durable Objects, the
+      # content database), so it follows the pipeline above. Its secrets are the content stack's.
       - name: Deploy delivery
         id: delivery
-        run: retry pnpm --filter @commerceworker/delivery exec wrangler deploy --config "$CONFIG"
+        run: |
+          secrets=()
+          if [ "$CONTENT" = true ] && [ "$(cat "$RUNNER_TEMP/delivery-secrets.json")" != "{}" ]; then
+            secrets=(--secrets-file "$RUNNER_TEMP/delivery-secrets.json")
+          fi
+          retry pnpm --filter @commerceworker/delivery exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
       # Each plugin's own D1 migrations, then its Worker: the engine and the web Worker bind to it,
       # so it goes before them. Like the core's, a plugin's migrations must be additive. Each one
       # deployed is listed, so a failure rolls it back with the rest.
@@ -299,6 +386,18 @@ jobs:
           secrets=()
           [ "$(cat "$RUNNER_TEMP/web-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/web-secrets.json")
           retry pnpm --filter @commerceworker/web exec wrangler deploy "${secrets[@]}"
+      # The studio fronts the api and delivery over service bindings, so it goes after both.
+      - name: Build studio
+        if: fromJSON(inputs.deployment).content
+        run: COMMERCEWORKER_STUDIO_WRANGLER_CONFIG="$CONFIG" pnpm --filter @commerceworker/studio build
+      # `wrangler deploy` picks up the build's own config (.wrangler/deploy), made from $CONFIG.
+      - name: Deploy studio
+        id: studio
+        if: fromJSON(inputs.deployment).content
+        run: |
+          secrets=()
+          [ "$(cat "$RUNNER_TEMP/studio-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/studio-secrets.json")
+          retry pnpm --filter @commerceworker/studio exec wrangler deploy "${secrets[@]}"
       # A new domain's certificate can take a few minutes to issue, so each check retries for up
       # to five minutes before it counts as failed, a request at most 20 s: each curl ends within
       # about 5 min 20 s and the write check within 5 min, under 27 min for the five. The step's own
@@ -329,6 +428,27 @@ jobs:
           # The storefront answers on its own host, and reaches the engine (it binds nothing else).
           curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$STOREFRONT_DOMAIN/health"
           curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$STOREFRONT_DOMAIN/health/deep"
+      # The content stack's own smoke test, after the commerce one. The studio renders its sign-in
+      # (or setup) page and reaches the api and delivery; the api serves its OpenAPI document; the
+      # media origin serves nothing it wasn't told to (an unknown asset is a 404); delivery refuses
+      # an anonymous read (auth runs before its cache).
+      - name: Smoke test content
+        id: smoke-content
+        if: fromJSON(inputs.deployment).content
+        timeout-minutes: 20
+        run: |
+          get() { curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "$@"; }
+          get "https://$STUDIO_DOMAIN/health"
+          get "https://$STUDIO_DOMAIN/health/deep"
+          get -L -o /dev/null -H 'Accept: text/html' "https://$STUDIO_DOMAIN/login"
+          get "https://$API_DOMAIN/health"
+          get -o /dev/null "https://$API_DOMAIN/openapi.json"
+          get "https://$CDN_DOMAIN/health"
+          get "https://$MEDIA_DOMAIN/health"
+          status=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' "https://$MEDIA_DOMAIN/smoke/main/none/v1/o/none")
+          [ "$status" = 404 ] || { echo "::error::an unknown media URL answered $status, not 404"; exit 1; }
+          status=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' "https://$CDN_DOMAIN/delivery/smoke/main/entries")
+          [ "$status" = 401 ] || { echo "::error::an anonymous delivery read answered $status, not 401"; exit 1; }
       # A latency budget on the deployed app, once it is up. It warns rather than fails: a slow
       # runner or network blip must not roll production back. The best of three runs counts, so a
       # cold start alone doesn't trip it.
@@ -350,9 +470,14 @@ jobs:
           check "https://$DOMAIN/health/deep" 1.0
           check "https://$CATALOG_DOMAIN/health" 0.5
           check "https://$STOREFRONT_DOMAIN/health/deep" 1.0
+          if [ "$CONTENT" = true ]; then
+            check "https://$STUDIO_DOMAIN/login" 1.5
+            check "https://$CDN_DOMAIN/health" 0.5
+          fi
       # Any failure once the catalog has shipped puts each Worker that deployed back on its
       # previous version: the engine, then the storefront and the web app, the plugins, delivery
-      # and the catalog.
+      # and the catalog; and with the content stack the pipeline first, then the studio, api and
+      # media (delivery is in the list above).
       # The engine goes first because it is the one that can refuse (Cloudflare won't roll a Worker
       # back past a Durable Object migration). If it can't go back, nothing else is rolled back
       # either: the storefront, web app, plugins and catalog stay on the versions the new engine was
@@ -369,6 +494,10 @@ jobs:
           STOREFRONT: ${{ steps.storefront.outcome }}
           WEB: ${{ steps.web.outcome }}
           DELIVERY: ${{ steps.delivery.outcome }}
+          PIPELINE: ${{ steps.pipeline.outcome }}
+          MEDIA: ${{ steps.media.outcome }}
+          API: ${{ steps.api.outcome }}
+          STUDIO: ${{ steps.studio.outcome }}
         run: |
           msg="Deploy failed for ${GITHUB_SHA::7}"
           # rollback <name> <pnpm filter>: 0 rolled back, 2 no earlier version, 1 failed. Retries
@@ -394,32 +523,62 @@ jobs:
             echo "**Failed to roll back $name**" >> "$GITHUB_STEP_SUMMARY"
             return 1
           }
+          failed=0
+          engine=0
           if [ "$ENGINE" = success ]; then
-            engine=0
             rollback engine @commerceworker/engine || engine=$?
             if [ "$engine" = 1 ]; then
               echo "::error::The engine could not be rolled back (a Durable Object migration since its last version, for one, prevents it), so the storefront, web app, plugins and catalog were left on ${GITHUB_SHA::7} to match it. Fix forward, or roll back by hand once the cause is known."
-              exit 1
+              failed=1
             fi
           fi
-          failed=0
+          # The content stack has its own engine, the pipeline, with the same rule: the api, media,
+          # delivery and studio bind its Durable Objects, so if it can't go back they stay on
+          # ${GITHUB_SHA::7} with it. The commerce Workers don't depend on it, so each stack is
+          # decided on its own.
+          pipeline=0
+          if [ "$PIPELINE" = success ]; then
+            rollback pipeline @commerceworker/pipeline || pipeline=$?
+            if [ "$pipeline" = 1 ]; then
+              echo "::error::The pipeline could not be rolled back (a Durable Object migration since its last version, for one, prevents it), so the api, media, delivery and studio were left on ${GITHUB_SHA::7} to match it. Fix forward, or roll back by hand once the cause is known."
+              failed=1
+            fi
+          fi
           # The storefront and the web app follow the engine: back only if the engine went back (or
           # never deployed).
-          if [ "$STOREFRONT" = success ] && [ "${engine:-0}" = 0 ]; then
-            rollback storefront @commerceworker/storefront || [ $? = 2 ] || failed=1
+          if [ "$engine" != 1 ]; then
+            if [ "$STOREFRONT" = success ] && [ "$engine" = 0 ]; then
+              rollback storefront @commerceworker/storefront || [ $? = 2 ] || failed=1
+            fi
+            if [ "$WEB" = success ] && [ "$engine" = 0 ]; then
+              rollback web @commerceworker/web || [ $? = 2 ] || failed=1
+            fi
+            if [ -f "$RUNNER_TEMP/plugins-deployed" ]; then
+              while read -r p; do
+                rollback "plugin $p" "./plugins/$p" || [ $? = 2 ] || failed=1
+              done <"$RUNNER_TEMP/plugins-deployed"
+            fi
           fi
-          if [ "$WEB" = success ] && [ "${engine:-0}" = 0 ]; then
-            rollback web @commerceworker/web || [ $? = 2 ] || failed=1
+          # The studio, api and media follow the pipeline, in reverse of their deploy order.
+          if [ "$pipeline" = 0 ]; then
+            if [ "$STUDIO" = success ]; then
+              rollback studio @commerceworker/studio || [ $? = 2 ] || failed=1
+            fi
+            if [ "$API" = success ]; then
+              rollback api @commerceworker/api || [ $? = 2 ] || failed=1
+            fi
+            if [ "$MEDIA" = success ]; then
+              rollback media @commerceworker/media || [ $? = 2 ] || failed=1
+            fi
           fi
-          if [ -f "$RUNNER_TEMP/plugins-deployed" ]; then
-            while read -r p; do
-              rollback "plugin $p" "./plugins/$p" || [ $? = 2 ] || failed=1
-            done <"$RUNNER_TEMP/plugins-deployed"
-          fi
-          if [ "$DELIVERY" = success ]; then
+          # Delivery serves the catalog and, with content, binds the pipeline too: back only when
+          # neither engine is stuck.
+          if [ "$DELIVERY" = success ] && [ "$engine" != 1 ] && [ "$pipeline" != 1 ]; then
             rollback delivery @commerceworker/delivery || [ $? = 2 ] || failed=1
           fi
-          rollback catalog @commerceworker/catalog || [ $? = 2 ] || failed=1
+          if [ "$engine" != 1 ]; then
+            rollback catalog @commerceworker/catalog || [ $? = 2 ] || failed=1
+          fi
           exit "$failed"
       # Static docs Worker; independent of the app, so it goes last and can't block a deploy above
       # (the app's rollback step has already run by now, so a docs failure never rolls the app back).

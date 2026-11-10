@@ -10,8 +10,8 @@ Cloudflare**: D1 is the system of record, with Workers, Queues, KV, R2, Durable 
 Workflows, Vectorize, Workers AI (through AI Gateway), Images, Stream, Email Sending and Worker
 Loader. Content is **structured, not serialized HTML**: rich text is a typed document tree
 (`RichTextDocument`), and every channel renders it for itself. It is a pnpm + Turborepo monorepo with a **ports & adapters (hexagonal)** core, deployed
-as one isolated stack per customer (a registry entry each, rendered by `scripts/fleet.ts`; the registry of real
-deployments lives in the private `commerceworker/fleet` repo, not here); spaces
+as one isolated stack per customer (a registry entry each in `deployments/`, rendered by `scripts/fleet.ts`; a
+deployment turns the content stack on with `"content": true`, and it gets its own content database); spaces
 and environments live inside a deployment's D1. Shipped and planned work is in `ROADMAP.md`.
 
 ## Workers (split by traffic profile)
@@ -35,8 +35,9 @@ clients, Workflow clients), `@commerceworker/http` (the Hono surface: routes, au
 ## Rules
 
 - **Branch in a worktree; merging is releasing.** Never push `main`; open a PR. CI migrates D1
-  and deploys every Worker ring by ring (after `verify`, it hands the commit to the private
-  `commerceworker/fleet` repo, which holds the registry and the rings). Nobody deploys from an agent session (`wrangler deploy`
+  and deploys every Worker ring by ring (`.github/workflows/ci.yml` and `deploy.yml` in this repo, from the
+  registry in `deployments/`; the content Workers deploy only for a deployment with `content`, see
+  `docs/operations.md`). Nobody deploys from an agent session (`wrangler deploy`
   without `--dry-run`, `versions deploy`, `rollback`, `pnpm … deploy`); `wrangler deploy
   --dry-run` checks a bundle.
 - **Never migrate a remote database by hand.** `wrangler d1 migrations apply DB --local` only.

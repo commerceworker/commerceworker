@@ -2,10 +2,13 @@
  * The fleet: one CommerceWorker deployment per customer, each listed in deployments/<id>.jsonc.
  *
  *   node scripts/fleet.ts render <id>             write apps/{catalog,delivery,engine,storefront,web}/wrangler.<id>.json
+ *                                                 (and, with `content`, apps/{pipeline,media,api,studio}/)
  *                                                 and plugins/<plugin>/wrangler.<id>.json for each plugin
  *   node scripts/fleet.ts matrix                  print the deployments of each ring for CI
  *   node scripts/fleet.ts secrets <engine|storefront|web> <out> [id]  write this app's secrets from the
  *                                                 environment, refusing ones deployment <id> can't run on
+ *   node scripts/fleet.ts secrets <pipeline|media|api|delivery|studio> <out> <id>  the same for a
+ *                                                 content Worker (deployment <id> needs `content`)
  *   node scripts/fleet.ts secrets plugin <out> <plugin> [id]  write a plugin's own keys, derived, and
  *                                                 its PLUGIN_<ID>_* secrets from ENV_SECRETS (none
  *                                                 when deployment <id> has a Secrets Store)
@@ -25,6 +28,8 @@
  *   node scripts/fleet.ts set-d1 <id> <uuid>      record the D1 database id in the registry
  *   node scripts/fleet.ts set-catalog-kv <id> <kv id>  record the catalog's card KV namespace id
  *   node scripts/fleet.ts set-plugin-d1 <id> <plugin> <uuid>  record a plugin's D1 database id
+ *   node scripts/fleet.ts set-content-d1 <id> <uuid>  record the content database id (content only)
+ *   node scripts/fleet.ts set-content-kv <id> <kv id>  record the content cache's KV namespace id
  *   node scripts/fleet.ts demos                   the provisioned demo deployments, for the nightly reset
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and domain put
@@ -36,6 +41,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyEdits, modify, type ParseError, parse, printParseErrorCode } from 'jsonc-parser';
+import { deriveAssistantKey } from './derive-assistant-key.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
@@ -101,12 +107,78 @@ const SECRETS = {
 } as const;
 
 /**
+ * The content Workers' secrets (a deployment with `content`), read from the same environment. Every
+ * Worker gets only its own; the same PRINCIPAL_KEY, DATA_KEY and PASSWORD_PEPPER as the commerce
+ * Workers' hold, since one GitHub environment holds the deployment's. The pipeline's assistant keys
+ * are derived (`DERIVED`), never read: it never holds PRINCIPAL_KEY.
+ */
+export const CONTENT_SECRETS = {
+  studio: [
+    'PRINCIPAL_KEY',
+    'PRINCIPAL_KEY_PREVIOUS',
+    'DATA_KEY',
+    'DATA_KEY_PREVIOUS',
+    'SETUP_TOKEN',
+    'PASSWORD_PEPPER',
+    'OIDC_CLIENT_SECRET',
+  ],
+  api: [
+    'PRINCIPAL_KEY',
+    'PRINCIPAL_KEY_PREVIOUS',
+    'DATA_KEY',
+    'DATA_KEY_PREVIOUS',
+    'TOKEN_PEPPER',
+    'MEDIA_SIGNING_SECRET',
+    'STREAM_WEBHOOK_SECRET',
+    'MCP_TOKEN',
+    'ADMIN_TOKEN',
+  ],
+  pipeline: [
+    'ASSISTANT_PRINCIPAL_KEY',
+    'ASSISTANT_PRINCIPAL_KEY_PREVIOUS',
+    'DATA_KEY',
+    'DATA_KEY_PREVIOUS',
+    'TOKEN_PEPPER',
+    'MEDIA_SIGNING_SECRET',
+  ],
+  delivery: ['DATA_KEY', 'DATA_KEY_PREVIOUS', 'TOKEN_PEPPER', 'MEDIA_SIGNING_SECRET'],
+  // Verifies Preview's short-lived signed draft reads; it signs nothing and reads no secret at rest.
+  media: ['MEDIA_SIGNING_SECRET'],
+} as const;
+export type ContentApp = keyof typeof CONTENT_SECRETS;
+
+/**
+ * Secrets no environment holds: `secrets` derives each from the one named, so rotating that one
+ * rotates it (the previous from the previous). The pipeline's assistant principal key is HKDF of
+ * PRINCIPAL_KEY (`deriveAssistantPrincipalKey` in @commerceworker/security).
+ */
+export const DERIVED: Record<string, { from: string; derive: (secret: string) => string }> = {
+  ASSISTANT_PRINCIPAL_KEY: { from: 'PRINCIPAL_KEY', derive: deriveAssistantKey },
+  ASSISTANT_PRINCIPAL_KEY_PREVIOUS: { from: 'PRINCIPAL_KEY_PREVIOUS', derive: deriveAssistantKey },
+};
+
+/** The deploy job's environment with the derived secrets added (never echoed). */
+export function withDerived(env: Record<string, string | undefined>) {
+  const out = { ...env };
+  for (const [name, { from, derive }] of Object.entries(DERIVED)) {
+    const source = env[from];
+    out[name] = source ? derive(source) : undefined;
+  }
+  return out;
+}
+
+/**
  * Secrets a deploy can't go without, so without them in the environment the deploy stops here,
  * before migrating anything. PRINCIPAL_KEY signs every request the web Worker forwards to the
  * engine; DATA_KEY encrypts the secrets both Workers store (two-factor, webhook and integration
  * secrets, A2A push credentials).
  */
 const REQUIRED_SECRETS = ['PRINCIPAL_KEY', 'DATA_KEY'] as const;
+/**
+ * What a `content` deployment also can't go without: TOKEN_PEPPER is in every API key hash and
+ * MEDIA_SIGNING_SECRET signs every media URL, so neither may change once the content Workers run.
+ */
+const CONTENT_REQUIRED_SECRETS = ['TOKEN_PEPPER', 'MEDIA_SIGNING_SECRET'] as const;
 
 /** The shared keys, and the ones before them during a rotation: each at least this long. */
 const KEYS = [
@@ -115,6 +187,8 @@ const KEYS = [
   'DATA_KEY',
   'DATA_KEY_PREVIOUS',
   'PASSWORD_PEPPER',
+  'TOKEN_PEPPER',
+  'MEDIA_SIGNING_SECRET',
 ] as const;
 export const MIN_KEY_LENGTH = 32;
 
@@ -151,6 +225,20 @@ export type Deployment = {
   catalogDomain: string;
   /** The storefront's host: buyers' pages and agentic checkout. Defaults to `shop.<domain>`. */
   storefrontDomain: string;
+  /**
+   * The content stack: published content (the studio, the content API, the content engine) and the
+   * assets service, each with a separate content database. Default false: a commerce-only
+   * deployment renders and deploys none of it.
+   */
+  content: boolean;
+  /** The content admin's host. Only with `content`, defaulting to `studio.<domain>` (`contentHosts`). */
+  studioDomain?: string;
+  /** The Content Management, Preview, MCP and OAuth API's host. Only with `content`; defaults to `api.<domain>`. */
+  apiDomain?: string;
+  /** Delivery's content side (its catalog stays at `catalogDomain`). Only with `content`; defaults to `cdn.<domain>`. */
+  cdnDomain?: string;
+  /** The assets service's host. Only with `content`; defaults to `media.<domain>`. */
+  mediaDomain?: string;
   /** Appended to every resource name. Defaults to `-<id>`; app.commerceworker.com's own is `""`. */
   suffix: string;
   /** The GitHub environment holding this deployment's secrets. Defaults to `deploy-<id>`. */
@@ -159,6 +247,10 @@ export type Deployment = {
   d1Id?: string;
   /** The catalog's card KV namespace id. Set by scripts/provision.sh; required like d1Id. */
   catalogKvId?: string;
+  /** The content database (`commerceworker-content<suffix>`). Set by scripts/provision.sh; required with `content`. */
+  contentD1Id?: string;
+  /** The content stack's cache KV namespace id. Set by scripts/provision.sh; required with `content`. */
+  contentKvId?: string;
   /** Data location for D1 and R2 (`eu`), set when they're created. */
   jurisdiction?: 'eu' | 'fedramp';
   /** Skipped by CI: stays on what it runs now. */
@@ -344,6 +436,15 @@ function readJsonc(path: string): Record<string, unknown> {
   return value;
 }
 
+/** The registry's content host fields, and the label each defaults to under the deployment's domain. */
+const CONTENT_HOSTS = {
+  studioDomain: 'studio',
+  apiDomain: 'api',
+  cdnDomain: 'cdn',
+  mediaDomain: 'media',
+} as const;
+const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+
 export function toDeployment(raw: Record<string, unknown>, file = 'deployment'): Deployment {
   const id = raw.id;
   if (typeof id !== 'string' || !/^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){1,30}$/.test(id))
@@ -370,6 +471,23 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
       !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(raw.storefrontDomain))
   )
     throw new Error(`${file}: storefrontDomain must be a host name`);
+  // The content stack is opt-in: what only it uses can't be set without it.
+  if (raw.content !== undefined && typeof raw.content !== 'boolean')
+    throw new Error(`${file}: content must be true or false`);
+  const content = raw.content === true;
+  for (const k of [...Object.keys(CONTENT_HOSTS), 'contentD1Id', 'contentKvId'])
+    if (raw[k] !== undefined && !content)
+      throw new Error(`${file}: ${k} needs "content": true (the content stack is off)`);
+  for (const k of Object.keys(CONTENT_HOSTS))
+    if (raw[k] !== undefined && (typeof raw[k] !== 'string' || !HOST_RE.test(raw[k] as string)))
+      throw new Error(`${file}: ${k} must be a host name`);
+  if (raw.contentD1Id !== undefined && (typeof raw.contentD1Id !== 'string' || !raw.contentD1Id))
+    throw new Error(`${file}: contentD1Id must be the content database's id`);
+  if (
+    raw.contentKvId !== undefined &&
+    (typeof raw.contentKvId !== 'string' || !/^[0-9a-f]{32}$/.test(raw.contentKvId))
+  )
+    throw new Error(`${file}: contentKvId must be the KV namespace's 32-character id`);
   if (
     raw.catalogKvId !== undefined &&
     (typeof raw.catalogKvId !== 'string' || !/^[0-9a-f]{32}$/.test(raw.catalogKvId))
@@ -592,23 +710,46 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
         throw new Error(
           `${file}: plugins ${a} and ${b} can't both be installed: ${pluginBinding(b)}_* secrets would also reach ${a}`,
         );
+  const domain = typeof raw.domain === 'string' ? raw.domain : `${id}.commerceworker.com`;
+  const host = (k: keyof typeof CONTENT_HOSTS) =>
+    typeof raw[k] === 'string' ? (raw[k] as string) : `${CONTENT_HOSTS[k]}.${domain}`;
+  const catalogDomain =
+    typeof raw.catalogDomain === 'string' ? raw.catalogDomain : `catalog.${domain}`;
+  const storefrontDomain =
+    typeof raw.storefrontDomain === 'string' ? raw.storefrontDomain : `shop.${domain}`;
+  // One host, one Worker: the admin, the catalog, the storefront and each content surface differ.
+  const served = [
+    domain,
+    catalogDomain,
+    storefrontDomain,
+    ...(content
+      ? Object.keys(CONTENT_HOSTS).map((k) => host(k as keyof typeof CONTENT_HOSTS))
+      : []),
+  ];
+  const twice = served.find((h, i) => served.indexOf(h) !== i);
+  if (twice) throw new Error(`${file}: ${twice} is the host of two of the deployment's Workers`);
   return {
     id,
     ring,
     slot: raw.slot as number,
-    domain: typeof raw.domain === 'string' ? raw.domain : `${id}.commerceworker.com`,
-    catalogDomain:
-      typeof raw.catalogDomain === 'string'
-        ? raw.catalogDomain
-        : `catalog.${typeof raw.domain === 'string' ? raw.domain : `${id}.commerceworker.com`}`,
-    storefrontDomain:
-      typeof raw.storefrontDomain === 'string'
-        ? raw.storefrontDomain
-        : `shop.${typeof raw.domain === 'string' ? raw.domain : `${id}.commerceworker.com`}`,
+    domain,
+    catalogDomain,
+    storefrontDomain,
+    content,
+    ...(content
+      ? {
+          studioDomain: host('studioDomain'),
+          apiDomain: host('apiDomain'),
+          cdnDomain: host('cdnDomain'),
+          mediaDomain: host('mediaDomain'),
+        }
+      : {}),
     suffix: typeof raw.suffix === 'string' ? raw.suffix : `-${id}`,
     environment: typeof raw.environment === 'string' ? raw.environment : `deploy-${id}`,
     ...(raw.d1Id ? { d1Id: raw.d1Id as string } : {}),
     ...(raw.catalogKvId ? { catalogKvId: raw.catalogKvId as string } : {}),
+    ...(raw.contentD1Id ? { contentD1Id: raw.contentD1Id as string } : {}),
+    ...(raw.contentKvId ? { contentKvId: raw.contentKvId as string } : {}),
     ...(raw.jurisdiction ? { jurisdiction: raw.jurisdiction as 'eu' | 'fedramp' } : {}),
     hold: raw.hold === true,
     docs: raw.docs === true,
@@ -658,6 +799,22 @@ export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
       seen.set(d[key], d.id);
     }
   }
+  // No host serves two deployments (a content host only counts on a deployment with content).
+  const hostOwner = new Map<string, string>();
+  for (const d of list)
+    for (const h of servedHosts(d)) {
+      const other = hostOwner.get(h);
+      if (other && other !== d.id) throw new Error(`${d.id} and ${other} share the host ${h}`);
+      hostOwner.set(h, d.id);
+    }
+  // Queue names are account-wide: an id such as "dlq" would name another deployment's dead letters.
+  const queueOwner = new Map<string, string>();
+  for (const d of list.filter((x) => x.content))
+    for (const q of CONTENT_QUEUES.map(names(d).contentQueue)) {
+      const other = queueOwner.get(q);
+      if (other) throw new Error(`${d.id} and ${other} share the queue ${q}`);
+      queueOwner.set(q, d.id);
+    }
   if (list.filter((d) => d.docs).length > 1) throw new Error('only one deployment sets docs');
   for (const d of list)
     for (const p of workerPlugins(d))
@@ -685,6 +842,19 @@ export const names = (d: Deployment) => ({
   catalogChanges: `commerceworker-catalog-changes${d.suffix}`,
   catalogChangesDlq: `commerceworker-catalog-changes-dlq${d.suffix}`,
   catalogPurgeDlq: `commerceworker-catalog-purge-dlq${d.suffix}`,
+  // The content stack (`content`): its Workers, database, cache, assets bucket and vector index.
+  pipeline: `commerceworker-pipeline${d.suffix}`,
+  api: `commerceworker-api${d.suffix}`,
+  studio: `commerceworker-studio${d.suffix}`,
+  // The media Worker shares its base name with the bucket (Workers and buckets are named apart).
+  mediaWorker: `commerceworker-media${d.suffix}`,
+  mediaBucket: `commerceworker-media${d.suffix}`,
+  contentD1: `commerceworker-content${d.suffix}`,
+  contentKv: `commerceworker-content-cache${d.suffix}`,
+  contentVectors: `commerceworker-vectors${d.suffix}`,
+  contentDataset: `commerceworker_metrics${d.suffix.replaceAll('-', '_')}`,
+  /** A content queue's name for the deployment, from its base name (`CONTENT_QUEUES`). */
+  contentQueue: (q: string) => `${q}${d.suffix}`,
   /** Where Logpush writes the deployment's Workers' trace events, and the job and token that do. */
   logs: `commerceworker-logs${d.suffix}`,
   logpushJob: `commerceworker-workers${d.suffix}`,
@@ -694,6 +864,39 @@ export const names = (d: Deployment) => ({
   /** A plugin's Worker and its D1 database share a name. */
   plugin: (p: string) => `commerceworker-plugin-${p}${d.suffix}`,
 });
+
+/** The content stack's four hosts; throws for a deployment that has it off. */
+export function contentHosts(d: Deployment) {
+  if (!d.studioDomain || !d.apiDomain || !d.cdnDomain || !d.mediaDomain)
+    throw new Error(`${d.id} has the content stack off: no content hosts`);
+  return { studio: d.studioDomain, api: d.apiDomain, cdn: d.cdnDomain, media: d.mediaDomain };
+}
+
+/** Every host a deployment serves: the admin, the catalog, the storefront and, with content, its four. */
+export const servedHosts = (d: Deployment) => [
+  d.domain,
+  d.catalogDomain,
+  d.storefrontDomain,
+  ...(d.content ? Object.values(contentHosts(d)) : []),
+];
+
+/**
+ * The content stack's queues, by base name: domain events with their dead letters, bulk chunks,
+ * agent jobs, delivery purges, media purges and asset events (each with dead letters).
+ * `agents` has none: its failures go to the events dead letters.
+ */
+export const CONTENT_QUEUES = [
+  'commerceworker-events',
+  'commerceworker-events-dlq',
+  'commerceworker-bulk',
+  'commerceworker-agents',
+  'commerceworker-purge',
+  'commerceworker-purge-dlq',
+  'commerceworker-media-purge',
+  'commerceworker-media-purge-dlq',
+  'commerceworker-asset-events',
+  'commerceworker-asset-events-dlq',
+] as const;
 
 /**
  * The trace-event fields Logpush keeps. `Event` is left out: it is the request (URL, method,
@@ -731,6 +934,7 @@ export function logpushJob(d: Deployment) {
     n.engine,
     n.catalog,
     n.delivery,
+    ...(d.content ? [n.pipeline, n.mediaWorker, n.api, n.studio] : []),
     ...workerPlugins(d).map(n.plugin),
   ];
   const filter = JSON.stringify({ where: { key: 'ScriptName', operator: 'in', value: scripts } });
@@ -1116,10 +1320,34 @@ export function renderCatalog(base: Config, d: Deployment): Config {
 
 /**
  * The delivery Worker as the fleet deploys it: `wrangler.catalog.jsonc` (the catalog's public read
- * API, content off) at `catalog.<domain>`. The content stack's template, `wrangler.jsonc`, isn't
- * rendered here.
+ * API, content off) at `catalog.<domain>`. With `content`, it is the dispatcher instead: the
+ * content stack's template (`wrangler.jsonc`, passed as `contentBase`) with the catalog's bindings
+ * and host added, so one Worker serves `catalog.<domain>` and `cdn.<domain>`.
  */
-export function renderDelivery(base: Config, d: Deployment): Config {
+export function renderDelivery(base: Config, d: Deployment, contentBase?: Config): Config {
+  const catalog = renderCatalogDelivery(base, d);
+  if (!d.content) return catalog;
+  if (!contentBase) throw new Error(`${d.id}: delivery with content needs its content template`);
+  const config = contentCommon(contentBase, d, 'delivery');
+  // The catalog's side: its host beside the content one, and the bindings only it uses.
+  config.routes = [...catalog.routes, { pattern: contentHosts(d).cdn, custom_domain: true }];
+  config.r2_buckets = [...config.r2_buckets, ...catalog.r2_buckets];
+  config.kv_namespaces = [...config.kv_namespaces, ...catalog.kv_namespaces];
+  config.services = catalog.services;
+  config.queues = {
+    consumers: [...config.queues.consumers, ...catalog.queues.consumers],
+  };
+  config.analytics_engine_datasets = [
+    ...config.analytics_engine_datasets,
+    ...catalog.analytics_engine_datasets,
+  ];
+  // The default entrypoint is the uncached gateway; each side has its own cached one.
+  config.exports = { ...config.exports, ...catalog.exports };
+  config.observability = { ...config.observability, redact_query_string: true };
+  return config;
+}
+
+function renderCatalogDelivery(base: Config, d: Deployment): Config {
   if (!d.catalogKvId)
     throw new Error(`${d.id} has no catalogKvId: run scripts/provision.sh ${d.id}`);
   const config = structuredClone(base);
@@ -1228,6 +1456,163 @@ export function renderWeb(base: Config, d: Deployment): Config {
   return config;
 }
 
+/**
+ * Everything the content stack's Workers share, from their own templates (the content stack's
+ * `wrangler.jsonc`): the deployment's names and ids in place of the base ones, every account-wide
+ * name suffixed, and the content database in `DB`. Bindings a template keeps only for local work
+ * (a second, `remote` database, bucket or index) are dropped: a deployed Worker binds the
+ * deployment's own and no other.
+ */
+function contentCommon(base: Config, d: Deployment, app: ContentApp): Config {
+  if (!d.content)
+    throw new Error(
+      `${d.id} has the content stack off: set "content": true in deployments/${d.id}.jsonc`,
+    );
+  if (!d.contentD1Id)
+    throw new Error(`${d.id} has no contentD1Id: run scripts/provision.sh ${d.id}`);
+  if (!d.contentKvId && app !== 'studio')
+    throw new Error(`${d.id} has no contentKvId: run scripts/provision.sh ${d.id}`);
+  const n = names(d);
+  const hosts = contentHosts(d);
+  const c = structuredClone(base);
+  c.name = {
+    pipeline: n.pipeline,
+    media: n.mediaWorker,
+    api: n.api,
+    delivery: n.delivery,
+    studio: n.studio,
+  }[app];
+  c.workers_dev = false;
+  c.preview_urls = false;
+  // Trace events go to the deployment's Logpush job like the commerce Workers' (logpushJob).
+  c.logpush = true;
+  c.d1_databases = (c.d1_databases ?? [])
+    .filter((db: Config) => db.binding === 'DB')
+    .map(({ remote: _remote, ...db }: Config) => ({
+      ...db,
+      database_name: n.contentD1,
+      database_id: d.contentD1Id,
+    }));
+  if (c.kv_namespaces)
+    c.kv_namespaces = c.kv_namespaces.map((k: Config) =>
+      k.binding === 'KV_CACHE' ? { ...k, id: d.contentKvId } : k,
+    );
+  if (c.r2_buckets)
+    c.r2_buckets = c.r2_buckets
+      .filter((b: Config) => b.binding === 'MEDIA_BUCKET')
+      .map(({ remote: _remote, ...b }: Config) => ({
+        ...b,
+        bucket_name: n.mediaBucket,
+        ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
+      }));
+  // A demo mocks every model and has no index (provision.sh creates none).
+  if (c.vectorize) {
+    if (d.demo) delete c.vectorize;
+    else
+      c.vectorize = c.vectorize
+        .filter((v: Config) => v.binding === 'VECTORIZE')
+        .map(({ remote: _remote, ...v }: Config) => ({ ...v, index_name: n.contentVectors }));
+  }
+  if (c.analytics_engine_datasets)
+    c.analytics_engine_datasets = c.analytics_engine_datasets.map((a: Config) => ({
+      ...a,
+      dataset: n.contentDataset,
+    }));
+  if (c.queues?.producers)
+    c.queues.producers = c.queues.producers.map((p: Config) => ({
+      ...p,
+      queue: n.contentQueue(p.queue),
+    }));
+  if (c.queues?.consumers)
+    c.queues.consumers = c.queues.consumers.map((q: Config) => ({
+      ...q,
+      queue: n.contentQueue(q.queue),
+      ...(q.dead_letter_queue ? { dead_letter_queue: n.contentQueue(q.dead_letter_queue) } : {}),
+    }));
+  // Workflow names are account-wide; bindings to another script follow its rendered name.
+  if (c.workflows)
+    c.workflows = c.workflows.map((w: Config) => ({
+      ...w,
+      name: `${w.name}${d.suffix}`,
+      ...(w.script_name ? { script_name: n.pipeline } : {}),
+    }));
+  if (c.durable_objects?.bindings)
+    c.durable_objects.bindings = c.durable_objects.bindings.map((b: Config) =>
+      b.script_name ? { ...b, script_name: n.pipeline } : b,
+    );
+  if (c.services)
+    c.services = c.services.map((s: Config) =>
+      s.binding === 'API'
+        ? { ...s, service: n.api }
+        : s.binding === 'DELIVERY'
+          ? { ...s, service: n.delivery }
+          : s,
+    );
+  // The content Workers' namespaces sit in the deployment's slot at 500 and up: the commerce
+  // Workers' (1001 to 1007 for slot 1) are another set of counters with their own budgets.
+  if (c.ratelimits)
+    c.ratelimits = c.ratelimits.map((r: Config) => ({
+      ...r,
+      namespace_id: String(d.slot * 1000 + 500 + (Number(r.namespace_id) % 1000)),
+    }));
+  if (c.vars) {
+    if ('AI_GATEWAY_ID' in c.vars) {
+      c.vars.AI_GATEWAY_ID = n.aiGateway;
+      c.vars.AI_GATEWAY_LOGS = String(d.aiGatewayLogs);
+    }
+    if ('MEDIA_BASE_URL' in c.vars) c.vars.MEDIA_BASE_URL = `https://${hosts.api}`;
+    if ('MEDIA_PUBLIC_URL' in c.vars) c.vars.MEDIA_PUBLIC_URL = `https://${hosts.media}`;
+    if ('QUEUE_SUFFIX' in c.vars) c.vars.QUEUE_SUFFIX = d.suffix;
+    // Only Workers that bind Durable Objects need the jurisdiction (the studio binds none).
+    if (d.jurisdiction && app !== 'studio') c.vars.DATA_JURISDICTION = d.jurisdiction;
+    // A demo mocks every model and has no vector index: those fakes are its point, so it allows
+    // them (a persistent deployment refuses fakes it doesn't allow).
+    if (d.demo && app !== 'studio') {
+      c.vars.AI_MODE = 'mock';
+      c.vars.AI_GATEWAY_ID = '';
+      c.vars.ALLOW_FAKE_ADAPTERS = 'ai,vectors';
+      // The api offers the enterprise starter: a demo is where its brand is shown.
+      if ('DEMO_STARTERS' in c.vars) c.vars.DEMO_STARTERS = 'true';
+    }
+  }
+  return c;
+}
+
+/** The content engine: queue consumers, cron, and the owner of every content Durable Object and Workflow. No route. */
+export function renderPipeline(base: Config, d: Deployment): Config {
+  return contentCommon(base, d, 'pipeline');
+}
+
+export function renderApi(base: Config, d: Deployment): Config {
+  const c = contentCommon(base, d, 'api');
+  c.routes = [{ pattern: contentHosts(d).api, custom_domain: true }];
+  // OAuth for MCP clients is served on the studio's origin: the consent screen needs the person's
+  // session (the studio forwards /oauth/* and /mcp with the signed principal).
+  c.vars = { ...c.vars, OAUTH_ISSUER: `https://${contentHosts(d).studio}` };
+  return c;
+}
+
+export function renderMedia(base: Config, d: Deployment): Config {
+  const c = contentCommon(base, d, 'media');
+  c.routes = [{ pattern: contentHosts(d).media, custom_domain: true }];
+  return c;
+}
+
+/** The content admin and human sign-in; it fronts the api with a signed principal. */
+export function renderStudio(base: Config, d: Deployment): Config {
+  const c = contentCommon(base, d, 'studio');
+  c.routes = [{ pattern: contentHosts(d).studio, custom_domain: true }];
+  // The same identity provider as the admin's, a second redirect URI (https://<studio>/login/sso/callback).
+  if (d.sso)
+    c.vars = {
+      ...c.vars,
+      OIDC_ISSUER: d.sso.issuer,
+      OIDC_CLIENT_ID: d.sso.clientId,
+      OIDC_TRUST_EMAIL: d.sso.trustEmail ? 'true' : '',
+    };
+  return c;
+}
+
 function byId(id: string | undefined): Deployment {
   const d = loadDeployments().find((x) => x.id === id);
   if (!d) throw new Error(`no deployment ${JSON.stringify(id)} in deployments/`);
@@ -1236,21 +1621,37 @@ function byId(id: string | undefined): Deployment {
 
 function render(id: string | undefined) {
   const d = byId(id);
+  const template = (app: string, file = 'wrangler.jsonc') =>
+    readJsonc(join(ROOT, 'apps', app, file));
+  const write = (app: string, config: Config) => {
+    const out = join(ROOT, 'apps', app, `wrangler.${d.id}.json`);
+    writeFileSync(out, `${JSON.stringify(config, null, 2)}\n`);
+    console.log(out);
+  };
   for (const [app, fn] of [
     ['catalog', renderCatalog],
-    ['delivery', renderDelivery],
     ['engine', renderEngine],
     ['storefront', renderStorefront],
     ['web', renderWeb],
-  ] as const) {
-    const out = join(ROOT, 'apps', app, `wrangler.${d.id}.json`);
-    const template = app === 'delivery' ? 'wrangler.catalog.jsonc' : 'wrangler.jsonc';
-    writeFileSync(
-      out,
-      `${JSON.stringify(fn(readJsonc(join(ROOT, 'apps', app, template)), d), null, 2)}\n`,
-    );
-    console.log(out);
-  }
+  ] as const)
+    write(app, fn(template(app), d));
+  // Catalog-only unless the deployment has content, which adds the dispatcher's content side.
+  write(
+    'delivery',
+    renderDelivery(
+      template('delivery', 'wrangler.catalog.jsonc'),
+      d,
+      d.content ? template('delivery') : undefined,
+    ),
+  );
+  if (d.content)
+    for (const [app, fn] of [
+      ['pipeline', renderPipeline],
+      ['media', renderMedia],
+      ['api', renderApi],
+      ['studio', renderStudio],
+    ] as const)
+      write(app, fn(template(app), d));
   for (const p of workerPlugins(d)) {
     const out = join(ROOT, 'plugins', p, `wrangler.${d.id}.json`);
     const base = readJsonc(join(ROOT, 'plugins', p, 'wrangler.jsonc'));
@@ -1264,12 +1665,16 @@ export function matrix(list: Deployment[]): Record<Ring, Deployment[]> {
   const unprovisioned = list
     .filter(
       (d) =>
-        !d.hold && (!d.d1Id || !d.catalogKvId || workerPlugins(d).some((p) => !d.plugins[p]!.d1Id)),
+        !d.hold &&
+        (!d.d1Id ||
+          !d.catalogKvId ||
+          workerPlugins(d).some((p) => !d.plugins[p]!.d1Id) ||
+          (d.content && (!d.contentD1Id || !d.contentKvId))),
     )
     .map((d) => d.id);
   if (unprovisioned.length)
     throw new Error(
-      `not provisioned (no d1Id, catalogKvId or plugin d1Id): ${unprovisioned.join(', ')}; provision or hold them`,
+      `not provisioned (no d1Id, catalogKvId or plugin d1Id, or with content no contentD1Id or contentKvId): ${unprovisioned.join(', ')}; provision or hold them`,
     );
   return Object.fromEntries(
     RINGS.map((ring) => [ring, list.filter((d) => d.ring === ring && !d.hold)]),
@@ -1315,8 +1720,43 @@ export function storefrontSecrets(env: Record<string, string | undefined>) {
   };
 }
 
+/**
+ * The content Workers' secrets: only the ones set in `env`, plus the pipeline's derived assistant
+ * keys. A `content` deployment can't deploy without TOKEN_PEPPER and MEDIA_SIGNING_SECRET as well
+ * as the keys every deployment needs, nor with a key too short to sign with.
+ */
+export function contentSecretValues(
+  d: Deployment,
+  env: Record<string, string | undefined>,
+  app: ContentApp,
+): Record<string, string> {
+  if (!d.content)
+    throw new Error(`${d.id} has the content stack off: no ${app} to collect secrets for`);
+  const missing = [...REQUIRED_SECRETS, ...CONTENT_REQUIRED_SECRETS].filter((k) => !env[k]);
+  if (missing.length)
+    throw new Error(
+      `${missing.join(', ')} not set: add it to the ${d.environment} GitHub environment (scripts/provision.sh generates one)`,
+    );
+  const short = keysProblem(env);
+  if (short) throw new Error(short);
+  const all = withDerived(env);
+  // Only the ones set: `--secrets-file` adds to a Worker's secrets and never removes one.
+  return Object.fromEntries(
+    CONTENT_SECRETS[app].flatMap((k) => (all[k] ? [[k, all[k] as string]] : [])),
+  );
+}
+
+function contentSecrets(app: ContentApp, out: string, id: string | undefined) {
+  if (!id) throw new Error(`secrets ${app} <out> <deployment id>`);
+  const values = contentSecretValues(byId(id), process.env, app);
+  writeFileSync(out, JSON.stringify(values), { mode: 0o600 });
+  console.log(`${app}: ${Object.keys(values).join(', ') || 'no secrets set'}`);
+}
+
 function secrets(app: string | undefined, out: string | undefined, id?: string, more?: string) {
-  const usage = 'secrets <engine|storefront|web|plugin|sandboxed> <out> [id | plugin id]';
+  const usage =
+    'secrets <engine|storefront|web|plugin|sandboxed> <out> [id | plugin id]  or  secrets <pipeline|media|api|delivery|studio> <out> <id>';
+  if (out && app && app in CONTENT_SECRETS) return contentSecrets(app as ContentApp, out, id);
   if (
     app !== 'web' &&
     app !== 'storefront' &&
@@ -1510,6 +1950,23 @@ export function shellVars(d: Deployment): Record<string, string> {
     LOG_RETENTION_DAYS: String(d.logRetentionDays),
     LOGPUSH_JOB: n.logpushJob,
     LOGPUSH_TOKEN: n.logpushToken,
+    // The content stack: `true` creates its resources too. The rest are empty without it.
+    CONTENT: String(d.content),
+    CONTENT_D1: d.content ? n.contentD1 : '',
+    CONTENT_KV: d.content ? n.contentKv : '',
+    CONTENT_MEDIA: d.content ? n.mediaBucket : '',
+    // The content vector index (Vectorize); empty for a demo, which mocks its models.
+    CONTENT_VECTORS: d.content && !d.demo ? n.contentVectors : '',
+    CONTENT_QUEUES: d.content ? CONTENT_QUEUES.map(n.contentQueue).join(' ') : '',
+    // The queue the media bucket's object-create notifications go to (asset ingest).
+    ASSET_EVENTS: d.content ? n.contentQueue('commerceworker-asset-events') : '',
+    STUDIO_DOMAIN: d.studioDomain ?? '',
+    API_DOMAIN: d.apiDomain ?? '',
+    CDN_DOMAIN: d.cdnDomain ?? '',
+    MEDIA_DOMAIN: d.mediaDomain ?? '',
+    // The content Workers provision.sh asks for their secrets, to keep a running one's.
+    STUDIO: d.content ? n.studio : '',
+    API: d.content ? n.api : '',
     // Space-separated plugin ids; each one's D1 database is named commerceworker-plugin-<id><suffix>.
     PLUGINS: workerPlugins(d).join(' '),
     // The deployment's own Secrets Store (own Cloudflare account), when its registry names one.
@@ -1567,8 +2024,16 @@ function shellNames(id: string | undefined) {
 }
 
 /** Writes one field into deployments/<id>.jsonc, keeping its comments. */
-function setField(id: string | undefined, field: 'd1Id' | 'catalogKvId', value: string) {
+function setField(
+  id: string | undefined,
+  field: 'd1Id' | 'catalogKvId' | 'contentD1Id' | 'contentKvId',
+  value: string,
+) {
   const d = byId(id);
+  if (field.startsWith('content') && !d.content)
+    throw new Error(
+      `${d.id} has the content stack off: set "content": true before recording ${field}`,
+    );
   const file = join(ROOT, 'deployments', `${d.id}.jsonc`);
   const text = readFileSync(file, 'utf8');
   const edits = modify(text, [field], value, {
@@ -1598,6 +2063,16 @@ function setD1(id: string | undefined, uuid: string | undefined) {
 function setCatalogKv(id: string | undefined, kvId: string | undefined) {
   if (!kvId || !/^[0-9a-f]{32}$/.test(kvId)) throw new Error('set-catalog-kv <id> <namespace id>');
   setField(id, 'catalogKvId', kvId);
+}
+
+function setContentD1(id: string | undefined, uuid: string | undefined) {
+  if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('set-content-d1 <id> <uuid>');
+  setField(id, 'contentD1Id', uuid);
+}
+
+function setContentKv(id: string | undefined, kvId: string | undefined) {
+  if (!kvId || !/^[0-9a-f]{32}$/.test(kvId)) throw new Error('set-content-kv <id> <namespace id>');
+  setField(id, 'contentKvId', kvId);
 }
 
 async function status() {
@@ -1718,11 +2193,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'set-d1') setD1(args[0], args[1]);
     else if (cmd === 'set-catalog-kv') setCatalogKv(args[0], args[1]);
     else if (cmd === 'set-plugin-d1') setPluginD1(args[0], args[1], args[2]);
+    else if (cmd === 'set-content-d1') setContentD1(args[0], args[1]);
+    else if (cmd === 'set-content-kv') setContentKv(args[0], args[1]);
     else if (cmd === 'demos')
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|logpush-foreign|logpush-token|set-d1|set-catalog-kv|set-plugin-d1|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|logpush-foreign|logpush-token|set-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);
