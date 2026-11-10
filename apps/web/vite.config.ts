@@ -113,7 +113,6 @@ export default defineConfig(async () => {
               vars: {
                 TIME_SCALE: '1440',
                 STOREFRONT_ORIGIN: 'http://localhost:5174',
-                APP_ORIGIN: 'http://localhost:5173',
                 OWN_HOSTS: 'localhost',
                 AI_GATEWAY_ID: '',
                 PRINCIPAL_KEY: DEV_PRINCIPAL_KEY,

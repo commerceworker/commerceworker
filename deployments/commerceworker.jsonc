@@ -7,6 +7,9 @@
   "domain": "app.commerceworker.com",
   // The public catalog API keeps the short host; customers get catalog.<id>.commerceworker.com.
   "catalogDomain": "catalog.commerceworker.com",
+  // Buyers' pages and agentic checkout (apps/storefront) keep the short host too; customers get
+  // shop.<id>.commerceworker.com.
+  "storefrontDomain": "shop.commerceworker.com",
   "suffix": "",
   "environment": "production",
   "d1Id": "00000000-0000-0000-0000-000000000000",

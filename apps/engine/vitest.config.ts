@@ -103,11 +103,11 @@ export default defineConfig(async () => {
             SIMULATE_FAILURES: 'true',
             // Signs the principal header the tests send as the web Worker would (tests/principal.ts).
             PRINCIPAL_KEY: 'test-principal-key',
-            // The storefront's origin (an external cart's start link), and the app's origin and own
-            // hosts, for external carts' returns.
+            // The storefront's origin (an external cart's start link), and the hosts the deployment
+            // serves, for external carts' returns.
             STOREFRONT_ORIGIN: 'https://shop.commerceworker.test',
-            APP_ORIGIN: 'https://com.commerceworker.test',
-            OWN_HOSTS: 'com.commerceworker.test,catalog.com.commerceworker.test',
+            OWN_HOSTS:
+              'com.commerceworker.test,shop.commerceworker.test,catalog.com.commerceworker.test',
             // Encrypts secrets at rest (tests/secrets.test.ts rotates it).
             DATA_KEY: 'test-data-key',
             // Signs UCP order webhooks in tests (a throwaway key, never a deployment's).
