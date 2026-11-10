@@ -77,6 +77,9 @@ export default defineConfig({
           name: 'dispatcher',
           include: ['test/dispatcher/**/*.test.ts'],
           fsModuleCache: false,
+          // The first request loads the whole content side (src/content.ts), which takes more than
+          // vitest's 5 s default on a loaded CI runner.
+          testTimeout: 30_000,
         },
       },
     ],
