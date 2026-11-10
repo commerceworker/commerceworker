@@ -436,6 +436,14 @@ export function CartView({
                         </Td>
                         <Td numeric label="Total">
                           {l.unitPrice != null ? money(l.unitPrice * l.qty, currency) : '—'}
+                          {/* What promotions took off this line, a buy X, get Y one's free units included. */}
+                          {l.unitPrice != null &&
+                          l.listPrice != null &&
+                          l.listPrice * l.qty - l.unitPrice * l.qty >= 0.005 ? (
+                            <div className="text-muted-foreground text-xs">
+                              {money(l.listPrice * l.qty - l.unitPrice * l.qty, currency)} off
+                            </div>
+                          ) : null}
                         </Td>
                         {editable ? (
                           <Td className="max-md:ml-auto">

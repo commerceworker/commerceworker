@@ -574,7 +574,9 @@ export function quotedCart(
   const lines = quote
     ? cart.lines.map((l) => {
         const priced = quote.lines.find((p) => p.id === l.id);
-        return priced ? { ...l, title: priced.title, unitPrice: priced.unitPrice } : l;
+        return priced
+          ? { ...l, title: priced.title, unitPrice: priced.unitPrice, listPrice: priced.listPrice }
+          : l;
       })
     : cart.lines;
   return { ...cart, lines, quote, quotedVersion: cart.version, issues };

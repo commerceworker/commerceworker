@@ -237,6 +237,70 @@ describe('commerce.discount', () => {
     expect(await redemptions('SAVE10')).toEqual([]);
   });
 
+  describe('buy X, get Y', () => {
+    // Two WID-100 buy one GSK-010 at half off; the order holds two and one.
+    const rule = {
+      buy: { skus: ['WID-100'], qty: 2 },
+      get: { skus: ['GSK-010'], qty: 1, percent: 50 },
+      repeat: null,
+    };
+    const addRule = (code: string | null, over: Partial<typeof promotions.$inferInsert> = {}) =>
+      addPromotion({
+        code,
+        name: 'Buy 2, get 1',
+        kind: 'bxgy',
+        value: 0,
+        bxgy: JSON.stringify(rule),
+        ...over,
+      });
+
+    it('takes the units off the line that holds them, and redeems once per order', async () => {
+      await addRule('BXGY');
+      const o = order({ meta: { promoCodes: ['bxgy'] } });
+      const r = await discount(o);
+      expect(r.order?.lines?.map((l) => l.unitPrice)).toEqual([50, 50]);
+      expect(r.order).toMatchObject({ subtotal: 150, shipping: 15, total: 165 });
+      expect(r.summary).toBe('BXGY · $50.00 off');
+      await discount(o);
+      expect(await redemptions('BXGY')).toEqual([
+        expect.objectContaining({ orderId: o.id, amount: 50, stepKey: 'promo#1' }),
+      ]);
+      expect(await ROLLBACKS['commerce.discount']!(env, o.id, undefined, 'promo#1')).toBe(
+        'Gave back 1 promotion redemption',
+      );
+    });
+
+    it('prices a quote the same and redeems nothing', async () => {
+      await addRule('BXGY');
+      const r = await discount(order({ meta: { promoCodes: ['bxgy'] } }), { dryRun: true });
+      expect(r.order?.subtotal).toBe(150);
+      expect(await redemptions('BXGY')).toEqual([]);
+    });
+
+    it('refuses a code the order is too small for, and says what it needs', async () => {
+      await addRule('BXGY');
+      const small = order({
+        meta: { promoCodes: ['bxgy'] },
+        lines: [{ sku: 'WID-100', qty: 1, unitPrice: 50 }],
+      });
+      const r = await discount(small);
+      expect((r.output as { refused: unknown[] }).refused).toEqual([
+        { code: 'BXGY', reason: 'BXGY needs 2 WID-100 and 1 GSK-010 in the order.' },
+      ]);
+      expect(r.order?.subtotal).toBe(50);
+      expect(await redemptions('BXGY')).toEqual([]);
+    });
+
+    it('applies an automatic one that fits, and ignores a stored rule it cannot read', async () => {
+      await addRule(null, { id: 'promo_bxgy_auto' });
+      const fits = await discount(order({ meta: {} }));
+      expect(fits.order?.subtotal).toBe(150);
+      await db().delete(promotions);
+      await addRule(null, { id: 'promo_bxgy_broken', bxgy: '{"buy": 1}' });
+      expect((await discount(order({ meta: {} }))).order?.subtotal).toBe(200);
+    });
+  });
+
   it('gives redemptions back when the order rolls back', async () => {
     await addPromotion({ code: 'SAVE10' });
     const o = order();
@@ -413,5 +477,44 @@ describe('through the assistant', () => {
     expect((await previewAction(env, ops, 'set_promotion_status', pause)).title).toBe(
       'Pause Spring sale',
     );
+  });
+
+  it('adds a buy X, get Y promotion on a card that says it in words, and refuses one that cannot apply', async () => {
+    await db().delete(promotions);
+    const { TOOL_INPUTS } = await import('@commerceworker/core');
+    const { previewAction, runAction } = await import('../src/assistant/data');
+    const input = TOOL_INPUTS.create_promotion.parse({
+      name: 'Tee deal',
+      kind: 'bxgy',
+      stacking: 'stackable',
+      bxgy: { buy: { skus: ['TEE'], qty: 2 }, get: { qty: 1 } },
+    });
+    const card = await previewAction(env, ops, 'create_promotion', input);
+    expect(card.consequences).toEqual(
+      expect.arrayContaining(['Buy 2 TEE, get 1 free', 'Combines with other stackable promotions']),
+    );
+    expect(card.blocked).toBeUndefined();
+    const made = (await runAction(env, ops, 'create_promotion', input, 'assistant')) as {
+      id: string;
+    };
+    const row = await db().select().from(promotions).where(eq(promotions.id, made.id)).get();
+    expect(row).toMatchObject({ kind: 'bxgy', value: 0, skus: null });
+    // Stored whole, with the defaults the writer left out.
+    expect(JSON.parse(row!.bxgy!)).toEqual({
+      buy: { skus: ['TEE'], qty: 2 },
+      get: { skus: null, qty: 1, percent: 100 },
+      repeat: null,
+    });
+    const bad = (x: object) => TOOL_INPUTS.create_promotion.safeParse({ name: 'x', ...x });
+    const rule = { buy: { qty: 2 }, get: { qty: 1 } };
+    expect(bad({ kind: 'bxgy' }).success).toBe(false);
+    expect(bad({ kind: 'bxgy', bxgy: { ...rule, get: { qty: 0 } } }).success).toBe(false);
+    expect(bad({ kind: 'bxgy', bxgy: { ...rule, get: { qty: 1, skus: [] } } }).success).toBe(false);
+    expect(bad({ kind: 'bxgy', skus: ['TEE'], bxgy: rule }).success).toBe(false);
+    expect(bad({ kind: 'pct', value: 5, bxgy: rule }).success).toBe(false);
+    // The card holds the same line when a caller skips the schema.
+    expect(
+      (await previewAction(env, ops, 'create_promotion', { name: 'x', kind: 'bxgy' })).blocked,
+    ).toBe('A buy X, get Y promotion needs its rule.');
   });
 });

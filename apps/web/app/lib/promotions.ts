@@ -4,12 +4,15 @@
  */
 
 import {
+  type BxgyRule,
+  bxgyShapeProblem,
   MAX_CONDITION_MESSAGE,
   normalizePromoCode,
   PROMOTION_KINDS,
   PROMOTION_STACKING,
   type PromotionKind,
   type PromotionStacking,
+  parseBxgyRule,
   parsePromotionCondition,
 } from '@commerceworker/core';
 
@@ -44,6 +47,8 @@ export type PromotionForm = {
   maxDiscount: number | null;
   condition: object | null;
   conditionMessage: string | null;
+  /** Set for `bxgy`, and only then. */
+  bxgy: BxgyRule | null;
 };
 
 /** The promotion a form describes, or why it can't be one. */
@@ -56,7 +61,7 @@ export function promotionFrom(f: FormData): PromotionForm | string {
   if (!code && !name) return 'A promotion without a code needs a name.';
   const kind = s('kind') as PromotionKind;
   if (!PROMOTION_KINDS.includes(kind)) return 'Pick what the promotion does.';
-  const value = kind === 'free_shipping' ? 0 : Number(s('value'));
+  const value = kind === 'pct' || kind === 'amount' ? Number(s('value')) : 0;
   if (kind === 'pct' && !(value > 0 && value <= 100))
     return 'A percentage is above 0 and at most 100.';
   if (kind === 'amount' && !(value > 0)) return 'An amount off is above 0.';
@@ -86,11 +91,33 @@ export function promotionFrom(f: FormData): PromotionForm | string {
   }
   const conditionMessage = s('conditionMessage').slice(0, MAX_CONDITION_MESSAGE) || null;
   if (conditionMessage && !condition) return 'A message for a failed condition needs a condition.';
-  const skus = s('skus')
-    ? s('skus')
-        .split(/[\s,]+/)
-        .filter(Boolean)
-    : null;
+  const list = (k: string) => {
+    const skus = s(k)
+      .split(/[\s,]+/)
+      .filter(Boolean);
+    return skus.length ? skus : null;
+  };
+  const skus = kind === 'bxgy' ? null : list('skus');
+  // The rule's fields are only read for its own kind; a blank one takes the rule's default.
+  let bxgy: BxgyRule | null = null;
+  if (kind === 'bxgy') {
+    const whole = (k: string) => (s(k) ? Number(s(k)) : undefined);
+    const qtys = [whole('buyQty'), whole('getQty'), whole('repeat')];
+    if (qtys.some((n) => n !== undefined && !Number.isInteger(n)))
+      return 'Quantities and repeats are whole numbers.';
+    if (!qtys[0] || !qtys[1] || qtys[0] < 1 || qtys[1] < 1)
+      return 'Buy and get each need a quantity of at least 1.';
+    const percent = s('getPercent') ? Number(s('getPercent')) : 100;
+    const parsed = parseBxgyRule({
+      buy: { skus: list('buySkus'), qty: qtys[0] },
+      get: { skus: list('getSkus'), qty: qtys[1], percent },
+      repeat: qtys[2] ?? null,
+    });
+    if ('error' in parsed) return parsed.error;
+    bxgy = parsed.rule;
+  }
+  const shape = bxgyShapeProblem(kind, bxgy, skus);
+  if (shape) return shape;
   return {
     code,
     name,
@@ -107,5 +134,6 @@ export function promotionFrom(f: FormData): PromotionForm | string {
     maxDiscount,
     condition,
     conditionMessage,
+    bxgy,
   };
 }

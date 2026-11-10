@@ -608,7 +608,7 @@ export const ASSISTANT_TOOLS: Record<
     label: 'Add a promotion',
     title: 'Add a promotion',
     description:
-      'Add a promotion: a code buyers and staff enter on carts and at checkout, or an automatic one (no code, named) that applies to any order it fits. A percentage or amount off, or free shipping, optionally limited by subtotal, SKUs, customer, end date and uses, capped per order, with a priority and exclusive or stackable combining. Active at once.',
+      'Add a promotion: a code buyers and staff enter on carts and at checkout, or an automatic one (no code, named) that applies to any order it fits. A percentage or amount off, free shipping, or buy X get Y (buy a quantity of some SKUs, get a quantity of the same or other SKUs free or at a percentage off, the cheapest units first), optionally limited by subtotal, SKUs, customer, end date and uses, capped per order, with a priority and exclusive or stackable combining. Active at once.',
   },
   set_promotion_status: {
     role: 'operator',

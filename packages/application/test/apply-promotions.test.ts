@@ -28,6 +28,7 @@ const promo = (over: Partial<Promotion> & { id: string }): Promotion => ({
   maxDiscount: null,
   condition: null,
   conditionMessage: null,
+  bxgy: null,
   ...over,
 });
 const storeWith = (...promotions: Promotion[]) =>
@@ -282,5 +283,97 @@ describe('applying promotion codes to an order', () => {
       const r = await applyPromotions({ pricing }, order(undefined), opts);
       expect(r.applied.map((a) => a.id)).toEqual(['sku2']);
     });
+  });
+});
+
+describe('buy X, get Y on an order', () => {
+  const bxgy = (over: Partial<Promotion> & { id: string }, rule: Promotion['bxgy']) =>
+    promo({ kind: 'bxgy', value: 0, bxgy: rule, ...over });
+  const twoGetOne = {
+    buy: { skus: ['PC-SKU-1'], qty: 2 },
+    get: { skus: ['PC-SKU-2'], qty: 1, percent: 100 },
+    repeat: null,
+  };
+
+  it('puts the discount on the line that holds the units, and re-totals from it', async () => {
+    const pricing = storeWith(bxgy({ id: 'bx', code: 'TWOFORONE' }, twoGetOne));
+    const r = await applyPromotions({ pricing }, order(['twoforone']), opts);
+    expect(r.applied).toEqual([
+      { id: 'bx', code: 'TWOFORONE', name: '', kind: 'bxgy', amount: 25 },
+    ]);
+    expect(r.order?.lines).toEqual([
+      { sku: 'PC-SKU-1', qty: 2, unitPrice: 10 },
+      { sku: 'PC-SKU-2', qty: 1, unitPrice: 0 },
+    ]);
+    expect(r.order?.subtotal).toBe(20);
+    expect(r.order?.total).toBe(25);
+  });
+
+  it('refuses a code the order is too small for, saying what it needs', async () => {
+    const pricing = storeWith(
+      bxgy({ id: 'bx', code: 'BIG' }, { ...twoGetOne, buy: { skus: ['PC-SKU-1'], qty: 3 } }),
+    );
+    const r = await applyPromotions({ pricing }, order(['big']), opts);
+    expect(r.applied).toEqual([]);
+    expect(r.refused).toEqual([
+      { code: 'BIG', reason: 'BIG needs 3 PC-SKU-1 and 1 PC-SKU-2 in the order.' },
+    ]);
+    expect(r.order?.subtotal).toBe(45);
+  });
+
+  it('applies an automatic one only when the order fits, and nothing is refused', async () => {
+    const pricing = storeWith(
+      bxgy(
+        { id: 'auto', name: 'Any three' },
+        { buy: { skus: null, qty: 2 }, get: { skus: null, qty: 1, percent: 50 }, repeat: 1 },
+      ),
+    );
+    // Three units: the cheapest, a SKU 1 at 10, half off.
+    const fits = await applyPromotions({ pricing }, order(undefined), opts);
+    expect(fits.applied.map((a) => [a.name, a.amount])).toEqual([['Any three', 5]]);
+    expect(fits.order?.subtotal).toBe(40);
+    const small = {
+      ...order(undefined, 'o2'),
+      lines: [{ sku: 'PC-SKU-2', qty: 2, unitPrice: 25 }],
+    };
+    const none = await applyPromotions({ pricing }, small as Order, opts);
+    expect(none).toMatchObject({ applied: [], refused: [] });
+  });
+
+  it('holds its redemption once, like any promotion: a retry keeps it, a second order loses it', async () => {
+    const pricing = storeWith(bxgy({ id: 'bx', code: 'ONCE', maxRedemptions: 1 }, twoGetOne));
+    await applyPromotions({ pricing }, order(['once']), opts);
+    expect((await applyPromotions({ pricing }, order(['once']), opts)).applied).toHaveLength(1);
+    const other = await applyPromotions({ pricing }, order(['once'], 'ord_other'), opts);
+    expect(other.applied).toEqual([]);
+    expect(other.refused).toEqual([{ code: 'ONCE', reason: 'ONCE has been used up.' }]);
+  });
+
+  it('stacks on a percentage off that came before it', async () => {
+    const pricing = storeWith(
+      promo({ id: 'pct', code: 'TEN', value: 10, stacking: 'stackable', priority: 1 }),
+      bxgy({ id: 'bx', code: 'FREE', stacking: 'stackable' }, twoGetOne),
+    );
+    const r = await applyPromotions({ pricing }, order(['ten', 'free']), opts);
+    expect(r.applied.map((a) => a.code)).toEqual(['TEN', 'FREE']);
+    // 10% off 45 is 4.50, then the SKU 2 unit, now 22.50, is free.
+    expect(r.applied.map((a) => a.amount)).toEqual([4.5, 22.5]);
+    expect(r.order?.subtotal).toBe(18);
+  });
+
+  it('judges its condition like any promotion’s, with its own message', async () => {
+    const pricing = storeWith(
+      bxgy(
+        {
+          id: 'bx',
+          code: 'EUONLY',
+          condition: { '==': [{ var: 'order.currency' }, 'EUR'] },
+          conditionMessage: 'Euro orders only.',
+        },
+        twoGetOne,
+      ),
+    );
+    const r = await applyPromotions({ pricing }, order(['euonly']), opts);
+    expect(r.refused).toEqual([{ code: 'EUONLY', reason: 'Euro orders only.' }]);
   });
 });

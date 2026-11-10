@@ -13,6 +13,7 @@ import {
   type PriceSource,
   type PriceSourceKind,
   type Promotion,
+  parseBxgyRule,
 } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import type { PricingStore, Redemption } from '@commerceworker/ports/commerce';
@@ -41,6 +42,17 @@ function chunk<T>(xs: readonly T[], size: number): T[][] {
   return out;
 }
 
+/** A stored rule, or null when there is none or it isn't one (such a promotion never applies). */
+function bxgyOf(text: string | null): Promotion['bxgy'] {
+  if (!text) return null;
+  try {
+    const r = parseBxgyRule(JSON.parse(text));
+    return 'rule' in r ? r.rule : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A stored promotion as the discount node reads it. */
 export function promotionFromRow(r: PromotionRow): Promotion {
   return {
@@ -67,6 +79,7 @@ export function promotionFromRow(r: PromotionRow): Promotion {
     maxDiscount: r.maxDiscount,
     condition: r.condition ? (JSON.parse(r.condition) as object) : null,
     conditionMessage: r.conditionMessage,
+    bxgy: bxgyOf(r.bxgy),
   };
 }
 
@@ -292,6 +305,7 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
           maxDiscount: p.maxDiscount,
           condition: p.condition ? JSON.stringify(p.condition) : null,
           conditionMessage: p.conditionMessage,
+          bxgy: p.bxgy ? JSON.stringify(p.bxgy) : null,
           createdBy,
           createdAt: at,
           updatedAt: at,

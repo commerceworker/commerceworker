@@ -410,6 +410,42 @@ describe('promotion codes on a cart', () => {
     );
   });
 
+  it('shows buy X, get Y on the line that holds the free units, beside its list price', async () => {
+    const flow = { ...b2bOrderFlow(), id: 'test-cart-bxgy' };
+    await publishFlow(db(), flow);
+    await db()
+      .insert(promotions)
+      .values({
+        id: 'promo_cart_bxgy',
+        code: 'CARTBXGY',
+        kind: 'bxgy',
+        value: 0,
+        bxgy: JSON.stringify({
+          buy: { skus: null, qty: 3 },
+          get: { skus: null, qty: 1, percent: 100 },
+          repeat: null,
+        }),
+        createdAt: 0,
+        updatedAt: 0,
+      })
+      .onConflictDoNothing();
+    const made = await api().createCart({
+      title: 'Bxgy cart',
+      flowId: flow.id,
+      customerId: 'cus_northwind',
+      createdBy: 'usr_cart_ada',
+    });
+    if (!made.ok) throw new Error(made.error);
+    const ada = staff(await who('operator', 'ada'));
+    await cart(made.id).applyAs(ada, { op: 'add', sku: 'WID-100', qty: 10 });
+    await cart(made.id).applyAs(ada, { op: 'promo_add', code: 'cartbxgy' });
+    const priced = (await state(made.id)).cart!;
+    // Ten units at 21.50: two groups of four, so two units are free.
+    expect(priced.quote!.subtotal).toBe(172);
+    expect(priced.lines[0]).toMatchObject({ unitPrice: 17.2, listPrice: 21.5 });
+    expect(priced.issues.filter((i) => i.code === 'promotion')).toEqual([]);
+  });
+
   it('takes several codes and an automatic promotion off the price, and names what a code is not combined with', async () => {
     const flow = { ...b2bOrderFlow(), id: 'test-cart-promos-many' };
     await publishFlow(db(), flow);

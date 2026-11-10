@@ -5,7 +5,7 @@
  * promotions step.
  */
 
-import { BASE_CURRENCY, promotionLabel } from '@commerceworker/core';
+import { BASE_CURRENCY, type BxgyRule, describeBxgy, promotionLabel } from '@commerceworker/core';
 import { Button } from '@commerceworker/ui/button';
 import {
   Field,
@@ -72,6 +72,7 @@ export async function action({ request }: Route.ActionArgs) {
     maxDiscount,
     condition,
     conditionMessage,
+    bxgy,
     ...rest
   } = p;
   return {
@@ -81,6 +82,7 @@ export async function action({ request }: Route.ActionArgs) {
       ...(maxDiscount !== null ? { maxDiscount } : {}),
       ...(condition ? { condition } : {}),
       ...(conditionMessage ? { conditionMessage } : {}),
+      ...(bxgy ? { bxgy } : {}),
       ...(customerId ? { customerId } : {}),
       ...(minSubtotal !== null ? { minSubtotal } : {}),
       ...(skus ? { skus } : {}),
@@ -91,12 +93,19 @@ export async function action({ request }: Route.ActionArgs) {
   };
 }
 
-const describe = (p: { kind: string; value: number; currency: string | null }) =>
+const describe = (p: {
+  kind: string;
+  value: number;
+  currency: string | null;
+  bxgy: BxgyRule | null;
+}) =>
   p.kind === 'pct'
     ? `${p.value}% off`
     : p.kind === 'amount'
       ? `${money(p.value, p.currency ?? BASE_CURRENCY)} off`
-      : 'Free shipping';
+      : p.bxgy
+        ? describeBxgy(p.bxgy)
+        : 'Free shipping';
 
 export default function Promotions() {
   const { promotions, customers, now } = useLoaderData<typeof loader>();
@@ -180,6 +189,7 @@ export default function Promotions() {
                   const limits: ReactNode[] = [
                     p.minSubtotal ? `over ${money(p.minSubtotal)}` : null,
                     p.skus ? plural(p.skus.length, 'SKU') : null,
+                    p.bxgy?.repeat ? `${p.bxgy.repeat}× per order` : null,
                     p.customerId ? (
                       <Link to={`/customers/${p.customerId}`} className="text-link hover:underline">
                         {customers[p.customerId] ?? p.customerId}
@@ -266,6 +276,8 @@ export default function Promotions() {
  * checks them (`promotionFrom`).
  */
 function NewPromotion({ error, busy }: { error?: string | null; busy: boolean }) {
+  // What the kind needs decides which fields show: a percentage or an amount, or a buy X, get Y rule.
+  const [kind, setKind] = useState('pct');
   return (
     <Form method="post">
       <FieldGroup className="gap-5">
@@ -281,17 +293,73 @@ function NewPromotion({ error, busy }: { error?: string | null; busy: boolean })
         <div className="grid grid-cols-2 gap-3">
           <Field className="gap-2">
             <FieldLabel htmlFor="promo-kind">Takes off</FieldLabel>
-            <NativeSelect id="promo-kind" name="kind">
+            <NativeSelect
+              id="promo-kind"
+              name="kind"
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+            >
               <NativeSelectOption value="pct">A percentage</NativeSelectOption>
               <NativeSelectOption value="amount">An amount ({BASE_CURRENCY})</NativeSelectOption>
               <NativeSelectOption value="free_shipping">Shipping</NativeSelectOption>
+              <NativeSelectOption value="bxgy">Buy X, get Y</NativeSelectOption>
             </NativeSelect>
           </Field>
-          <Field className="gap-2">
-            <FieldLabel htmlFor="promo-value">Percent or amount</FieldLabel>
-            <Input id="promo-value" name="value" inputMode="decimal" />
-          </Field>
+          {kind === 'pct' || kind === 'amount' ? (
+            <Field className="gap-2">
+              <FieldLabel htmlFor="promo-value">Percent or amount</FieldLabel>
+              <Input id="promo-value" name="value" inputMode="decimal" />
+            </Field>
+          ) : null}
         </div>
+        {kind === 'bxgy' ? (
+          <FieldSet className="gap-4">
+            <FieldLegend variant="label" className="mb-0">
+              Buy X, get Y
+            </FieldLegend>
+            <div className="grid grid-cols-2 gap-3">
+              <Field className="gap-2">
+                <FieldLabel htmlFor="promo-buyQty">Buy (units)</FieldLabel>
+                <Input id="promo-buyQty" name="buyQty" inputMode="numeric" placeholder="2" />
+              </Field>
+              <Field className="gap-2">
+                <FieldLabel htmlFor="promo-getQty">Get (units)</FieldLabel>
+                <Input id="promo-getQty" name="getQty" inputMode="numeric" placeholder="1" />
+              </Field>
+            </div>
+            <Field className="gap-2">
+              <FieldLabel htmlFor="promo-buySkus">
+                Buy these SKUs (optional, comma separated; empty is any line)
+              </FieldLabel>
+              <Input id="promo-buySkus" name="buySkus" />
+            </Field>
+            <Field className="gap-2">
+              <FieldLabel htmlFor="promo-getSkus">
+                Get these SKUs (optional; empty is the same as the ones bought)
+              </FieldLabel>
+              <Input id="promo-getSkus" name="getSkus" />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field className="gap-2">
+                <FieldLabel htmlFor="promo-getPercent">Percent off (empty is free)</FieldLabel>
+                <Input
+                  id="promo-getPercent"
+                  name="getPercent"
+                  inputMode="decimal"
+                  placeholder="100"
+                />
+              </Field>
+              <Field className="gap-2">
+                <FieldLabel htmlFor="promo-repeat">Times per order (empty is no limit)</FieldLabel>
+                <Input id="promo-repeat" name="repeat" inputMode="numeric" />
+              </Field>
+            </div>
+            <FieldDescription>
+              The cheapest units you get are the ones discounted; units counted as bought are never
+              also discounted.
+            </FieldDescription>
+          </FieldSet>
+        ) : null}
         <FieldSet className="gap-4">
           <FieldLegend variant="label" className="mb-0">
             Combining
@@ -322,7 +390,8 @@ function NewPromotion({ error, busy }: { error?: string | null; busy: boolean })
           </FieldLegend>
           {[
             ['minSubtotal', `Minimum subtotal (${BASE_CURRENCY}, optional)`],
-            ['skus', 'Only these SKUs (optional, comma separated)'],
+            // A buy X, get Y promotion names its SKUs in its rule.
+            ...(kind === 'bxgy' ? [] : [['skus', 'Only these SKUs (optional, comma separated)']]),
             ['customerId', 'Only this customer id (optional)'],
             ['maxRedemptions', 'Uses in all (optional)'],
             ['perCustomerLimit', 'Uses per customer (optional)'],

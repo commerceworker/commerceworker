@@ -246,7 +246,7 @@ The response carries `discounts`:
 
 - `codes`: the codes as sent.
 - `applied`: what the promotions step applied, each with the `code`, the promotion's name as `title`,
-  the `amount` in minor units and a `method` (`each` for a percentage, `across` for a fixed amount).
+  the `amount` in minor units and a `method` (`each` for a percentage, `across` for a fixed amount or a buy X, get Y).
   Free shipping has no `method`. An automatic promotion (one with no code) is applied whether or
   not the platform sent codes; it comes back with no `code` and `automatic: true`.
 - `allocations` on an applied discount: where it landed, summing to its `amount`. They are given

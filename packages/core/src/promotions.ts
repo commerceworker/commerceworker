@@ -16,10 +16,11 @@
 
 import { normalizePromoCode } from './cart';
 import { fromBase, money, toBase } from './logic';
+import { type BxgyRule, bxgyGroups, bxgyNeeds, bxgyOffs } from './promotion-bxgy';
 import { type ConditionInput, promotionConditionHolds } from './promotion-conditions';
 import type { OrderLine } from './types';
 
-export const PROMOTION_KINDS = ['pct', 'amount', 'free_shipping'] as const;
+export const PROMOTION_KINDS = ['pct', 'amount', 'free_shipping', 'bxgy'] as const;
 export type PromotionKind = (typeof PROMOTION_KINDS)[number];
 
 /**
@@ -35,12 +36,15 @@ export type Promotion = {
   code: string | null;
   name: string;
   kind: PromotionKind;
-  /** A percentage for `pct`; for `amount`, money in `currency` (or the base currency when null). */
+  /**
+   * A percentage for `pct`; for `amount`, money in `currency` (or the base currency when null);
+   * 0 for the kinds that take none (`free_shipping`, and `bxgy`, whose rule holds its own).
+   */
   value: number;
   currency: string | null;
   /** In the base currency, compared with the order's subtotal converted. */
   minSubtotal: number | null;
-  /** SKUs it covers; null for every line. */
+  /** SKUs it covers; null for every line. A `bxgy` promotion names its SKUs in its rule instead. */
   skus: string[] | null;
   customerId: string | null;
   validFrom: number | null;
@@ -53,6 +57,8 @@ export type Promotion = {
   stacking: PromotionStacking;
   /** The most it takes off one order, in the base currency; null for no cap. */
   maxDiscount: number | null;
+  /** What `bxgy` buys and gets (see `promotion-bxgy.ts`); null for every other kind. */
+  bxgy: BxgyRule | null;
   /**
    * A JSON Logic expression the order must meet, beside the fields above (see
    * `promotion-conditions.ts`); null for none.
@@ -105,8 +111,11 @@ export function promotionProblem(p: Promotion, c: PromotionContext): string | nu
     return `${l} has been used up.`;
   if (p.perCustomerLimit !== null && c.customerId && c.redeemed.byCustomer >= p.perCustomerLimit)
     return `${l} has already been used by this customer.`;
-  const lines = eligible(p, c.lines);
-  if (!lines.length) return `${l} doesn't cover anything in the order.`;
+  if (p.kind === 'bxgy') {
+    // A bxgy promotion with no readable rule (never written by a surface) takes nothing off.
+    if (!p.bxgy) return `${l} has no buy X, get Y rule.`;
+    if (!bxgyGroups(p.bxgy, c.lines)) return `${l} needs ${bxgyNeeds(p.bxgy)} in the order.`;
+  } else if (!eligible(p, c.lines).length) return `${l} doesn't cover anything in the order.`;
   if (p.minSubtotal !== null && toBase(subtotalOf(c.lines), c.fxRate) < p.minSubtotal)
     return `${l} needs a subtotal of at least ${p.minSubtotal}.`;
   // Last: the typed fields are cheap and their refusals say more.
@@ -134,7 +143,8 @@ type Priced = { lines: OrderLine[]; shipping?: number };
  * `order` with `p` applied, and what it took off. Assumes `promotionProblem` found nothing. The
  * promotion's cap (`maxDiscount`, in the base currency) limits what it takes off, after its own
  * arithmetic: a line discount is scaled down across the lines it covers, free shipping takes off
- * at most the cap.
+ * at most the cap. A `bxgy` promotion takes the cheapest units its rule discounts off the lines
+ * that hold them (`bxgyOffs`).
  */
 export function applyPromotion(
   p: Promotion,
@@ -151,6 +161,21 @@ export function applyPromotion(
     };
   }
   const { lines } = order;
+  if (p.kind === 'bxgy') {
+    const offs = p.bxgy ? bxgyOffs(p.bxgy, lines, cap) : [];
+    // The line carries its discount as a lower unit price: the average over its units, to four
+    // decimals, so the line's total is what it was less exactly what its units gave up.
+    const next = lines.map((l, i) =>
+      offs[i] && l.unitPrice !== undefined
+        ? { ...l, unitPrice: unit((l.qty * l.unitPrice - offs[i]) / l.qty) }
+        : l,
+    );
+    return {
+      lines: next,
+      shipping: order.shipping,
+      amount: money(subtotalOf(lines) - subtotalOf(next)),
+    };
+  }
   const covered = new Set(eligible(p, lines));
   const base = subtotalOf([...covered]);
   if (base <= 0) return { lines, shipping: order.shipping, amount: 0 };
