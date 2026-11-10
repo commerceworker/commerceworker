@@ -128,6 +128,22 @@ Outbound webhook subscriptions and inbound integrations (the keys that sign
 `POST /api/v1/webhooks/events` and `/orders`) each have their own secret, generated when they are
 created through the API and stored in D1; they are not configuration.
 
+## Content stack secrets
+
+A deployment with `"content": true` ([Operations](operations.md#the-content-stack)) deploys the content Workers with these secrets, set in the same GitHub environment as the commerce ones; `node scripts/fleet.ts secrets <pipeline|media|api|delivery|studio> <out> <id>` writes each Worker's only (`CONTENT_SECRETS` in `scripts/fleet.ts`), refusing a deployment with content off, a missing required secret, or a key under 32 characters.
+
+| Secret | Worker | Meaning |
+|---|---|---|
+| `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS` | studio, api | The same key as the commerce web Worker's. The studio signs the principal header it forwards to the api and the api verifies it. The pipeline and delivery never hold it |
+| `ASSISTANT_PRINCIPAL_KEY`, `ASSISTANT_PRINCIPAL_KEY_PREVIOUS` | pipeline | Not in the environment: derived at each deploy from `PRINCIPAL_KEY` (and the previous one) with HKDF (`scripts/derive-assistant-key.ts`, the same salt and info as `deriveAssistantPrincipalKey` in `packages/security`), so a principal the pipeline could forge is good for the assistant's socket and nothing else |
+| `DATA_KEY`, `DATA_KEY_PREVIOUS` | studio, api, pipeline, delivery | Seals the secrets the content stack stores in its own database. The same value as the commerce Workers'; rotate it the same way ([Rotating the data key](operations.md#rotating-the-data-key)) |
+| `TOKEN_PEPPER` | api, pipeline, delivery | Required with content. In every API key hash: never change it once a deployment runs. `scripts/provision.sh` generates it, and refuses to when the api already holds one the environment lost |
+| `MEDIA_SIGNING_SECRET` | api, pipeline, delivery, media | Required with content. Signs the `/media/*` URLs the api and delivery hand out and the media Worker verifies. Changing it invalidates URLs already handed out |
+| `PASSWORD_PEPPER`, `SETUP_TOKEN`, `OIDC_CLIENT_SECRET` | studio | The same as the commerce web Worker's: the studio's password hashes use the same pepper, its `/setup` takes the same one-time code (redeemed once in each database), and single sign-on uses the deployment's `sso` entry with a second redirect URI (`https://<studioDomain>/login/sso/callback`) |
+| `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN`, `ADMIN_TOKEN` | api | Optional: the Stream webhook's signing secret, and the static MCP and admin tokens |
+
+The content Workers' bindings and variables are in each app's `wrangler.jsonc` (`apps/pipeline`, `apps/api`, `apps/media`, `apps/studio`, and `apps/delivery`'s content template); `scripts/fleet.ts` renders them per deployment: the content database (`commerceworker-content<suffix>`) as `DB` on every one of them, `KV_CACHE`, `MEDIA_BUCKET`, `VECTORIZE`, the queues, Workflows and Durable Object script names (`commerceworker-pipeline<suffix>`) with the deployment's names, `MEDIA_BASE_URL` (the api's host), `MEDIA_PUBLIC_URL` (the media host), `OAUTH_ISSUER` (the studio's host), `QUEUE_SUFFIX`, `AI_GATEWAY_ID` and `DATA_JURISDICTION`. Their rate-limit namespaces are `<slot>501` to `<slot>506`.
+
 ## Bindings
 
 | Binding | Worker | Resource |
@@ -210,6 +226,8 @@ registry's `catalogDomain`, default `catalog.<domain>`, rendered at deploy), wit
 compatibility flags are `nodejs_compat` and `global_fetch_strictly_public`; `observability` is on
 with `head_sampling_rate` 0.05 (logs from 5% of requests; every request is still counted in Analytics
 Engine) and source maps are uploaded.
+
+With the content stack, the studio serves `studio.<domain>`, the api `api.<domain>`, the media Worker `media.<domain>` and delivery also `cdn.<domain>` (the registry's `studioDomain`, `apiDomain`, `mediaDomain` and `cdnDomain`, only with `content: true`), each a custom domain with `workers_dev` and `preview_urls` off; the pipeline has no route. Delivery then deploys its dispatcher entry and answers `GET /health` with `serves: ["catalog", "content"]` on either host. All of them send trace events to Logpush.
 
 The web, storefront and engine Workers answer `GET /health` with `{ ok: true, service }`. The web app's
 `GET /health/deep` also checks D1, R2 and the engine, and `POST /health/write`, which only CI can

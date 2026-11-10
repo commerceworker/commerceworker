@@ -5,6 +5,10 @@
 #
 #   ./scripts/provision.sh <id>
 #
+# A deployment with `"content": true` in its registry entry also gets the content stack's own
+# resources (its D1 database, KV namespace, assets bucket, vector index and queues), and its D1 and
+# KV ids are recorded as contentD1Id and contentKvId. A commerce-only deployment gets none of them.
+#
 # Needs `wrangler login` (or CLOUDFLARE_API_TOKEN) and `gh auth login`. The AI Gateway, the
 # Turnstile widget and the Logpush job are created through the API, so they also need
 # CLOUDFLARE_API_TOKEN (for the widget, with Turnstile Sites Write) and CLOUDFLARE_ACCOUNT_ID;
@@ -20,6 +24,10 @@ j=()
 [ -n "$JURISDICTION" ] && j=(--jurisdiction "$JURISDICTION")
 
 echo "== $id: D1 $D1, R2 $R2 and $CATALOG_R2, KV $CATALOG_KV, gateway $AI_GATEWAY, index ${PRODUCT_INDEX:-none}, https://$DOMAIN, environment $ENVIRONMENT"
+if [ "$CONTENT" = true ]; then
+  echo "   content: D1 $CONTENT_D1, KV $CONTENT_KV, R2 $CONTENT_MEDIA, index ${CONTENT_VECTORS:-none}"
+  echo "   https://$STUDIO_DOMAIN (studio), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery), https://$MEDIA_DOMAIN (media)"
+fi
 
 wrangler d1 create "$D1" ${j[@]+"${j[@]}"} || echo "D1 database $D1 already exists"
 uuid=$(wrangler d1 info "$D1" --json | jq -er .uuid)
@@ -109,6 +117,85 @@ for q in "$CATALOG_FEED_PARTS" "$CATALOG_FEED_PARTS_DLQ" "$CATALOG_PURGE" "$CATA
   wrangler queues update "$q" --message-retention-period-secs 1209600 >/dev/null
   echo "Queue $q keeps messages 14 days"
 done
+
+# ---- The content stack (registry `content`) -------------------------------------------------------
+# Published content and the assets service: a database of its own (migrated from
+# packages/store/migrations; the commerce database keeps packages/db/migrations), the cache KV the
+# api, pipeline, delivery and media share, the assets bucket, the vector index and the queues. The
+# AI Gateway is the deployment's one above. Every step finds or creates, so a re-run changes nothing.
+if [ "$CONTENT" = true ]; then
+  # D1, with read replication on: delivery and admin reads go to the nearest replica (the Workers
+  # open Sessions API sessions; writes always go to the primary). Looked up by name in the account's
+  # list: `d1 info <name>` resolves the name against the engine's own config first.
+  wrangler d1 create "$CONTENT_D1" ${j[@]+"${j[@]}"} || echo "D1 database $CONTENT_D1 already exists"
+  content_uuid=$(wrangler d1 list --json | jq -er --arg n "$CONTENT_D1" '.[] | select(.name == $n) | .uuid')
+  node scripts/fleet.ts set-content-d1 "$id" "$content_uuid"
+  echo "Recorded contentD1Id $content_uuid in deployments/$id.jsonc"
+  if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] &&
+    curl -fsS -X PUT "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$content_uuid" \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+      --data '{"read_replication":{"mode":"auto"}}' >/dev/null; then
+    echo "D1 read replication for $CONTENT_D1: auto"
+  else
+    echo "Turn on read replication for $CONTENT_D1 (dashboard: D1 > $CONTENT_D1 > Settings)."
+  fi
+
+  # The KV namespace the api, pipeline, delivery and media share (delivery cache, cached principals,
+  # the published-asset gate). KV has no jurisdictions.
+  content_kv_id() { wrangler kv namespace list | jq -er --arg t "$CONTENT_KV" '.[] | select(.title == $t) | .id'; }
+  content_kv=$(content_kv_id 2>/dev/null) || { wrangler kv namespace create "$CONTENT_KV" >/dev/null; content_kv=$(content_kv_id); }
+  node scripts/fleet.ts set-content-kv "$id" "$content_kv"
+  echo "Recorded contentKvId $content_kv in deployments/$id.jsonc"
+
+  # The assets bucket: originals, import staging, dead letters and zip downloads. Staged imports,
+  # dead letters and zips expire (a zip is kept a day; the pipeline's sweep removes it, this is the
+  # backstop). The rules are replaced on each run.
+  wrangler r2 bucket create "$CONTENT_MEDIA" ${j[@]+"${j[@]}"} || echo "R2 bucket $CONTENT_MEDIA already exists"
+  for rule in "imports imports/ 7" "dlq dlq/ 30" "zips zips/ 2"; do
+    set -- $rule
+    wrangler r2 bucket lifecycle remove "$CONTENT_MEDIA" --name "$1" ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+    wrangler r2 bucket lifecycle add "$CONTENT_MEDIA" "$1" "$2" --expire-days "$3" --force ${j[@]+"${j[@]}"}
+  done
+  # Multipart uploads nobody finished (an abandoned large upload, a zip whose build died): aborted
+  # after 2 days anywhere in the bucket, so R2 stops keeping their parts. The pipeline's hourly
+  # sweep aborts an abandoned upload after one day; this is the backstop.
+  wrangler r2 bucket lifecycle remove "$CONTENT_MEDIA" --name abort-multipart ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+  wrangler r2 bucket lifecycle add "$CONTENT_MEDIA" abort-multipart "" --abort-multipart-days 2 --force ${j[@]+"${j[@]}"}
+
+  # Embeddings for semantic and hybrid search (Workers AI bge-base-en-v1.5: 768 dimensions, cosine,
+  # fixed at creation), filtered by space and environment, so both are metadata indexes. A demo
+  # mocks every model and has no index.
+  if [ -n "$CONTENT_VECTORS" ]; then
+    if wrangler vectorize get "$CONTENT_VECTORS" >/dev/null 2>&1; then
+      echo "Vectorize index $CONTENT_VECTORS already exists"
+    else
+      wrangler vectorize create "$CONTENT_VECTORS" --dimensions 768 --metric cosine
+    fi
+    for prop in spaceId environmentId; do
+      wrangler vectorize create-metadata-index "$CONTENT_VECTORS" --property-name "$prop" --type string \
+        >/dev/null 2>&1 || true
+    done
+  fi
+
+  # Queues: domain events (+ dead letters), bulk chunks, agent jobs, delivery purges, media purges
+  # and asset events (each + dead letters). A deploy fails if a consumer's queue is missing, so a
+  # queue that can't be created or found stops provisioning. Each keeps messages 14 days.
+  for q in $CONTENT_QUEUES; do
+    if wrangler queues info "$q" >/dev/null 2>&1; then echo "Queue $q already exists"
+    else wrangler queues create "$q"; fi
+    wrangler queues update "$q" --message-retention-period-secs 1209600 >/dev/null
+  done
+
+  # Asset ingest: every object written to the assets bucket is announced on the asset-events queue.
+  # Asset keys (`space/environment/asset/file`) share no prefix, so the rule has none; the pipeline
+  # ignores keys that aren't an asset's current file (extracted text, version bodies, staged jobs).
+  if wrangler r2 bucket notification list "$CONTENT_MEDIA" ${j[@]+"${j[@]}"} 2>/dev/null | grep -q "$ASSET_EVENTS"; then
+    echo "R2 notification $CONTENT_MEDIA -> $ASSET_EVENTS already exists"
+  else
+    wrangler r2 bucket notification create "$CONTENT_MEDIA" --event-type object-create \
+      --queue "$ASSET_EVENTS" --description "commerceworker asset ingest" ${j[@]+"${j[@]}"}
+  fi
+fi
 
 # How long the R2 archive keeps audit events (auditArchiveDays): the rule is replaced on each run,
 # so a changed number takes effect; without one, archived events are kept.
@@ -306,11 +393,23 @@ if WORKER_SECRETS=$(wrangler secret list --name "$WEB" 2>/dev/null); then
   RUNNING=true
   WORKER_SECRETS=$(jq -r '.[].name' <<<"$WORKER_SECRETS" 2>/dev/null || true)
 fi
-for KEY in PRINCIPAL_KEY DATA_KEY PASSWORD_PEPPER; do
+# A content deployment also needs TOKEN_PEPPER (in every API key hash: it never changes once the api
+# holds one, so the api's secrets are read as the web Worker's are) and MEDIA_SIGNING_SECRET (signs
+# media URLs, so a lost one only invalidates URLs already handed out). The studio's PRINCIPAL_KEY,
+# DATA_KEY, PASSWORD_PEPPER and SETUP_TOKEN are the ones above: one environment holds them all. The
+# pipeline's assistant keys aren't generated: every deploy derives them from PRINCIPAL_KEY.
+KEYS="PRINCIPAL_KEY DATA_KEY PASSWORD_PEPPER"
+if [ "$CONTENT" = true ]; then
+  KEYS="$KEYS TOKEN_PEPPER MEDIA_SIGNING_SECRET"
+  if API_HELD=$(wrangler secret list --name "$API" 2>/dev/null); then
+    WORKER_SECRETS+=$'\n'$(jq -r '.[].name' <<<"$API_HELD" 2>/dev/null || true)
+  fi
+fi
+for KEY in $KEYS; do
   if grep -qx "$KEY" <<<"$EXISTING"; then
     echo "$ENVIRONMENT already has $KEY"
-  elif [ "$KEY" != PRINCIPAL_KEY ] && grep -qx "$KEY" <<<"$WORKER_SECRETS"; then
-    echo "$ENVIRONMENT has no $KEY, but $WEB already holds one. Set the deployment's own value on"
+  elif [ "$KEY" != PRINCIPAL_KEY ] && [ "$KEY" != MEDIA_SIGNING_SECRET ] && grep -qx "$KEY" <<<"$WORKER_SECRETS"; then
+    echo "$ENVIRONMENT has no $KEY, but a Worker already holds one. Set the deployment's own value on"
     echo "$ENVIRONMENT from its escrowed copy; a new one would make what it protects unreadable."
     exit 1
   else
@@ -410,3 +509,8 @@ echo
 echo "Next: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to $ENVIRONMENT if they aren't"
 echo "repository secrets, commit deployments/$id.jsonc, and merge: CI deploys it in its ring."
 echo "Then send the customer's first admin https://$DOMAIN/setup and the setup code in $file."
+if [ "$CONTENT" = true ]; then
+  echo "The content stack's first admin signs up at https://$STUDIO_DOMAIN/setup with the same code. Once the"
+  echo "deployment is merged and deployed, register https://$STUDIO_DOMAIN/login/sso/callback with the identity"
+  echo "provider too, if the registry has sso."
+fi

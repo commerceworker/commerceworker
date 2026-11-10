@@ -6,11 +6,19 @@ and five edge workers (engine, media, api, delivery, web). Spaces and environmen
 deployment's database. Merging to `main` is releasing: CI migrates the database and deploys every
 deployment, ring by ring. Nobody deploys from a workstation or an agent session.
 
-The code, `scripts/fleet.ts`, `scripts/deploy.sh`, `scripts/provision.sh` and `deploy.yml` are in
-this repository. The registry of real deployments, the rings and each deployment's secrets are not:
-they live in the maintainers' private `commerceworker/fleet` repository, which this repository's CI
-calls after `verify` (see [The pipeline](#the-pipeline)). To run your own fleet, keep your registry
-as described under [Provisioning](#provisioning-a-deployment).
+> **This page describes the content stack's original, separate fleet.** In this repository the
+> content Workers are rendered, provisioned and deployed by the same `scripts/fleet.ts`,
+> `scripts/provision.sh` and `.github/workflows/deploy.yml` as the commerce Workers, opt-in per
+> deployment with `"content": true` in its `deployments/<id>.jsonc`: the Workers are `pipeline`
+> (the content engine), `media`, `api`, `delivery` (with its content side) and `studio` (the
+> content admin), with a separate content database `commerceworker-content<suffix>`. Read
+> [Operations](../operations.md#the-content-stack), [Deploy](../deploy.md#the-content-stack) and
+> [Configuration](../configuration.md#content-stack-secrets) for what is current; the sections
+> below stay as background on the content stack's design.
+
+The code, `scripts/fleet.ts`, `scripts/provision.sh` and `deploy.yml` are in this repository, and so
+is the registry, `deployments/`. A fork that wants its registry elsewhere keeps it as described under
+[Provisioning](#provisioning-a-deployment).
 
 For bindings and vars, see [Configuration](./configuration.md); for what each worker does, see
 [Architecture](./architecture.md); for restore points, see
