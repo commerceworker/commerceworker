@@ -48,7 +48,7 @@ export const FEED_STATES = [
 ] as const;
 export type FeedState = (typeof FEED_STATES)[number];
 
-/** One message on the purge queue: cache tags catalog-edge purges (rationed, ~5 calls a minute). */
+/** One message on the purge queue: cache tags delivery purges (rationed, ~5 calls a minute). */
 export type PurgeMessage = { tags: string[] };
 
 /** Products a feed step reads before handing off to the next step. */
@@ -365,7 +365,7 @@ export interface ProductCatalogRpc {
   /**
    * The deploy smoke test's write check (the web app's `POST /health/write`): a row through
    * CatalogMeta's SQLite and one shard's, and an object through the published bucket under
-   * `health/`, which catalog-edge never serves; each written, read back and deleted. No product,
+   * `health/`, which delivery never serves; each written, read back and deleted. No product,
    * outbox row or publish is touched.
    */
   writeHealth(): Promise<HealthReport>;

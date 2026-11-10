@@ -40,13 +40,14 @@ and the code or account disagree, the code and account are right. Report the gap
   - `commerceworker-catalog`: no route. Has six SQLite DO classes, Workflow `commerceworker-catalog-feed`,
     the feed-parts and changes queues (each with a DLQ) and the purge producer, R2
     `commerceworker-catalog`, KV `CARDS`, and D1.
-  - `commerceworker-catalog-edge`: public and read-only at `catalog.<domain>`. Uses Workers Caching
-    (`Delivery`), R2, KV, the purge consumer with a DLQ, Analytics Engine, and `SearchApi`.
+  - `commerceworker-delivery`: public and read-only at `catalog.<domain>` (the catalog entrypoint;
+    the content stack is off). Uses Workers Caching
+    (`CatalogDelivery`), R2, KV, the purge consumer with a DLQ, Analytics Engine, and `SearchApi`.
   - `commerceworker-docs` (static assets, `commerceworker` only), plus plugin Workers, each with its own D1.
 - **External dependencies:** Stripe, Shopify, carriers, OIDC, SCIM, UCP platforms, A2A push
   targets, and inbound and reply email.
 - **Delivery.** CI only (`ci.yml` → `deploy.yml`). Per deployment, the order is: Time Travel
-  bookmark → D1 migrations (expand-only) → catalog → catalog-edge → plugins → engine → web →
+  bookmark → D1 migrations (expand-only) → catalog → delivery → plugins → engine → web →
   smoke tests (`/health`, `/health/deep`, `/login`, catalog `/health`) → `wrangler rollback` of
   every Worker that deployed if anything failed. D1 is never rolled back.
 - **Tiers.** Every account the fleet runs on is Workers Paid. Ask the caller for zone plans, or
@@ -121,8 +122,8 @@ and the code or account disagree, the code and account are right. Report the gap
      against `/api/v1`, `/mcp`, `/a2a`, `/ucp/*`, `/oauth/*`, `/scim/v2` and the webhook paths.
    - Rate Limiting bindings vs zone rules.
    - Turnstile or bot protection on `/login`, `/setup` and cart start links.
-   - CSP and headers (`apps/web/app/lib/csp.ts`, `entry.server.tsx`) on web, catalog-edge and
-     docs, and CORS on catalog-edge and `/ucp`.
+   - CSP and headers (`apps/web/app/lib/csp.ts`, `entry.server.tsx`) on web, delivery and
+     docs, and CORS on delivery and `/ucp`.
    - `workers_dev` and preview URLs off on every `commerceworker-*` script, live
      (`/workers/scripts/<name>/subdomain`), including orphans.
 5. **Rendered Worker config vs live.**
@@ -146,7 +147,7 @@ and the code or account disagree, the code and account are right. Report the gap
    - Catalog outbox and alarm safety.
 7. **Queues.** For each: DLQ, `max_retries`, concurrency, and an idempotent consumer. Is
    anything consuming, alerting on, or documenting replay for each DLQ?
-8. **Caching.** catalog-edge Workers Caching (`cross_version_cache`, canonical URLs),
+8. **Caching.** delivery's catalog Workers Caching (`cross_version_cache`, canonical URLs),
    `max-age`/ETag vs the purge budget, no caching of authenticated responses, zone Cache Rules
    or Tiered Cache conflicts, and docs asset headers.
 9. **Data durability.** For D1 (core and each plugin's), engine DOs, catalog DOs, Workflows, each
@@ -205,8 +206,8 @@ and the code or account disagree, the code and account are right. Report the gap
     - **Secrets Store** (`secrets_store_secrets` from `fleet.ts`). One store per deployment
       (never shared), access scoped, and CI token permission.
     - **Rate Limiting bindings**: domain 4.
-    - **Workers Caching and the Cache API** (catalog-edge): domain 8.
-    - **Analytics Engine** (`commerceworker_catalog_edge`). What is written (no personal data), and
+    - **Workers Caching and the Cache API** (delivery): domain 8.
+    - **Analytics Engine** (`commerceworker_catalog_delivery`). What is written (no personal data), and
       the retention and query limits.
     - **Smart Placement**: fit, per Worker.
     - **Workers Observability** (logs, traces, source maps): domain 11.

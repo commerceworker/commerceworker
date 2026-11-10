@@ -4,7 +4,7 @@
  * the same listing changes as the indexers (latest by `at`, removals tombstoned), and ranked with
  * BM25 weighted towards the title, then SKUs, then brand.
  *
- * SearchApi (an RPC entrypoint for catalog-edge) asks every shard for its best `offset + limit`
+ * SearchApi (an RPC entrypoint for delivery) asks every shard for its best `offset + limit`
  * matches in parallel and merges them by score, so a page costs one round of 16 small queries.
  */
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
@@ -170,7 +170,7 @@ export class SearchShard extends DurableObject<Env> {
   }
 }
 
-/** catalog-edge's search: every shard at once, merged by score. */
+/** delivery's search: every shard at once, merged by score. */
 export class SearchApi extends WorkerEntrypoint<Env> {
   async search(
     channel: string,

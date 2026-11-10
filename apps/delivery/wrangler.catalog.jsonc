@@ -1,6 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "commerceworker-catalog-edge",
+  // The delivery Worker as the fleet deploys it: the catalog's public read API with the content
+  // stack off (none of its bindings), at catalog.<domain>. wrangler.jsonc is the content stack's
+  // template; scripts/fleet.ts renders this one per deployment (renderDelivery).
+  "name": "commerceworker-delivery",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -27,7 +30,7 @@
     // The gateway normalizes every request; caching in front of it would skip that.
     "default": { "type": "worker", "cache": { "enabled": false } },
     // What the gateway forwards to: cached by URL.
-    "Delivery": { "type": "worker", "cache": { "enabled": true } }
+    "CatalogDelivery": { "type": "worker", "cache": { "enabled": true } }
   },
   // What the catalog Worker publishes: documents, alias pointers and category trees.
   "r2_buckets": [{ "binding": "PUBLISHED", "bucket_name": "commerceworker-catalog" }],
@@ -57,6 +60,6 @@
   },
   // Requests by route, channel, status and cache result, with latency.
   "analytics_engine_datasets": [
-    { "binding": "ANALYTICS", "dataset": "commerceworker_catalog_edge" }
+    { "binding": "ANALYTICS", "dataset": "commerceworker_catalog_delivery" }
   ]
 }

@@ -1,5 +1,5 @@
 /**
- * Delivery: the cached entrypoint. Everything it answers is already rendered by the catalog's
+ * CatalogDelivery: the catalog's cached entrypoint. Everything it answers is already rendered by the catalog's
  * publisher, so it reads and streams; it never parses a document. Workers Caching sits in front of
  * it: a hit never runs this code, concurrent misses for a URL run it once, and a stale entry is
  * served while one background request revalidates it. That revalidation carries the stored ETag,
@@ -19,6 +19,7 @@ import {
 } from '@commerceworker/core/product/listing';
 import { CODE, DOC_FORMAT, paths, tags } from '@commerceworker/core/product/paths';
 import { SEARCH_DEPTH } from '@commerceworker/core/product/search';
+import type { CatalogEnv } from './env';
 import { parse, type Route } from './routes';
 
 /** Fresh a minute; served stale for a day while revalidating, or a week if R2 fails. */
@@ -168,7 +169,7 @@ async function assembled(
   return json(body, 200, { ...headers, etag });
 }
 
-export class Delivery extends WorkerEntrypoint<Env> {
+export class CatalogDelivery extends WorkerEntrypoint<CatalogEnv> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname.startsWith(INDEX_PATH)) return this.indexBlob(request, url);
@@ -367,7 +368,8 @@ export class Delivery extends WorkerEntrypoint<Env> {
     id: string,
     h: HeldListing | undefined,
   ): Promise<(ListingIndex | null)[] | null> {
-    const self = (this.ctx as unknown as { exports: { Delivery: Fetcher } }).exports.Delivery;
+    const self = (this.ctx as unknown as { exports: { CatalogDelivery: Fetcher } }).exports
+      .CatalogDelivery;
     const now = Date.now();
     const answers = await Promise.all(
       Array.from({ length: LISTING_SEGMENTS }, async (_, s) => {

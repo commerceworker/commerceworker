@@ -1944,7 +1944,7 @@ export class CatalogShard extends DurableObject<Env> {
     // Listing indexes follow from these (listings.ts). Sent before the outbox rows go, so a crash
     // here republishes and sends them again; indexers order changes by `at`.
     await sendChanges(this.env.CHANGES, changes);
-    // Urgent changes don't wait out the edge cache's minute: their tags go to catalog-edge's purge
+    // Urgent changes don't wait out the edge cache's minute: their tags go to delivery's purge
     // queue, which it drains at the rate Cloudflare allows (a call of up to 100 tags at a time, so
     // a message carries that many). Sent after publishing, so a purge never refills from the old
     // document.

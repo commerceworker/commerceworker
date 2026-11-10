@@ -23,7 +23,7 @@ import {
   postWriteCheck,
   RESERVED_PATH_SEGMENTS,
   renderCatalog,
-  renderCatalogEdge,
+  renderDelivery,
   renderEngine,
   renderPlugin,
   renderWeb,
@@ -39,7 +39,19 @@ import {
 } from './fleet.ts';
 
 const base = (app: string) =>
-  parse(readFileSync(join(import.meta.dirname, '..', 'apps', app, 'wrangler.jsonc'), 'utf8'));
+  parse(
+    readFileSync(
+      join(
+        import.meta.dirname,
+        '..',
+        'apps',
+        app,
+        // The delivery Worker is deployed as its catalog-only config; wrangler.jsonc is the content stack's.
+        app === 'delivery' ? 'wrangler.catalog.jsonc' : 'wrangler.jsonc',
+      ),
+      'utf8',
+    ),
+  );
 
 const acme = toDeployment({
   id: 'acme',
@@ -140,10 +152,10 @@ test('the catalog config has its own name, bucket, card namespace and jurisdicti
   ]);
 });
 
-test("catalog-edge serves catalog.<domain> from the deployment's bucket, cards and purge queue", () => {
-  const c = renderCatalogEdge(base('catalog-edge'), acme);
+test("delivery serves catalog.<domain> from the deployment's bucket, cards and purge queue, with content off", () => {
+  const c = renderDelivery(base('delivery'), acme);
   assert.equal(acme.catalogDomain, 'catalog.acme.commerceworker.com');
-  assert.equal(c.name, 'commerceworker-catalog-edge-acme');
+  assert.equal(c.name, 'commerceworker-delivery-acme');
   assert.deepEqual(c.routes, [{ pattern: 'catalog.acme.commerceworker.com', custom_domain: true }]);
   assert.deepEqual(c.r2_buckets[0], {
     binding: 'PUBLISHED',
@@ -154,7 +166,12 @@ test("catalog-edge serves catalog.<domain> from the deployment's bucket, cards a
   assert.equal(c.queues.consumers[0].queue, 'commerceworker-catalog-purge-acme');
   assert.equal(c.queues.consumers[0].dead_letter_queue, 'commerceworker-catalog-purge-dlq-acme');
   assert.equal(c.queues.consumers[0].max_concurrency, 1);
-  assert.equal(c.analytics_engine_datasets[0].dataset, 'commerceworker_catalog_edge_acme');
+  assert.equal(c.analytics_engine_datasets[0].dataset, 'commerceworker_catalog_delivery_acme');
+  // Content is off: none of the content stack's bindings are bound, and the catalog's cached
+  // entrypoint is the one with Workers Caching.
+  for (const k of ['d1_databases', 'vectorize', 'ai', 'durable_objects', 'ratelimits', 'vars'])
+    assert.equal(c[k], undefined, k);
+  assert.equal(c.exports.CatalogDelivery.cache.enabled, true);
   // Search goes to this deployment's own catalog.
   assert.deepEqual(c.services, [
     { binding: 'CATALOG', service: 'commerceworker-catalog-acme', entrypoint: 'SearchApi' },
@@ -175,10 +192,10 @@ test("catalog-edge serves catalog.<domain> from the deployment's bucket, cards a
   );
 });
 
-test("the catalog consumes every dead-letter queue, its own and catalog-edge's, by the deployment's names", () => {
+test("the catalog consumes every dead-letter queue, its own and delivery's, by the deployment's names", () => {
   type Consumer = { queue: string; dead_letter_queue?: string; retry_delay?: number };
   const catalog: Consumer[] = renderCatalog(base('catalog'), acme).queues.consumers;
-  const edge: Consumer[] = renderCatalogEdge(base('catalog-edge'), acme).queues.consumers;
+  const edge: Consumer[] = renderDelivery(base('delivery'), acme).queues.consumers;
   const dlqs = [...catalog, ...edge].flatMap((c) => c.dead_letter_queue ?? []);
   const n = names(acme);
   assert.deepEqual(
@@ -223,7 +240,7 @@ test("a customer's limits replace the base budgets they name", () => {
 test("app.commerceworker.com's own deployment renders the base configs unchanged", () => {
   const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
   assert.deepEqual(renderCatalog(base('catalog'), d), base('catalog'));
-  assert.deepEqual(renderCatalogEdge(base('catalog-edge'), d), base('catalog-edge'));
+  assert.deepEqual(renderDelivery(base('delivery'), d), base('delivery'));
   assert.deepEqual(renderEngine(base('engine'), d), base('engine'));
   assert.deepEqual(renderWeb(base('web'), d), base('web'));
   // Its punchout cancels the POs a buyer calls off: the grant ships in the same engine deploy as
@@ -250,7 +267,7 @@ test('rendering never changes Durable Object bindings or migrations', () => {
     }
     for (const [app, render] of [
       ['web', renderWeb],
-      ['catalog-edge', renderCatalogEdge],
+      ['delivery', renderDelivery],
     ] as const) {
       const c = render(base(app), d);
       assert.equal(c.migrations, undefined, `${d.id}: ${app} migrations`);
@@ -1016,7 +1033,7 @@ test("every Worker of a deployment sends its trace events to Logpush, plugins' t
       ['engine', renderEngine],
       ['web', renderWeb],
       ['catalog', renderCatalog],
-      ['catalog-edge', renderCatalogEdge],
+      ['delivery', renderDelivery],
     ] as const)
       assert.equal(render(base(app), d).logpush, true, `${d.id}: ${app}`);
   }
@@ -1042,7 +1059,7 @@ test("a deployment's Logpush job takes only its own Workers, without the request
     'commerceworker-web-acme',
     'commerceworker-engine-acme',
     'commerceworker-catalog-acme',
-    'commerceworker-catalog-edge-acme',
+    'commerceworker-delivery-acme',
     'commerceworker-plugin-ledger-acme',
   ]);
   assert.deepEqual(JSON.parse(job.filter), {

@@ -2,7 +2,7 @@
  * Listing indexes: every channel's category listing is split by product key into LISTING_SEGMENTS
  * segments (`listingSegment`), and one ListingIndexer Durable Object per channel, category and
  * segment keeps who is listed in it and rebuilds that segment's binary index (core's listing
- * index) into R2 for catalog-edge, which merges the segments per query. Splitting keeps every
+ * index) into R2 for delivery, which merges the segments per query. Splitting keeps every
  * build a fraction of the category: one object holding a million-member root category spent 30 s
  * and more per rebuild, queued the changes arriving meanwhile until they were refused, and near a
  * million members was reset mid-build for overrunning storage.

@@ -41,7 +41,7 @@ describe('writing products', () => {
           .exec<{ uid: number }>('SELECT uid FROM products WHERE key = ?', p.key)
           .one().uid,
     );
-    // catalog-edge looks a card up by key through this entry.
+    // delivery looks a card up by key through this entry.
     expect(await env.CARDS.get(paths.uid(DOC_FORMAT, p.key))).toBe(String(uid));
     const card = await env.CARDS.get(paths.card(DOC_FORMAT, 'web', 'en', uid), 'json');
     expect(card).toMatchObject({
@@ -65,7 +65,7 @@ describe('writing products', () => {
       ...p,
       channels: { web: { visible: true, price: { amount: 1499, currency: 'USD' } } },
     };
-    // Urgent: the publisher also queues the product's cache tag for catalog-edge to purge.
+    // Urgent: the publisher also queues the product's cache tag for delivery to purge.
     expect(await api.putProducts([cheaper], { by, urgent: true })).toEqual([
       { key: p.key, status: 'updated', version: 2 },
     ]);

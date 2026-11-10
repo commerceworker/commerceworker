@@ -1,0 +1,26 @@
+{
+  // The delivery Worker as a catalog-only deployment renders it (scripts/fleet.ts, renderDelivery):
+  // the catalog's bindings and no content binding at all. Local R2 and KV; the catalog's SearchApi
+  // is a stub Worker (vitest.config.ts).
+  "name": "commerceworker-delivery-catalog-test",
+  "main": "../../src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "cache": { "enabled": true, "cross_version_cache": true },
+  "exports": {
+    "default": { "type": "worker", "cache": { "enabled": false } },
+    "Delivery": { "type": "worker", "cache": { "enabled": true } },
+    "CatalogDelivery": { "type": "worker", "cache": { "enabled": true } }
+  },
+  "r2_buckets": [{ "binding": "PUBLISHED", "bucket_name": "commerceworker-catalog" }],
+  "services": [
+    { "binding": "CATALOG", "service": "commerceworker-catalog", "entrypoint": "SearchApi" }
+  ],
+  "kv_namespaces": [{ "binding": "CARDS", "id": "00000000000000000000000000000000" }],
+  "queues": {
+    "consumers": [{ "queue": "commerceworker-catalog-purge", "max_batch_size": 100 }]
+  },
+  "analytics_engine_datasets": [
+    { "binding": "ANALYTICS", "dataset": "commerceworker_catalog_edge" }
+  ]
+}

@@ -2,8 +2,9 @@ import { createExecutionContext, createMessageBatch, getQueueResult } from 'clou
 import { env, exports } from 'cloudflare:workers';
 import { DOC_FORMAT, paths } from '@commerceworker/core/product/paths';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import worker, { backoff, drain, PURGE_CALLS, PURGE_PACE_MS } from '../src';
-import { FRESH, MISSING } from '../src/delivery';
+import worker from '../../src';
+import { FRESH, MISSING } from '../../src/catalog/delivery';
+import { backoff, drain, PURGE_CALLS, PURGE_PACE_MS } from '../../src/catalog/gateway';
 
 const get = (path: string, init?: RequestInit) =>
   (exports as unknown as { default: Fetcher }).default.fetch(
@@ -152,7 +153,7 @@ describe('the gateway', () => {
     expect((await get('/v1/web/EN_us/products/tee')).status).toBe(400);
     expect((await get('/v1/web/en/slugs/Not-A-Slug')).status).toBe(400);
     expect((await get('/v1/web/en/widgets')).status).toBe(404);
-    expect(await (await get('/health')).json()).toEqual({ ok: true });
+    expect(await (await get('/health')).json()).toEqual({ ok: true, serves: ['catalog'] });
   });
 });
 

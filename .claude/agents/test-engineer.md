@@ -1,6 +1,6 @@
 ---
 name: test-engineer
-description: Writes, fixes and de-flakes CommerceWorker's tests (core in node; engine, catalog and catalog-edge in workerd with real Workflows, mock AI and the Stripe fake). Delegate when a change needs test coverage, a suite is failing or flaky, or a review found a missing failure-path test. Changes test code only, unless the test proves a production bug, which it reports instead of fixing.
+description: Writes, fixes and de-flakes CommerceWorker's tests (core in node; engine, catalog and delivery's catalog entrypoint in workerd with real Workflows, mock AI and the Stripe fake). Delegate when a change needs test coverage, a suite is failing or flaky, or a review found a missing failure-path test. Changes test code only, unless the test proves a production bug, which it reports instead of fixing.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 color: cyan

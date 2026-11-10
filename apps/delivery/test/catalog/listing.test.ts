@@ -8,7 +8,7 @@ import {
 } from '@commerceworker/core/product';
 import { DOC_FORMAT, paths } from '@commerceworker/core/product/paths';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { forgetListings, heldListings, INDEX_LIMITS } from '../src/delivery';
+import { forgetListings, heldListings, INDEX_LIMITS } from '../../src/catalog/delivery';
 
 const get = (path: string, init?: RequestInit) =>
   (exports as unknown as { default: Fetcher }).default.fetch(
@@ -190,7 +190,7 @@ describe('category listings', () => {
   });
 
   it('serves each segment internally, revalidating it with its ETag', async () => {
-    const delivery = (exports as unknown as { Delivery: Fetcher }).Delivery;
+    const delivery = (exports as unknown as { CatalogDelivery: Fetcher }).CatalogDelivery;
     const blob = (path: string, init?: RequestInit) =>
       delivery.fetch(`https://catalog.internal/_idx/${path}`, init);
     const s = teesSegments.findIndex((n) => n > 0);
@@ -359,7 +359,7 @@ describe('held listing indexes', () => {
 
 describe('listing cache keys', () => {
   it('gives equivalent pages one canonical URL', async () => {
-    const { canonical, parse } = await import('../src/routes');
+    const { canonical, parse } = await import('../../src/catalog/routes');
     const url = (q: string) => {
       const p = parse(new URL(`https://x/v1/web/en/categories/tees/products?${q}`));
       if (!p.ok) throw new Error(p.error);

@@ -2,7 +2,7 @@
  * Keyword search queries. What a shopper types becomes one normalized string (the cache key) and
  * then an FTS5 query of quoted terms, all required, the last one also matching as a prefix ("blue
  * cott" finds "blue cotton tee"). User text never reaches FTS5 syntax: every term is quoted, so
- * operators, column filters and stray quotes are just characters. Zod-free, for catalog-edge. Pure.
+ * operators, column filters and stray quotes are just characters. Zod-free, for delivery. Pure.
  */
 
 /** Characters of a query kept, after normalizing. */

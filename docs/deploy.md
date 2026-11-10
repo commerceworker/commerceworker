@@ -6,13 +6,13 @@ CommerceWorker deploys as four Workers in the deployment's Cloudflare account, p
 
 | Worker | Config | Role |
 |---|---|---|
-| `commerceworker-catalog` | `apps/catalog/wrangler.jsonc` | The product catalog: `CatalogShard`, `CatalogMeta` and `CatalogFeeds` Durable Objects, the `commerceworker-catalog-feed`, `commerceworker-catalog-backup` (daily) and `commerceworker-catalog-restore` (operator-only) Workflows, `ListingIndexer`, `SearchShard` and `CatalogPublisher` Durable Objects, queues for feed parts (`commerceworker-catalog-feed-parts`) and listing changes (`commerceworker-catalog-changes`), each with a dead-letter queue, and a consumer of all three dead-letter queues (catalog-edge's too) that keeps their messages under `dlq/`, an R2 bucket (`commerceworker-catalog`) and a KV namespace for what it publishes, and it binds CommerceWorker's D1 database to keep variant names and prices in `products` (migration `0043` adds `catalog_at`, so it applies before this Worker deploys). No public URL and no secrets; catalog-edge binds to it (`SearchApi`, for keyword search) the engine (`CatalogApi`, for the assistant's content drafts) and the web app (`CatalogApi`, for `/api/v1/catalog`) |
-| `commerceworker-catalog-edge` | `apps/catalog-edge/wrangler.jsonc` | The public, read-only catalog API at `catalog.commerceworker.com` (custom domain): reads the catalog's R2 bucket and KV namespace behind Workers Caching, calls the catalog's `SearchApi` for keyword search through a service binding, consumes the purge queue (`commerceworker-catalog-purge`, with a dead-letter queue) and writes request data points to an Analytics Engine dataset (`commerceworker_catalog_edge`). No secrets |
+| `commerceworker-catalog` | `apps/catalog/wrangler.jsonc` | The product catalog: `CatalogShard`, `CatalogMeta` and `CatalogFeeds` Durable Objects, the `commerceworker-catalog-feed`, `commerceworker-catalog-backup` (daily) and `commerceworker-catalog-restore` (operator-only) Workflows, `ListingIndexer`, `SearchShard` and `CatalogPublisher` Durable Objects, queues for feed parts (`commerceworker-catalog-feed-parts`) and listing changes (`commerceworker-catalog-changes`), each with a dead-letter queue, and a consumer of all three dead-letter queues (delivery's too) that keeps their messages under `dlq/`, an R2 bucket (`commerceworker-catalog`) and a KV namespace for what it publishes, and it binds CommerceWorker's D1 database to keep variant names and prices in `products` (migration `0043` adds `catalog_at`, so it applies before this Worker deploys). No public URL and no secrets; delivery binds to it (`SearchApi`, for keyword search) the engine (`CatalogApi`, for the assistant's content drafts) and the web app (`CatalogApi`, for `/api/v1/catalog`) |
+| `commerceworker-delivery` | `apps/delivery/wrangler.catalog.jsonc` | The public, read-only catalog API at `catalog.commerceworker.com` (custom domain), the delivery Worker with its content stack off (none of its bindings bound; content routes answer `404`): reads the catalog's R2 bucket and KV namespace behind Workers Caching, calls the catalog's `SearchApi` for keyword search through a service binding, consumes the purge queue (`commerceworker-catalog-purge`, with a dead-letter queue) and writes request data points to an Analytics Engine dataset (`commerceworker_catalog_delivery`). No secrets |
 | `commerceworker-engine` | `apps/engine/wrangler.jsonc` | OrderAgent and AssistantAgent Durable Objects, `commerceworker-order` and `commerceworker-replenish` Workflows, Workers AI. No public URL (`workers_dev` and preview URLs are off); reached only through the web app's service binding. Binds the catalog as `CATALOG` (entrypoint `CatalogApi`, for the assistant's product content drafts) |
 | `commerceworker-web` | `apps/web/wrangler.jsonc` | Dashboard, editor, REST API. Binds the engine as `ENGINE` (entrypoint `EngineApi`) and the catalog as `CATALOG` (entrypoint `CatalogApi`, for `/api/v1/catalog`) |
 
 The engine and web bind the same D1 database (`commerceworker`) and R2 bucket (`commerceworker-docs`). The catalog binds the same D1
-database too, to write variant names and prices into `products`, but not the R2 bucket; catalog-edge binds neither. The catalog and catalog-edge share the catalog's R2 bucket, KV namespace and purge queue, and catalog-edge binds the catalog Worker as a service.
+database too, to write variant names and prices into `products`, but not the R2 bucket; delivery binds neither. The catalog and delivery share the catalog's R2 bucket, KV namespace and purge queue, and delivery binds the catalog Worker as a service.
 
 ## First deploy
 
@@ -20,7 +20,7 @@ database too, to write variant names and prices into `products`, but not the R2 
 pnpm exec wrangler login
 ./scripts/provision.sh commerceworker               # creates D1 `commerceworker`, R2 `commerceworker-docs` and `commerceworker-catalog`, KV `commerceworker-catalog-cards`, Vectorize `commerceworker-products`, the feed-parts, purge and changes queues and their dead-letter queues (each keeping messages 14 days), 30-day expiries for `feeds/`, `dlq/` and `restores/` in `commerceworker-catalog`, and a `catalogBackupDays` expiry and lock rule for its `backups/`, lock rules on `audit/` and `plugins/` in `commerceworker-docs`, R2 `commerceworker-logs` with a `logRetentionDays` expiry and the Logpush job `commerceworker-workers` that fills it, the AI Gateway and the GitHub environment; safe to re-run
 pnpm --filter @commerceworker/web db:migrate:remote
-pnpm run deploy                                # catalog, then catalog-edge, then engine (web binds to it), then web
+pnpm run deploy                                # catalog, then delivery, then engine (web binds to it), then web
 ```
 
 Production has no demo data (migration `0027` removed it and `packages/db/seed` is never applied remotely), so the
@@ -47,14 +47,14 @@ something else entirely.
    table or column. Until the new Workers are live, the old code runs against the new schema, so a
    migration only adds (expand); dropping or renaming waits for a later change once nothing
    deployed uses it (contract).
-2. **Catalog, then catalog-edge, then plugins, then engine, then web.** The engine and the web Worker bind each installed plugin (`PLUGIN_<ID>`), so a plugin goes before them; a deployment with none skips that step. A sandboxed plugin has no Worker; its bundle is published to the deployment's `DOCS` bucket and pinned in the engine's config in that step, before the engine deploys. The web Worker's service bindings need the
-   engine and the catalog to exist. Catalog-edge, the engine and the web app call the catalog (their `CATALOG` service bindings need the
+2. **Catalog, then delivery, then plugins, then engine, then web.** The engine and the web Worker bind each installed plugin (`PLUGIN_<ID>`), so a plugin goes before them; a deployment with none skips that step. A sandboxed plugin has no Worker; its bundle is published to the deployment's `DOCS` bucket and pinned in the engine's config in that step, before the engine deploys. The web Worker's service bindings need the
+   engine and the catalog to exist. The delivery Worker, the engine and the web app call the catalog (their `CATALOG` service bindings need the
    catalog to exist, which is why the catalog goes first); it goes first so that the Workers that come to
-   bind to it always find the version they expect. Catalog-edge goes next because its queue
+   bind to it always find the version they expect. The delivery Worker goes next because its queue
    consumer needs the purge queue (which `provision.sh` creates) and it reads what the catalog
    publishes; the catalog's `PURGE` producer needs the same queue, and its `CHANGES` producer and consumer need the changes queue.
 
-Workflow names (`commerceworker-order`, `commerceworker-replenish`, `commerceworker-catalog-feed`, `commerceworker-catalog-backup`, `commerceworker-catalog-restore`) and queue names must be unique in the account. The catalog's and catalog-edge's queue consumers need their queues to exist, so run `provision.sh` before the first deploy that carries the feed code, the purge queue or the changes queue; an existing deployment re-runs it (see [Operations](operations.md#adding-a-customer)).
+Workflow names (`commerceworker-order`, `commerceworker-replenish`, `commerceworker-catalog-feed`, `commerceworker-catalog-backup`, `commerceworker-catalog-restore`) and queue names must be unique in the account. The catalog's and delivery's queue consumers need their queues to exist, so run `provision.sh` before the first deploy that carries the feed code, the purge queue or the changes queue; an existing deployment re-runs it (see [Operations](operations.md#adding-a-customer)).
 
 ## Email intake
 
@@ -196,13 +196,13 @@ commitlint (`commitlint.config.ts`) over every commit the PR adds. On `main`, on
 `DEPLOY_ENABLED` is `true` (Settings → Secrets and variables → Actions → Variables), it then deploys
 every deployment in `deployments/`, ring by ring ([Operations](operations.md#rings)). Each
 deployment's job (`.github/workflows/deploy.yml`) records a D1 Time Travel bookmark, migrates its
-D1, deploys its catalog, deploys its catalog-edge, deploys each [plugin](plugins.md) (its D1 migrations, then its Worker; a sandboxed plugin's bundle is published and pinned instead), deploys its engine, deploys its web app, smoke-tests `/health`, `/health/deep` and `/login` on the app's host and `https://$CATALOG_DOMAIN/health` on the catalog's, then runs the [write check](#the-write-check),
+D1, deploys its catalog, deploys its delivery, deploys each [plugin](plugins.md) (its D1 migrations, then its Worker; a sandboxed plugin's bundle is published and pinned instead), deploys its engine, deploys its web app, smoke-tests `/health`, `/health/deep` and `/login` on the app's host and `https://$CATALOG_DOMAIN/health` on the catalog's, then runs the [write check](#the-write-check),
 checks their latency (the best of three requests to `/login`, `/health/deep` and the catalog's
 `/health` against budgets of 1.5 s, 1 s and 0.5 s; over budget is a warning on the run, never a
 failure or a rollback) and, for `commerceworker` only, deploys these docs, in that order, so a change never reaches a
 deployment before its migration. If anything fails once the catalog has deployed (the engine deploy,
 the web deploy or the smoke test), the job runs `wrangler rollback` for each Worker that deployed:
-the engine first, then the web app, the plugins, catalog-edge and the catalog. The engine goes
+the engine first, then the web app, the plugins, delivery and the catalog. The engine goes
 first because it is the one that can refuse (Cloudflare won't roll a Worker back past a Durable
 Object migration): if it can't go back, the step fails with an error and leaves every other Worker
 on the new version, so the web app never runs against an engine it wasn't built with, and a person
@@ -248,7 +248,7 @@ app's host, and each Worker writes, reads back and deletes:
 | `docs`, `engine.docs` | The `DOCS` bucket | An object under `health/` (never `audit/`, `plugins/` or `backups/`, which bucket locks keep from being overwritten or deleted) |
 | `engine.objects` | Durable Object SQLite | A row in the `HealthProbe` object (`v6`), never an order, cart or assistant |
 | `catalog.meta`, `catalog.shard` | CatalogMeta's and shard 0's SQLite | A row in each object's own `health_probes` table: no product, outbox row or publish |
-| `catalog.published` | The catalog's bucket | An object under `health/`, which catalog-edge never serves |
+| `catalog.published` | The catalog's bucket | An object under `health/`, which delivery never serves |
 
 Each check is pass or fail only, with `503` when any fails, so the log names the broken store and
 nothing about why. A row whose check stopped before its delete is cleared by the next check; an R2

@@ -1,9 +1,9 @@
 # Configuration
 
-Variables, secrets and bindings for the engine, web, catalog and catalog-edge Workers, and the local dev files.
+Variables, secrets and bindings for the engine, web, catalog and delivery Workers, and the local dev files.
 
 Each Worker is configured in its `wrangler.jsonc`. After changing one, regenerate its binding
-types: `pnpm --filter @commerceworker/engine types`, `pnpm --filter @commerceworker/web types` `pnpm --filter @commerceworker/catalog types` or `pnpm --filter @commerceworker/catalog-edge types`.
+types: `pnpm --filter @commerceworker/engine types`, `pnpm --filter @commerceworker/web types` or `pnpm --filter @commerceworker/catalog types` (the delivery Worker has no generated binding types: its bindings are typed in `src/catalog/env.ts` and core's `EdgeEnv`).
 
 ## Engine variables
 
@@ -35,7 +35,7 @@ Set in `vars` in `apps/engine/wrangler.jsonc`.
 
 ## Catalog variables
 
-The catalog Worker has five variables and no secrets (`apps/catalog/wrangler.jsonc`); the catalog-edge Worker has neither variables nor secrets (`apps/catalog-edge/wrangler.jsonc`):
+The catalog Worker has five variables and no secrets (`apps/catalog/wrangler.jsonc`); the delivery Worker, as the fleet deploys it, has neither variables nor secrets (`apps/delivery/wrangler.catalog.jsonc`, the catalog's bindings with the content stack off; `apps/delivery/wrangler.jsonc` is the content stack's template, whose bindings, variables and secrets are in the content docs):
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -140,16 +140,16 @@ created through the API and stored in D1; they are not configuration.
 | `SEARCH` | catalog | Durable Object `SearchShard` (SQLite-backed, migration `v4`), 16 shards named `search-<n>` |
 | `PUBLISHERS` | catalog | Durable Object `CatalogPublisher` (SQLite-backed, migration `v5`), `PUBLISH_FANOUT` (32) per shard named `pub-<shard>-<n>`: does the storage writes of a shard's publishes |
 | `FEED_PARTS` | catalog | Queue `commerceworker-catalog-feed-parts`, produced and consumed by the catalog Worker (batches of 10, 1 second, `max_retries` 4, `retry_delay` 30 seconds when the handler throws, dead-letter queue `commerceworker-catalog-feed-parts-dlq`) |
-| `CHANGES` | catalog | Queue `commerceworker-catalog-changes`: the shards' alarms send each publish's listing changes, packed up to 64 KB a message, and the catalog Worker consumes them (`max_batch_size` 100 messages, `max_batch_timeout` 2 seconds, `max_retries` 10, `retry_delay` 30, dead-letter queue `commerceworker-catalog-changes-dlq`). The consumer also takes the three dead-letter queues, `commerceworker-catalog-feed-parts-dlq`, `commerceworker-catalog-changes-dlq` and catalog-edge's `commerceworker-catalog-purge-dlq` (`max_batch_size` 100, `max_batch_timeout` 5, `max_retries` 10, `retry_delay` 60, no dead-letter queue), and keeps each message in `PUBLISHED` under `dlq/` ([Operations](operations.md#dead-letters)) |
+| `CHANGES` | catalog | Queue `commerceworker-catalog-changes`: the shards' alarms send each publish's listing changes, packed up to 64 KB a message, and the catalog Worker consumes them (`max_batch_size` 100 messages, `max_batch_timeout` 2 seconds, `max_retries` 10, `retry_delay` 30, dead-letter queue `commerceworker-catalog-changes-dlq`). The consumer also takes the three dead-letter queues, `commerceworker-catalog-feed-parts-dlq`, `commerceworker-catalog-changes-dlq` and delivery's `commerceworker-catalog-purge-dlq` (`max_batch_size` 100, `max_batch_timeout` 5, `max_retries` 10, `retry_delay` 60, no dead-letter queue), and keeps each message in `PUBLISHED` under `dlq/` ([Operations](operations.md#dead-letters)) |
 | `PUBLISHED` | catalog | R2 bucket `commerceworker-catalog`: product documents, alias pointers, category trees, listing indexes (`idx/`), feed files (`feeds/`), dead letters (`dlq/`) and backups (`backups/`, and `restores/`). Strongly consistent, so a purge is never undone by a stale read |
 | `PURGE` | catalog | Queue producer for `commerceworker-catalog-purge`: the alarm sends the cache tags (`PurgeMessage`) of urgent products after publishing them |
 | `CARDS` | catalog | KV namespace of listing cards and `u:f1:<key>` uid entries. `wrangler.jsonc` holds `commerceworker`'s id; a customer's is the registry's `catalogKvId`, rendered at deploy |
-| `PUBLISHED` | catalog-edge | The same R2 bucket, `commerceworker-catalog`, read |
-| `CARDS` | catalog-edge | The same KV namespace, read |
-| `CATALOG` | catalog-edge | Service binding to `commerceworker-catalog`, entrypoint `SearchApi` (a customer's is `commerceworker-catalog-<id>`, rendered at deploy) |
-| `ANALYTICS` | catalog-edge | Analytics Engine dataset `commerceworker_catalog_edge` (a customer's is `commerceworker_catalog_edge_<id>`) |
-| Queue consumer | catalog-edge | `commerceworker-catalog-purge` (`max_batch_size` 100, `max_batch_timeout` 12 seconds, `max_concurrency` 1, `max_retries` 10, `retry_delay` 30, dead-letter queue `commerceworker-catalog-purge-dlq`, consumed by the catalog) |
-| Workers Caching | catalog-edge | `cache: { enabled: true, cross_version_cache: true }`, and `exports`: the default (gateway) entrypoint has the cache off, `Delivery` has it on |
+| `PUBLISHED` | delivery | The same R2 bucket, `commerceworker-catalog`, read |
+| `CARDS` | delivery | The same KV namespace, read |
+| `CATALOG` | delivery | Service binding to `commerceworker-catalog`, entrypoint `SearchApi` (a customer's is `commerceworker-catalog-<id>`, rendered at deploy) |
+| `ANALYTICS` | delivery | Analytics Engine dataset `commerceworker_catalog_delivery` (a customer's is `commerceworker_catalog_delivery_<id>`) |
+| Queue consumer | delivery | `commerceworker-catalog-purge` (`max_batch_size` 100, `max_batch_timeout` 12 seconds, `max_concurrency` 1, `max_retries` 10, `retry_delay` 30, dead-letter queue `commerceworker-catalog-purge-dlq`, consumed by the catalog) |
+| Workers Caching | delivery | `cache: { enabled: true, cross_version_cache: true }`, and `exports`: the default (gateway) entrypoint has the cache off, `CatalogDelivery` has it on |
 | `ENGINE` | web | Service binding to `commerceworker-engine`, entrypoint `EngineApi` |
 | `PLUGIN_<ID>` | engine, web | Service binding to `commerceworker-plugin-<id>` for each plugin in the registry's `plugins` whose `runtime` is `worker` (the default; a `sandboxed` one has no Worker or binding; `pluginServices` in `scripts/fleet.ts`; none in the base `wrangler.jsonc` files). A plugin's own Worker has a `DB` D1 binding and, as secrets, `PLUGIN_KEY` and, during a rotation, `PLUGIN_KEY_PREVIOUS` (`fleet.ts secrets plugin <out> <plugin>`), to verify the principal the web Worker signs for that plugin. See [Plugins](plugins.md) |
 | `PLUGIN_KEY`, `PLUGIN_KEY_PREVIOUS` | each plugin | Secrets, one pair per plugin Worker. `PLUGIN_KEY` is the plugin's own page-signing key: the hex HMAC-SHA256 of `PRINCIPAL_KEY` over `commerceworker-plugin:<id>` (`pluginKey` in `packages/core/src/plugins.ts`, mirrored in `scripts/fleet.ts`); for a plugin an admin installed at runtime, over `commerceworker-plugin:<id>@<sha>` (its running version's bundle), so a key that leaked opens nothing for any other version (it works again only if that same bundle runs again), and `PLUGIN_KEY_PREVIOUS` the same from `PRINCIPAL_KEY_PREVIOUS`, written only when that is set. The web Worker signs a plugin's page requests with it; the engine and other plugins refuse it, and a plugin never holds `PRINCIPAL_KEY`. CI writes one secrets file per plugin. In local dev `apps/web/vite.config.ts` derives it from `DEV_PRINCIPAL_KEY` |
@@ -177,12 +177,12 @@ URLs: only the web app's service binding reaches it, plus Email Routing rules th
 (see [Email intake](deploy.md#email-intake)). The docs Worker (`apps/docs/wrangler.jsonc`)
 serves `docs.commerceworker.com`, and likewise sets `workers_dev` and `preview_urls` to `false`.
 
-The catalog Worker has no routes, no `workers_dev` URL and no preview URLs, and only catalog-edge
+The catalog Worker has no routes, no `workers_dev` URL and no preview URLs, and only delivery
 (`SearchApi`) and the web app (`CatalogApi`) bind to it; it answers `GET /health` with `{ ok: true }` and `404` otherwise. CI doesn't smoke-test it.
 
-The catalog-edge Worker serves `catalog.commerceworker.com` as a custom domain (a customer's is the
+The delivery Worker serves `catalog.commerceworker.com` as a custom domain (a customer's is the
 registry's `catalogDomain`, default `catalog.<domain>`, rendered at deploy), with `workers_dev` and
-`preview_urls` off. It answers `GET /health` with `{ ok: true }`, and CI smoke-tests it. Its
+`preview_urls` off. It answers `GET /health` with `{ ok: true, serves: ["catalog"] }` (it names only the surfaces that are bound; content is off here), and CI smoke-tests it. Its
 compatibility flags are `nodejs_compat` and `global_fetch_strictly_public`; `observability` is on
 with `head_sampling_rate` 0.05 (logs from 5% of requests; every request is still counted in Analytics
 Engine) and source maps are uploaded.
@@ -197,7 +197,7 @@ every request.
 
 The catalog Worker turns `observability` on at the default sampling and sets `limits.cpu_ms` to 300,000, since a feed step parses and validates up to 25,000 products. Both app Workers log and trace every request (`observability` with `head_sampling_rate` 1, invocation logs
 and traces on); lower the rate once traffic makes the volume or cost matter. All four (web, engine,
-catalog, catalog-edge) turn on Workers Issues (`observability.issues.enabled`), which groups
+catalog, delivery) turn on Workers Issues (`observability.issues.enabled`), which groups
 uncaught exceptions, failed invocations, `5xx` responses and error-level logs into issues and is
 what the account's alerting watches; see [Alerting](operations.md#alerting). All four also set
 `observability.redact_query_string`, so OAuth codes and states and other query strings stay out of

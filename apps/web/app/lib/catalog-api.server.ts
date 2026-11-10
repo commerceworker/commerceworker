@@ -1,7 +1,7 @@
 /**
  * /api/v1/catalog: the product catalog's admin API, forwarded to the catalog Worker over its
  * service binding (`ProductCatalogRpc`). Reads need viewer, writes operator, reindex admin. Every
- * write is in the audit log. What shoppers read is served by catalog-edge, not here.
+ * write is in the audit log. What shoppers read is served by delivery, not here.
  *
  *   GET  /api/v1/catalog/products/:key           the stored product
  *   POST /api/v1/catalog/products                { products: [...], urgent? }  at most 500

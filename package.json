@@ -24,7 +24,7 @@
     "db:seed:records": "pnpm --filter @commerceworker/web db:seed:records --",
     "db:seed:live": "pnpm --filter @commerceworker/web db:seed:live --",
     "db:seed:all": "pnpm --filter @commerceworker/web db:seed:all --",
-    "deploy": "pnpm --filter @commerceworker/catalog run deploy && pnpm --filter @commerceworker/catalog-edge run deploy && pnpm --filter @commerceworker/engine run deploy && pnpm --filter @commerceworker/web run deploy",
+    "deploy": "pnpm --filter @commerceworker/catalog run deploy && pnpm --filter @commerceworker/delivery run deploy:catalog && pnpm --filter @commerceworker/engine run deploy && pnpm --filter @commerceworker/web run deploy",
     "test:fleet": "node --test scripts/*.test.ts",
     "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
     "plugin:pack": "node scripts/plugin-pack.ts",

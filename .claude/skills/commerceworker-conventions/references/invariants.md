@@ -91,7 +91,7 @@ terminal statuses. A new report kind gets a case there.
 |---|---|---|
 | `packages/core` has no bindings and no Cloudflare imports | It runs in node tests, the browser and the docs build | `grep -rnE "from '(cloudflare:\|@cloudflare/)" packages/core/src` |
 | The web app never imports engine source | Separate Workers; the contract is `EngineRpc` (`packages/core/src/api.ts`) | `grep -rnE "from '[^']*(apps/engine\|@commerceworker/engine)" apps/web/app` |
-| catalog-edge's runtime imports from core are zod-free subpaths (`product/paths`, `product/listing`, `product/search`); `@commerceworker/core/product` only as `import type` | Its bundle stays ~10 KiB gzipped (`docs/architecture.md`) | `grep -rnE "^import [^t].*from '@commerceworker/core(/product)?'" apps/catalog-edge/src` |
+| The catalog entrypoint's (`apps/delivery/src/catalog/`) runtime imports from core are zod-free subpaths (`product/paths`, `product/listing`, `product/search`); `@commerceworker/core/product` only as `import type`; nothing of the content stack | Its bundle stays ~10 KiB gzipped (`apps/delivery/test/catalog-bundle.test.ts`, `docs/architecture.md`) | `grep -rnE "^import [^t].*from '@commerceworker/core(/product)?'" apps/delivery/src/catalog`, and the bundle test |
 | The core never imports plugin code | A deployment works with no plugin bound | `grep -rnE "from '[^']*plugins/" packages/core/src apps/engine/src apps/web/app` |
 | The docs import only `@commerceworker/core` and `apps/web/app/lib/openapi.ts` | The site builds without engine source | `grep -rnE "from '[^']*(apps/engine\|@commerceworker/engine)" apps/docs/src` |
 
@@ -167,8 +167,8 @@ through `quoteNodes` is a finding. What UCP serves is tested against the vendore
 - **Typed binding.** Callers type the catalog binding as `ProductCatalogRpc`.
 - **Per-deployment resources.** A new catalog resource goes in `scripts/fleet.ts` and
   `scripts/provision.sh`.
-- **Edge.** `apps/catalog-edge` is read-only, serves only what the publisher wrote, and reaches
-  its cached `Delivery` entrypoint by canonical URL (`routes.ts`). Purges are rationed (Free-plan
+- **Edge.** The catalog entrypoint of `apps/delivery` (`src/catalog/`) is read-only, serves only what the publisher wrote, and reaches
+  its cached `CatalogDelivery` entrypoint by canonical URL (`routes.ts`). Purges are rationed (Free-plan
   limits): freshness comes from `max-age` and ETag revalidation; only urgent writes queue a purge.
 
 ## Plugins
@@ -227,7 +227,7 @@ if they differ) and generates the docs theme. After changing a token: change `to
 - Endpoint names never end in a trailing z: `/health`, `/ready`, `/auth`.
 - Production deploys from CI only. Merging to `main` runs `.github/workflows/ci.yml`: verify, then
   the fleet in rings (staging → internal → canary → general) through `deploy.yml`, which records a
-  D1 bookmark, migrates D1, deploys catalog, catalog-edge, plugins (with their own migrations),
+  D1 bookmark, migrates D1, deploys catalog, delivery, plugins (with their own migrations),
   engine, web and docs, smoke-tests, and rolls the Workers back on failure (D1 stays migrated;
   `docs/deploy.md` "Restoring D1"). If a deploy job fails, re-run its failed jobs.
 - vitest is pinned to 5.0.3: 5.0.4's module cache breaks `@cloudflare/vitest-plugin`.

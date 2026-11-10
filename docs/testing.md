@@ -21,7 +21,7 @@ and on a pull request a `commits` job lints each commit message against Conventi
 | `plugins/fixture-carrier` | workerd, through `@cloudflare/vitest-plugin`, with the plugin's own D1 | `plugins/fixture-carrier/vitest.config.ts` |
 | `apps/engine` | workerd, through `@cloudflare/vitest-plugin`; five projects, `engine`, `plugins`, `sandboxed`, `installs` and `stripe` | `apps/engine/vitest.config.ts` |
 | `apps/catalog` | workerd, through `@cloudflare/vitest-plugin` | `apps/catalog/vitest.config.ts` |
-| `apps/catalog-edge` | workerd, through `@cloudflare/vitest-plugin` | `apps/catalog-edge/vitest.config.ts` |
+| `apps/delivery` | two projects: `unit` (Node: the content gateway's pure parts, the catalog bundle budget) and `catalog` (workerd, through `@cloudflare/vitest-plugin`, as a catalog-only deployment) | `apps/delivery/vitest.config.ts` |
 | `apps/web` | Node | `apps/web/vitest.config.ts` |
 
 :::caution
@@ -499,7 +499,7 @@ generated `apps/docs/src/styles/theme.css` is stale. Fix it by mirroring the `ap
 
 It also covers logs: every rendered app config and plugin config sets `logpush` (a plugin's own `wrangler.jsonc` may not); `logRetentionDays` defaults to 400, reaches `shellVars` as `LOG_RETENTION_DAYS` with the bucket `LOGS_R2`, and is refused below 30, fractional or as a string; `logpushJob` names the job and bucket by the deployment, filters to its own Workers (Worker plugins in, sandboxed ones out), never pushes `Event`, refuses a filter past 1,000 bytes, and no two registry deployments share a Worker, job or bucket. `logRetentionDays` defaults to `personalDataRetentionDays` when that is set and is refused above it. `foreignJobsReaching` reports another job with no filter, an unparseable one, one naming one of the deployment's Workers, one filtering only on another field, and an `or` with a branch that admits them, but not the deployment's own job, another deployment's, or one filtered to other Workers (`in`, `!startsWith`, an `and`). `logpushToken` builds the one-policy token with the jurisdiction (or `default`) in the bucket resource, finds the permission group by exact name and refuses none or two, and `tokenMatches` refuses a token with another name, no policy or two, a wider resource, an extra resource or group, or `deny`. A last test runs `bash -n` on `scripts/provision.sh`.
 
-`scripts/fleet.test.ts` also covers catalog-edge: `renderCatalogEdge` gives the Worker its own name (`commerceworker-catalog-edge-<id>`), points its `CATALOG` service binding at the deployment's catalog (`commerceworker-catalog-<id>`, entrypoint `SearchApi`), a custom-domain route for `catalogDomain` (default `catalog.<domain>`), the deployment's bucket (with its jurisdiction), `CARDS` namespace id, purge queue and dead-letter queue consumer (`max_concurrency` 1) and Analytics Engine dataset (`commerceworker_catalog_edge_<id>`); the catalog's `PURGE` producer names the same queue; a `catalogDomain` that isn't a host name is refused; `commerceworker` renders the committed `apps/catalog-edge/wrangler.jsonc` unchanged.
+`scripts/fleet.test.ts` also covers delivery: `renderDelivery` gives the Worker its own name (`commerceworker-delivery-<id>`), points its `CATALOG` service binding at the deployment's catalog (`commerceworker-catalog-<id>`, entrypoint `SearchApi`), a custom-domain route for `catalogDomain` (default `catalog.<domain>`), the deployment's bucket (with its jurisdiction), `CARDS` namespace id, purge queue and dead-letter queue consumer (`max_concurrency` 1) and Analytics Engine dataset (`commerceworker_catalog_delivery_<id>`); the catalog's `PURGE` producer names the same queue; a `catalogDomain` that isn't a host name is refused; `commerceworker` renders the committed `apps/delivery/wrangler.catalog.jsonc` unchanged.
 
 `scripts/fleet.test.ts` also covers plugin runtimes and secrets: a `sandboxed` plugin gets no Worker, service binding or `d1Id` (`workerPlugins`, `sandboxedPlugins`; `renderPlugin` refuses it; a `d1Id` or an unknown `runtime` is refused); the reserved ids (`bundles`, `secrets`, `grants`, `key`, `publishers`) and ids with a double or trailing dash are refused; with a `secretsStore`, `renderEngine` binds each sandboxed plugin's listed secrets as `PLUGIN_SECRET_<ID>__<NAME>` from the store and `renderPlugin` binds a Worker plugin's under `<NAME>` (a bad `storeId` or secret name is refused); a shared account binds no store; and `missingPluginSecrets` finds the required secrets a deployment lacks, by name only (from the environment, or from the registry's list and the store's names).
 
@@ -509,7 +509,7 @@ It also covers logs: every rendered app config and plugin config sets `logpush` 
 
 `scripts/fleet.test.ts` also covers the registry's `turnstileSiteKey`: it sets the web Worker's `TURNSTILE_SITE_KEY` (empty without it) and `provision.sh`'s `TURNSTILE_SITE_KEY`, refuses anything that isn't a site key, and Cloudflare's test keys (`1x`–`3x`) anywhere but a demo (production and customers alike); and `secretsProblem` stops a web deploy whose environment lacks `TURNSTILE_SECRET_KEY` while the engine's and a deployment without a key need none.
 
-`scripts/do-migrations.test.ts` (in `pnpm test:fleet`) guards Durable Object migrations, which no deploy can roll back. It freezes each app's applied tags as golden values (not read from `origin/main`, which CI's one-commit checkout doesn't have): an applied tag edited, removed or moved, a new tag not appended to `APPLIED` in the same change, a repeated tag, a `deleted_classes`, `renamed_classes` or `transferred_classes` not in `DESTRUCTIVE_ALLOWED`, or a bound class (not another Worker's `script_name`) that no migration creates each fail it, as cases against made-up configs show. `scripts/fleet.test.ts` checks that rendering any deployment (every one in the registry, a customer and a demo) leaves the engine's and catalog's `durable_objects` and `migrations` as the base configs have them, and gives the web app and catalog-edge none.
+`scripts/do-migrations.test.ts` (in `pnpm test:fleet`) guards Durable Object migrations, which no deploy can roll back. It freezes each app's applied tags as golden values (not read from `origin/main`, which CI's one-commit checkout doesn't have): an applied tag edited, removed or moved, a new tag not appended to `APPLIED` in the same change, a repeated tag, a `deleted_classes`, `renamed_classes` or `transferred_classes` not in `DESTRUCTIVE_ALLOWED`, or a bound class (not another Worker's `script_name`) that no migration creates each fail it, as cases against made-up configs show. `scripts/fleet.test.ts` checks that rendering any deployment (every one in the registry, a customer and a demo) leaves the engine's and catalog's `durable_objects` and `migrations` as the base configs have them, and gives the web app and delivery none.
 
 ## Devices: the web app on iPhone and iPad
 
@@ -550,8 +550,8 @@ test shrinks to the area above a keyboard.
 
 ## Catalog edge: delivery in workerd
 
-`apps/catalog-edge/tests/edge.test.ts` runs the gateway and `Delivery` against local R2 and KV,
-from the Worker's own `wrangler.jsonc` with `remoteBindings: false`. `beforeAll` writes what the
+`apps/delivery/test/catalog/edge.test.ts` runs the gateway and `Delivery` against local R2 and KV,
+from `test/catalog/wrangler.jsonc` (the catalog's bindings and no content binding, as `wrangler.catalog.jsonc` renders) with `remoteBindings: false`. `content-off.test.ts` holds that one Worker serves a catalog read with content off: the content routes are `404`, `/health` names only the catalog, a write is `405`. `test/catalog-bundle.test.ts` (the `unit` project) bundles `src/catalog/` alone with esbuild and holds it to 10 KiB gzipped and to core's zod-free subpaths, with no content-stack import. `beforeAll` writes what the
 publisher would (two products, one in two locales, SKU and slug alias pointers, a category tree, uid
 entries and cards) with `paths` from `@commerceworker/core/product/paths`, and requests go to the default
 entrypoint through `exports`.
@@ -563,7 +563,7 @@ entrypoint through `exports`.
 | the gateway | `POST` is `405`; `OPTIONS` is `204` allowing `if-none-match`; a wrong version prefix or unknown kind is `404`; a bad channel, locale or slug is `400`; `/health` is `{ ok: true }` |
 | purging | A queue batch with a repeated tag acknowledges every message, with no wait since `purge` skipped; `drain` with a fake clock and purge: whole messages packed into calls of at most 100 deduplicated tags (a 250-tag message split), `PURGE_PACE_MS` after each call; an hour-old message is still purged, and past `PURGE_CALLS` calls the rest is retried after 12 seconds, a message handed back before waiting longer (96 seconds on its fourth delivery, 300 at most); a refused call retries the messages it hadn't covered after 30 seconds and keeps the purged one acknowledged; `backoff` doubles up to its cap. The local queue records which messages were retried but not their delay, so `run` spies on each message's `retry` |
 
-`apps/catalog-edge/tests/listing.test.ts` writes listing indexes split into segments by `listingSegment` (each built with core's `buildListingIndex`; five products in `tees`, so some segments have no object, and 300 with many ties in `many`) and their cards, and requests `categories/<code>/products` through the gateway:
+`apps/delivery/test/catalog/listing.test.ts` writes listing indexes split into segments by `listingSegment` (each built with core's `buildListingIndex`; five products in `tees`, so some segments have no object, and 300 with many ties in `many`) and their cards, and requests `categories/<code>/products` through the gateway:
 
 | Group | Covers |
 |---|---|
@@ -576,7 +576,7 @@ entrypoint through `exports`.
 | merging | For `newest` and both price sorts, with no filter, a term filter and a term and range filter, pages of 7 followed to the end are exactly the brute-force order, `total` on every page; facet counts summed over segments |
 | cache keys | Equivalent pages (filter order, value order, default `sort`, the first page's `cursor` and `limit` spelled out) have one canonical URL; any other cursor keeps its spelling |
 
-`apps/catalog-edge/tests/search.test.ts` requests `search` through the gateway. The catalog is a stub Worker named `commerceworker-catalog`, defined in `vitest.config.ts` (miniflare `workers`) and answering only `tee` (uids 7, 70 and 71), so the service binding resolves without Durable Objects:
+`apps/delivery/test/catalog/search.test.ts` requests `search` through the gateway. The catalog is a stub Worker named `commerceworker-catalog`, defined in `vitest.config.ts` (miniflare `workers`) and answering only `tee` (uids 7, 70 and 71), so the service binding resolves without Durable Objects:
 
 | Group | Covers |
 |---|---|
@@ -621,7 +621,7 @@ changes; go larger only when the question is about scale itself. It:
    `bench-0000000` up, seeded so every run sends the same feed) as it generates it;
 3. polls the feed and the root listing's `total` every 5 seconds (each poll a different page size,
    so it isn't a cached copy) until the import is done and every product is listed;
-4. samples catalog-edge latencies five times each, as cache misses (page sizes no one asked for) and
+4. samples delivery latencies five times each, as cache misses (page sizes no one asked for) and
    hits: the root listing, a filtered and sorted page and its next page, a leaf listing, search and a
    product document;
 5. prints a JSON report (`uploadSeconds`, `importSeconds`, `publishedSeconds`, `productsPerSecond`,

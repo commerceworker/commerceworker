@@ -330,12 +330,12 @@ Published objects. `f1` is `DOC_FORMAT`, in every path so a format change is a n
 | R2 | `docs/f1/<channel>/<locale>/categories.json` | The channel's flat category tree, names in that locale |
 | R2 | `idx/f1/<channel>/<category>/<segment>.bin` | One segment (`0` to `LISTING_SEGMENTS - 1`, 8 segments, `listingSegment(key)`) of the category's listing index (binary format 3, all locales' labels inside; together the segments are at most `LISTING_MAX_BYTES`, 64 MiB); custom metadata `members` and `builtAt`. A segment with no members yet has no object |
 | KV | `c:f1:<channel>:<locale>:<uid in base 36>` | The listing card |
-| KV | `u:f1:<key>` | The product's `uid` as a decimal string, written the first time the product publishes (and again under a new uid), deleted when the product is; `catalog-edge` turns a batch's keys into card keys with it |
+| KV | `u:f1:<key>` | The product's `uid` as a decimal string, written the first time the product publishes (and again under a new uid), deleted when the product is; the delivery Worker turns a batch's keys into card keys with it |
 
-`catalog-edge` ([Architecture](architecture.md#catalog-edge)) reads these objects and writes none.
+the delivery Worker ([Architecture](architecture.md#catalog-edge)) reads these objects and writes none.
 It has no storage of its own besides Workers Caching, whose entries are tagged `p:<key>`,
 `ch:<channel>` and `cats`, and `cat:<code>` on listing pages. The cache tags of urgent changes wait on a queue, `commerceworker-catalog-purge`
-(`{ tags }` messages, drained by `catalog-edge`; failed messages go to `commerceworker-catalog-purge-dlq`).
+(`{ tags }` messages, drained by the delivery Worker; failed messages go to `commerceworker-catalog-purge-dlq`).
 Messages that reach any of the catalog's dead-letter queues are kept in the catalog's bucket at
 `dlq/<queue>/<yyyy-mm-dd>/<message id>.json`, which a lifecycle rule `dlq` expires after 30 days
 ([Operations](operations.md#dead-letters)).
@@ -544,7 +544,7 @@ Not covered by the redaction:
   (`NO_LOG_PAYLOAD` in `apps/engine/src/ai.ts`), so an entry keeps the model, tokens, cost and its
   metadata (the prompt id, the order id, or the assistant's surface and hashed principal) but not
   the prompt, the document text, the buyer details or the tool results in it.
-- **Workers logs** are on for the engine, web, catalog and catalog-edge Workers (`observability` in `wrangler.jsonc`, invocation logs
+- **Workers logs** are on for the engine, web, catalog and delivery Workers (`observability` in `wrangler.jsonc`, invocation logs
   included). Every audit event is also written as one `{"type":"audit_event",…}` JSON line
   (`apps/web/app/lib/audit.server.ts`, `apps/engine/src/audit.ts`), carrying `actor`, `target`, `detail` and `ip`; these lines
   outlive the D1 retention and are subject to Cloudflare's log retention instead: 7 days in

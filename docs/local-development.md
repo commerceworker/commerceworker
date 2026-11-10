@@ -222,7 +222,7 @@ Then read its live state with `GET /api/v1/orders/:id`.
 ## Checks
 
 ```bash
-pnpm test            # core planner tests (node), engine Workflow e2e and catalog and catalog-edge (workerd), web tests
+pnpm test            # core planner tests (node), engine Workflow e2e and catalog and delivery (workerd), web tests
 pnpm lint            # Biome
 pnpm check-types     # tsc --noEmit (web runs react-router typegen first)
 pnpm test:fleet      # the deployment registry and the configs rendered from it
@@ -239,15 +239,15 @@ app; `pnpm web:dev` already runs it inside the Vite session.
 
 After changing a `wrangler.jsonc`, regenerate that app's binding types with
 `pnpm --filter @commerceworker/engine types`, `pnpm --filter @commerceworker/web types`,
-`pnpm --filter @commerceworker/catalog types` or `pnpm --filter @commerceworker/catalog-edge types`.
+`pnpm --filter @commerceworker/catalog types` .
 
 `pnpm web:dev` runs the catalog Worker inside the Vite session, as it does the engine. To run it on its
 own, without the web app, use `pnpm --filter @commerceworker/catalog dev` (port 8789); its tests run in `pnpm test` with local R2, KV and
 Durable Objects (including the changes queue and the listing indexers; a test runs an indexer's alarm itself instead of waiting out the 15 second debounce).
 
-`pnpm web:dev` doesn't start catalog-edge either. Run it with `pnpm --filter @commerceworker/catalog-edge dev`
+`pnpm web:dev` doesn't start delivery either. Run its catalog side (content off) with `pnpm --filter @commerceworker/delivery dev:catalog`
 (port 8790). It reads R2 and KV through `wrangler dev`'s local storage, which the catalog Worker
-(port 8789) doesn't share by default, so a local catalog-edge serves what its own storage holds
+(port 8789) doesn't share by default, so a local delivery serves what its own storage holds
 (tests write it directly). Search calls the catalog through its service binding, so locally it
 needs the catalog Worker running too, and a `search` request fails without it (the tests stub the
 catalog Worker). There is no Workers Caching locally: every request runs `Delivery`, and

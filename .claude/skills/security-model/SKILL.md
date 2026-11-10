@@ -1,6 +1,6 @@
 ---
 name: security-model
-description: CommerceWorker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed principal header between the web app and the engine, UCP platform envelopes, MCP and A2A as separate OAuth resources, API tokens and sessions, webhook signing, outbound URLs, secrets and encryption at rest, prompt injection into model nodes, personal data, the public catalog edge and the supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, signing, secrets, webhooks, external fetches or model prompts.
+description: CommerceWorker's trust boundaries and what to check at each, for security review of a diff or a design. Covers the signed principal header between the web app and the engine, UCP platform envelopes, MCP and A2A as separate OAuth resources, API tokens and sessions, webhook signing, outbound URLs, secrets and encryption at rest, prompt injection into model nodes, personal data, the public catalog read edge and the supply chain. Preloaded by the security-reviewer agent; use it directly when a change touches auth, roles, signing, secrets, webhooks, external fetches or model prompts.
 license: MIT
 metadata:
   repo: commerceworker
@@ -31,8 +31,8 @@ apps/engine  (reachable only through the web app's service binding; still verifi
 outside world
 ```
 
-`apps/catalog-edge` is a separate public, read-only Worker that serves only what the catalog
-publisher wrote. `apps/catalog` is reached through its RPC binding (`ProductCatalogRpc`).
+`apps/delivery`'s catalog entrypoint (`src/catalog/`) is public and read-only and serves only what the
+catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no content stack. `apps/catalog` is reached through its RPC binding (`ProductCatalogRpc`).
 
 ## The rules a change must keep
 
