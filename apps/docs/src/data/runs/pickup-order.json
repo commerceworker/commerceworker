@@ -53,7 +53,7 @@
     },
     "promo": {
       "status": "succeeded",
-      "summary": "No promotion codes",
+      "summary": "No promotions",
       "branches": ["out"]
     },
     "shipping": {

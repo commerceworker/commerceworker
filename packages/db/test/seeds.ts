@@ -81,15 +81,14 @@ export async function seedPricing(f: PricingFixture) {
   );
   if (f.customers?.length) await db.insert(customers).values(f.customers);
   if (f.products?.length) await db.insert(products).values(f.products);
-  if (f.promotions?.length)
-    await db.insert(promotions).values(
-      f.promotions.map((p) => ({
-        ...p,
-        skus: p.skus ? JSON.stringify(p.skus) : null,
-        createdAt: t,
-        updatedAt: t,
-      })),
-    );
+  // One row a statement: a promotion has 20 columns and D1 binds at most 100 parameters.
+  for (const p of f.promotions ?? [])
+    await db.insert(promotions).values({
+      ...p,
+      skus: p.skus ? JSON.stringify(p.skus) : null,
+      createdAt: t,
+      updatedAt: t,
+    });
   for (const r of f.fxRates ?? [])
     await db
       .insert(fxRates)

@@ -15,6 +15,8 @@ import {
   certificateVerifyProblem,
   type Principal,
   type PromotionKind,
+  type PromotionStacking,
+  promotionLabel,
   type RpcActor,
   type TaxCertificate,
 } from '@commerceworker/core';
@@ -31,7 +33,8 @@ import { money, Refused } from './data';
 type Trail = Record<string, unknown>;
 
 export type PromotionInput = {
-  code: string;
+  /** Left out for an automatic promotion, which needs a name. */
+  code?: string;
   name?: string;
   kind: PromotionKind;
   value?: number;
@@ -41,6 +44,9 @@ export type PromotionInput = {
   validTo?: number;
   maxRedemptions?: number;
   perCustomerLimit?: number;
+  priority?: number;
+  stacking?: PromotionStacking;
+  maxDiscount?: number;
 };
 
 const what = (p: { kind: string; value: number }) =>
@@ -49,6 +55,14 @@ const what = (p: { kind: string; value: number }) =>
     : p.kind === 'amount'
       ? `${money(p.value, BASE_CURRENCY)} off`
       : 'Free shipping';
+
+/** How the promotion combines, in the card's words. */
+const stackingLine = (i: Pick<PromotionInput, 'stacking' | 'priority'>) =>
+  `${
+    i.stacking === 'stackable'
+      ? 'Combines with other stackable promotions'
+      : 'Never combined with another promotion'
+  }${i.priority ? ` · priority ${i.priority}` : ''}`;
 
 const customerName = async (env: Env, id: string) =>
   (await pricingStore(env).customer(id))?.name ?? null;
@@ -59,6 +73,7 @@ function promotionProblem(i: PromotionInput): string | null {
   if (i.kind === 'pct' && !(value > 0 && value <= 100))
     return 'A percentage is above 0 and at most 100.';
   if (i.kind === 'amount' && !(value > 0)) return 'An amount off is above 0.';
+  if (!i.code && !i.name?.trim()) return 'A promotion without a code needs a name.';
   return null;
 }
 
@@ -67,14 +82,18 @@ export async function previewCreatePromotion(
   i: PromotionInput,
   roleBlock?: string,
 ): Promise<ActionPreview> {
-  const [taken] = await pricingStore(env).promotionsByCode([i.code]);
+  const [taken] = i.code ? await pricingStore(env).promotionsByCode([i.code]) : [];
   const value = i.kind === 'free_shipping' ? 0 : (i.value ?? 0);
   const who = i.customerId ? await customerName(env, i.customerId) : null;
   return {
-    title: `Add the promotion ${i.code}`,
+    title: i.code
+      ? `Add the promotion ${i.code}`
+      : `Add the automatic promotion “${boundText(i.name, 80)}”`,
     href: '/promotions',
     consequences: [
-      `${what({ kind: i.kind, value })}${i.name ? ` · “${boundText(i.name, 80)}”` : ''}`,
+      `${what({ kind: i.kind, value })}${i.name && i.code ? ` · “${boundText(i.name, 80)}”` : ''}`,
+      ...(i.maxDiscount ? [`Takes off at most ${money(i.maxDiscount)} from one order`] : []),
+      stackingLine(i),
       ...(i.minSubtotal ? [`On a subtotal of ${money(i.minSubtotal)} or more`] : []),
       ...(i.skus?.length
         ? [
@@ -90,7 +109,9 @@ export async function previewCreatePromotion(
         : ['No end date']),
       ...(i.maxRedemptions ? [`At most ${i.maxRedemptions} uses`] : []),
       ...(i.perCustomerLimit ? [`At most ${i.perCustomerLimit} per customer`] : []),
-      'Active at once: buyers and staff can enter it on carts and at checkout',
+      i.code
+        ? 'Active at once: buyers and staff can enter it on carts and at checkout'
+        : 'Active at once: it applies to every order it fits, with no code to enter',
     ],
     blocked:
       roleBlock ??
@@ -106,7 +127,7 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
   const added = await pricingStore(env).createPromotion(
     {
       id,
-      code: i.code,
+      code: i.code ?? null,
       name: (i.name ?? '').slice(0, 120),
       kind: i.kind,
       value,
@@ -116,16 +137,19 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
       validTo: i.validTo ?? null,
       maxRedemptions: i.maxRedemptions ?? null,
       perCustomerLimit: i.perCustomerLimit ?? null,
+      priority: i.priority ?? 0,
+      stacking: i.stacking ?? 'exclusive',
+      maxDiscount: i.maxDiscount ?? null,
     },
     p.id,
   );
-  if (!added) throw new Refused(`${i.code} already exists.`);
+  if (!added) throw new Refused(`${i.code ?? i.name} already exists.`);
   await recordAudit(env, 'promotion.saved', {
     actor: p,
     target: id,
     // Its whole reach, so the record of a wide code says how wide.
     detail: {
-      code: i.code,
+      code: i.code ?? null,
       kind: i.kind,
       value,
       ...(i.name ? { name: i.name.slice(0, 120) } : {}),
@@ -135,10 +159,13 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
       validTo: i.validTo ?? null,
       maxRedemptions: i.maxRedemptions ?? null,
       perCustomerLimit: i.perCustomerLimit ?? null,
+      priority: i.priority ?? 0,
+      stacking: i.stacking ?? 'exclusive',
+      maxDiscount: i.maxDiscount ?? null,
       ...trail,
     },
   });
-  return { done: `Added ${i.code}`, href: '/promotions', id };
+  return { done: `Added ${i.code ?? i.name}`, href: '/promotions', id };
 }
 
 async function promotionById(env: Env, id: string) {
@@ -154,16 +181,21 @@ export async function previewPromotionStatus(
 ): Promise<ActionPreview> {
   const row = await promotionById(env, i.promotionId);
   return {
-    title: `${i.status === 'paused' ? 'Pause' : 'Reactivate'} ${row.code}`,
+    title: `${i.status === 'paused' ? 'Pause' : 'Reactivate'} ${promotionLabel(row)}`,
     href: '/promotions',
     consequences: [
       what(row),
       i.status === 'paused'
-        ? 'Carts and checkouts stop accepting it; orders it already discounted keep their price'
-        : 'Buyers and staff can enter it again',
+        ? row.code
+          ? 'Carts and checkouts stop accepting it; orders it already discounted keep their price'
+          : 'New orders stop getting it; orders it already discounted keep their price'
+        : row.code
+          ? 'Buyers and staff can enter it again'
+          : 'It applies again to every order it fits',
     ],
     blocked:
-      roleBlock ?? (row.status === i.status ? `${row.code} is already ${i.status}.` : undefined),
+      roleBlock ??
+      (row.status === i.status ? `${promotionLabel(row)} is already ${i.status}.` : undefined),
   };
 }
 
@@ -181,7 +213,7 @@ export async function runPromotionStatus(
     detail: { status: i.status, ...trail },
   });
   return {
-    done: `${i.status === 'paused' ? 'Paused' : 'Reactivated'} ${row.code}`,
+    done: `${i.status === 'paused' ? 'Paused' : 'Reactivated'} ${promotionLabel(row)}`,
     href: '/promotions',
     id: row.id,
   };

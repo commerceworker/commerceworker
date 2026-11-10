@@ -236,7 +236,7 @@ as the built-in `tpl-omnichannel-order` does. A flow with no such path, such as
 
 With `dev.ucp.shopping.discount` negotiated, a platform sends promotion codes (the codes an admin
 creates under [Promotions](/guides/promotions/)) as `discounts.codes` on create and update. They are
-case-insensitive, at most five, and replace any sent before; an update that sends none clears them
+case-insensitive, at most five, may be several at once, and replace any sent before; an update that sends none clears them
 (an update replaces the whole checkout, like the rest of it). The checkout is priced as ever, by the
 flow's own nodes, so the flow needs an Apply promotions step (`commerce.discount`) for a code to do
 anything, and the payment held at completion is the discounted total the order's authorize node
@@ -247,7 +247,8 @@ The response carries `discounts`:
 - `codes`: the codes as sent.
 - `applied`: what the promotions step applied, each with the `code`, the promotion's name as `title`,
   the `amount` in minor units and a `method` (`each` for a percentage, `across` for a fixed amount).
-  Free shipping has no `method`. Every promotion here is code-based, so none is `automatic`.
+  Free shipping has no `method`. An automatic promotion (one with no code) is applied whether or
+  not the platform sent codes; it comes back with no `code` and `automatic: true`.
 - `allocations` on an applied discount: where it landed, summing to its `amount`. They are given
   when they can be derived from the step's own result: the lines a single discount lowered
   (`$.line_items[n]`, a rounding remainder on the last of them) or, for free shipping, the shipping
@@ -258,7 +259,7 @@ The response carries `discounts`:
 applied, shipping before any free-shipping discount, tax and the total, and each discounted line
 shows its list price with its share as a `discount` total. The entries add up to the total.
 
-A code the step leaves out (unknown, expired, used up, not combinable with another) stays in
+A code the step leaves out (unknown, expired, used up, not combined with a better promotion, which the message names) stays in
 `codes` and comes back as a `warning` message with code `promotion` at its place in the list
 (`$.discounts.codes[1]`), saying why. It doesn't block the checkout.
 
@@ -266,7 +267,7 @@ A code that can't do anything is told so the same way: free shipping when the fl
 after its promotions step takes nothing off, so it is left out of `applied` with a warning, and when
 the checkout flow has no Apply promotions step every code gets a warning that codes don't apply.
 
-Only the codes that were applied are passed on to the order. Redemption limits are checked when
+Only the codes that were applied are passed on to the order; an automatic promotion has no code to pass, and the order's own Apply promotions step applies it again. Redemption limits are checked when
 the order runs, not held while the checkout is open, so with one use left of a code, two checkouts
 can both quote it and the second order, whose step then refuses it, is declined at authorization and
 reaches the platform as an order event.
@@ -379,7 +380,7 @@ error is a JSON-RPC error with the HTTP status set: code `-32001` for a profile 
 - Currencies other than `USD`.
 - Fulfillment is shipping or pickup for the whole checkout; no split between them, and no other methods.
 - Catalog search and lookup, carts, identity linking, AP2 mandates and the embedded checkout.
-- Automatic and eligibility discounts (`automatic`, `provisional`, `eligibility`); the discount extension covers promotion codes only.
+- Eligibility and provisional discounts (`provisional`, `eligibility`); the discount extension covers promotion codes and automatic promotions.
 - Cards that require 3-D Secure authentication (refused with `payment_failed`).
 - Verifying a platform's own request signatures; platforms authenticate with their key.
 

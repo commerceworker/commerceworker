@@ -224,24 +224,23 @@ export const EXECUTORS: Record<string, Exec> = {
     };
   },
 
-  'commerce.discount': async ({ env, ctx, config, stepKey, dryRun }) => {
+  'commerce.discount': async ({ env, ctx, stepKey, dryRun }) => {
     const r = await applyPromotions({ pricing: pricingStore(env) }, ctx.order, {
       now: ctx.now,
-      stack: config.stack === true,
       stepKey,
       dryRun: dryRun === true,
     });
-    if (!r.order) return { output: { applied: [], refused: [] }, summary: 'No promotion codes' };
+    if (!r.order) return { output: { applied: [], refused: [] }, summary: 'No promotions' };
     const off = r.applied.reduce((s, a) => s + a.amount, 0);
     return {
       order: r.order,
       output: { applied: r.applied, refused: r.refused },
       vars: { promotionsRefused: r.refused.map((x) => x.reason) },
       summary: r.applied.length
-        ? `${r.applied.map((a) => a.code).join(', ')} · ${cash(off, ctx)} off`
+        ? `${r.applied.map((a) => a.code ?? a.name).join(', ')} · ${cash(off, ctx)} off`
         : r.refused.length
           ? r.refused.map((x) => x.reason).join(' ')
-          : 'No promotion codes',
+          : 'No promotions',
     };
   },
 

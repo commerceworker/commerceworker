@@ -81,7 +81,8 @@ export type CheckoutBuyer = {
 
 /** A promotion the quote's discount step applied, in the session's currency. */
 export type QuoteDiscount = {
-  code: string;
+  /** The code that gave it; null for an automatic promotion. */
+  code: string | null;
   /** The promotion's name. */
   title: string;
   kind: PromotionKind;

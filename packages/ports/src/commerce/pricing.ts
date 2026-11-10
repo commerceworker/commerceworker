@@ -82,6 +82,11 @@ export interface PricingStore {
   products(skus?: readonly string[]): Promise<ProductRecord[]>;
   /** The promotions with these codes; an unknown kind reads as `pct`, any status but paused as active. */
   promotionsByCode(codes: readonly string[]): Promise<Promotion[]>;
+  /**
+   * The promotions with no code that apply at `at`: active, and inside their dates. Whether one
+   * fits an order (customer, SKUs, subtotal, limits) is the core's to judge.
+   */
+  automaticPromotions(at: number): Promise<Promotion[]>;
   /** Redemptions of a promotion by orders other than `orderId`: all of them, and the customer's. */
   redemptionsOf(
     promotionId: string,
@@ -102,7 +107,7 @@ export interface PricingStore {
   promotion(id: string): Promise<Promotion | undefined>;
   /**
    * Adds a promotion, active at once. Codes are unique: false (and nothing written) when the code
-   * is taken.
+   * is taken. A promotion with no code is automatic and never conflicts.
    */
   createPromotion(
     p: Omit<Promotion, 'status' | 'currency' | 'validFrom'>,

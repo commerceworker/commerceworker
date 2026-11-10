@@ -38,8 +38,10 @@ way an order on that flow is priced. Until the new price is in, the cart shows *
   choose again; a line removed and added back comes back unticked.
 - A cart holds at most 100 lines, and a line at most 10,000 units.
 - **Promotion codes** go in the box under the price (up to five a cart). They change the price
-  only if the cart's flow has an Apply promotions step; a code that doesn't apply, or a flow
-  without that step, is shown under the price, and the cart can still be submitted. A cart takes
+  only if the cart's flow has an Apply promotions step, which also applies any automatic promotion
+  with no code. Which codes combine is up to the promotions themselves ([Combining
+  promotions](/guides/promotions/#combining-promotions)). A code that doesn't apply, or a flow
+  without that step, is shown under the price, naming the code, and the cart can still be submitted. A cart takes
   at most ten codes tried in an hour, by anyone, so codes can't be guessed through it.
 - A SKU the store doesn't sell, or a line that is short of stock, shows its problem under the line.
   A policy the cart breaks (an order minimum, say) shows under the price.

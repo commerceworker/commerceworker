@@ -8,6 +8,7 @@ import {
   type FxSource,
   matchCustomerByName,
   PROMOTION_KINDS,
+  PROMOTION_STACKING,
   type PriceRule,
   type PriceSource,
   type PriceSourceKind,
@@ -59,6 +60,11 @@ export function promotionFromRow(r: PromotionRow): Promotion {
     maxRedemptions: r.maxRedemptions,
     perCustomerLimit: r.perCustomerLimit,
     status: r.status === 'paused' ? 'paused' : 'active',
+    priority: r.priority,
+    stacking: (PROMOTION_STACKING as readonly string[]).includes(r.stacking)
+      ? (r.stacking as Promotion['stacking'])
+      : 'exclusive',
+    maxDiscount: r.maxDiscount,
   };
 }
 
@@ -172,6 +178,21 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
       return rows.map(promotionFromRow);
     },
 
+    async automaticPromotions(at) {
+      const rows = await db
+        .select()
+        .from(promotions)
+        .where(
+          and(
+            sql`${promotions.code} IS NULL`,
+            eq(promotions.status, 'active'),
+            sql`(${promotions.validFrom} IS NULL OR ${promotions.validFrom} <= ${at})`,
+            sql`(${promotions.validTo} IS NULL OR ${promotions.validTo} > ${at})`,
+          ),
+        );
+      return rows.map(promotionFromRow);
+    },
+
     async redemptionsOf(promotionId, orderId, customerId) {
       const row = await db
         .select({
@@ -264,6 +285,9 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
           validTo: p.validTo,
           maxRedemptions: p.maxRedemptions,
           perCustomerLimit: p.perCustomerLimit,
+          priority: p.priority,
+          stacking: p.stacking,
+          maxDiscount: p.maxDiscount,
           createdBy,
           createdAt: at,
           updatedAt: at,

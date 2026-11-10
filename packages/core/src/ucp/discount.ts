@@ -23,9 +23,12 @@ const SHIPPING_TOTAL_PATH = '$.totals[?@.type == "fulfillment"]';
 
 /** `$defs/applied_discount` of `shopping/discount.json`. */
 export type AppliedDiscount = {
-  code: string;
+  /** Omitted for an automatic discount. */
+  code?: string;
   title: string;
   amount: number;
+  /** True for a promotion that needed no code. */
+  automatic?: true;
   method?: 'each' | 'across';
   allocations?: { path: string; amount: number }[];
 };
@@ -81,7 +84,11 @@ export function discountView(s: CheckoutSession): DiscountView {
 
   const out: AppliedDiscount[] = applied.map((a) => {
     const amount = m(a.amount);
-    const base = { code: a.code, title: a.title, amount };
+    const base = {
+      ...(a.code === null ? { automatic: true as const } : { code: a.code }),
+      title: a.title,
+      amount,
+    };
     if (a.kind === 'free_shipping')
       return {
         ...base,
@@ -96,10 +103,11 @@ export function discountView(s: CheckoutSession): DiscountView {
 
   const refused = new Map((q?.discounts?.refused ?? []).map((r) => [r.code, r.reason]));
   for (const a of idle)
-    refused.set(
-      a.code,
-      `${a.code} takes nothing off: this checkout's shipping is rated after its promotions.`,
-    );
+    if (a.code !== null)
+      refused.set(
+        a.code,
+        `${a.code} takes nothing off: this checkout's shipping is rated after its promotions.`,
+      );
   const messages: CheckoutIssue[] = [];
   const seen = new Set<string>();
   for (const [i, raw] of codes.entries()) {

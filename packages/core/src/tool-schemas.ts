@@ -34,7 +34,7 @@ import {
   catalogTypeInput,
 } from './product/inputs';
 import { BOARD_PAGE_LIMIT, FEEDS_LIMIT } from './product/reads';
-import { PROMOTION_KINDS } from './promotions';
+import { PROMOTION_KINDS, PROMOTION_STACKING } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
@@ -323,36 +323,60 @@ export const TOOL_INPUTS = {
   cancel_catalog_feed: z.object({ feedId: z.string().min(1).max(100) }),
   reindex_catalog: z.object({}),
   rebuild_catalog_gaps: z.object({}),
-  create_promotion: z.object({
-    // As a cart reads it (`normalizePromoCode`), so the code made is the code buyers enter.
-    code: z
-      .string()
-      .max(64)
-      .transform((c, ctx) => {
-        const code = normalizePromoCode(c);
-        if (!code)
-          ctx.addIssue({
-            code: 'custom',
-            message: 'Letters, digits, dashes and underscores, up to 32',
-          });
-        return code ?? '';
-      }),
-    name: z.string().max(120).optional(),
-    kind: z.enum(PROMOTION_KINDS),
-    value: z.number().nonnegative().optional().describe('The percentage or amount off'),
-    minSubtotal: z.number().nonnegative().optional(),
-    skus: z.array(z.string().min(1).max(100)).max(200).optional(),
-    customerId: z.string().max(100).optional(),
-    validTo: z
-      .number()
-      .int()
-      .positive()
-      .max(Date.UTC(9999, 0, 1))
-      .optional()
-      .describe('Ends at, epoch ms'),
-    maxRedemptions: z.number().int().positive().optional(),
-    perCustomerLimit: z.number().int().positive().optional(),
-  }),
+  create_promotion: z
+    .object({
+      // As a cart reads it (`normalizePromoCode`), so the code made is the code buyers enter.
+      // Without one the promotion is automatic: it applies to any order it fits.
+      code: z
+        .string()
+        .max(64)
+        .transform((c, ctx) => {
+          const code = normalizePromoCode(c);
+          if (!code)
+            ctx.addIssue({
+              code: 'custom',
+              message: 'Letters, digits, dashes and underscores, up to 32',
+            });
+          return code ?? '';
+        })
+        .optional()
+        .describe('What buyers enter; leave out for an automatic promotion that needs no code'),
+      name: z.string().max(120).optional().describe('Required when there is no code'),
+      kind: z.enum(PROMOTION_KINDS),
+      value: z.number().nonnegative().optional().describe('The percentage or amount off'),
+      minSubtotal: z.number().nonnegative().optional(),
+      skus: z.array(z.string().min(1).max(100)).max(200).optional(),
+      customerId: z.string().max(100).optional(),
+      validTo: z
+        .number()
+        .int()
+        .positive()
+        .max(Date.UTC(9999, 0, 1))
+        .optional()
+        .describe('Ends at, epoch ms'),
+      maxRedemptions: z.number().int().positive().optional(),
+      perCustomerLimit: z.number().int().positive().optional(),
+      priority: z
+        .number()
+        .int()
+        .min(-1000)
+        .max(1000)
+        .optional()
+        .describe('Higher is considered first (default 0)'),
+      stacking: z
+        .enum(PROMOTION_STACKING)
+        .optional()
+        .describe('exclusive (default) is never combined with another; stackable combines'),
+      maxDiscount: z
+        .number()
+        .positive()
+        .optional()
+        .describe('The most it takes off one order, in the base currency'),
+    })
+    .refine((p) => p.code !== undefined || !!p.name?.trim(), {
+      message: 'A promotion without a code needs a name',
+      path: ['name'],
+    }),
   set_promotion_status: z.object({
     promotionId: z.string().max(60),
     status: z.enum(['active', 'paused']),
