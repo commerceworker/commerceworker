@@ -46,9 +46,11 @@ test('a buyer’s cookie for a cart the engine doesn’t have is a 404, not a pa
   const guest = { cartId: 'cart_unknown', id: 'guest:b1', name: 'Pat Buyer' };
   await context.addCookies([
     {
-      name: `ol_${guest.cartId}`,
+      // As the start link sets it: `__Host-` with Secure and Path=/, the host only.
+      name: `__Host-ol_${guest.cartId}`,
       value: await signCartGuestSession(DEV_PRINCIPAL_KEY, guest, Date.now() + 60_000),
       url: baseURL!,
+      secure: true,
     },
   ]);
   const res = await page.goto('/cart/cart_unknown');
