@@ -11,6 +11,7 @@ import { d1AuditLog } from '@commerceworker/db/audit-log';
 import { d1AuthStore } from '@commerceworker/db/auth-store';
 import { d1BackOffice } from '@commerceworker/db/back-office';
 import { d1CartRecords } from '@commerceworker/db/cart-records';
+import { d1CompanyDirectory } from '@commerceworker/db/company-directory';
 import { d1FlowStore } from '@commerceworker/db/flow-store';
 import { d1IntegrationStore } from '@commerceworker/db/integration-store';
 import { d1WebhookReceipts } from '@commerceworker/db/logs';
@@ -30,6 +31,7 @@ import type {
   AuthStore,
   BackOffice,
   CartRecords,
+  CompanyDirectory,
   FlowStore,
   IntegrationStore,
   OrderBoard,
@@ -58,6 +60,9 @@ export const cartRecords = (): CartRecords => d1CartRecords(env.DB, systemClock)
 
 /** The places customers' orders ship to. */
 export const addressBook = (): AddressBook => d1AddressBook(env.DB);
+
+/** Companies, their teams and members, and the customer accounts they hang off. */
+export const companyDirectory = (): CompanyDirectory => d1CompanyDirectory(env.DB);
 
 /** People, sessions, API tokens, failed-attempt windows and two-factor challenges. */
 export const authStore = (): AuthStore => d1AuthStore(env.DB);

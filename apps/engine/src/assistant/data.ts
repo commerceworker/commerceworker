@@ -86,6 +86,20 @@ import {
   runCreatePromotion,
   runPromotionStatus,
 } from './commerce';
+import {
+  previewCompanyStatus,
+  previewCreateCustomer,
+  previewMembers,
+  previewRemoveMember,
+  previewTeam,
+  previewUpdateCustomer,
+  runCompanyStatus,
+  runCreateCustomer,
+  runMembers,
+  runRemoveMember,
+  runTeam,
+  runUpdateCustomer,
+} from './companies';
 import { draftHash, heldToDraft, previewTestFlow, runTestFlow } from './flows';
 import { previewFxRate, runFxRate } from './fx';
 import { previewRestart, previewStart, runRestart, runStart, type StartInput } from './orders';
@@ -433,6 +447,12 @@ export type ActionInput = {
   set_fx_rate: ToolInput<'set_fx_rate'>;
   verify_tax_certificate: { customerId: string; certificateId: string };
   revoke_tax_certificate: { customerId: string; certificateId: string };
+  create_customer: ToolInput<'create_customer'>;
+  update_customer: ToolInput<'update_customer'>;
+  set_company_status: ToolInput<'set_company_status'>;
+  put_company_members: ToolInput<'put_company_members'>;
+  remove_company_member: ToolInput<'remove_company_member'>;
+  put_company_team: ToolInput<'put_company_team'>;
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
@@ -664,6 +684,26 @@ export async function previewAction<T extends ActionTool>(
         );
       case 'set_fx_rate':
         return await previewFxRate(env, input as ActionInput['set_fx_rate'], roleBlock);
+      case 'create_customer':
+        return await previewCreateCustomer(env, input as ActionInput['create_customer'], roleBlock);
+      case 'update_customer':
+        return await previewUpdateCustomer(env, input as ActionInput['update_customer'], roleBlock);
+      case 'set_company_status':
+        return await previewCompanyStatus(
+          env,
+          input as ActionInput['set_company_status'],
+          roleBlock,
+        );
+      case 'put_company_members':
+        return await previewMembers(env, input as ActionInput['put_company_members'], roleBlock);
+      case 'remove_company_member':
+        return await previewRemoveMember(
+          env,
+          input as ActionInput['remove_company_member'],
+          roleBlock,
+        );
+      case 'put_company_team':
+        return await previewTeam(env, input as ActionInput['put_company_team'], roleBlock);
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -956,6 +996,18 @@ export async function runAction<T extends ActionTool>(
       );
     case 'set_fx_rate':
       return runFxRate(env, p, input as ActionInput['set_fx_rate'], trail);
+    case 'create_customer':
+      return runCreateCustomer(env, p, input as ActionInput['create_customer'], trail);
+    case 'update_customer':
+      return runUpdateCustomer(env, p, input as ActionInput['update_customer'], trail);
+    case 'set_company_status':
+      return runCompanyStatus(env, p, input as ActionInput['set_company_status'], trail);
+    case 'put_company_members':
+      return runMembers(env, p, input as ActionInput['put_company_members'], trail);
+    case 'remove_company_member':
+      return runRemoveMember(env, p, input as ActionInput['remove_company_member'], trail);
+    case 'put_company_team':
+      return runTeam(env, p, input as ActionInput['put_company_team'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

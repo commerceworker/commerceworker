@@ -5,6 +5,7 @@
  * Read only. `d1BackOffice` (packages/db) and `InMemoryBackOffice` (packages/test-kit) implement
  * it, held to one contract.
  */
+import type { CompanyStatus } from '@commerceworker/core';
 import type { StoreLocation } from './fulfillment';
 import type { SellerRecord } from './marketplace';
 import type { CustomerRecord, ProductRecord } from './pricing';
@@ -22,6 +23,18 @@ export type BookList =
   | { readonly list: 'inventory' | 'customers' | 'sellers' }
   | { readonly list: 'store'; readonly id: string }
   | { readonly list: 'prices'; readonly sourceId: string };
+
+/** What narrows the customers list: a kind, and a business customer's company status. */
+export interface CustomerFilter {
+  readonly kind?: string;
+  /** Only business customers have a company, so this leaves the others out. */
+  readonly status?: CompanyStatus;
+}
+
+/** A customer as the list shows it: with its company's status, null when it has no company. */
+export interface CustomerRow extends CustomerRecord {
+  readonly companyStatus: CompanyStatus | null;
+}
 
 export interface PriceSourceRow {
   readonly id: string;
@@ -84,7 +97,7 @@ export interface PriceEntry {
 export interface BackOfficePage {
   /** Each product with what the stores hold of it (stock less reserved). */
   readonly inventory: Paged<ProductRecord & { inStores: number }>;
-  readonly customers: Paged<CustomerRecord>;
+  readonly customers: Paged<CustomerRow>;
   readonly sellers: Paged<SellerRecord>;
   /** Every store, with a page of its stock. */
   readonly stores: (StoreLocation & {
@@ -116,12 +129,14 @@ export interface BackOffice {
    * One page of every list for a search: `q` (case-insensitive, matched literally) narrows each
    * list by what it shows. A store whose name matches shows all it holds. `asked` says which page
    * of each list to show; lists are `sizes.list` rows a page, a store's stock and a source's
-   * entries `sizes.group`.
+   * entries `sizes.group`. `customers` narrows the customers list alone, by kind and company
+   * status.
    */
   page(
     q: string,
     asked: (list: BookList) => number,
     sizes: { list: number; group: number },
+    customers?: CustomerFilter,
   ): Promise<BackOfficePage>;
   /** Every record the pickers choose from, in one round trip. */
   everything(): Promise<BackOfficeData>;

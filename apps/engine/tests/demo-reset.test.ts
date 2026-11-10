@@ -24,8 +24,23 @@ describe('the demo reset', () => {
     await run(db, testEnv.TEST_SEED);
     const customers = await count(db, 'customers');
     const products = await count(db, 'products');
+    const companies = await count(db, 'companies');
+    const members = await count(db, 'company_members');
+    expect(companies).toBeGreaterThan(0);
+    expect(members).toBeGreaterThan(0);
 
     await db.batch([
+      db.prepare(
+        `INSERT INTO companies (customer_id, status, legal_name, created_at, updated_at)
+         VALUES ('cus_visitor', 'pending', 'Visitor Ltd', 0, 0)`,
+      ),
+      db.prepare(
+        `INSERT INTO company_teams (id, company_id, name, path) VALUES ('team_v', 'cus_visitor', 'V', '/team_v/')`,
+      ),
+      db.prepare(
+        `INSERT INTO company_members (id, company_id, name, email, created_at, updated_at)
+         VALUES ('mem_v', 'cus_visitor', 'V', 'v@example.com', 0, 0)`,
+      ),
       db.prepare(
         `INSERT INTO flows (id, name, model, graph_json, published_version, created_at, updated_at)
          VALUES ('visitor-flow', 'Mine', 'b2b', '{}', 1, 0, 0)`,
@@ -54,6 +69,9 @@ describe('the demo reset', () => {
     ]);
 
     await run(db, testEnv.TEST_DEMO_RESET);
+    expect(await count(db, 'companies')).toBe(0);
+    expect(await count(db, 'company_teams')).toBe(0);
+    expect(await count(db, 'company_members')).toBe(0);
     expect(await count(db, 'orders')).toBe(0);
     expect(await count(db, 'flows')).toBe(0);
     expect(await count(db, 'audit_events')).toBe(0);
@@ -67,6 +85,8 @@ describe('the demo reset', () => {
     await run(db, testEnv.TEST_SEED);
     expect(await count(db, 'customers')).toBe(customers);
     expect(await count(db, 'products')).toBe(products);
+    expect(await count(db, 'companies')).toBe(companies);
+    expect(await count(db, 'company_members')).toBe(members);
     expect(await count(db, "products WHERE sku = 'MON-27' AND stock > 0")).toBe(1);
   });
 });

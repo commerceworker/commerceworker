@@ -10,6 +10,7 @@ import { d1AuditLog } from '@commerceworker/db/audit-log';
 import { d1BalanceStore } from '@commerceworker/db/balance-store';
 import { d1CartRecords } from '@commerceworker/db/cart-records';
 import { d1CheckoutSessions } from '@commerceworker/db/checkout-sessions';
+import { d1CompanyDirectory } from '@commerceworker/db/company-directory';
 import { d1ConfirmationStore } from '@commerceworker/db/confirmation-store';
 import { d1DocumentStore, d1MessageStore } from '@commerceworker/db/document-store';
 import { d1FlowStore } from '@commerceworker/db/flow-store';
@@ -43,6 +44,7 @@ import type {
   CartRecords,
   CartRuntime,
   CheckoutSessionStore,
+  CompanyDirectory,
   ConfirmationStore,
   DocumentStore,
   FlowStore,
@@ -325,6 +327,10 @@ export const sealedSecrets = (env: Pick<Env, 'DB'>): SealedSecretStore => d1Seal
 /** Customers' tax exemption certificates. */
 export const taxCertificateStore = (env: Pick<Env, 'DB'>): TaxCertificateStore =>
   d1TaxCertificateStore(env.DB);
+
+/** Companies, their teams and members, and the customer accounts they hang off. */
+export const companyDirectory = (env: Pick<Env, 'DB'>): CompanyDirectory =>
+  d1CompanyDirectory(env.DB);
 
 /** The places customers' orders ship to. */
 export const addressBook = (env: Pick<Env, 'DB'>): AddressBook => d1AddressBook(env.DB);

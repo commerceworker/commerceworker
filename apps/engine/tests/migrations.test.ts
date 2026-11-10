@@ -324,3 +324,74 @@ describe('0063_order_address_backfill', () => {
     ]);
   });
 });
+
+describe('0068_companies', () => {
+  it('makes every business customer an active company, and no one else, keeping their orders', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0068_');
+    await applyD1Migrations(db, applied);
+    const customer = (id: string, kind: string, name = id) =>
+      db
+        .prepare(`INSERT INTO customers (id, name, email, kind) VALUES (?, ?, ?, ?)`)
+        .bind(id, name, `${id}@example.test`, kind);
+    await db.batch([
+      customer('cm_biz', 'business', 'Biz Ltd'),
+      customer('cm_biz2', 'business'),
+      customer('cm_shop', 'consumer'),
+      customer('cm_int', 'internal'),
+      db.prepare(
+        `INSERT INTO orders (id, model, status, flow_id, flow_version, customer_id, created_at, updated_at)
+         VALUES ('cm_o', 'b2b', 'completed', 'f', 1, 'cm_biz', 1, 1)`,
+      ),
+    ]);
+    await applyD1Migrations(db, [next]);
+
+    const companies = await db
+      .prepare(
+        "SELECT customer_id, status, legal_name, tax_id, parent_company_id FROM companies WHERE customer_id LIKE 'cm\\_%' ESCAPE '\\' ORDER BY customer_id",
+      )
+      .all();
+    expect(companies.results).toEqual([
+      {
+        customer_id: 'cm_biz',
+        status: 'active',
+        legal_name: 'Biz Ltd',
+        tax_id: null,
+        parent_company_id: null,
+      },
+      {
+        customer_id: 'cm_biz2',
+        status: 'active',
+        legal_name: 'cm_biz2',
+        tax_id: null,
+        parent_company_id: null,
+      },
+    ]);
+    const stamped = await db
+      .prepare("SELECT created_at, updated_at FROM companies WHERE customer_id = 'cm_biz'")
+      .first<{ created_at: number; updated_at: number }>();
+    expect(stamped!.created_at).toBeGreaterThan(Date.parse('2026-01-01'));
+    expect(stamped!.updated_at).toBe(stamped!.created_at);
+    // The order keeps its customer, and has no buyer.
+    expect(
+      await db.prepare("SELECT customer_id, buyer_id FROM orders WHERE id = 'cm_o'").first(),
+    ).toEqual({ customer_id: 'cm_biz', buyer_id: null });
+
+    // A member's email is unique within the company, in any case, until they are removed.
+    const member = (id: string, email: string, status = 'active') =>
+      db
+        .prepare(
+          `INSERT INTO company_members (id, company_id, name, email, status, created_at, updated_at)
+           VALUES (?, 'cm_biz', ?, ?, ?, 1, 1)`,
+        )
+        .bind(id, id, email, status);
+    await member('m1', 'Ann@Example.test').run();
+    await expect(member('m2', 'ann@example.test').run()).rejects.toThrow(/UNIQUE/);
+    await db.prepare("UPDATE company_members SET status = 'removed' WHERE id = 'm1'").run();
+    await member('m2', 'ann@example.test').run();
+    const role = await db
+      .prepare("SELECT role, status FROM company_members WHERE id = 'm2'")
+      .first();
+    expect(role).toEqual({ role: 'buyer', status: 'active' });
+  });
+});

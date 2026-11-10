@@ -4,6 +4,7 @@
  */
 
 import jsonLogic from 'json-logic-js';
+import type { AccountContext } from './b2b/companies';
 import type { Order } from './types';
 
 /** What every expression and template sees while a flow runs. */
@@ -17,6 +18,12 @@ export type RunContext = {
   now: number;
   /** How the customer knows the order: see `orderReference`. */
   ref: string;
+  /**
+   * The customer's company and the ordering member, as `company.*` and `buyer.*` (`accountContext`);
+   * absent where a run's context isn't built for an order with a customer.
+   */
+  company?: AccountContext['company'];
+  buyer?: AccountContext['buyer'];
 };
 
 /**

@@ -118,6 +118,7 @@
 ^(packages/core/src/cart|apps/engine/src/cart/.*|packages/cart/src/[a-z-]+|apps/web/app/(lib/carts\.server|routes/carts?)|apps/storefront/app/(lib/cart-[a-z-]+\.server|routes/cart-[a-z]+))\.tsx?$	guides/carts docs/architecture.md docs/data-model.md	prose
 ^apps/storefront/(workers/app\.ts|wrangler\.jsonc)$|^apps/engine/src/storefront-api\.ts$|^apps/engine/tests/storefront-api\.test\.ts$	docs/architecture.md docs/configuration.md docs/operations.md docs/testing.md reference/ucp	prose
 ^apps/engine/src/(assistant/plugin-draft|plugin-cases)\.ts$	guides/assistant guides/installing-plugins reference/mcp guides/team-and-roles docs/plugins.md	prose
+^(packages/core/src/(b2b/companies|lifecycle)\.ts|packages/(db/src/company-directory|application/src/commerce/companies|ports/src/commerce/companies)\.ts|apps/engine/src/(accounts|assistant/companies)\.ts|apps/web/app/(components/company|routes/customer)\.tsx)$	guides/companies reference/mcp reference/rest-api docs/data-model.md docs/b2b.md	prose
 ^(packages/core/src/promotion(s|-conditions|-bxgy)|apps/web/app/(lib/promotions\.server|routes/promotions))\.tsx?$	guides/promotions docs/data-model.md	prose
 ^plugins/punchout/(src/.*|migrations/.*)$	guides/punchout docs/plugins.md docs/testing.md	prose
 ^(apps/engine/src/product-index|apps/web/app/lib/product-index\.server)\.ts$	guides/ai guides/team-and-roles docs/architecture.md docs/operations.md docs/configuration.md	prose

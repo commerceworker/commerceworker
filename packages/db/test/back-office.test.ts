@@ -6,6 +6,7 @@ import {
 import { d1BackOffice } from '../src/back-office';
 import { createDb } from '../src/index';
 import {
+  companies,
   contractPrices,
   customers,
   fxRates,
@@ -31,6 +32,7 @@ async function seed(f: BackOfficeFixture) {
     locations,
     sellers,
     products,
+    companies,
     customers,
     fxRates,
   ])
@@ -40,6 +42,9 @@ async function seed(f: BackOfficeFixture) {
   };
   await put(f.products, (x) => db.insert(products).values(x));
   await put(f.customers, (x) => db.insert(customers).values(x));
+  await put(f.companies, (x) =>
+    db.insert(companies).values({ ...x, legalName: x.customerId, createdAt: 1, updatedAt: 1 }),
+  );
   await put(f.sellers, (x) => db.insert(sellers).values(x));
   await put(f.locations, (x) => db.insert(locations).values(x));
   await put(f.stock, (x) => db.insert(locationStock).values(x));

@@ -96,7 +96,7 @@ waits at and since when, steps run, recent activity),
 [cart's](/guides/carts/) lines with their ids, its price with shipping and tax, promotion codes,
 its ship-to and the shipping options on offer, the problems its price
 found, and why it can't be submitted yet), `list_flows` and `get_flow` (a saved
-draft with its validation problems). Every role can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), integrations (`list_integrations`) and agentic checkout (`get_ucp_settings`), as the REST API shows them, never with a secret or a key. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
+draft with its validation problems). Operators and admins can read [companies](/guides/companies/) (`list_companies`, `get_company`, `list_company_members`), as the REST API shows them. Every role can read the product catalog (`get_product`, `get_product_sheet`, `find_product_by_alias`, the types, channels, categories and feeds, and the editor's board), as the REST API shows it. An admin can also read the audit trail (`list_audit_events`, `verify_audit_trail`), plugins (`list_plugins`, `get_plugin_usage`) webhooks (`list_webhook_subscriptions`, `list_webhook_deliveries`), integrations (`list_integrations`) and agentic checkout (`get_ucp_settings`), as the REST API shows them, never with a secret or a key. Text, customer and SKU searches match `%` and `_` literally, not as LIKE wildcards. Reads run without asking, and each shows as a line in the
 conversation: what it is doing while the reply streams, then what it found. An order's line names
 the step it waits at or stopped at, and opens that step on the order's graph; answers about an order
 say the same. A line for one cart, flow or assessment links to it too, and a reply that opened
@@ -129,6 +129,12 @@ sent until you press the confirm button, and declining leaves everything as it w
 | `set_fx_rate` | `admin` | Sets a currency's exchange rate, in units per one USD. The card shows the rate now, the new one and the change as a percent, flags a change of 10% or more, and says that orders already priced keep their rate and that the next daily ECB refresh replaces it for a currency it covers. Blocked for `USD`, a currency nobody uses, or a rate out of bounds |
 | `verify_tax_certificate` | `operator` | Verifies a customer's tax exemption certificate, so their new orders are exempt in its regions. With approval separation on, whoever added it can't |
 | `revoke_tax_certificate` | `operator` | Revokes a customer's tax exemption certificate, so their new orders are taxed again |
+| `create_customer` | `operator` | Adds a customer: a business customer also gets its [company](/guides/companies/), active at once. It starts with no credit limit |
+| `update_customer` | `operator` | Changes a customer's name, email, kind, pricing tier or payment terms, never its credit limit. The card lists each field's change; a business customer's kind can't change while its company is open |
+| `set_company_status` | `operator` | Moves a company along its lifecycle. The card says what the status means for its orders: a company that isn't active has them declined |
+| `put_company_members` | `operator` | Adds up to 100 members to a company by email, or changes those already there. The card counts them and names no one |
+| `remove_company_member` | `operator` | Removes a member for good; their record stays for the orders they placed |
+| `put_company_team` | `operator` | Adds a team to a company, or renames or moves one under another team |
 
 These four change what buyers pay or owe in tax, so a person always confirms them: on the panel's
 card, through an MCP confirmation, or with `{ "confirm": true }` in an A2A chat. They aren't typed

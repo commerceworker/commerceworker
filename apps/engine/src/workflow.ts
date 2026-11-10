@@ -17,6 +17,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
+  type AccountContext,
   beginNode,
   completeLoop,
   completeNode,
@@ -42,6 +43,7 @@ import {
   truthy,
   withPlugins,
 } from '@commerceworker/core';
+import { loadAccount } from './accounts';
 import type { Report } from './agent';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
@@ -108,6 +110,16 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         )
       : staticRegistry;
 
+    // The order's company and buyer, for `company.*` and `buyer.*` in the flow's expressions. Read
+    // once, in a step, so a replay sees what the first run did. An order with no customer adds no
+    // step.
+    const account = p.order.customerId
+      ? (JSON.parse(
+          await step.do('load-account', async () =>
+            JSON.stringify(await loadAccount(this.env, p.order)),
+          ),
+        ) as AccountContext)
+      : undefined;
     const plan = initPlan(flow);
     const ctx: RunContext = {
       order: p.order,
@@ -116,6 +128,7 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
       input: p.order.meta ?? {},
       now: event.timestamp.getTime(),
       ref: orderReference(p.order),
+      ...account,
     };
     let seq = 0;
     const report = async (r: Omit<Report, 'seq' | 'generation'>, durable = false) => {

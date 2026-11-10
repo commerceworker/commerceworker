@@ -5,6 +5,7 @@ export * from './back-office';
 export * from './balances';
 export * from './carts';
 export * from './checkouts';
+export * from './companies';
 export * from './confirmations';
 export * from './documents';
 export * from './flows';

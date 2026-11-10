@@ -58,6 +58,8 @@ export const orders = sqliteTable(
     instanceId: text('instance_id'),
     generation: integer('generation').notNull().default(1),
     customerId: text('customer_id'),
+    /** The company member who placed it (`meta.buyerId`); null for none. */
+    buyerId: text('buyer_id'),
     currency: text('currency').notNull().default('USD'),
     total: real('total').notNull().default(0),
     waitingOn: text('waiting_on'),
@@ -156,6 +158,73 @@ export const customers = sqliteTable(
     uniqueIndex('customers_stripe_customer')
       .on(t.stripeCustomerId)
       .where(sql`${t.stripeCustomerId} IS NOT NULL`),
+  ],
+);
+
+/**
+ * A business customer's company (`Company` in core), one to one with it: the customer's id is the
+ * key. Closed and rejected rows stay for the record.
+ */
+export const companies = sqliteTable(
+  'companies',
+  {
+    customerId: text('customer_id').primaryKey(),
+    /** pending | active | suspended | rejected | closed (`COMPANY_LIFECYCLE`). */
+    status: text('status').notNull().default('pending'),
+    legalName: text('legal_name').notNull(),
+    taxId: text('tax_id'),
+    parentCompanyId: text('parent_company_id'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    index('companies_status').on(t.status, t.customerId),
+    index('companies_parent').on(t.parentCompanyId).where(sql`${t.parentCompanyId} IS NOT NULL`),
+  ],
+);
+
+/** A company's teams, a tree: `path` is the ids from the root down, each followed by `/`. */
+export const companyTeams = sqliteTable(
+  'company_teams',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id').notNull(),
+    parentId: text('parent_id'),
+    name: text('name').notNull(),
+    path: text('path').notNull(),
+  },
+  (t) => [index('company_teams_company').on(t.companyId, t.path)],
+);
+
+/**
+ * A company's members (`CompanyMember` in core): personal data (name, email), covered by the data
+ * subject export and erasure and the retention sweep. Removed rows are kept for the orders they
+ * placed, blanked on erasure.
+ */
+export const companyMembers = sqliteTable(
+  'company_members',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id').notNull(),
+    name: text('name').notNull(),
+    /** Lower case. */
+    email: text('email').notNull(),
+    /** buyer | approver | company_admin. */
+    role: text('role').notNull().default('buyer'),
+    teamId: text('team_id'),
+    /** invited | active | inactive | removed (`MEMBER_LIFECYCLE`). */
+    status: text('status').notNull().default('invited'),
+    /** The most one order of theirs may total, in the base currency; null for none. */
+    orderLimit: real('order_limit'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('company_members_email')
+      .on(t.companyId, sql`lower(${t.email})`)
+      .where(sql`${t.status} <> 'removed'`),
+    index('company_members_company').on(t.companyId, t.name, t.id),
+    index('company_members_removed').on(t.updatedAt).where(sql`${t.status} = 'removed'`),
   ],
 );
 

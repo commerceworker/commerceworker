@@ -55,6 +55,9 @@ describe('the promotion condition context', () => {
         meta: { shipTo: { country: 'US', region: 'TX' } },
       },
       customer: { id: 'cus_1', kind: 'business', tier: 'gold' },
+      // No company or buyer loaded: null, as for a guest.
+      company: { status: null, tier: null },
+      buyer: { role: null, team: null, orderLimit: null },
     });
   });
 

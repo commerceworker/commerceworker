@@ -3,6 +3,7 @@
  * evaluated to (for a return, the lines in the `return.requested` payload) and the order's lines.
  */
 
+import { companyOrderProblem, type OrderAccount } from './b2b/companies';
 import type { Order, OrderLine } from './types';
 
 export type StockLine = { sku: string; qty: number };
@@ -33,13 +34,15 @@ export function stockLines(requested: unknown, ordered: OrderLine[]): StockLine[
 
 /**
  * An order's acceptance (`commerce.validate`): why it can't run at all (no lines, a SKU the
- * catalog doesn't sell, a customer that doesn't exist), or its lines as the order keeps them, each
+ * catalog doesn't sell, a customer that doesn't exist, a company that isn't active, a buyer who
+ * isn't an active member of the customer: `companyOrderProblem`), or its lines as the order keeps them, each
  * quantity a whole number of at least one and each line named from its product when unnamed.
  */
 export function validateOrder(
-  order: Pick<Order, 'lines' | 'customerId'>,
+  order: Pick<Order, 'lines' | 'customerId'> & { meta?: Order['meta'] },
   products: readonly { sku: string; name: string }[],
   customerFound: boolean,
+  account: OrderAccount = { company: undefined, buyer: undefined },
 ): { problem: string } | { lines: OrderLine[] } {
   const known = new Map(products.map((p) => [p.sku, p]));
   if (!order.lines.length) return { problem: 'Order has no lines' };
@@ -47,6 +50,8 @@ export function validateOrder(
   if (unknown.length) return { problem: `Unknown SKUs: ${unknown.join(', ')}` };
   if (order.customerId && !customerFound)
     return { problem: `Unknown customer ${order.customerId}` };
+  const refused = companyOrderProblem(order, account);
+  if (refused) return { problem: refused };
   return {
     lines: order.lines.map((l) => ({
       ...l,

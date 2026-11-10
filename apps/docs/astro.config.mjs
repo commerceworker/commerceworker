@@ -94,6 +94,7 @@ export default defineConfig({
             { label: 'Product catalog', slug: 'guides/product-catalog' },
             { label: 'Payments', slug: 'guides/payments' },
             { label: 'Promotions', slug: 'guides/promotions' },
+            { label: 'Companies', slug: 'guides/companies' },
             { label: 'Approvals and events', slug: 'guides/approvals-and-events' },
             { label: 'Carts', slug: 'guides/carts' },
             { label: 'Punchout', slug: 'guides/punchout' },

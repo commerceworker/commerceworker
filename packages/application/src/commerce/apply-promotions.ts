@@ -12,18 +12,21 @@
  * another, is simply not applied.
  */
 import {
+  type AccountContext,
   type AppliedPromotion,
+  accountContext,
   applyPromotion,
   choosePromotions,
   computeTotals,
   type Order,
+  orderBuyerId,
   type Promotion,
   promoCodesOf,
   promotionLabel,
   promotionProblem,
   unknownPromotion,
 } from '@commerceworker/core';
-import type { PricingStore } from '@commerceworker/ports/commerce';
+import type { CompanyDirectory, PricingStore } from '@commerceworker/ports/commerce';
 
 export type PromotionsApplied = {
   /** The order's lines and totals with the promotions taken off; undefined when nothing was tried. */
@@ -34,7 +37,11 @@ export type PromotionsApplied = {
 };
 
 export async function applyPromotions(
-  ports: { readonly pricing: PricingStore },
+  ports: {
+    readonly pricing: PricingStore;
+    /** Where `company.*` and `buyer.*` in a condition come from; without it they read as null. */
+    readonly companies?: Pick<CompanyDirectory, 'access'>;
+  },
   order: Order,
   opts: { now: number; stepKey: string; dryRun: boolean },
 ): Promise<PromotionsApplied> {
@@ -53,6 +60,15 @@ export async function applyPromotions(
     (customer ??= ports.pricing
       .customer(order.customerId)
       .then((c) => c && { kind: c.kind, tier: c.tier }));
+  // The customer's company and the member who ordered, read once and only for a condition.
+  let account: Promise<AccountContext | undefined> | undefined;
+  const accountOf = () =>
+    (account ??= ports.companies
+      ? Promise.all([
+          customerOf(),
+          ports.companies.access({ all: true }, order.customerId!, orderBuyerId(order.meta)),
+        ]).then(([customer, held]) => accountContext(customer, held.company, held.buyer))
+      : Promise.resolve(undefined));
   const check = async (p: Promotion) => {
     // Only a promotion with a limit needs its redemptions counted.
     const redeemed =
@@ -68,6 +84,7 @@ export async function applyPromotions(
       lines: order.lines,
       meta: order.meta,
       customer: p.condition && order.customerId ? await customerOf() : undefined,
+      account: p.condition && order.customerId ? await accountOf() : undefined,
       redeemed,
     });
   };

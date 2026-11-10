@@ -1,5 +1,8 @@
 import {
   BASE_CURRENCY,
+  COMPANY_STATUS_LABELS,
+  COMPANY_STATUSES,
+  CUSTOMER_KINDS,
   ORDER_MODEL_LABELS,
   type OrderModel,
   type OrderState,
@@ -18,6 +21,7 @@ import {
 } from '@commerceworker/ui/item';
 import { count, money, plural } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
+import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
 import { Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Table, TableBody, TableEmpty, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { Check, Mail, RefreshCw, Zap } from 'lucide-react';
@@ -28,15 +32,25 @@ import {
   type ShouldRevalidateFunctionArgs,
   useFetcher,
   useLoaderData,
+  useNavigate,
   useSearchParams,
 } from 'react-router';
+import { NewCustomer } from '~/components/company';
 import { type FxRateRow, FxRates } from '~/components/fx-rates';
 import { ToneBadge } from '~/components/status';
 import { WaitingAt } from '~/components/waiting-at';
 import { useAssistant } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
 import { type CommercePage, commercePage, fxRatesPage } from '~/lib/commerce.server';
-import { type Paged, pageHref, pricesKey, shown, storeKey } from '~/lib/commerce-pages';
+import {
+  CUSTOMER_KIND_KEY,
+  CUSTOMER_STATUS_KEY,
+  type Paged,
+  pageHref,
+  pricesKey,
+  shown,
+  storeKey,
+} from '~/lib/commerce-pages';
 import { engine } from '~/lib/env.server';
 import { eventAction, eventWaiting } from '~/lib/events';
 import { humanize, orderRef } from '~/lib/format';
@@ -148,6 +162,7 @@ export default function Commerce() {
   const {
     inventory,
     customers,
+    customerFilter,
     sellers,
     stores,
     pricing,
@@ -184,6 +199,7 @@ export default function Commerce() {
   };
   const canOperate = useCan('operator');
   const canAdmin = useCan('admin');
+  const navigate = useNavigate();
   const [recorded, setRecorded] = useState<ReadonlySet<string>>(new Set());
   const open = events.filter((e) => !recorded.has(eventKey(e))).length;
   // More orders wait on an outside event than the page read.
@@ -641,16 +657,23 @@ export default function Commerce() {
         <Section
           id="customers"
           title="Customers"
-          description="Each customer’s terms, balance and credit limit."
+          description="Each customer’s terms, balance and credit limit, and a business customer’s company status."
           className="xl:col-span-2"
-          actions={<Total list={customers} noun="customer" />}
+          actions={
+            <div className="flex items-center gap-3">
+              <Total list={customers} noun="customer" />
+              {canOperate ? <NewCustomer navigate={navigate} /> : null}
+            </div>
+          }
           flush
         >
-          {customers.total || q ? (
+          <CustomerFilters filter={customerFilter} />
+          {customers.total || q || customerFilter.kind || customerFilter.status ? (
             <Table stack="cards" scroll caption="Customers">
               <TableHead>
                 <Tr>
                   <Th>Customer</Th>
+                  <Th>Company</Th>
                   <Th>Terms</Th>
                   <Th numeric>Balance</Th>
                   <Th numeric>Credit limit</Th>
@@ -671,6 +694,16 @@ export default function Commerce() {
                           {humanize(c.kind)}
                           {c.kind === 'business' ? ` · ${humanize(c.tier)}` : ''}
                         </div>
+                      </Td>
+                      <Td label="Company">
+                        {c.companyStatus ? (
+                          <ToneBadge
+                            tone={COMPANY_TONE[c.companyStatus]}
+                            label={COMPANY_STATUS_LABELS[c.companyStatus]}
+                          />
+                        ) : (
+                          <span className="text-muted-foreground">None</span>
+                        )}
                       </Td>
                       <Td label="Terms">
                         {c.kind === 'business' ? humanize(c.terms) : 'Pays at checkout'}
@@ -697,8 +730,10 @@ export default function Commerce() {
                     </Tr>
                   );
                 })}
-                {q && !customers.total ? (
-                  <TableEmpty colSpan={4}>Nothing here matches “{q}”.</TableEmpty>
+                {!customers.total ? (
+                  <TableEmpty colSpan={5}>
+                    Nothing here matches{q ? ` “${q}”` : ' those filters'}.
+                  </TableEmpty>
                 ) : null}
               </TableBody>
             </Table>
@@ -1128,6 +1163,85 @@ function Pricing({ pricing, fxRates }: Pick<Office, 'pricing'> & { fxRates: FxRa
 }
 
 /** A section's count, in its header: "2,000 items". */
+/** A company's status as its badge shows it (the customer page's tones). */
+const COMPANY_TONE: Record<(typeof COMPANY_STATUSES)[number], 'ok' | 'wait' | 'bad' | 'idle'> = {
+  pending: 'wait',
+  active: 'ok',
+  suspended: 'bad',
+  rejected: 'idle',
+  closed: 'idle',
+};
+
+/**
+ * The customers list's filters, kept in the URL beside the search and the other lists' pages:
+ * a kind, and the status of a business customer's company. Choosing one reloads the list.
+ */
+function CustomerFilters({ filter }: { filter: { kind: string | null; status: string | null } }) {
+  const [params] = useSearchParams();
+  const kindId = useId();
+  const statusId = useId();
+  const kept = [...params].filter(
+    ([k]) => k !== CUSTOMER_KIND_KEY && k !== CUSTOMER_STATUS_KEY && k !== 'customers',
+  );
+  return (
+    <Form
+      method="get"
+      className="flex flex-wrap items-center gap-2 px-4 pb-3"
+      role="search"
+      aria-label="Filter customers"
+    >
+      {kept.map(([k, v]) => (
+        <input key={`${k}=${v}`} type="hidden" name={k} value={v} />
+      ))}
+      <label htmlFor={kindId} className="sr-only">
+        Kind
+      </label>
+      <NativeSelect
+        id={kindId}
+        name={CUSTOMER_KIND_KEY}
+        size="sm"
+        defaultValue={filter.kind ?? ''}
+        onChange={(e) => e.currentTarget.form?.requestSubmit()}
+      >
+        <NativeSelectOption value="">All kinds</NativeSelectOption>
+        {CUSTOMER_KINDS.map((k) => (
+          <NativeSelectOption key={k} value={k}>
+            {humanize(k)}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+      <label htmlFor={statusId} className="sr-only">
+        Company status
+      </label>
+      <NativeSelect
+        id={statusId}
+        name={CUSTOMER_STATUS_KEY}
+        size="sm"
+        defaultValue={filter.status ?? ''}
+        onChange={(e) => e.currentTarget.form?.requestSubmit()}
+      >
+        <NativeSelectOption value="">Any company status</NativeSelectOption>
+        {COMPANY_STATUSES.map((s) => (
+          <NativeSelectOption key={s} value={s}>
+            {COMPANY_STATUS_LABELS[s]}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+      <Button type="submit" size="sm" variant="outline">
+        Filter
+      </Button>
+      {filter.kind || filter.status ? (
+        <Link
+          to={`?${new URLSearchParams(kept).toString()}#customers`}
+          className="hit-area text-link text-sm hover:underline"
+        >
+          Clear filters
+        </Link>
+      ) : null}
+    </Form>
+  );
+}
+
 function Total({ list, noun }: { list: Paged<unknown>; noun: string }) {
   return list.total > list.size ? (
     <span className="text-muted-foreground text-xs tabular">

@@ -133,3 +133,10 @@ export const expireAddresses = (
   now: number,
   days: number,
 ) => ports.retention.expireAddresses(now - days * DAY);
+
+/** Blanks the name and email of company members removed more than `days` ago. Returns how many. */
+export const expireMembers = (
+  ports: { readonly retention: RetentionStore },
+  now: number,
+  days: number,
+) => ports.retention.expireMembers(now - days * DAY);

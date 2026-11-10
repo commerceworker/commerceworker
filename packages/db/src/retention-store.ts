@@ -4,7 +4,7 @@
  * reads in a fixed order, so a sweep that stops part way picks up where it left off. The contract
  * in @commerceworker/test-kit/commerce holds this and the in-memory store to the same behaviour.
  */
-import { FINAL_CART_STATUSES, TERMINAL_ORDER_STATUSES } from '@commerceworker/core';
+import { ERASED, FINAL_CART_STATUSES, TERMINAL_ORDER_STATUSES } from '@commerceworker/core';
 import type { RetentionStore } from '@commerceworker/ports/commerce';
 import { and, asc, eq, inArray, isNotNull, isNull, lt, lte, ne, or } from 'drizzle-orm';
 import { createDb } from './index';
@@ -12,6 +12,7 @@ import {
   auditEvents,
   carts,
   checkoutSessions,
+  companyMembers,
   customerAddresses,
   inboundEmails,
   nodeRuns,
@@ -141,6 +142,21 @@ export function d1RetentionStore(d1: D1Database): RetentionStore {
         .delete(customerAddresses)
         .where(lt(customerAddresses.lastUsedAt, before))
         .returning({ id: customerAddresses.id });
+      return gone.length;
+    },
+
+    async expireMembers(before) {
+      const gone = await d
+        .update(companyMembers)
+        .set({ name: ERASED, email: ERASED })
+        .where(
+          and(
+            eq(companyMembers.status, 'removed'),
+            lt(companyMembers.updatedAt, before),
+            ne(companyMembers.name, ERASED),
+          ),
+        )
+        .returning({ id: companyMembers.id });
       return gone.length;
     },
 

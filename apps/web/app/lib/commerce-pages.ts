@@ -11,6 +11,10 @@ export const GROUP_SIZE = 10;
 
 export type Paged<T> = { rows: T[]; total: number; page: number; size: number };
 
+/** The URL keys of the customers list's filters: a kind, and a business customer's company status. */
+export const CUSTOMER_KIND_KEY = 'customer-kind';
+export const CUSTOMER_STATUS_KEY = 'customer-status';
+
 export const storeKey = (locationId: string) => `store-${locationId}`;
 export const pricesKey = (sourceId: string) => `prices-${sourceId}`;
 

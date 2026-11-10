@@ -123,6 +123,15 @@ export type AssistantTool =
   | 'set_fx_rate'
   | 'verify_tax_certificate'
   | 'revoke_tax_certificate'
+  | 'list_companies'
+  | 'get_company'
+  | 'list_company_members'
+  | 'create_customer'
+  | 'update_customer'
+  | 'set_company_status'
+  | 'put_company_members'
+  | 'remove_company_member'
+  | 'put_company_team'
   | 'set_member_role'
   | 'set_approval_separation'
   | 'set_plugin_enabled'
@@ -648,6 +657,77 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Revoke a tax exemption certificate',
     description:
       'Revoke a customer’s tax exemption certificate, so their new orders are taxed again.',
+  },
+  list_companies: {
+    role: 'operator',
+    confirm: false,
+    label: 'Listed companies',
+    title: 'List companies',
+    description:
+      'Business customers’ companies, a page at a time by name: status, legal name, tax id and parent company. Narrow by status or a search of the name; pass the cursor a page returned for the next.',
+  },
+  get_company: {
+    role: 'operator',
+    confirm: false,
+    label: 'Read a company',
+    title: 'Get a company',
+    description: 'One company: its status, legal name, tax id, parent and its team tree.',
+  },
+  list_company_members: {
+    role: 'operator',
+    confirm: false,
+    label: 'Listed company members',
+    title: 'List a company’s members',
+    description:
+      'A company’s members a page at a time by name: role, team, status and their own order limit. Narrow by status, role or team. Names and emails are personal data.',
+  },
+  create_customer: {
+    role: 'operator',
+    confirm: true,
+    label: 'Add a customer',
+    title: 'Add a customer',
+    description:
+      'Add a customer: a business customer (which also gets its company, active at once), a consumer or an internal account. It starts with no credit limit.',
+  },
+  update_customer: {
+    role: 'operator',
+    confirm: true,
+    label: 'Change a customer',
+    title: 'Change a customer',
+    description:
+      'Change a customer’s name, email, kind, pricing tier or payment terms. A new kind or tier applies to orders from now on; orders already priced keep their price. The credit limit isn’t changed here.',
+  },
+  set_company_status: {
+    role: 'operator',
+    confirm: true,
+    label: 'Change a company’s status',
+    title: 'Change a company’s status',
+    description:
+      'Move a company along its lifecycle: approve or reject a pending one, suspend or reinstate an active one, or close it for good. Orders from a company that is not active are declined.',
+  },
+  put_company_members: {
+    role: 'operator',
+    confirm: true,
+    label: 'Add or change members',
+    title: 'Add or change a company’s members',
+    description:
+      'Add up to 100 members by email, or change those already there (name, role, team, order limit, active or inactive). An email already a member of the company is changed rather than added twice.',
+  },
+  remove_company_member: {
+    role: 'operator',
+    confirm: true,
+    label: 'Remove a member',
+    title: 'Remove a company member',
+    description:
+      'Remove a member for good: they can no longer be the buyer on an order. Their record stays for the orders they placed.',
+  },
+  put_company_team: {
+    role: 'operator',
+    confirm: true,
+    label: 'Add or change a team',
+    title: 'Add or change a company team',
+    description:
+      'Add a team to a company, or rename or move one under another team. Teams nest up to six deep.',
   },
   // The Team and Plugins pages' changes, for admins. Those the pages ask a step-up for need one on
   // the card too (`ActionPreview.stepUp`).

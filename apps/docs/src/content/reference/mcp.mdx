@@ -103,7 +103,7 @@ unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
 
 An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order`, `submit_cart`,
 `publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, `set_fx_rate`,
-`verify_tax_certificate`, `revoke_tax_certificate`, the admin tools (`set_member_role`,
+`verify_tax_certificate`, `revoke_tax_certificate`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
 `uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
@@ -168,8 +168,10 @@ Annotations also tell a client when to confirm:
 | `decide_approval`, `decide_approvals`, `cancel_order`, `submit_cart`, `publish_flow`, `publish_catalog`, `uninstall_plugin` | `destructiveHint: true`; all but `publish_flow` are also `idempotentHint: true` |
 | The [outside access](#outside-access) tools that remove or revoke, and `set_ucp_settings` | `destructiveHint: true` and `idempotentHint: true` |
 | The [catalog's writes](#catalog-writes) that go live or take something down, and `discard_product_edits` | `destructiveHint: true` |
-| `deliver_event`, `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow`, `create_promotion`, `set_promotion_status`, `verify_tax_certificate`, `revoke_tax_certificate`, `set_member_role`, `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin` | writes, not destructive |
+| `deliver_event`, `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow`, `create_promotion`, `set_promotion_status`, `verify_tax_certificate`, `revoke_tax_certificate`, `create_customer`, `put_company_team`, `set_member_role`, `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin` | writes, not destructive |
 | `set_fx_rate` | `destructiveHint: true` and `idempotentHint: true`: it replaces the rate buyers pay by, and the same rate again changes nothing |
+| `set_company_status`, `remove_company_member` | `destructiveHint: true` and `idempotentHint: true`: closing or rejecting a company and removing a member are final, and the same move again changes nothing |
+| `update_customer`, `put_company_members` | writes, not destructive, `idempotentHint: true`: the same input again changes nothing |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
 `assess_order` set `openWorldHint: true` (a started order runs its flow for real):
@@ -187,6 +189,29 @@ a plugin), and `list_webhook_subscriptions` and `list_webhook_deliveries`, `list
 `get_ucp_settings` (agentic checkout's settings and the platforms let in). None of them returns a
 signing secret, a key or anything sealed. Their annotations are `readOnlyHint: true`. Lower roles
 aren't offered them.
+
+## Companies
+
+A business customer's [company](/guides/companies/), its members and its teams are three reads and six
+writes, REST's `/api/v1/companies` and `/api/v1/customers` routes by another way in: they run the same code, so they
+refuse what REST refuses and write the same audit entries (`customer.created`, `customer.updated`,
+`company.status_changed`, `company.members_saved`, `company.member_removed`, `company.team_saved`).
+All need the `operator` role, and an API token may use them.
+
+| Tool | Does |
+|---|---|
+| `list_companies` | A page of companies by name: `status`, `search` (part of the name, legal name or id), `cursor` and `limit` (at most 100); answers `companies`, `total` and the next `cursor` (`null` at the end). `readOnlyHint: true` |
+| `get_company` | `{ companyId }`: the company and its team tree. `readOnlyHint: true` |
+| `list_company_members` | `{ companyId, status?, role?, teamId?, cursor?, limit? }`: a page of members by name, with their role, team, status and own order limit. Names and emails are personal data. `readOnlyHint: true` |
+| `create_customer` | `{ name, email, kind?, tier?, terms?, company? }`: adds a customer; a business one (the default kind) also gets its company, active, with `company.legalName`, `taxId` and `parentCompanyId` if given. Refuses an email another customer has |
+| `update_customer` | `{ customerId, name?, email?, kind?, tier?, terms? }`. The credit limit is not a field. A kind change is refused while it would leave a customer without its company or a company without its customer |
+| `set_company_status` | `{ companyId, status }`: `pending` to `active` or `rejected`, `active` and `suspended` to each other, either to `closed`; `rejected` and `closed` are final |
+| `put_company_members` | `{ companyId, members }`, up to 100 `{ email, name, role?, teamId?, orderLimit?, status? }`. A new member starts `invited` or `active`; an email already a member is changed, and a field left out stays as it was (`null` clears a team or limit) |
+| `remove_company_member` | `{ companyId, memberId }`: final; the member's record stays for the orders they placed |
+| `put_company_team` | `{ companyId, name, teamId?, parentTeamId? }`: adds a team, or renames and moves one with the teams under it. Teams nest up to six deep |
+
+Each write confirms, as [above](#actions-wait-for-the-person). The preview says what the move does to orders and
+counts members without naming them, and the audit entry does the same.
 
 ## Exchange rates
 

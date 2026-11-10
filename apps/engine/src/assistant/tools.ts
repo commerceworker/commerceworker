@@ -43,6 +43,7 @@ import { draftCartReply } from './cart-reply';
 import { changeCart, getCart, listCarts, openCart } from './carts';
 import { acceptProductDrafts, discardProductEdits, stageProductEdits } from './catalog';
 import { putCatalogChannel, putCatalogType } from './catalog-writes';
+import { readCompanies, readCompany, readCompanyMembers } from './companies';
 import {
   type ActionInput,
   type ActionTool,
@@ -121,6 +122,12 @@ export const ACTION_TOOLS: ActionTool[] = [
   'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',
+  'create_customer',
+  'update_customer',
+  'set_company_status',
+  'put_company_members',
+  'remove_company_member',
+  'put_company_team',
   'set_member_role',
   'set_approval_separation',
   'set_assistant_routing',
@@ -322,6 +329,12 @@ export async function runTool<T extends AssistantTool>(
     }
     case 'list_fx_rates':
       return readFxRates(env);
+    case 'list_companies':
+      return readCompanies(env, input as ToolInput<'list_companies'>);
+    case 'get_company':
+      return readCompany(env, input as ToolInput<'get_company'>);
+    case 'list_company_members':
+      return readCompanyMembers(env, input as ToolInput<'list_company_members'>);
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

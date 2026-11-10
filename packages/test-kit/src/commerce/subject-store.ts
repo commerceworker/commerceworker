@@ -25,6 +25,14 @@ export interface SubjectFixture {
   documents?: { orderId: string; key: string; kind: string }[];
   taxCertificates?: { id: string; customerId: string; regions: string }[];
   addresses?: { id: string; customerId: string }[];
+  companies?: { customerId: string; legalName: string; taxId: string | null }[];
+  companyMembers?: {
+    id: string;
+    companyId: string;
+    name: string;
+    email: string;
+    status: string;
+  }[];
   checkouts?: { id: string; email: string; orderId: string | null }[];
   carts?: {
     id: string;
@@ -57,6 +65,8 @@ export class InMemorySubjectStore implements SubjectStore {
       documents: c.documents ?? [],
       taxCertificates: c.taxCertificates ?? [],
       addresses: c.addresses ?? [],
+      companies: c.companies ?? [],
+      companyMembers: c.companyMembers ?? [],
       checkouts: c.checkouts ?? [],
       carts: c.carts ?? [],
       audit: c.audit ?? [],
@@ -133,6 +143,8 @@ export class InMemorySubjectStore implements SubjectStore {
       inboundEmails: this.f.inboundEmails.filter((r) => lower(r.sender) === s.email),
       taxCertificates: this.f.taxCertificates.filter((c) => accounts.has(c.customerId)),
       addresses: this.f.addresses.filter((a) => accounts.has(a.customerId)),
+      companies: this.f.companies.filter((c) => accounts.has(c.customerId)),
+      companyMembers: this.f.companyMembers.filter((m) => lower(m.email) === s.email),
     };
   }
 
@@ -229,6 +241,18 @@ export class InMemorySubjectStore implements SubjectStore {
     this.f.addresses = this.f.addresses.filter((a) => a.customerId !== customerId);
     const c = this.f.customers.find((x) => x.id === customerId);
     if (c) Object.assign(c, { name: 'Erased customer', email: erasedCustomerEmail(customerId) });
-    return { taxCertificates: certs, addresses: addrs };
+    for (const co of this.f.companies)
+      if (co.customerId === customerId) Object.assign(co, { legalName: ERASED, taxId: null });
+    const members = this.f.companyMembers.filter(
+      (m) => m.companyId === customerId && m.name !== ERASED,
+    );
+    for (const m of members) Object.assign(m, { name: ERASED, email: ERASED, status: 'removed' });
+    return { taxCertificates: certs, addresses: addrs, companyMembers: members.length };
+  }
+
+  async eraseMembers(email: string) {
+    const mine = this.f.companyMembers.filter((m) => lower(m.email) === email);
+    for (const m of mine) Object.assign(m, { name: ERASED, email: ERASED, status: 'removed' });
+    return mine.length;
   }
 }

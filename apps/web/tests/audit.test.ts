@@ -138,6 +138,8 @@ suite('audit vocabulary', () => {
       'promotion',
       'fx',
       'tax_certificate',
+      'customer',
+      'company',
       'catalog',
       'plugin',
       'personal_data',

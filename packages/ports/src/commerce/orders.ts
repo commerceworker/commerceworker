@@ -47,6 +47,8 @@ export interface NewOrderRow {
   readonly flowVersion: number;
   readonly instanceId: string;
   readonly customerId: string | null;
+  /** The company member placing it (`meta.buyerId`), when the order names one. */
+  readonly buyerId?: string | null;
   readonly currency: string;
   readonly createdAt: number;
   readonly idempotencyKey: string | null;

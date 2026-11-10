@@ -20,6 +20,8 @@ Every expression and template sees one object:
 | `nodes` | Each node's latest output, by node id, for example `nodes.risk.score` |
 | `input` | The order's `meta` |
 | `now` | When the current run started, in epoch milliseconds |
+| `company` | The customer's [company](/guides/companies/): `company.status` (`pending`, `active`, `suspended`, `rejected` or `closed`) and `company.tier` (the customer's pricing tier). `null` fields for an order with no company |
+| `buyer` | The company member the order names in `meta.buyerId`: `buyer.role` (`buyer`, `approver` or `company_admin`), `buyer.team` (the id of their team) and `buyer.orderLimit` (their own limit per order, in the base currency). `null` fields when the order names no buyer |
 
 ## JSON Logic
 
@@ -45,7 +47,7 @@ CommerceWorker adds three operations:
 A condition is true by JSON Logic's truthiness: empty arrays, `0`, `""` and `null` are false. A plain
 value (a number, `true`) is its own result, which is why Loop's default `while` is `true`.
 
-A [promotion's condition](/guides/promotions/#conditions) is also JSON Logic, over a smaller context (`now`, `order.channel`, `order.lines`, `order.meta.shipTo`, `customer`, …) and a shorter list of operators.
+A [promotion's condition](/guides/promotions/#conditions) is also JSON Logic, over a smaller context (`now`, `order.channel`, `order.lines`, `order.meta.shipTo`, `customer`, `company`, `buyer`, …) and a shorter list of operators.
 
 A node's result, including any clock it read, is recorded once, so an order that resumes or
 retries later sees the same value.

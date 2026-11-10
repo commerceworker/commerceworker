@@ -13,6 +13,7 @@
  */
 
 import { checkAddress } from './address';
+import { ACCOUNT_VARIABLES, type AccountContext, accountContext } from './b2b/companies';
 import { money, toBase, truthy } from './logic';
 import type { OrderLine } from './types';
 
@@ -38,6 +39,7 @@ export const PROMOTION_CONDITION_VARIABLES = {
   'customer.id': "The buyer's customer id, or null for a guest",
   'customer.kind': 'business, consumer or internal, or null for a guest',
   'customer.tier': "The customer's pricing tier, or null for a guest",
+  ...ACCOUNT_VARIABLES,
 } as const;
 
 /** What each line carries, in a condition and inside `map`, `filter`, `some`… over the lines. */
@@ -200,6 +202,8 @@ export type ConditionInput = {
   customer: { kind: string; tier: string } | undefined;
   /** The order's `meta`, which holds the ship-to. */
   meta: Record<string, unknown> | undefined;
+  /** The customer's company and the ordering member, when the order has them. */
+  account?: AccountContext | undefined;
 };
 
 /** The data a condition reads: a fresh copy, so nothing a condition does reaches the order. */
@@ -228,6 +232,7 @@ export function promotionConditionContext(c: ConditionInput) {
       kind: c.customer?.kind ?? null,
       tier: c.customer?.tier ?? null,
     },
+    ...(c.account ?? accountContext(undefined, undefined, undefined)),
   };
 }
 

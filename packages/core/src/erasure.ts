@@ -141,6 +141,11 @@ export type ErasureResult =
       taxCertificates: number;
       /** The places their accounts' orders shipped to, as the customer page lists them. */
       addresses: number;
+      /**
+       * Company members blanked: those with their email, in any company, and every member of
+       * their accounts' companies. The rows stay for the orders those members placed.
+       */
+      companyMembers: number;
       /** The address is also a team member's; remove them on the team page. */
       teamMember: boolean;
     }
@@ -166,6 +171,9 @@ export type SubjectExport = {
   taxCertificates: Record<string, unknown>[];
   /** The places their accounts' orders shipped to, as the customer page lists them. */
   addresses: Record<string, unknown>[];
+  /** Their accounts' companies (legal name and tax id), and the members with their email. */
+  companies: Record<string, unknown>[];
+  companyMembers: Record<string, unknown>[];
   /** True when there were more orders than one export holds. */
   truncated: boolean;
   teamMember: boolean;

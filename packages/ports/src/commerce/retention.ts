@@ -42,6 +42,11 @@ export interface RetentionStore {
   ordersEndedBefore(before: number, limit: number): Promise<{ id: string; title: string }[]>;
   /** Deletes customer addresses last used before `before`. Returns how many. */
   expireAddresses(before: number): Promise<number>;
+  /**
+   * Blanks the name and email of members removed before `before` (their rows stay, for the orders
+   * they placed). Returns how many.
+   */
+  expireMembers(before: number): Promise<number>;
   /** Audit events from before the chain, older than `before`, by time then id. */
   unchainedAudit(before: number, limit: number): Promise<AuditRow[]>;
   /** Deletes the unchained audit events up to and including `last`, in that order. */

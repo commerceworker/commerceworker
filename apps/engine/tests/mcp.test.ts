@@ -293,7 +293,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(54);
+    expect(operator).toHaveLength(63);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -305,6 +305,25 @@ describe('MCP', () => {
     expect(operator.find((t) => t.name === 'publish_flow')).toMatchObject({
       annotations: { openWorldHint: false },
     });
+    // Companies: three reads, and six writes of which closing and removing are final.
+    for (const name of ['list_companies', 'get_company', 'list_company_members'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        outputSchema: { type: 'object' },
+      });
+    for (const name of ['set_company_status', 'remove_company_member'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      });
+    for (const name of ['update_customer', 'put_company_members'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      });
+    for (const name of ['create_customer', 'put_company_team'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      });
+    expect(viewer.map((t) => t.name)).not.toContain('list_companies');
     // An admin also drafts plugins: no confirm, but it saves a draft, so it isn't read-only.
     // A cart is saved without a confirm (nothing is ordered); submitting it is an action.
     expect(operator.find((t) => t.name === 'change_cart')).toMatchObject({
@@ -320,7 +339,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(75);
+    expect(admin).toHaveLength(84);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -753,6 +772,84 @@ describe('MCP', () => {
             links: Array.from({ length: 11 }, () => ({ type: 't', url: 'https://x.y/' })),
           })
         ).isError,
+      ).toBe(true);
+    });
+  });
+
+  describe('companies', () => {
+    const operator = person('operator', 'ops@example.com');
+    const viewer = person('viewer', 'view@example.com');
+
+    async function confirm(tool: string, args: Record<string, unknown>) {
+      const first = await call(operator, tool, args);
+      expect(first.isError, first.content[0]?.text).toBeFalsy();
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(operator, tool, { ...args, confirmation: code });
+      expect(done.isError, done.content[0]?.text).toBeFalsy();
+      // A code works once.
+      expect((await call(operator, tool, { ...args, confirmation: code })).isError).toBe(true);
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+      };
+    }
+
+    it('adds a customer, its members and a team on a code each, and reads them back', async () => {
+      const name = `Mcp Co ${crypto.randomUUID().slice(0, 6)}`;
+      const created = await confirm('create_customer', {
+        name,
+        email: `${crypto.randomUUID().slice(0, 8)}@mcp.test`,
+      });
+      expect(created.preview.title).toBe(`Add business customer ${name}`);
+      const id = created.done.id as string;
+
+      const listed = await call(operator, 'list_companies', { search: name });
+      expect(listed.structuredContent).toMatchObject({
+        total: 1,
+        cursor: null,
+        companies: [{ id, name, status: 'active' }],
+      });
+
+      const members = {
+        companyId: id,
+        members: [{ email: 'Zed@Mcp.test', name: 'Zed', role: 'approver', status: 'active' }],
+      };
+      const added = await confirm('put_company_members', members);
+      // A card counts members and names no one.
+      expect(JSON.stringify(added.preview)).not.toContain('zed@');
+      expect(added.preview.consequences[0]).toBe('1 added, 0 changed');
+      const read = await call(operator, 'list_company_members', { companyId: id });
+      expect(read.structuredContent).toMatchObject({
+        total: 1,
+        members: [{ email: 'zed@mcp.test', role: 'approver', status: 'active', orderLimit: null }],
+      });
+
+      await confirm('put_company_team', { companyId: id, name: 'Buying' });
+      const company = await call(operator, 'get_company', { companyId: id });
+      expect(company.structuredContent).toMatchObject({ teams: [{ name: 'Buying' }] });
+
+      const closed = await confirm('set_company_status', { companyId: id, status: 'closed' });
+      expect(closed.preview.consequences.join('\n')).toContain('Final');
+      // Final: a closed company moves nowhere, and the preview says so with no code.
+      const again = await call(operator, 'set_company_status', { companyId: id, status: 'active' });
+      expect(again.isError).toBe(true);
+      expect(again.content[0]?.text).toContain('closed, which is final');
+      expect(again.structuredContent?.confirmation).toBeUndefined();
+    });
+
+    it('refuses a viewer, an unknown company and a bad cursor, and a code for another input', async () => {
+      expect((await tools(viewer)).map((t) => t.name)).not.toContain('create_customer');
+      const missing = await call(operator, 'get_company', { companyId: 'cus_nobody' });
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0]?.text).toBe('No such company.');
+      const junk = await call(operator, 'list_companies', { cursor: 'junk' });
+      expect(junk.isError).toBe(true);
+      const args = { name: 'Other', email: `${crypto.randomUUID().slice(0, 8)}@mcp.test` };
+      const code = (await call(operator, 'create_customer', args)).structuredContent!
+        .confirmation as string;
+      expect(
+        (await call(operator, 'create_customer', { ...args, name: 'Changed', confirmation: code }))
+          .isError,
       ).toBe(true);
     });
   });

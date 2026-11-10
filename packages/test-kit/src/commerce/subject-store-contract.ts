@@ -57,6 +57,24 @@ export const SUBJECT_FIXTURE: SubjectFixture = {
   documents: [{ orderId: 'sc2_o_acct', key: 'orders/sc2_o_acct/invoice/a.html', kind: 'invoice' }],
   taxCertificates: [{ id: 'sc2_cert', customerId: 'sc2_acct', regions: '["US-NY"]' }],
   addresses: [{ id: 'sc2_addr', customerId: 'sc2_acct' }],
+  companies: [{ customerId: 'sc2_acct', legalName: 'Lovelace Engines Ltd', taxId: 'GB123' }],
+  companyMembers: [
+    // Ada is a member of another company, and Charles one of her own company's.
+    {
+      id: 'sc2_mem_ada',
+      companyId: 'sc2_other',
+      name: 'Ada',
+      email: 'ADA@Example.com',
+      status: 'active',
+    },
+    {
+      id: 'sc2_mem_charles',
+      companyId: 'sc2_acct',
+      name: 'Charles',
+      email: 'charles@corp.example',
+      status: 'active',
+    },
+  ],
   checkouts: [
     { id: 'sc2_chk_placed', email: ADA, orderId: 'sc2_o_guest' },
     { id: 'sc2_chk_open', email: ADA, orderId: null },
@@ -117,6 +135,8 @@ export function describeSubjectStoreContract(
       expect(rows.inboundEmails).toHaveLength(2);
       expect(rows.taxCertificates).toHaveLength(1);
       expect(rows.addresses).toHaveLength(1);
+      expect(rows.companies.map((c) => c.customerId)).toEqual(['sc2_acct']);
+      expect(rows.companyMembers.map((m) => m.id)).toEqual(['sc2_mem_ada']);
       expect((await s.checkouts(ADA, 10)).map((c) => c.id).sort()).toEqual([
         'sc2_chk_open',
         'sc2_chk_placed',
@@ -127,6 +147,14 @@ export function describeSubjectStoreContract(
       expect(await s.orderCarts(['sc2_o_acct'])).toEqual(['sc2_cart_staff']);
       expect(await s.wasErased('hash:ada')).toBe(true);
       expect(await s.wasErased('hash:other')).toBe(false);
+    });
+
+    it('blanks the company members with their email, keeping the rows, once', async () => {
+      const s = await fresh();
+      const ada = await s.subject(ADA);
+      expect(await s.eraseMembers(ADA)).toBe(1);
+      expect((await s.rows(ada, [])).companyMembers).toEqual([]);
+      expect(await s.eraseMembers(ADA)).toBe(0);
     });
 
     it("erases their orders' rows, then what isn't tied to an order, then their accounts", async () => {
@@ -148,8 +176,16 @@ export function describeSubjectStoreContract(
       expect(await s.eraseUnlinked(ADA)).toEqual({ messages: 1, inboundEmails: 1 });
       expect(await s.checkouts(ADA, 10)).toEqual([]);
       expect(await s.unlinkedFiles(ADA)).toEqual([]);
-      expect(await s.eraseAccount('sc2_acct')).toEqual({ taxCertificates: 1, addresses: 1 });
+      expect(await s.eraseAccount('sc2_acct')).toEqual({
+        taxCertificates: 1,
+        addresses: 1,
+        companyMembers: 1,
+      });
       expect((await s.subject(ADA)).accounts).toEqual([]);
+      // Her own company's people and legal details are blanked, and not twice.
+      const after2 = await s.rows(await s.subject('charles@corp.example'), []);
+      expect(after2.companyMembers).toEqual([]);
+      expect((await s.eraseAccount('sc2_acct')).companyMembers).toBe(0);
       const left = await s.rows(await s.subject('grace@example.com'), ['sc2_o_grace']);
       expect(left.messages.map((m) => m.recipient)).toEqual([ERASED]);
     });

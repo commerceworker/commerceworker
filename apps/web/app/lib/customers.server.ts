@@ -6,9 +6,12 @@
  * as a cart's files are; one the engine doesn't end up holding is deleted again.
  */
 
+import { getCompany, listCompanyMembers } from '@commerceworker/application/commerce';
 import {
   attachmentName,
+  COMPANY_ROLES,
   isTaxCertificateId,
+  MEMBER_STATUSES,
   type Principal,
   type RpcActor,
   TAX_CERTIFICATE_FILE_TYPES,
@@ -21,7 +24,7 @@ import { actorName } from './audit.server';
 import { docs, engine } from './env.server';
 import { signedActor } from './principal.server';
 import { expiryFrom, parseTaxPlaces } from './tax-certificates';
-import { addressBook, pricingStore } from './wire.server';
+import { addressBook, companyDirectory, pricingStore } from './wire.server';
 
 export async function customerById(id: string) {
   return (await pricingStore().customer(id)) ?? null;
@@ -121,4 +124,40 @@ export async function certificateFile(customerId: string, id: string) {
   if (!c?.file || c.file.key !== taxCertificateKey(customerId, id)) return null;
   const obj = await docs().get(c.file.key);
   return obj ? { file: c.file, body: obj.body } : null;
+}
+
+/** Members a page of the customer's page lists. */
+export const MEMBERS_PAGE = 25;
+
+/**
+ * A business customer's company: its status and details, its team tree, and a page of its members
+ * (names and emails, so only for staff who may read them: `members` is null otherwise). `params`
+ * narrows the members (`member-status`, `member-role`) and pages them (`members-after`, a cursor
+ * the last page handed out). Null for a customer with no company.
+ */
+export async function companyOf(customerId: string, params: URLSearchParams, readMembers: boolean) {
+  const ports = { companies: companyDirectory() };
+  const scope = { all: true } as const;
+  const found = await getCompany(ports, scope, customerId);
+  if (!found) return null;
+  const parent = found.company.parentCompanyId
+    ? await getCompany(ports, scope, found.company.parentCompanyId)
+    : null;
+  const status = MEMBER_STATUSES.find((s) => s === params.get('member-status'));
+  const role = COMPANY_ROLES.find((r) => r === params.get('member-role'));
+  const page = readMembers
+    ? await listCompanyMembers(ports, scope, {
+        companyId: customerId,
+        status,
+        role,
+        cursor: params.get('members-after') ?? undefined,
+        limit: MEMBERS_PAGE,
+      })
+    : null;
+  return {
+    ...found,
+    parent: parent ? { id: parent.company.id, name: parent.company.name } : null,
+    members: page?.ok ? page : null,
+    memberFilter: { status: status ?? null, role: role ?? null },
+  };
 }

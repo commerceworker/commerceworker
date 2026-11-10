@@ -45,6 +45,9 @@ export interface SubjectRows {
   readonly inboundEmails: Record<string, unknown>[];
   readonly taxCertificates: Record<string, unknown>[];
   readonly addresses: Record<string, unknown>[];
+  /** Their accounts' companies, and the company members with their email (any company). */
+  readonly companies: Record<string, unknown>[];
+  readonly companyMembers: Record<string, unknown>[];
 }
 
 export interface SubjectStore {
@@ -55,7 +58,7 @@ export interface SubjectStore {
    * sent), `active` ones only when asked, up to `limit`.
    */
   orders(subject: Subject, opts: { active?: boolean; limit: number }): Promise<SubjectOrder[]>;
-  /** Their messages, documents, inbound emails, certificates and addresses, for an export. */
+  /** Their messages, documents, inbound emails, certificates, addresses, companies and member rows, for an export. */
   rows(subject: Subject, orderIds: readonly string[]): Promise<SubjectRows>;
   /** Their checkout sessions, as stored. */
   checkouts(email: string, limit: number): Promise<CheckoutSession[]>;
@@ -82,8 +85,18 @@ export interface SubjectStore {
   unlinkedFiles(email: string): Promise<string[]>;
   /** Blanks what isn't tied to an order: inbound emails and messages; deletes unplaced checkouts. */
   eraseUnlinked(email: string): Promise<{ messages: number; inboundEmails: number }>;
-  /** Deletes an account's certificates and addresses and blanks the account. */
-  eraseAccount(customerId: string): Promise<{ taxCertificates: number; addresses: number }>;
+  /**
+   * Deletes an account's certificates and addresses and blanks the account, its company and every
+   * member of it (their rows stay, for the orders they placed).
+   */
+  eraseAccount(
+    customerId: string,
+  ): Promise<{ taxCertificates: number; addresses: number; companyMembers: number }>;
+  /**
+   * Blanks the company members with this email, in every company, and marks them removed: their
+   * rows stay for the orders they placed. Returns how many.
+   */
+  eraseMembers(email: string): Promise<number>;
 }
 
 /** The file store the subject's documents are in. */

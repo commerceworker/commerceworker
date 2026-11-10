@@ -30,6 +30,18 @@
   "admin performance: 30 days": { "statements": 5, "roundTrips": 2 },
   "admin commerce: a page of every list": { "statements": 13, "roundTrips": 2 },
   "admin commerce: a search": { "statements": 10, "roundTrips": 2 },
+  "admin commerce: customers filtered by status": { "statements": 13, "roundTrips": 2 },
+  "companies: a page": { "statements": 2, "roundTrips": 1 },
+  "companies: a page by status and search": { "statements": 2, "roundTrips": 1 },
+  "companies: one company": { "statements": 1, "roundTrips": 1 },
+  "companies: a company’s teams": { "statements": 1, "roundTrips": 1 },
+  "companies: a page of members": { "statements": 2, "roundTrips": 1 },
+  "companies: one member": { "statements": 1, "roundTrips": 1 },
+  "companies: members by email": { "statements": 1, "roundTrips": 1 },
+  "companies: its parents": { "statements": 1, "roundTrips": 1 },
+  "companies: a customer by email": { "statements": 1, "roundTrips": 1 },
+  "commerce.validate: the company only": { "statements": 1, "roundTrips": 1 },
+  "commerce.validate: the company and its buyer": { "statements": 2, "roundTrips": 1 },
   "admin new order: every record for the pickers": { "statements": 8, "roundTrips": 1 },
   "admin: currencies": { "statements": 1, "roundTrips": 1 }
 }
