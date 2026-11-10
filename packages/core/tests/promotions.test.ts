@@ -31,6 +31,7 @@ const promo = (p: Partial<Promotion> = {}): Promotion => ({
   maxDiscount: null,
   condition: null,
   conditionMessage: null,
+  bxgy: null,
   ...p,
 });
 const lines: OrderLine[] = [

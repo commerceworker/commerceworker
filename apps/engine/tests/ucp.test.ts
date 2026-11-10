@@ -631,6 +631,76 @@ describe('UCP discounts', () => {
     expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
   });
 
+  describe('with buy X, get Y', () => {
+    const at = Date.now();
+    const row = {
+      id: 'promo_UCPBXGY',
+      code: 'UCPBXGY',
+      name: 'Buy 2, get 1',
+      kind: 'bxgy',
+      value: 0,
+      bxgy: JSON.stringify({
+        buy: { skus: ['MON-27'], qty: 2 },
+        get: { skus: null, qty: 1, percent: 100 },
+        repeat: null,
+      }),
+      createdAt: at,
+      updatedAt: at,
+    };
+    beforeAll(async () => {
+      await db().insert(promotions).values(row).onConflictDoNothing();
+      await db().update(promotions).set({ status: 'paused' }).where(eq(promotions.code, SAVE));
+    });
+    afterAll(async () => {
+      await db().delete(promotions).where(eq(promotions.id, row.id));
+      await db().update(promotions).set({ status: 'active' }).where(eq(promotions.code, SAVE));
+    });
+    const three = (codes?: string[]) => ({
+      ...withCodes(codes),
+      line_items: [{ item: { id: 'MON-27' }, quantity: 3 }],
+    });
+
+    it('shows the free unit as the line’s own discount, and the totals agree', async () => {
+      const plain = (await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', three())).body;
+      const { body: c } = await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', three(['ucpbxgy']));
+      // Three monitors at 349.00: the third is free.
+      expect(c.discounts.applied).toEqual([
+        {
+          code: 'UCPBXGY',
+          title: 'Buy 2, get 1',
+          amount: 34900,
+          method: 'across',
+          allocations: [{ path: '$.line_items[0]', amount: 34900 }],
+        },
+      ]);
+      expect(c.line_items[0]).toMatchObject({ quantity: 3, item: { price: 34900 } });
+      expect(c.line_items[0].totals).toEqual([
+        { type: 'subtotal', amount: 104700 },
+        { type: 'discount', display_text: 'Discount', amount: -34900 },
+        { type: 'total', amount: 69800 },
+      ]);
+      expect(amountOf(c, 'discount')).toBe(-34900);
+      expect(sums(c)).toBe(amountOf(c, 'total'));
+      // Tax follows the discounted prices, so the total falls by more than the free unit.
+      expect(amountOf(c, 'total')).toBeLessThan(amountOf(plain, 'total') - 34900 + 1);
+    });
+
+    it('refuses the code on a checkout too small for it, without failing the checkout', async () => {
+      const { body: c } = await ucp(disc, 'POST', '/ucp/v1/checkout-sessions', {
+        ...withCodes(['UCPBXGY']),
+        line_items: [{ item: { id: 'MON-27' }, quantity: 2 }],
+      });
+      expect(c.discounts.applied).toEqual([]);
+      expect(c.messages).toEqual([
+        expect.objectContaining({
+          code: 'promotion',
+          path: '$.discounts.codes[0]',
+          content: 'UCPBXGY needs at least 3 MON-27 in the order.',
+        }),
+      ]);
+    });
+  });
+
   describe('with promotion conditions', () => {
     const at = Date.now();
     const rows = [

@@ -104,6 +104,42 @@ test('the new promotion form, condition included, fits the screen and reads at 1
     ).toBeGreaterThanOrEqual(16);
 });
 
+test('the new promotion form shows the buy X, get Y fields inside the screen, at 16px on touch', async ({
+  page,
+}, info) => {
+  await open(page, '/promotions');
+  await page.getByRole('button', { name: 'New promotion' }).click();
+  const sheet = page.getByRole('dialog');
+  // Only the kind's own fields: no percentage or amount for a rule, until the kind says so.
+  await expect(sheet.getByLabel('Buy (units)', { exact: true })).toHaveCount(0);
+  await sheet.getByLabel('Takes off', { exact: true }).selectOption('bxgy');
+  await expect(sheet.getByLabel('Percent or amount', { exact: true })).toHaveCount(0);
+  const width = page.viewportSize()!.width;
+  for (const name of [
+    'Buy (units)',
+    'Get (units)',
+    /^Buy these SKUs/,
+    /^Get these SKUs/,
+    /^Percent off/,
+    /^Times per order/,
+  ]) {
+    const field = sheet.getByLabel(name);
+    await field.scrollIntoViewIfNeeded();
+    await expect(field).toBeVisible();
+    const box = await field.boundingBox();
+    expect(box!.x, `${name} starts inside the screen`).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width, `${name} ends inside it`).toBeLessThanOrEqual(width);
+    if (isTouch(info))
+      expect(
+        await field.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize)),
+      ).toBeGreaterThanOrEqual(16);
+  }
+  expect(
+    await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    'the sheet has no sideways scroll',
+  ).toBe(true);
+});
+
 test('at double text size the sidebar and header fit without scrolling sideways', async ({
   page,
 }, info) => {

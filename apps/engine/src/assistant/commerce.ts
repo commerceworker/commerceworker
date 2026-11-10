@@ -11,8 +11,11 @@
 import {
   type ActionPreview,
   BASE_CURRENCY,
+  type BxgyRule,
   boundText,
+  bxgyShapeProblem,
   certificateVerifyProblem,
+  describeBxgy,
   type Principal,
   type PromotionKind,
   type PromotionStacking,
@@ -50,14 +53,22 @@ export type PromotionInput = {
   maxDiscount?: number;
   condition?: object;
   conditionMessage?: string;
+  /** The rule of a `bxgy` promotion, as the tool parsed it. */
+  bxgy?: BxgyRule;
 };
 
-const what = (p: { kind: string; value: number }) =>
+const what = (p: { kind: string; value: number; bxgy?: BxgyRule | null }) =>
   p.kind === 'pct'
     ? `${p.value}% off`
     : p.kind === 'amount'
       ? `${money(p.value, BASE_CURRENCY)} off`
-      : 'Free shipping';
+      : p.kind === 'bxgy' && p.bxgy
+        ? (boundText(describeBxgy(p.bxgy), 300) ?? '')
+        : 'Free shipping';
+
+/** The value a promotion stores: only a percentage or an amount has one. */
+const storedValue = (i: Pick<PromotionInput, 'kind' | 'value'>) =>
+  i.kind === 'pct' || i.kind === 'amount' ? (i.value ?? 0) : 0;
 
 /** How the promotion combines, in the card's words. */
 const stackingLine = (i: Pick<PromotionInput, 'stacking' | 'priority'>) =>
@@ -72,7 +83,9 @@ const customerName = async (env: Env, id: string) =>
 
 /** Why the promotion can't be made as asked, in the form's words; null when it can. */
 function promotionProblem(i: PromotionInput): string | null {
-  const value = i.kind === 'free_shipping' ? 0 : (i.value ?? 0);
+  const value = storedValue(i);
+  const shape = bxgyShapeProblem(i.kind, i.bxgy, i.skus);
+  if (shape) return shape;
   if (i.kind === 'pct' && !(value > 0 && value <= 100))
     return 'A percentage is above 0 and at most 100.';
   if (i.kind === 'amount' && !(value > 0)) return 'An amount off is above 0.';
@@ -87,7 +100,7 @@ export async function previewCreatePromotion(
   roleBlock?: string,
 ): Promise<ActionPreview> {
   const [taken] = i.code ? await pricingStore(env).promotionsByCode([i.code]) : [];
-  const value = i.kind === 'free_shipping' ? 0 : (i.value ?? 0);
+  const value = storedValue(i);
   const who = i.customerId ? await customerName(env, i.customerId) : null;
   return {
     title: i.code
@@ -95,7 +108,7 @@ export async function previewCreatePromotion(
       : `Add the automatic promotion “${boundText(i.name, 80)}”`,
     href: '/promotions',
     consequences: [
-      `${what({ kind: i.kind, value })}${i.name && i.code ? ` · “${boundText(i.name, 80)}”` : ''}`,
+      `${what({ kind: i.kind, value, bxgy: i.bxgy })}${i.name && i.code ? ` · “${boundText(i.name, 80)}”` : ''}`,
       ...(i.maxDiscount ? [`Takes off at most ${money(i.maxDiscount)} from one order`] : []),
       stackingLine(i),
       ...(i.minSubtotal ? [`On a subtotal of ${money(i.minSubtotal)} or more`] : []),
@@ -136,7 +149,7 @@ export async function previewCreatePromotion(
 
 export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInput, trail: Trail) {
   const id = `promo_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
-  const value = i.kind === 'free_shipping' ? 0 : (i.value ?? 0);
+  const value = storedValue(i);
   const added = await pricingStore(env).createPromotion(
     {
       id,
@@ -155,6 +168,7 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
       maxDiscount: i.maxDiscount ?? null,
       condition: i.condition ?? null,
       conditionMessage: i.conditionMessage?.trim() || null,
+      bxgy: i.kind === 'bxgy' ? (i.bxgy ?? null) : null,
     },
     p.id,
   );
@@ -177,6 +191,8 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
       priority: i.priority ?? 0,
       stacking: i.stacking ?? 'exclusive',
       maxDiscount: i.maxDiscount ?? null,
+      // Its whole rule: who gets what free is what the record is for.
+      bxgy: i.kind === 'bxgy' ? (i.bxgy ?? null) : null,
       // The condition itself is what the record is for: it decides who gets the discount.
       condition: i.condition ?? null,
       ...trail,

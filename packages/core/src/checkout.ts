@@ -70,6 +70,8 @@ export type CheckoutLine = {
   /** Set by the quote. */
   title?: string;
   unitPrice?: number;
+  /** Set by the quote when promotions lowered `unitPrice`: the price before them. */
+  listPrice?: number;
 };
 
 export type CheckoutBuyer = {

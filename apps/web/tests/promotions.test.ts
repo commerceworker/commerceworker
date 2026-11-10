@@ -50,4 +50,53 @@ describe('promotionFrom', () => {
       'A message for a failed condition needs a condition.',
     );
   });
+
+  it('reads a buy X, get Y rule, with blanks taking the rule’s defaults', () => {
+    expect(
+      promotionFrom(form({ kind: 'bxgy', value: '', buyQty: '2', getQty: '1', buySkus: 'TEE' })),
+    ).toMatchObject({
+      kind: 'bxgy',
+      value: 0,
+      skus: null,
+      bxgy: {
+        buy: { skus: ['TEE'], qty: 2 },
+        get: { skus: null, qty: 1, percent: 100 },
+        repeat: null,
+      },
+    });
+    expect(
+      promotionFrom(
+        form({
+          kind: 'bxgy',
+          buyQty: '3',
+          getQty: '2',
+          getSkus: 'HAT, CAP',
+          getPercent: '50',
+          repeat: '2',
+        }),
+      ),
+    ).toMatchObject({
+      bxgy: {
+        buy: { skus: null, qty: 3 },
+        get: { skus: ['HAT', 'CAP'], qty: 2, percent: 50 },
+        repeat: 2,
+      },
+    });
+    // Other kinds carry no rule, even if its fields were left filled in.
+    expect(promotionFrom(form({ buyQty: '2', getQty: '1' }))).toMatchObject({ bxgy: null });
+  });
+
+  it('refuses a rule that can never apply', () => {
+    const bxgy = (f: Record<string, string>) =>
+      promotionFrom(form({ kind: 'bxgy', buyQty: '2', getQty: '1', ...f }));
+    expect(bxgy({ getQty: '0' })).toBe('Buy and get each need a quantity of at least 1.');
+    expect(bxgy({ buyQty: '' })).toBe('Buy and get each need a quantity of at least 1.');
+    expect(bxgy({ buyQty: '1.5' })).toBe('Quantities and repeats are whole numbers.');
+    expect(bxgy({ repeat: '0' })).toBe('Repeat is at least 1');
+    expect(bxgy({ getPercent: '0' })).toBe('A percentage is above 0');
+    expect(bxgy({ getPercent: '101' })).toMatch(/100/);
+    expect(bxgy({ buySkus: 'TEE, TEE' })).toBe('A SKU is listed once');
+    // The ordinary SKU limit belongs to the other kinds.
+    expect(bxgy({ skus: 'TEE' })).toMatchObject({ skus: null });
+  });
 });

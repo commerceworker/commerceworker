@@ -1,6 +1,6 @@
 ---
 title: Promotions
-description: Promotions, with a code or automatic, that take a percentage or an amount off, or make shipping free, with limits on who can use them and how often, a cap, a priority and rules for combining, applied by a flow's Apply promotions step.
+description: Promotions, with a code or automatic, that take a percentage or an amount off, make shipping free, or give units free or discounted when others are bought, with limits on who can use them and how often, a cap, a priority and rules for combining, applied by a flow's Apply promotions step.
 ---
 
 A promotion is either a code, such as `WELCOME15`, or automatic: it has no code and applies to
@@ -26,10 +26,11 @@ off one of:
 | **A percentage** | The prices of the lines it covers, by that percentage |
 | **An amount** | That amount, spread over the lines it covers in proportion to their value, never more than they are worth. In the base currency, converted at the order's rate |
 | **Shipping** | The order's shipping charge, to zero |
+| **Buy X, get Y** | The cheapest units it gives, off the lines that hold them (see [Buy X, get Y](#buy-x-get-y)) |
 
 and can be limited to:
 
-- **Only these SKUs**: it covers only those lines.
+- **Only these SKUs**: it covers only those lines (a buy X, get Y promotion names its SKUs in its own rule instead).
 - **Only this customer**.
 - **A minimum subtotal**, in the base currency.
 - **Uses in all** and **uses per customer**: each order that keeps a promotion uses it once, an
@@ -48,6 +49,67 @@ and set apart by how it combines:
 end date is marked **Ended**, paused or not, and offers neither, since neither would change
 anything. Its dates can't be edited: to run the offer again, add a new promotion. One for a single
 customer names them, linked to their page. The **Used** column counts the orders that have used it.
+
+## Buy X, get Y
+
+A buy X, get Y promotion gives units away, or at a discount, when the order holds enough of
+others: "Buy 2 TEE, get 1 free", or "buy 3 of anything, get 1 at half price". Choose **Buy X, get Y**
+under **Takes off**; the form then asks for:
+
+| Field | Meaning |
+|---|---|
+| **Buy** (units) | X, a whole number from 1 |
+| **Buy these SKUs** | The lines that count toward buying. Empty is any line |
+| **Get** (units) | Y, a whole number from 1: how many units each purchase of X earns |
+| **Get these SKUs** | The lines whose units are discounted. Empty is the same lines as the ones bought |
+| **Percent off** | What the units it gives lose: 100, the default when empty, is free |
+| **Times per order** | How often it applies to one order. Empty is as often as the order allows |
+
+Every other field (minimum subtotal, customer, dates, uses, a condition, a cap, priority and
+combining) works as for the other kinds; **Only these SKUs** doesn't, since the rule names its own.
+`create_promotion` takes the same as `kind: "bxgy"` with a `bxgy` object, over MCP and REST alike, and
+refuses one that can never apply: a quantity below 1 or not whole, a percentage of 0 or over 100,
+an empty or repeated SKU list, or a rule on another kind. Its confirm card says the rule in words
+("Buy 2 TEE, get 1 free").
+
+```json
+{ "kind": "bxgy", "name": "Tee deal", "stacking": "stackable",
+  "bxgy": { "buy": { "skus": ["TEE"], "qty": 2 }, "get": { "qty": 1 } } }
+```
+
+Buy 2 TEE, get 1 TEE free: every third tee, the cheapest. With `"get": { "skus": ["HAT"], "qty": 1,
+"percent": 50 }` it is instead buy 2 TEE, get 1 HAT at half price. With `"repeat": 1` it applies
+once however many are bought.
+
+How it works out what to take off:
+
+- **Units, not lines.** A line of 3 is 3 units. Only whole units count (2.5 is 2), and a unit with
+  no price or a price of 0 is neither bought nor discounted, so a free gift never earns a discount.
+- **The cheapest units are discounted first.** Of the lines that can be discounted it takes the
+  cheapest units, each by its percentage. (The surveyed design this came from spread the discount
+  over the whole subtotal without picking units; this picks them, so what a buyer sees on each line
+  is what they were given.)
+- **A unit counts once.** Each time the promotion applies it uses X units to buy and Y to discount,
+  and no unit is both. With the same SKUs on both sides, buy 2 get 1 needs three units a time:
+  six units earn two free, five earn one, two earn none. When some units could be either, they are
+  discounted only while enough are left to buy with, and the order isn't given the promotion until
+  it has at least X to buy and Y to get.
+- **How many times** is as many as the units allow, up to **Times per order**.
+- **Rounding.** The discount on each line is rounded to the cent, and the line carries it as a lower
+  unit price (the average over its units, to four decimals), as every promotion does. So the order's
+  subtotal, tax, invoices and refunds all work from it. A line of 3 at 10.00 with one unit free
+  shows a unit price of 6.6667 and still totals 20.00.
+- **A cap** (the most it takes off one order) scales the discount down across its lines.
+- **Combining.** It is chosen and ranked like any promotion, on what it would take off alone. In a
+  stack it takes its units from the prices the promotions before it left, so a stackable 10% first
+  and then buy 2 get 1 free makes the third unit free at its price after the 10%. A line already
+  averaged by an earlier buy X, get Y promotion is a single price to a later one.
+
+An order too small for it is told what it needs (`needs 2 TEE and 1 HAT in the order`) if it
+entered the code; an automatic promotion that doesn't fit is dropped without a word. Where the
+order is shown the line carries the discount: the cart and the order show the discounted unit price
+and total (the cart also shows what was taken off the line), and a UCP checkout shows each line's list price and its discount, with the allocation
+on that line (see [UCP](/reference/ucp/)).
 
 ## Conditions
 

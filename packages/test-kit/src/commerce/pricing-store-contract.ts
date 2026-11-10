@@ -72,6 +72,7 @@ export const PRICING_FIXTURE: PricingFixture = {
       maxDiscount: null,
       condition: null,
       conditionMessage: null,
+      bxgy: null,
     },
     {
       id: 'pc_promo_paused',
@@ -93,6 +94,7 @@ export const PRICING_FIXTURE: PricingFixture = {
       maxDiscount: null,
       condition: null,
       conditionMessage: null,
+      bxgy: null,
     },
     // Automatic promotions (no code): one live, and one each paused, not yet valid and ended.
     ...(
@@ -122,6 +124,7 @@ export const PRICING_FIXTURE: PricingFixture = {
       maxDiscount: 12,
       condition: null,
       conditionMessage: null,
+      bxgy: null,
       ...over,
     })),
   ],
@@ -371,6 +374,7 @@ export function describePricingStoreContract(
         maxDiscount: 25,
         condition: null,
         conditionMessage: null,
+        bxgy: null,
       };
       expect(await s.createPromotion(promo, 'usr_ada')).toBe(true);
       expect(await s.createPromotion({ ...promo, id: 'pc_promo_dup' }, 'usr_ada')).toBe(false);
@@ -415,6 +419,7 @@ export function describePricingStoreContract(
         maxDiscount: null,
         condition,
         conditionMessage: 'US orders with 3 or more of a SKU only.',
+        bxgy: null,
       };
       expect(await s.createPromotion(promo, 'usr_ada')).toBe(true);
       const expected = { condition, conditionMessage: promo.conditionMessage };
@@ -427,7 +432,43 @@ export function describePricingStoreContract(
       expect(await s.promotion('pc_promo_last')).toMatchObject({
         condition: null,
         conditionMessage: null,
+        bxgy: null,
       });
+    });
+
+    it('keeps a buy X, get Y rule whole, with every default it was given', async () => {
+      const s = await store();
+      const rule = {
+        buy: { skus: ['PC-SKU-1'], qty: 2 },
+        get: { skus: null, qty: 1, percent: 100 },
+        repeat: null,
+      };
+      const promo = {
+        id: 'pc_promo_bxgy',
+        code: null,
+        name: 'Buy 2, get 1',
+        kind: 'bxgy' as const,
+        value: 0,
+        minSubtotal: null,
+        skus: null,
+        customerId: null,
+        validTo: null,
+        maxRedemptions: null,
+        perCustomerLimit: null,
+        priority: 0,
+        stacking: 'stackable' as const,
+        maxDiscount: 10,
+        condition: null,
+        conditionMessage: null,
+        bxgy: rule,
+      };
+      expect(await s.createPromotion(promo, 'usr_ada')).toBe(true);
+      expect(await s.promotion('pc_promo_bxgy')).toMatchObject({ kind: 'bxgy', bxgy: rule });
+      expect((await s.listPromotions()).find((p) => p.id === 'pc_promo_bxgy')?.bxgy).toEqual(rule);
+      // Automatic, so the discount node reads it with the others.
+      expect(
+        (await s.automaticPromotions(2_000)).find((p) => p.id === 'pc_promo_bxgy')?.bxgy,
+      ).toEqual(rule);
     });
 
     it('adds any number of automatic promotions, which have no code to clash', async () => {
@@ -449,6 +490,7 @@ export function describePricingStoreContract(
         maxDiscount: null,
         condition: null,
         conditionMessage: null,
+        bxgy: null,
       };
       expect(await s.createPromotion(auto, 'usr_ada')).toBe(true);
       expect(await s.createPromotion({ ...auto, id: 'pc_promo_auto_b' }, 'usr_ada')).toBe(true);

@@ -1094,7 +1094,8 @@ export const carts = sqliteTable(
  * considered first), `stacking` (`exclusive` or `stackable`) and `max_discount` (a cap per order,
  * in the base currency) decide how promotions combine. `condition` is a JSON Logic expression
  * (JSON text) the order must meet and `condition_message` what a buyer entering the code is told
- * when it doesn't.
+ * when it doesn't. `bxgy` is a buy X, get Y promotion's rule (JSON text, read by
+ * `parseBxgyRule`); only `kind = 'bxgy'` has one.
  */
 export const promotions = sqliteTable(
   'promotions',
@@ -1121,6 +1122,7 @@ export const promotions = sqliteTable(
     maxDiscount: real('max_discount'),
     condition: text('condition'),
     conditionMessage: text('condition_message'),
+    bxgy: text('bxgy'),
   },
   (t) => [
     uniqueIndex('promotions_code').on(t.code),

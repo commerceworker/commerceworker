@@ -34,6 +34,7 @@ import {
   catalogTypeInput,
 } from './product/inputs';
 import { BOARD_PAGE_LIMIT, FEEDS_LIMIT } from './product/reads';
+import { bxgyRuleSchema, bxgyShapeProblem } from './promotion-bxgy';
 import {
   MAX_CONDITION_MESSAGE,
   PROMOTION_CONDITION_VARIABLES,
@@ -392,6 +393,11 @@ export const TOOL_INPUTS = {
         .max(MAX_CONDITION_MESSAGE)
         .optional()
         .describe('What a buyer entering the code is told when the condition fails'),
+      bxgy: bxgyRuleSchema
+        .optional()
+        .describe(
+          'The rule of a bxgy promotion (and of no other kind): buy {skus?, qty} earns get {skus?, qty, percent?} at a percentage off, repeat times per order. Leave buy.skus out for any line, get.skus out for the same lines as buy, percent out for free (100), repeat out for unlimited. The cheapest get units are discounted first',
+        ),
     })
     .refine((p) => p.code !== undefined || !!p.name?.trim(), {
       message: 'A promotion without a code needs a name',
@@ -400,6 +406,10 @@ export const TOOL_INPUTS = {
     .refine((p) => p.conditionMessage === undefined || p.condition !== undefined, {
       message: 'A condition message needs a condition',
       path: ['conditionMessage'],
+    })
+    .superRefine((p, ctx) => {
+      const why = bxgyShapeProblem(p.kind, p.bxgy, p.skus);
+      if (why) ctx.addIssue({ code: 'custom', message: why, path: ['bxgy'] });
     }),
   set_promotion_status: z.object({
     promotionId: z.string().max(60),
