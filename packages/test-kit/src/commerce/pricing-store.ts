@@ -5,6 +5,8 @@
  */
 import {
   BASE_CURRENCY,
+  bookEntryId,
+  bookInForce,
   type FxSource,
   matchCustomerByName,
   type PriceRule,
@@ -19,6 +21,7 @@ import type {
   ProductRecord,
   Redemption,
 } from '@commerceworker/ports/commerce';
+import { PriceBookData, sortedEntries } from './price-book-store';
 
 /** What a pricing store holds, as a test seeds it. */
 export interface PricingFixture {
@@ -37,10 +40,24 @@ export class InMemoryPricingStore implements PricingStore {
   private readonly redemptions: Held[] = [];
   private readonly fxBy = new Map<string, string>();
 
+  /**
+   * Price books and contract prices. Give the same `PriceBookData` to an `InMemoryPriceBookStore`
+   * to price with the books it writes; the fixture's contract prices are added to it.
+   */
+  private readonly data: PriceBookData;
+
   constructor(
     private readonly fixture: PricingFixture,
     private readonly clock: Clock,
-  ) {}
+    data: PriceBookData = new PriceBookData(),
+  ) {
+    this.data = data;
+    for (const c of fixture.contractPrices ?? []) {
+      const mine = data.contracts.get(c.customerId) ?? new Map<string, number>();
+      if (!mine.has(c.sku)) mine.set(c.sku, c.price);
+      data.contracts.set(c.customerId, mine);
+    }
+  }
 
   async customersByEmail(email: string, domain: string) {
     return (this.fixture.customers ?? [])
@@ -199,38 +216,65 @@ export class InMemoryPricingStore implements PricingStore {
     currency: string,
     customerId: string | undefined,
     chain: boolean,
+    at: number,
   ) {
     return {
       products: await this.products(skus),
       fxRate: await this.fxRate(currency),
-      chain: chain ? await this.pricingFor(customerId) : null,
+      chain: chain ? await this.pricingFor(customerId, at, skus) : null,
     };
   }
 
-  async pricingFor(customerId: string | undefined) {
+  async pricingFor(customerId: string | undefined, at: number, skus?: readonly string[]) {
     const customer = await this.customer(customerId);
+    const tier = customer?.tier ?? null;
     const sources = (this.fixture.priceSources ?? [])
       .filter((s) => s.active !== false)
       .map(({ active: _active, ...s }) => s);
-    const contracts = customerId
-      ? (this.fixture.contractPrices ?? []).filter((c) => c.customerId === customerId)
-      : [];
+    const contracts = customerId ? [...(this.data.contracts.get(customerId) ?? [])] : [];
+    // The books assigned to the customer, by id or through their tier, that are in force at `at`.
+    const assigned = new Set(
+      this.data.assignments
+        .filter((a) => (customerId && a.customerId === customerId) || (tier && a.tier === tier))
+        .map((a) => a.bookId),
+    );
+    const wanted = skus ? new Set(skus) : null;
+    const entries = this.data.books
+      .filter((b) => assigned.has(b.id) && bookInForce(b, at))
+      .flatMap((b) =>
+        sortedEntries(this.data, b.id)
+          .filter((e) => !wanted || wanted.has(e.sku))
+          .map(
+            (e): PriceRule => ({
+              id: bookEntryId(b.id, e.sku, e.minQty),
+              source: 'price_book',
+              name: b.name,
+              sku: e.sku,
+              minQty: e.minQty,
+              price: e.price,
+              discountPct: e.discountPct,
+              bookId: b.id,
+              bookPriority: b.priority,
+            }),
+          ),
+      );
     return {
       sources,
       rules: [
         ...(this.fixture.priceRules ?? []),
+        ...entries,
         ...contracts.map(
-          (c): PriceRule => ({
-            id: `contract_${c.customerId}_${c.sku}`,
+          ([sku, price]): PriceRule => ({
+            id: `contract_${customerId}_${sku}`,
             source: 'contract',
             name: 'Contract price',
-            sku: c.sku,
-            customerId: c.customerId,
-            price: c.price,
+            sku,
+            customerId,
+            price,
           }),
         ),
       ],
-      tier: customer?.tier ?? null,
+      tier,
     };
   }
 }

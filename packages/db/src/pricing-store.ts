@@ -17,13 +17,15 @@ import {
 } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import type { PricingStore, Redemption } from '@commerceworker/ports/commerce';
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { createDb } from './index';
 import { endsWith } from './match';
 import {
   contractPrices,
   customers,
   fxRates,
+  priceBookAssignments,
+  priceBooks,
   priceRules,
   priceSources,
   products,
@@ -87,12 +89,17 @@ type ProductRow = typeof products.$inferSelect;
 type FxRow = typeof fxRates.$inferSelect;
 type SourceRow = typeof priceSources.$inferSelect;
 type RuleRow = typeof priceRules.$inferSelect;
+/** A rule with the book it belongs to, null for one in none. */
+type RuleRead = {
+  rule: RuleRow;
+  book: { id: string | null; name: string | null; priority: number | null } | null;
+};
 type ContractRow = typeof contractPrices.$inferSelect;
 
 /** The price chain from its rows: contract prices become the contract source's entries. */
 function chainOf(
   sources: SourceRow[],
-  rules: RuleRow[],
+  rules: RuleRead[],
   contracts: ContractRow[],
   customer: { tier: string } | undefined,
 ) {
@@ -106,7 +113,16 @@ function chainOf(
       }),
     ),
     rules: [
-      ...rules.map((r): PriceRule => ({ ...r, source: r.sourceId as PriceSourceKind })),
+      ...rules.map(
+        ({ rule: r, book }): PriceRule => ({
+          ...r,
+          source: r.sourceId as PriceSourceKind,
+          // A book's entries are named by the book, so a line's price says which book priced it.
+          ...(book?.id
+            ? { name: book.name ?? r.name, bookId: book.id, bookPriority: book.priority }
+            : {}),
+        }),
+      ),
       ...contracts.map(
         (c): PriceRule => ({
           id: `contract_${c.customerId}_${c.sku}`,
@@ -126,13 +142,68 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
   const db = createDb(d1);
 
   /**
-   * The price chain's four reads, as one batch's statements. With no customer, the contract and
-   * tier reads match nothing (a customer id is never empty), so the batch keeps its shape.
+   * The rules the chain reads: every entry in no book, and the entries of the books assigned to
+   * the customer (by id or by their tier) that are active and inside their dates at `at`, with
+   * each entry's book. With no customer, no book is assigned (a customer id is never empty). When
+   * `skus` is given the book entries are only those SKUs', in runs under D1's parameter limit
+   * (the first run also carries the entries in no book); one statement for any usual order.
    */
-  const chainReads = (customerId: string | undefined) =>
+  const ruleReads = (customerId: string | undefined, at: number, skus?: readonly string[]) => {
+    const assigned = db
+      .select({ id: priceBooks.id })
+      .from(priceBooks)
+      .innerJoin(priceBookAssignments, eq(priceBookAssignments.bookId, priceBooks.id))
+      .where(
+        and(
+          eq(priceBooks.status, 'active'),
+          or(isNull(priceBooks.startsAt), lte(priceBooks.startsAt, at)),
+          or(isNull(priceBooks.endsAt), gt(priceBooks.endsAt, at)),
+          or(
+            eq(priceBookAssignments.customerId, customerId ?? ''),
+            eq(
+              priceBookAssignments.tier,
+              sql`(SELECT ${customers.tier} FROM ${customers} WHERE ${customers.id} = ${customerId ?? ''})`,
+            ),
+          ),
+        ),
+      );
+    const read = (loose: boolean, only?: readonly string[]) =>
+      db
+        .select({
+          rule: priceRules,
+          // Aliased: Drizzle's D1 batch reads rows by column name, so a joined `id` and `name`
+          // would overwrite the rule's own.
+          book: {
+            id: sql<string | null>`${priceBooks.id}`.as('pb_id'),
+            name: sql<string | null>`${priceBooks.name}`.as('pb_name'),
+            priority: sql<number | null>`${priceBooks.priority}`.as('pb_priority'),
+          },
+        })
+        .from(priceRules)
+        .leftJoin(priceBooks, eq(priceBooks.id, priceRules.bookId))
+        .where(
+          or(
+            loose ? isNull(priceRules.bookId) : undefined,
+            and(
+              inArray(priceRules.bookId, assigned),
+              only ? inArray(priceRules.sku, [...only]) : undefined,
+            ),
+          ),
+        );
+    if (!skus) return [read(true)];
+    const runs = chunk([...new Set(skus)], SKUS_PER_QUERY);
+    return runs.length ? runs.map((run, i) => read(i === 0, run)) : [read(true)];
+  };
+
+  /**
+   * The price chain's reads, as one batch's statements: sources, rules (`ruleReads`), the
+   * customer's contract prices and their tier. With no customer, the contract and tier reads
+   * match nothing (a customer id is never empty), so the batch keeps its shape.
+   */
+  const chainReads = (customerId: string | undefined, at: number, skus?: readonly string[]) =>
     [
       db.select().from(priceSources).where(eq(priceSources.active, true)),
-      db.select().from(priceRules),
+      ...ruleReads(customerId, at, skus),
       db
         .select()
         .from(contractPrices)
@@ -143,6 +214,15 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
         .where(eq(customers.id, customerId ?? ''))
         .limit(1),
     ] as const;
+
+  /** The chain from a batch of `chainReads`: sources, one or more rule reads, contracts, tier. */
+  const chainFrom = (results: unknown[][]) =>
+    chainOf(
+      results[0] as SourceRow[],
+      results.slice(1, -2).flat() as RuleRead[],
+      results.at(-2) as ContractRow[],
+      (results.at(-1) as { tier: string }[])[0],
+    );
 
   return {
     async customer(id) {
@@ -376,12 +456,12 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
       return rows.length;
     },
 
-    async pricingFor(customerId) {
-      const [sources, rules, contracts, customer] = await db.batch(chainReads(customerId));
-      return chainOf(sources, rules, contracts, customer[0]);
+    async pricingFor(customerId, at, skus) {
+      const [head, ...rest] = chainReads(customerId, at, skus);
+      return chainFrom((await db.batch([head, ...rest])) as unknown[][]);
     },
 
-    async priceInputs(skus, currency, customerId, chain) {
+    async priceInputs(skus, currency, customerId, chain, at) {
       const runs = chunk([...new Set(skus)], SKUS_PER_QUERY);
       const productReads = runs.map((run) =>
         db.select().from(products).where(inArray(products.sku, run)),
@@ -390,7 +470,7 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
         currency === BASE_CURRENCY
           ? []
           : [db.select().from(fxRates).where(eq(fxRates.currency, currency))];
-      const reads = chain ? chainReads(customerId) : [];
+      const reads = chain ? chainReads(customerId, at, skus) : [];
       const all = [...productReads, ...rate, ...reads];
       if (!all.length) return { products: [], fxRate: 1, chain: null };
       const [head, ...rest] = all;
@@ -402,14 +482,7 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
       return {
         products: found,
         fxRate: currency === BASE_CURRENCY ? 1 : (rateRow[0]?.rate ?? null),
-        chain: chain
-          ? chainOf(
-              c[0] as SourceRow[],
-              c[1] as RuleRow[],
-              c[2] as ContractRow[],
-              (c[3] as { tier: string }[])[0],
-            )
-          : null,
+        chain: chain ? chainFrom(c) : null,
       };
     },
   };

@@ -1,5 +1,6 @@
 {
   "commerce.price: price 2 lines for a contract customer": { "statements": 5, "roundTrips": 1 },
+  "commerce.price: price 2 lines with an assigned price book": { "statements": 5, "roundTrips": 1 },
   "commerce.price: price 2 lines in another currency": { "statements": 6, "roundTrips": 1 },
   "commerce.price: price a buy-side order at cost": { "statements": 1, "roundTrips": 1 },
   "commerce.route_fulfillment: ship 2 lines": { "statements": 4, "roundTrips": 4 },
@@ -50,5 +51,8 @@
   "commerce.validate: the company only": { "statements": 1, "roundTrips": 1 },
   "commerce.validate: the company and its buyer": { "statements": 2, "roundTrips": 1 },
   "admin new order: every record for the pickers": { "statements": 8, "roundTrips": 1 },
-  "admin: currencies": { "statements": 1, "roundTrips": 1 }
+  "admin: currencies": { "statements": 1, "roundTrips": 1 },
+  "admin price books: a page": { "statements": 2, "roundTrips": 1 },
+  "admin price book: its assignees and a page of entries": { "statements": 4, "roundTrips": 3 },
+  "admin customer: its price books and contract prices": { "statements": 2, "roundTrips": 2 }
 }

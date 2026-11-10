@@ -31,7 +31,9 @@ DELETE FROM flow_versions;
 DELETE FROM flows;
 
 DELETE FROM contract_prices;
+DELETE FROM price_book_assignments;
 DELETE FROM price_rules;
+DELETE FROM price_books;
 DELETE FROM location_stock;
 DELETE FROM products;
 DELETE FROM sellers;

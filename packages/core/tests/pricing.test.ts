@@ -73,3 +73,106 @@ describe('resolvePrice', () => {
     expect(resolvePrice(line('W', 1), 10, noContract, rules, ctx).by.source).toBe('list');
   });
 });
+
+describe('resolvePrice across price books', () => {
+  const book = (
+    id: string,
+    bookPriority: number,
+    price: number,
+    over: Partial<PriceRule> = {},
+  ): PriceRule => ({
+    id: `e_${id}_${price}`,
+    source: 'price_book',
+    name: `Book ${id}`,
+    sku: 'W',
+    price,
+    bookId: id,
+    bookPriority,
+    ...over,
+  });
+
+  it('prefers the highest-priority book over a lower price in another', () => {
+    const rules = [book('low', 1, 4), book('high', 5, 9)];
+    expect(resolvePrice(line('W', 1), 10, sources, rules, ctx)).toEqual({
+      unitPrice: 9,
+      by: { source: 'price_book', ruleId: 'e_high_9', name: 'Book high', bookId: 'high' },
+    });
+    // The order the rules arrive in changes nothing.
+    expect(resolvePrice(line('W', 1), 10, sources, [...rules].reverse(), ctx).by).toMatchObject({
+      bookId: 'high',
+    });
+  });
+
+  it('takes the lowest price within the winning book, so the deepest tier wins', () => {
+    const rules = [
+      book('high', 5, 9),
+      book('high', 5, 8, { id: 'tier10', minQty: 10 }),
+      book('high', 5, 6, { id: 'tier100', minQty: 100 }),
+      book('low', 1, 1),
+    ];
+    expect(resolvePrice(line('W', 1), 10, sources, rules, ctx).unitPrice).toBe(9);
+    expect(resolvePrice(line('W', 10), 10, sources, rules, ctx).by.ruleId).toBe('tier10');
+    expect(resolvePrice(line('W', 500), 10, sources, rules, ctx).by.ruleId).toBe('tier100');
+  });
+
+  it('falls to a lower-priority book for a SKU the higher one does not price', () => {
+    const rules = [book('high', 5, 9, { sku: 'X' }), book('low', 1, 4)];
+    expect(resolvePrice(line('W', 1), 10, sources, rules, ctx).by).toMatchObject({ bookId: 'low' });
+  });
+
+  it('falls to a lower-priority book when the higher one is not yet at its quantity', () => {
+    const rules = [book('high', 5, 6, { minQty: 100 }), book('low', 1, 9)];
+    expect(resolvePrice(line('W', 99), 10, sources, rules, ctx).by).toMatchObject({
+      bookId: 'low',
+    });
+    expect(resolvePrice(line('W', 100), 10, sources, rules, ctx).by).toMatchObject({
+      bookId: 'high',
+    });
+  });
+
+  it('ranks an entry in no book below every book', () => {
+    const rules: PriceRule[] = [
+      { id: 'tier', source: 'price_book', name: 'Gold', customerTier: 'gold', price: 3 },
+      book('b', -5, 9),
+    ];
+    expect(resolvePrice(line('W', 1), 10, sources, rules, ctx).by).toMatchObject({ bookId: 'b' });
+    // With no book pricing the line, the book-less rule stands as before.
+    expect(resolvePrice(line('W', 1), 10, sources, rules.slice(0, 1), ctx)).toMatchObject({
+      unitPrice: 3,
+      by: { ruleId: 'tier' },
+    });
+  });
+
+  it('prices a percentage book entry off the list price', () => {
+    const rules = [book('pct', 2, 0, { price: null, discountPct: 20 })];
+    expect(resolvePrice(line('W', 1), 10, sources, rules, ctx).unitPrice).toBe(8);
+  });
+
+  it('breaks ties between equal priority and price by book id, then entry id, whatever the order', () => {
+    const rules = [book('b', 3, 7), book('a', 3, 7), book('a', 3, 7, { id: 'a_second' })];
+    for (const order of [rules, [...rules].reverse(), [rules[1]!, rules[2]!, rules[0]!]])
+      expect(resolvePrice(line('W', 1), 10, sources, order, ctx).by).toMatchObject({
+        bookId: 'a',
+        ruleId: 'a_second',
+      });
+  });
+
+  it('still takes the lowest price among the other sources, ties by entry id', () => {
+    const rules: PriceRule[] = [
+      { id: 'z', source: 'volume', name: 'Z', sku: 'W', price: 5 },
+      { id: 'a', source: 'volume', name: 'A', sku: 'W', price: 5 },
+      { id: 'm', source: 'volume', name: 'M', sku: 'W', price: 6 },
+    ];
+    expect(resolvePrice(line('W', 1), 10, sources, rules, ctx).by.ruleId).toBe('a');
+    expect(resolvePrice(line('W', 1), 10, sources, [...rules].reverse(), ctx).by.ruleId).toBe('a');
+  });
+
+  it('keeps the chain: a contract can still beat a book that does not stop processing', () => {
+    const open = sources.map((s) => (s.id === 'price_book' ? { ...s, stopProcessing: false } : s));
+    const rules: PriceRule[] = [
+      book('high', 5, 9),
+      { id: 'c', source: 'contract', name: 'Contract', customerId: 'cus_a', sku: 'W', price: 7 },
+    ];
+    expect(resolvePrice(line('W', 1), 10, open, rules, ctx).by.source).toBe('contract');
+  });
+});

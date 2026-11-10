@@ -1150,7 +1150,11 @@ function Pricing({ pricing, fxRates }: Pick<Office, 'pricing'> & { fxRates: FxRa
       <p className="border-t px-4 py-2.5 text-muted-foreground text-xs">
         <span className="block max-w-measure">
           Prices are in {BASE_CURRENCY}. Orders in another currency convert at the rate below, fixed
-          when the order is priced. Promotion codes are on the{' '}
+          when the order is priced. Named price books and their assignments are on the{' '}
+          <Link to="/price-books" className="text-link hover:underline">
+            Price books
+          </Link>{' '}
+          page, and promotion codes on the{' '}
           <Link to="/promotions" className="text-link hover:underline">
             Promotions
           </Link>{' '}

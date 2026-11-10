@@ -1274,6 +1274,78 @@ describe('operations REST runs as MCP does', () => {
     ).toBe(403);
   });
 
+  it('reads price books as a viewer, with the book from the path and the query typed as the tool takes it', async () => {
+    run.mockResolvedValueOnce({ ok: true, value: { books: [], total: 0, next: null } });
+    const listed = await handleApi(
+      new Request('https://app.test/api/v1/price-books?status=active&limit=5&after=spring'),
+      viewer,
+    );
+    expect(listed.status).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'list_price_books',
+      { status: 'active', limit: 5, after: 'spring' },
+    ]);
+    run.mockResolvedValueOnce({ ok: true, value: { entries: [] } });
+    await handleApi(new Request('https://app.test/api/v1/price-books/pb_1?limit=10'), viewer);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'get_price_book',
+      { bookId: 'pb_1', limit: 10 },
+    ]);
+    run.mockResolvedValueOnce({ ok: true, value: { lines: [] } });
+    expect(
+      (await post('price-preview', { lines: [{ sku: 'WID-100', qty: 3 }] }, viewer)).status,
+    ).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'preview_price',
+      { lines: [{ sku: 'WID-100', qty: 3 }] },
+    ]);
+  });
+
+  it('writes price books and contract prices only for an operator, naming the book or customer in the path', async () => {
+    const before = run.mock.calls.length;
+    for (const [path, body] of [
+      ['price-books', { code: 'spring', name: 'Spring' }],
+      ['price-books/pb_1/status', { status: 'active' }],
+      ['price-books/pb_1/entries', { entries: [{ sku: 'A', price: 1 }] }],
+      ['price-books/pb_1/assignments', { tier: 'gold' }],
+      ['customers/cus_1/contract-prices', { prices: [{ sku: 'A', price: 1 }] }],
+    ] as const)
+      expect((await post(path, body, viewer)).status, path).toBe(403);
+    expect(run).toHaveBeenCalledTimes(before);
+
+    run.mockResolvedValueOnce({ ok: true, value: { done: 'Added', href: '/price-books/pb_1' } });
+    expect(
+      (await post('price-books', { code: 'spring', name: 'Spring', priority: 5 })).status,
+    ).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'create_price_book',
+      { code: 'spring', name: 'Spring', priority: 5 },
+    ]);
+    run.mockResolvedValueOnce({ ok: true, value: {} });
+    await post('price-books/pb_1/status', { status: 'archived', bookId: 'pb_other' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'set_price_book_status',
+      { bookId: 'pb_1', status: 'archived' },
+    ]);
+    run.mockResolvedValueOnce({ ok: true, value: {} });
+    await post('customers/cus_1/contract-prices', { prices: [{ sku: 'A', price: null }] });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'put_contract_prices',
+      { customerId: 'cus_1', prices: [{ sku: 'A', price: null }] },
+    ]);
+
+    // The engine refuses an API token: these change what buyers pay.
+    run.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      error: 'A person signed in as themselves does this',
+    });
+    expect((await post('price-books/pb_1/assignments', { tier: 'gold' })).status).toBe(403);
+    // A body the tool won't take is a 400.
+    run.mockResolvedValueOnce({ ok: false, status: 400, error: 'status: Invalid option' });
+    expect((await post('price-books/pb_1/status', { status: 'draft' })).status).toBe(400);
+  });
+
   it("answers the engine's refusal, holds the tool's role, and leaves other paths alone", async () => {
     run.mockResolvedValueOnce({ ok: false, error: 'A person verifies a certificate…' });
     expect((await post('customers/cus_1/tax-certificates/txc_1/verify', {})).status).toBe(409);

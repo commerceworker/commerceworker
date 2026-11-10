@@ -68,13 +68,23 @@ again.
 | Slice | Scope | Depends on |
 |---|---|---|
 | S1 Companies (built) | `companies` (1:1 with a business customer), teams (a tree), members (fixed company roles, an optional per-member order limit), the buyer on an order, creating and editing customers. Lifecycles: company `pending → active ⇄ suspended → closed` (or `rejected`), member `invited → active ⇄ inactive → removed`. `validateOrder` declines orders from inactive companies or buyers. JSON Logic gains `company.*` and `buyer.*` | none |
-| S2 Price books | Named books (priority, dates, status) assigned to a company or a tier, entries as price rules, a write path for contract prices. Within the price-book source, the highest-priority assigned book wins, then the lowest price in it. Read in the same single batch | S1 for company assignments |
+| S2 Price books (built) | Named books (priority, dates, status) assigned to a company or a tier, entries as price rules, a write path for contract prices. Within the price-book source, the highest-priority assigned book wins, then the lowest price in it. Read in the same single batch | S1 for company assignments |
 | S3 Credit ledger (built) | Holds taken by the credit check, guarded so the check and the hold are one batch and no interleaving exceeds a limit. Converted to the charge at invoicing, released on rollback, cancel and order end. Limit editing and adjustments (person-confirmed) | S1 |
 | S4 Budgets | Per company and team, per calendar period, `strict` or `advisory`. Spend is a ledger keyed by order and step and summed per window, never a mutable counter. Reversed on rollback | S1 |
 | S5 Approvals | `control.approval` gains approvers (`staff:<role>`, `company:<role>`, team, members) and a mode (`any`, `all`, `majority`, `quorum`). Votes are recorded once, and the OrderAgent resumes the wait only once the vote is decided, so the Workflow and its step names are unchanged. Thresholds are flow logic over `company.*`. No route approves outside the flow | S1 |
 | S6 Purchase orders | Buyer PO records with editable drafts. Submitting starts an order on a B2B PO flow, and the PO's status follows the order. Inbound EDI, email and punchout POs create records too | S1, S3, S4, S5 |
 | S7 Quotes | Negotiated, versioned quotes. A `quote` price source with the highest priority, valid only while accepted, unexpired, for its company and within its quantities. Quote to PO draft, or straight to an order | S1, S2, S6 |
 | S8 Close | A B2B scenario and docs run, `patterns.md` and `port-map.md` updated, a `hexagonal-guardian` pass, a generated lifecycle reference | all |
+
+### S2 notes
+
+S2 follows D2 and D8: books are in the base currency, and a book is assigned to a `customer_id` (under D1, the
+company) or to a `tier`. Beyond the plan: entries in no book (the older `price_book` rules) stay valid and rank
+below every book; equal priority and price break by book id, then entry id; the book's dates are checked
+against the order's `now`, so a replayed step prices as it did; an agentic checkout's buyer has no customer, so no
+assigned book applies to it. `PriceBookStore.forCustomer` takes S1's `scope`. A suspended or closed company's
+assigned books still price (pricing isn't access control; `validateOrder` declines the order), but
+`assign_price_book` refuses a company that isn't active (taking an assignment away is always allowed).
 
 ### S3 notes
 

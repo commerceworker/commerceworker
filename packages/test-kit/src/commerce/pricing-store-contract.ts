@@ -289,7 +289,7 @@ export function describePricingStoreContract(
       expect(await s.fxRate('GBP')).toBe(0.781);
       expect(await s.fxRate('USD')).toBe(1);
       expect(await s.fxRate('XTS')).toBeNull();
-      expect((await s.priceInputs([], 'GBP', undefined, false)).fxRate).toBe(0.781);
+      expect((await s.priceInputs([], 'GBP', undefined, false, 0)).fxRate).toBe(0.781);
       expect(await s.setFxRates([], 2_000, 'ecb')).toBe(0);
       expect(
         await s.setFxRates([{ currency: 'CHF', rate: Number.POSITIVE_INFINITY }], 2_000, 'ecb'),
@@ -347,12 +347,12 @@ export function describePricingStoreContract(
         ['USD', undefined],
         ['XTS', 'pc_northwind'],
       ] as const) {
-        const together = await s.priceInputs(skus, currency, customerId, true);
+        const together = await s.priceInputs(skus, currency, customerId, true, 0);
         expect(byId(together.products)).toEqual(byId(await s.products(skus)));
         expect(together.fxRate).toBe(await s.fxRate(currency));
-        expect(together.chain).toEqual(await s.pricingFor(customerId));
+        expect(together.chain).toEqual(await s.pricingFor(customerId, 0, skus));
       }
-      expect((await s.priceInputs(skus, 'USD', 'pc_northwind', false)).chain).toBeNull();
+      expect((await s.priceInputs(skus, 'USD', 'pc_northwind', false, 0)).chain).toBeNull();
     });
 
     it('adds a promotion once per code, active, and pauses and reactivates it', async () => {
@@ -503,7 +503,7 @@ export function describePricingStoreContract(
 
     it("builds a customer's price chain: active sources, rules, their contract prices, their tier", async () => {
       const s = await store();
-      const chain = await s.pricingFor('pc_northwind');
+      const chain = await s.pricingFor('pc_northwind', 0);
       expect(chain.sources.map((x) => x.id).sort()).toEqual(['contract', 'price_book']);
       expect(chain.tier).toBe('gold');
       const mine = chain.rules.filter(
@@ -518,7 +518,7 @@ export function describePricingStoreContract(
         price: 20,
       });
 
-      const anonymous = await s.pricingFor(undefined);
+      const anonymous = await s.pricingFor(undefined, 0);
       expect(anonymous.tier).toBeNull();
       expect(anonymous.rules.some((r) => r.source === 'contract')).toBe(false);
     });

@@ -20,6 +20,7 @@ import { d1OrderBoard } from '@commerceworker/db/order-board';
 import { d1OrderRecords } from '@commerceworker/db/order-records';
 import { d1PasskeyStore } from '@commerceworker/db/passkey-store';
 import { d1PluginInstallStore } from '@commerceworker/db/plugin-install-store';
+import { d1PriceBookStore } from '@commerceworker/db/price-book-store';
 import { d1PricingStore } from '@commerceworker/db/pricing-store';
 import { d1ScimDirectory } from '@commerceworker/db/scim-directory';
 import { d1UcpStore } from '@commerceworker/db/ucp-store';
@@ -40,6 +41,7 @@ import type {
   OrderRecords,
   PasskeyStore,
   PluginInstallStore,
+  PriceBookStore,
   PricingStore,
   ScimDirectory,
   UcpStore,
@@ -59,6 +61,8 @@ export const pricingStore = (): PricingStore => d1PricingStore(env.DB, systemClo
 
 /** A business customer's credit: its limit, balance, holds and ledger. */
 export const balanceStore = (): BalanceStore => d1BalanceStore(env.DB, systemClock);
+/** Price books, their entries and assignees, and customers' contract prices. */
+export const priceBookStore = (): PriceBookStore => d1PriceBookStore(env.DB);
 
 /** The carts index: one row per cart. */
 export const cartRecords = (): CartRecords => d1CartRecords(env.DB, systemClock);

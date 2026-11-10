@@ -61,6 +61,8 @@ export const PAGES = [
   '/flows/tpl-storefront-order',
   '/commerce',
   '/promotions',
+  '/price-books',
+  '/price-books/pb_demo_wholesale',
   '/performance',
   '/catalog',
   '/customers/cus_northwind',

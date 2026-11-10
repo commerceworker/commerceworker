@@ -130,18 +130,30 @@ export interface PricingStore {
     source: FxSource,
     by?: string,
   ): Promise<number>;
-  /** The price chain for a customer: contract prices become the contract source's entries. */
-  pricingFor(customerId: string | undefined): Promise<PricingInputs>;
+  /**
+   * The price chain for a customer: contract prices become the contract source's entries, and the
+   * price books assigned to the customer (by id, or by their tier) that are in force at `at` supply
+   * the price-book source's entries, each tagged with its book (`bookId`, `bookPriority`, the
+   * book's name). Book entries for SKUs other than `skus` are left out when it is given; entries
+   * in no book are always read.
+   */
+  pricingFor(
+    customerId: string | undefined,
+    at: number,
+    skus?: readonly string[],
+  ): Promise<PricingInputs>;
   /**
    * What pricing an order reads, together: the SKUs' products, the currency's rate, and the price
    * chain unless `chain` is false (a buy-side order prices at cost). The same answers as
-   * `products`, `fxRate` and `pricingFor`, read in one round trip where the store can.
+   * `products`, `fxRate` and `pricingFor` (for `skus`, as of `at`), read in one round trip where
+   * the store can.
    */
   priceInputs(
     skus: readonly string[],
     currency: string,
     customerId: string | undefined,
     chain: boolean,
+    at: number,
   ): Promise<{
     products: ProductRecord[];
     fxRate: number | null;

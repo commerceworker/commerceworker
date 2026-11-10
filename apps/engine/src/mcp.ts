@@ -69,6 +69,10 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'remove_company_member',
   // A limit replaces the one customers order on account by.
   'set_credit_limit',
+  // Entries and contract prices replace what buyers pay by; archiving a book is for good.
+  'put_price_book_entries',
+  'put_contract_prices',
+  'set_price_book_status',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -98,6 +102,12 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'remove_company_member',
   'update_customer',
   'set_credit_limit',
+  // or rate, entries, prices, assignment or status.
+  'set_fx_rate',
+  'put_price_book_entries',
+  'put_contract_prices',
+  'set_price_book_status',
+  'assign_price_book',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',

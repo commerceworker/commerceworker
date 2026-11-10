@@ -373,6 +373,7 @@ export const RESERVED_PATH_SEGMENTS = new Set([
   'orders',
   'performance',
   'plugins',
+  'price-books',
   'promotions',
   'scim',
   'setup',

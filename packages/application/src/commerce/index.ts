@@ -8,6 +8,7 @@ export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';
 export * from './payments';
+export * from './price-books';
 export * from './price-order';
 export * from './principals';
 export * from './rate-shipping';

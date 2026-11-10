@@ -109,6 +109,18 @@ import {
 import { draftHash, heldToDraft, previewTestFlow, runTestFlow } from './flows';
 import { previewFxRate, runFxRate } from './fx';
 import { previewRestart, previewStart, runRestart, runStart, type StartInput } from './orders';
+import {
+  previewContractPrices,
+  previewCreatePriceBook,
+  previewPriceBookAssignment,
+  previewPriceBookEntries,
+  previewPriceBookStatus,
+  runContractPrices,
+  runCreatePriceBook,
+  runPriceBookAssignment,
+  runPriceBookEntries,
+  runPriceBookStatus,
+} from './price-books';
 
 export class Refused extends Error {}
 
@@ -453,6 +465,11 @@ export type ActionInput = {
   set_fx_rate: ToolInput<'set_fx_rate'>;
   set_credit_limit: ToolInput<'set_credit_limit'>;
   adjust_credit: ToolInput<'adjust_credit'>;
+  create_price_book: ToolInput<'create_price_book'>;
+  set_price_book_status: ToolInput<'set_price_book_status'>;
+  put_price_book_entries: ToolInput<'put_price_book_entries'>;
+  assign_price_book: ToolInput<'assign_price_book'>;
+  put_contract_prices: ToolInput<'put_contract_prices'>;
   verify_tax_certificate: { customerId: string; certificateId: string };
   revoke_tax_certificate: { customerId: string; certificateId: string };
   create_customer: ToolInput<'create_customer'>;
@@ -716,6 +733,36 @@ export async function previewAction<T extends ActionTool>(
         return await previewCreditLimit(env, input as ActionInput['set_credit_limit'], roleBlock);
       case 'adjust_credit':
         return await previewCreditAdjustment(env, input as ActionInput['adjust_credit'], roleBlock);
+      case 'create_price_book':
+        return await previewCreatePriceBook(
+          env,
+          input as ActionInput['create_price_book'],
+          roleBlock,
+        );
+      case 'set_price_book_status':
+        return await previewPriceBookStatus(
+          env,
+          input as ActionInput['set_price_book_status'],
+          roleBlock,
+        );
+      case 'put_price_book_entries':
+        return await previewPriceBookEntries(
+          env,
+          input as ActionInput['put_price_book_entries'],
+          roleBlock,
+        );
+      case 'assign_price_book':
+        return await previewPriceBookAssignment(
+          env,
+          input as ActionInput['assign_price_book'],
+          roleBlock,
+        );
+      case 'put_contract_prices':
+        return await previewContractPrices(
+          env,
+          input as ActionInput['put_contract_prices'],
+          roleBlock,
+        );
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -1024,6 +1071,16 @@ export async function runAction<T extends ActionTool>(
       return runCreditLimit(env, p, input as ActionInput['set_credit_limit'], trail);
     case 'adjust_credit':
       return runCreditAdjustment(env, p, input as ActionInput['adjust_credit'], trail, key);
+    case 'create_price_book':
+      return runCreatePriceBook(env, p, input as ActionInput['create_price_book'], trail);
+    case 'set_price_book_status':
+      return runPriceBookStatus(env, p, input as ActionInput['set_price_book_status'], trail);
+    case 'put_price_book_entries':
+      return runPriceBookEntries(env, p, input as ActionInput['put_price_book_entries'], trail);
+    case 'assign_price_book':
+      return runPriceBookAssignment(env, p, input as ActionInput['assign_price_book'], trail);
+    case 'put_contract_prices':
+      return runContractPrices(env, p, input as ActionInput['put_contract_prices'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

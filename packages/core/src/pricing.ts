@@ -3,9 +3,12 @@
  * D1 and passes them in with the list price.
  *
  * Sources run in `priority` order (lowest first). Within a source, the lowest price among its
- * matching entries counts, so the deepest volume tier wins. Each source that matches adds that
- * price as a candidate, and a matching source with `stopProcessing` ends the chain. The line takes
- * the lowest candidate; with none, the list price.
+ * matching entries counts, so the deepest volume tier wins. The price-book source ranks first by
+ * the entry's book: the highest-priority book that prices the line wins, then the lowest price in
+ * it (an entry in no book ranks below every book). Equal ranks break by book id, then entry id,
+ * so the same inputs always price the same way. Each source that matches adds that price as a
+ * candidate, and a matching source with `stopProcessing` ends the chain. The line takes the lowest
+ * candidate; with none, the list price.
  */
 
 export const PRICE_SOURCES = ['price_book', 'contract', 'volume'] as const;
@@ -33,6 +36,10 @@ export type PriceRule = {
   discountPct?: number | null;
   startsAt?: number | null;
   endsAt?: number | null;
+  /** The price book the entry belongs to; null for an entry in none. */
+  bookId?: string | null;
+  /** That book's priority: the higher wins within the price-book source. */
+  bookPriority?: number | null;
 };
 
 export type PriceContext = {
@@ -42,7 +49,7 @@ export type PriceContext = {
 };
 
 export type PricedBy =
-  | { source: PriceSourceKind; ruleId: string; name: string }
+  | { source: PriceSourceKind; ruleId: string; name: string; bookId?: string | null }
   | { source: 'list'; ruleId: null; name: 'List price' };
 
 export type ResolvedPrice = { unitPrice: number; by: PricedBy };
@@ -70,6 +77,19 @@ function priceOf(r: PriceRule, listPrice: number) {
   return round(listPrice * (1 - (r.discountPct ?? 0) / 100));
 }
 
+/** Whether `a` ranks above `b` within a source: book priority, then price, then ids. */
+function outranks(
+  a: { rule: PriceRule; unitPrice: number },
+  b: { rule: PriceRule; unitPrice: number },
+): boolean {
+  const pa = a.rule.bookPriority ?? Number.NEGATIVE_INFINITY;
+  const pb = b.rule.bookPriority ?? Number.NEGATIVE_INFINITY;
+  if (pa !== pb) return pa > pb;
+  if (a.unitPrice !== b.unitPrice) return a.unitPrice < b.unitPrice;
+  const books = (a.rule.bookId ?? '').localeCompare(b.rule.bookId ?? '');
+  return books !== 0 ? books < 0 : a.rule.id.localeCompare(b.rule.id) < 0;
+}
+
 export function resolvePrice(
   line: { sku: string; qty: number },
   listPrice: number,
@@ -80,14 +100,22 @@ export function resolvePrice(
   let best: ResolvedPrice | null = null;
   const ordered = [...sources].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   for (const source of ordered) {
-    let mine: ResolvedPrice | null = null;
+    let top: { rule: PriceRule; unitPrice: number } | null = null;
     for (const r of rules) {
       if (r.source !== source.id || !matchesRule(r, line, ctx)) continue;
-      const unitPrice = priceOf(r, listPrice);
-      if (!mine || unitPrice < mine.unitPrice)
-        mine = { unitPrice, by: { source: source.id, ruleId: r.id, name: r.name } };
+      const c = { rule: r, unitPrice: priceOf(r, listPrice) };
+      if (!top || outranks(c, top)) top = c;
     }
-    if (!mine) continue;
+    if (!top) continue;
+    const mine: ResolvedPrice = {
+      unitPrice: top.unitPrice,
+      by: {
+        source: source.id,
+        ruleId: top.rule.id,
+        name: top.rule.name,
+        ...(top.rule.bookId ? { bookId: top.rule.bookId } : {}),
+      },
+    };
     if (!best || mine.unitPrice < best.unitPrice) best = mine;
     if (source.stopProcessing) break;
   }

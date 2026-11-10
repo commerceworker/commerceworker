@@ -23,6 +23,7 @@ export * from './outbox';
 export * from './passkeys';
 export * from './payments';
 export * from './plugin-installs';
+export * from './price-books';
 export * from './pricing';
 export * from './product-index';
 export * from './retention';

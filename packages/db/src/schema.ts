@@ -2,6 +2,7 @@
 
 import { sql } from 'drizzle-orm';
 import {
+  check,
   index,
   integer,
   primaryKey,
@@ -510,8 +511,57 @@ export const priceRules = sqliteTable(
     startsAt: integer('starts_at'),
     endsAt: integer('ends_at'),
     createdAt: integer('created_at').notNull(),
+    /** The price book this entry belongs to; null for an entry in none. */
+    bookId: text('book_id').references(() => priceBooks.id),
   },
-  (t) => [index('price_rules_source').on(t.sourceId)],
+  (t) => [
+    index('price_rules_source').on(t.sourceId),
+    index('price_rules_book').on(t.bookId, t.sku, t.minQty),
+  ],
+);
+
+/** Named price lists (packages/core/src/price-books.ts); their entries are `price_rules` by `book_id`. */
+export const priceBooks = sqliteTable(
+  'price_books',
+  {
+    id: text('id').primaryKey(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    priority: integer('priority').notNull().default(0),
+    status: text('status').notNull().default('draft'),
+    startsAt: integer('starts_at'),
+    endsAt: integer('ends_at'),
+    createdBy: text('created_by'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('price_books_code').on(t.code)],
+);
+
+/** A book's assignees: one customer or one tier per row. */
+export const priceBookAssignments = sqliteTable(
+  'price_book_assignments',
+  {
+    bookId: text('book_id')
+      .notNull()
+      .references(() => priceBooks.id),
+    customerId: text('customer_id'),
+    tier: text('tier'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('price_book_assignments_customer')
+      .on(t.bookId, t.customerId)
+      .where(sql`${t.customerId} IS NOT NULL`),
+    uniqueIndex('price_book_assignments_tier')
+      .on(t.bookId, t.tier)
+      .where(sql`${t.tier} IS NOT NULL`),
+    index('price_book_assignments_assignee').on(t.customerId, t.tier),
+    check(
+      'price_book_assignments_one_assignee',
+      sql`(${t.customerId} IS NULL) <> (${t.tier} IS NULL)`,
+    ),
+  ],
 );
 
 /** One change to a customer's balance, keyed by the step that made it. */
