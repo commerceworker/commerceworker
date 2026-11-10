@@ -22,6 +22,7 @@ export function FormSheet({
   open,
   onOpenChange,
   label,
+  icon = <Plus aria-hidden="true" />,
   title,
   description,
   onCloseAutoFocus,
@@ -32,6 +33,8 @@ export function FormSheet({
   onOpenChange: (open: boolean) => void;
   /** The button that opens it, e.g. "New promotion". */
   label: string;
+  /** The button's icon; a plus for a create form, none for another action. */
+  icon?: ReactNode;
   /** The sheet's heading, when it says more than the button. */
   title?: string;
   description?: ReactNode;
@@ -47,7 +50,7 @@ export function FormSheet({
       {bare ? null : (
         <SheetTrigger asChild>
           <Button size="sm">
-            <Plus aria-hidden="true" /> {label}
+            {icon} {label}
           </Button>
         </SheetTrigger>
       )}

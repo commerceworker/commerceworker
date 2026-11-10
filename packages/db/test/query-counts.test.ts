@@ -153,6 +153,42 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
       }),
   ],
   ['rollback commerce.invoice: reverse the charge', () => ports.balances.reverse(id('invoice'))],
+  [
+    'commerce.credit_check: hold the order total',
+    () =>
+      ports.balances.hold({
+        orderId: id('credit'),
+        stepKey: 'credit#1',
+        customerId: 'pc_northwind',
+        amount: 10,
+        expiresAt: now + 86_400_000,
+      }),
+  ],
+  [
+    'rollback commerce.credit_check: release the holds',
+    () => ports.balances.releaseHolds(id('credit')),
+  ],
+  ['admin customer: its credit account', () => ports.balances.account('pc_northwind')],
+  [
+    'admin customer: a page of the credit ledger',
+    () => ports.balances.ledger('pc_northwind', undefined, 25),
+  ],
+  [
+    'admin customer: a later page of the credit ledger',
+    () => ports.balances.ledger('pc_northwind', { at: now, id: 'bal_' }, 25),
+  ],
+  [
+    'admin customer: adjust the balance',
+    () =>
+      ports.balances.adjust({
+        key: id('adjust'),
+        customerId: 'pc_northwind',
+        amount: -5,
+        reason: 'Credit memo',
+        by: 'ann@example.com',
+      }),
+  ],
+  ['admin customer: set the credit limit', () => ports.balances.setLimit('pc_northwind', 50_000)],
   ['commerce.invoice: paid so far', () => ports.ledger.forOrder(id('invoice'))],
   ['ucp: order shipments', () => ports.shipping.booked(id('invoice'))],
   ['ucp: load a checkout', () => ports.checkouts.load('qc_platform', id('checkout'))],

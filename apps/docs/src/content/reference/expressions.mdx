@@ -183,8 +183,9 @@ Central Bank's daily refresh keeps every currency it covers current, except one 
 by hand holds until someone changes it, and the table shows who set it and when.
 
 - Amounts on the order, its documents, payments and refunds are in the order's currency.
-- Credit check and budget check compare `baseTotal`; the credit check reports in the order's
-  currency, and an unpaid invoice to a business customer adds `baseTotal` to their balance.
+- Credit check and budget check compare `baseTotal`; the credit check holds `baseTotal` against the
+  customer's limit, reports in the order's currency, and an unpaid invoice to a business customer
+  converts that hold into a charge of `baseTotal` on their balance.
 - The dashboard converts at each order's `fxRate`, so its figures are in USD.
 - `order.total` in an expression is in the order's currency; use `order.baseTotal` for a threshold
   that should hold across currencies. Policy rule amounts compare `order.total`.

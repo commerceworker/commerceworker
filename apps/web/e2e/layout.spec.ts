@@ -104,6 +104,42 @@ test('the new promotion form, condition included, fits the screen and reads at 1
     ).toBeGreaterThanOrEqual(16);
 });
 
+test('a customer’s credit section shows its figures and ledger, and its two forms fit the screen at 16px', async ({
+  page,
+}, info) => {
+  await open(page, '/customers/cus_northwind');
+  const credit = page.locator('#credit');
+  await expect(credit.getByRole('heading', { name: 'Credit' })).toBeVisible();
+  for (const label of ['Credit limit', 'Balance owed', 'Held by open orders', 'Available'])
+    await expect(credit.getByText(label, { exact: true })).toBeVisible();
+  for (const name of ['Set limit', 'Adjust balance']) {
+    await credit.getByRole('button', { name }).click();
+    const sheet = page.getByRole('dialog');
+    const fields = sheet.locator('input, select');
+    await expect(fields.first()).toBeVisible();
+    for (const field of await fields.all()) {
+      const width = page.viewportSize()!.width;
+      // The sheet slides in: measure once it has settled.
+      await expect
+        .poll(
+          async () => {
+            const box = await field.boundingBox();
+            return box ? box.x >= 0 && box.x + box.width <= width : false;
+          },
+          { message: `${name}: a field sits inside the screen` },
+        )
+        .toBe(true);
+      if (isTouch(info))
+        expect(
+          await field.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize)),
+        ).toBeGreaterThanOrEqual(16);
+    }
+    expect(await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(sheet).toBeHidden();
+  }
+});
+
 test('the new promotion form shows the buy X, get Y fields inside the screen, at 16px on touch', async ({
   page,
 }, info) => {

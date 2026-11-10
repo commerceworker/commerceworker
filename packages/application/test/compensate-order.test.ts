@@ -35,7 +35,9 @@ function ports() {
     ledger,
     mode: paymentModeFor(),
     invoices: new InMemoryInvoiceStore(ledger, clock),
-    balances: new InMemoryBalanceStore({ customers: [{ id: 'ada', balance: 0 }] }),
+    balances: new InMemoryBalanceStore({
+      customers: [{ id: 'ada', balance: 0, creditLimit: 500 }],
+    }),
     inventory: new InMemoryInventoryStore({ products: [{ sku: 'TEE', stock: 10 }] }),
     shipping: new InMemoryShippingStore(clock),
     labels: new FakeLabelService(),
@@ -93,6 +95,33 @@ describe('cancelling an order', () => {
     });
   });
 
+  it('gives back the credit it holds, once, and leaves a charged hold charged', async () => {
+    const p = ports();
+    const hold = (orderId: string) =>
+      p.balances.hold({
+        orderId,
+        stepKey: 'credit#1',
+        customerId: 'ada',
+        amount: 200,
+        expiresAt: 9e15,
+      });
+    await hold('o1');
+    await hold('o2');
+    expect((await p.balances.account('ada'))?.held).toBe(400);
+    expect(await compensateOrder(p, 'o1')).toMatchObject({ creditReleased: 1 });
+    expect(await compensateOrder(p, 'o1')).toMatchObject({ creditReleased: 0 });
+    expect((await p.balances.account('ada'))?.held).toBe(200);
+    // An invoice converted o2's hold: cancelling reverses the charge and releases nothing.
+    await p.balances.charge({
+      orderId: 'o2',
+      stepKey: 'invoice#1',
+      customerId: 'ada',
+      amount: 200,
+    });
+    expect(await compensateOrder(p, 'o2')).toMatchObject({ creditReleased: 0, unbilled: 1 });
+    expect(await p.balances.account('ada')).toMatchObject({ balance: 0, held: 0, available: 500 });
+  });
+
   it('undoes nothing for an order that holds nothing', async () => {
     expect(await compensateOrder(ports(), 'o_none')).toEqual({
       released: 0,
@@ -103,6 +132,7 @@ describe('cancelling an order', () => {
       payoutsReversed: 0,
       revoked: 0,
       unbilled: 0,
+      creditReleased: 0,
       invoicesVoided: 0,
       invoicesPaid: [],
       labelsNotVoided: 0,

@@ -14,6 +14,7 @@ export * from './channels/x12';
 export * from './checkout';
 export * from './codes';
 export * from './credentials';
+export * from './credit';
 export * from './customers';
 export * from './documents';
 export * from './egress';

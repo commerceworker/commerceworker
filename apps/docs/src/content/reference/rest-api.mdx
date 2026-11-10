@@ -304,6 +304,9 @@ on, and its JSON body (or, for a `GET`, its query string) gives the rest of the 
 | `POST` | `/api/v1/companies/:companyId/members/:memberId/remove` | Removes a member for good (operator) |
 | `POST` | `/api/v1/companies/:companyId/teams` | `{ name, teamId?, parentTeamId? }`: adds a team, or renames and moves one (operator) |
 | `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
+| `GET` | `/api/v1/customers/:customerId/credit?after=&limit=` | A business customer's credit account: `limit`, `balance`, `held`, `available` and a page of the ledger, newest first with `balanceAfter` per entry; `next` is the cursor for `after` |
+| `POST` | `/api/v1/customers/:customerId/credit/limit` | `{ limit }`: sets the credit limit (admin; a person, not an API token) |
+| `POST` | `/api/v1/customers/:customerId/credit/adjustments` | `{ amount, reason }`: records a credit memo or payment received (negative) or a debit (positive), with a required reason (admin; a person, not an API token). An `Idempotency-Key` records a retry once |
 | `POST` | `/api/v1/stock/review` | Runs the stock review now |
 | `GET` | `/api/v1/stock?q=&belowReorder=` | The stock list: SKUs, stock and reorder points |
 | `POST` | `/api/v1/orders/:orderId/assess` | `{ questions, images? }`: asks the model questions about an order |

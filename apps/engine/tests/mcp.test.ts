@@ -11,7 +11,7 @@ import {
   UCP_SETTINGS_KEY,
 } from '@commerceworker/core';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
-import { auditEvents, createDb } from '@commerceworker/db';
+import { auditEvents, createDb, customers } from '@commerceworker/db';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ensureTemplates } from '../src/flows';
@@ -195,7 +195,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        19,
+        20,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -267,6 +267,7 @@ describe('MCP', () => {
       'find_products',
       'get_cart',
       'get_catalog_feed',
+      'get_credit_account',
       'get_flow',
       'get_order',
       'get_product',
@@ -293,7 +294,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(63);
+    expect(operator).toHaveLength(64);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -339,7 +340,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(84);
+    expect(admin).toHaveLength(87);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -977,6 +978,137 @@ describe('MCP', () => {
       expect(swapped.isError).toBe(true);
       expect(swapped.content[0]!.text).toMatch(/different action or input/);
       expect(await pricingStore(env).fxRate('EUR')).toBe(0.92);
+    });
+  });
+
+  describe('credit accounts', () => {
+    const admin = person('admin', 'ann@example.com');
+    const operator = person('operator', 'ops@example.com');
+    const viewer = person('viewer', 'view@example.com');
+    const id = `cus_mcp_credit_${crypto.randomUUID().slice(0, 8)}`;
+    const audited = async (action: string) =>
+      (
+        await createDb(env.DB)
+          .select()
+          .from(auditEvents)
+          .where(and(eq(auditEvents.action, action), eq(auditEvents.target, id)))
+          .all()
+      ).map((e) => ({ actor: e.actor, detail: JSON.parse(e.detail ?? '{}') }));
+
+    beforeAll(async () => {
+      await createDb(env.DB)
+        .insert(customers)
+        .values({
+          id,
+          name: `Credit ${id}`,
+          email: `${id}@example.com`,
+          kind: 'business',
+          creditLimit: 1_000,
+          balance: 100,
+        });
+    });
+
+    async function confirm(tool: string, args: Record<string, unknown>) {
+      const first = await call(admin, tool, args);
+      expect(first.isError, first.content[0]?.text).toBeFalsy();
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(admin, tool, { ...args, confirmation: code });
+      expect(done.isError, done.content[0]?.text).toBeFalsy();
+      // A code works once.
+      expect((await call(admin, tool, { ...args, confirmation: code })).isError).toBe(true);
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+      };
+    }
+
+    it('reads for a viewer, and changes the account for an admin only, with hints', async () => {
+      expect(
+        (await tools(viewer)).find((t) => t.name === 'get_credit_account')?.annotations,
+      ).toMatchObject({ readOnlyHint: true, idempotentHint: true });
+      for (const name of ['set_credit_limit', 'adjust_credit'])
+        expect((await tools(operator)).map((t) => t.name)).not.toContain(name);
+      const all = await tools(admin);
+      expect(all.find((t) => t.name === 'set_credit_limit')).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      });
+      expect(all.find((t) => t.name === 'adjust_credit')).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+        inputSchema: { required: expect.arrayContaining(['customerId', 'amount', 'reason']) },
+      });
+    });
+
+    it('sets the limit on a confirmed code, shows the account before and after, and audits it', async () => {
+      const { preview } = await confirm('set_credit_limit', { customerId: id, limit: 400 });
+      const text = preview.consequences.join('\n');
+      expect(text).toContain('Limit $1,000.00, then $400.00');
+      expect(text).toContain('Available $900.00, then $300.00');
+      expect(
+        (await call(viewer, 'get_credit_account', { customerId: id })).structuredContent,
+      ).toMatchObject({
+        limit: 400,
+        balance: 100,
+        held: 0,
+        available: 300,
+        currency: 'USD',
+      });
+      expect((await audited('credit.limit_set')).at(-1)).toMatchObject({
+        actor: 'ann@example.com',
+        detail: { from: 1_000, to: 400, via: 'mcp', tool: 'set_credit_limit' },
+      });
+      // A limit under what is owed warns that orders are refused.
+      const low = await call(admin, 'set_credit_limit', { customerId: id, limit: 50 });
+      expect(
+        (low.structuredContent!.preview as { consequences: string[] }).consequences.join('\n'),
+      ).toMatch(/refused until it is paid down/);
+    });
+
+    it('adjusts the balance with a reason, which the ledger and the audit trail keep', async () => {
+      const { preview, done } = await confirm('adjust_credit', {
+        customerId: id,
+        amount: -60,
+        reason: 'Credit memo 41',
+      });
+      expect(preview.title).toBe(`Lower ${id}’s balance by $60.00`);
+      expect(preview.consequences.join('\n')).toContain('Owed $100.00, then $40.00');
+      expect(done.id).toMatch(/^adj_/);
+      const account = (await call(viewer, 'get_credit_account', { customerId: id }))
+        .structuredContent!;
+      expect(account).toMatchObject({ balance: 40, next: null });
+      expect(account.entries).toMatchObject([
+        { kind: 'adjust', amount: -60, balanceAfter: 40, note: 'Credit memo 41', orderId: null },
+      ]);
+      expect((await audited('credit.adjusted')).at(-1)).toMatchObject({
+        detail: { amount: -60, reason: 'Credit memo 41', balance: 40, via: 'mcp' },
+      });
+    });
+
+    it('blocks what the account can’t take at the preview, issuing no code', async () => {
+      for (const [tool, input, why] of [
+        ['adjust_credit', { customerId: id, amount: -5, reason: '   ' }, /Give a reason/],
+        [
+          'adjust_credit',
+          { customerId: 'cus_nobody', amount: -5, reason: 'x' },
+          /No such customer/,
+        ],
+        ['set_credit_limit', { customerId: 'cus_ada', limit: 5 }, /business customer/],
+        ['set_credit_limit', { customerId: id, limit: -1 }, /schema|too small|>=0|Too small/i],
+      ] as const) {
+        const r = await call(admin, tool, input);
+        expect(r.isError, JSON.stringify(input)).toBe(true);
+        expect(r.content[0]!.text).toMatch(why);
+        expect(r.structuredContent?.confirmation).toBeUndefined();
+      }
+      // A code is for the amount it previewed.
+      const first = await call(admin, 'adjust_credit', { customerId: id, amount: -5, reason: 'x' });
+      const swapped = await call(admin, 'adjust_credit', {
+        customerId: id,
+        amount: -500,
+        reason: 'x',
+        confirmation: first.structuredContent!.confirmation,
+      });
+      expect(swapped.isError).toBe(true);
+      expect(swapped.content[0]!.text).toMatch(/different action or input/);
     });
   });
 

@@ -100,6 +100,12 @@ import {
   runTeam,
   runUpdateCustomer,
 } from './companies';
+import {
+  previewCreditAdjustment,
+  previewCreditLimit,
+  runCreditAdjustment,
+  runCreditLimit,
+} from './credit';
 import { draftHash, heldToDraft, previewTestFlow, runTestFlow } from './flows';
 import { previewFxRate, runFxRate } from './fx';
 import { previewRestart, previewStart, runRestart, runStart, type StartInput } from './orders';
@@ -445,6 +451,8 @@ export type ActionInput = {
   uninstall_plugin: { pluginId: string };
   set_promotion_status: { promotionId: string; status: 'active' | 'paused' };
   set_fx_rate: ToolInput<'set_fx_rate'>;
+  set_credit_limit: ToolInput<'set_credit_limit'>;
+  adjust_credit: ToolInput<'adjust_credit'>;
   verify_tax_certificate: { customerId: string; certificateId: string };
   revoke_tax_certificate: { customerId: string; certificateId: string };
   create_customer: ToolInput<'create_customer'>;
@@ -704,6 +712,10 @@ export async function previewAction<T extends ActionTool>(
         );
       case 'put_company_team':
         return await previewTeam(env, input as ActionInput['put_company_team'], roleBlock);
+      case 'set_credit_limit':
+        return await previewCreditLimit(env, input as ActionInput['set_credit_limit'], roleBlock);
+      case 'adjust_credit':
+        return await previewCreditAdjustment(env, input as ActionInput['adjust_credit'], roleBlock);
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -1008,6 +1020,10 @@ export async function runAction<T extends ActionTool>(
       return runRemoveMember(env, p, input as ActionInput['remove_company_member'], trail);
     case 'put_company_team':
       return runTeam(env, p, input as ActionInput['put_company_team'], trail);
+    case 'set_credit_limit':
+      return runCreditLimit(env, p, input as ActionInput['set_credit_limit'], trail);
+    case 'adjust_credit':
+      return runCreditAdjustment(env, p, input as ActionInput['adjust_credit'], trail, key);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

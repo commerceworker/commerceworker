@@ -44,6 +44,7 @@ import { changeCart, getCart, listCarts, openCart } from './carts';
 import { acceptProductDrafts, discardProductEdits, stageProductEdits } from './catalog';
 import { putCatalogChannel, putCatalogType } from './catalog-writes';
 import { readCompanies, readCompany, readCompanyMembers } from './companies';
+import { readCreditAccount } from './credit';
 import {
   type ActionInput,
   type ActionTool,
@@ -120,6 +121,8 @@ export const ACTION_TOOLS: ActionTool[] = [
   'create_promotion',
   'set_promotion_status',
   'set_fx_rate',
+  'set_credit_limit',
+  'adjust_credit',
   'verify_tax_certificate',
   'revoke_tax_certificate',
   'create_customer',
@@ -335,6 +338,8 @@ export async function runTool<T extends AssistantTool>(
       return readCompany(env, input as ToolInput<'get_company'>);
     case 'list_company_members':
       return readCompanyMembers(env, input as ToolInput<'list_company_members'>);
+    case 'get_credit_account':
+      return readCreditAccount(env, input as ToolInput<'get_credit_account'>);
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

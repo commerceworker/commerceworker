@@ -327,9 +327,23 @@ export const NODE_SPECS = [
     category: 'commerce',
     label: 'Credit check',
     description:
-      'Compares the order total plus open balance with the customer’s credit limit. Guests and consumers have no credit account.',
+      'Compares the order total with the credit the customer has left: the limit less the balance owed and what other open orders hold. With a hold, passing the check claims that credit for the order until its invoice charges it (or the order ends or rolls back), so two orders can’t both pass and together exceed the limit. Guests and consumers have no credit account.',
     icon: 'ShieldCheck',
     fields: [
+      {
+        key: 'hold',
+        label: 'Hold the credit',
+        kind: 'boolean',
+        default: true,
+        hint: 'Claim the order’s total from the limit when it passes, until the invoice charges it',
+      },
+      {
+        key: 'holdFor',
+        label: 'Hold for at most',
+        kind: 'duration',
+        default: '30 days',
+        hint: 'A backstop: a hold the order never gave back expires after this',
+      },
       {
         key: 'noAccount',
         label: 'Without a credit account',
@@ -340,6 +354,7 @@ export const NODE_SPECS = [
       },
     ],
     outputs: ['ok', 'over_limit'],
+    rollback: true,
   }),
   node({
     type: 'commerce.budget_check',
