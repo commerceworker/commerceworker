@@ -2,35 +2,45 @@ import { env } from 'cloudflare:workers';
 import {
   type CartGuest,
   DEV_PRINCIPAL_KEY,
+  type GuestActor,
   PRINCIPAL_HEADER,
-  type RpcActor,
   type SignedActor,
   signCartGuest,
-  signRpcActor,
+  signGuestActor,
+  storefrontKey,
 } from '@commerceworker/core';
 
 /**
- * The key this Worker signs with, the same `PRINCIPAL_KEY` the web Worker and the engine hold; the
- * engine checks every envelope against it. Local dev (`vite dev`) uses a fixed key when none is set.
+ * The key this Worker signs with and checks the buyer's cookie under: `storefrontKey`, derived
+ * from the deployment's principal key, which this Worker never holds (the deploy writes only the
+ * derived key, `scripts/fleet.ts secrets storefront`). The engine derives the same value and
+ * checks what the storefront signs under it alone, so a compromise here can speak as a buyer or a
+ * UCP platform and never as staff. Local dev (`vite dev`) derives it from the fixed dev key.
  */
-export function principalKey() {
+export async function signingKey(): Promise<string> {
   const key =
-    (env as { PRINCIPAL_KEY?: string }).PRINCIPAL_KEY ||
-    (import.meta.env.DEV ? DEV_PRINCIPAL_KEY : undefined);
+    (env as { STOREFRONT_KEY?: string }).STOREFRONT_KEY ||
+    (import.meta.env.DEV ? await storefrontKey(DEV_PRINCIPAL_KEY) : undefined);
   if (!key)
-    throw new Error('PRINCIPAL_KEY is not set: the engine would refuse every forwarded call');
+    throw new Error('STOREFRONT_KEY is not set: the engine would refuse every forwarded call');
   return key;
+}
+
+/** The keys a buyer's cookie is checked under: the current, then the previous one in a rotation. */
+export async function verifyingKeys(): Promise<string[]> {
+  const previous = (env as { STOREFRONT_KEY_PREVIOUS?: string }).STOREFRONT_KEY_PREVIOUS;
+  return previous ? [await signingKey(), previous] : [await signingKey()];
 }
 
 /** The header for an external cart's buyer on that cart's socket (`signCartGuest`). */
 export async function setGuestHeader(headers: Headers, g: CartGuest, path: string) {
-  headers.set(PRINCIPAL_HEADER, await signCartGuest(principalKey(), g, path));
+  headers.set(PRINCIPAL_HEADER, await signCartGuest(await signingKey(), g, path));
 }
 
 /**
- * Who is acting on an `EngineRpc` call, signed for that one call (`cart:<cartId>`): the engine
- * takes it from nothing else.
+ * The buyer acting on a `StorefrontRpc` call, signed for that one call (`cart:<cartId>`): the
+ * engine takes it from nothing else, and only for the cart that buyer was admitted to.
  */
-export function signedActor(actor: RpcActor, call: string): Promise<SignedActor> {
-  return signRpcActor(principalKey(), actor, call);
+export async function signedActor(actor: GuestActor, call: string): Promise<SignedActor> {
+  return signGuestActor(await signingKey(), actor, call);
 }

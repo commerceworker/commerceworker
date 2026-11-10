@@ -1,31 +1,36 @@
 import {
   PRINCIPAL_HEADER,
-  UCP_SETTINGS_KEY,
   verifyCartGuest,
   verifyPlatform,
   verifyPrincipal,
 } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const env = { PRINCIPAL_KEY: 'storefront-test-key' };
+const env = { STOREFRONT_KEY: 'storefront-test-key' };
 const KEY = `cmw_ucp_${'k'.repeat(43)}`;
 
-/** The platform behind KEY and the UCP settings, in memory. */
-const { InMemoryUcpStore, InMemoryWorkspaceStore } = await import(
-  '@commerceworker/test-kit/commerce'
-);
-let ucp = new InMemoryUcpStore();
-let workspace = new InMemoryWorkspaceStore();
-vi.mock('~/lib/wire.server', () => ({ ucpStore: () => ucp, workspaceStore: () => workspace }));
+/**
+ * The platforms the engine knows (by key hash) and whether agentic checkout is on: the engine
+ * holds both, this Worker no database.
+ */
+let platforms = new Map<string, { id: string; name: string; profileUrl: string }>();
+let checkoutOn = true;
+const ucpPlatform = vi.fn(async (hash: string) => platforms.get(hash) ?? null);
+const ucpCheckoutOn = vi.fn(async () => checkoutOn);
+let engineHealth = vi.fn(async () => ({ ok: true }));
 const engineFetch = vi.fn(async (_r: Request) => Response.json({ ok: true }));
 const ucpProfile = vi.fn(async (_origin: string): Promise<Record<string, unknown> | null> => null);
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
 vi.mock('~/lib/env.server', () => ({
-  engine: () => ({ fetch: engineFetch, ucpProfile }),
-  afterResponse: (work: PromiseLike<unknown>) => void Promise.resolve(work),
-  docs: () => ({}),
+  engine: () => ({
+    fetch: engineFetch,
+    ucpProfile,
+    ucpPlatform,
+    ucpCheckoutOn,
+    health: () => engineHealth(),
+  }),
 }));
 vi.mock('~/lib/rate-limit', () => ({ overBudget: async () => null }));
 
@@ -48,14 +53,10 @@ describe('UCP on the storefront', () => {
   beforeEach(async () => {
     engineFetch.mockClear();
     forgetUcpSettings();
-    ucp = new InMemoryUcpStore({
-      platforms: [
-        { id: 'ucp_1', name: 'Agent', profileUrl: PROFILE, keyHash: await sha256Hex(KEY) },
-      ],
-    });
-    workspace = new InMemoryWorkspaceStore({
-      settings: { [UCP_SETTINGS_KEY]: JSON.stringify({ checkoutFlowId: 'tpl-storefront-order' }) },
-    });
+    platforms = new Map([
+      [await sha256Hex(KEY), { id: 'ucp_1', name: 'Agent', profileUrl: PROFILE }],
+    ]);
+    checkoutOn = true;
   });
 
   it('refuses a request without a platform key', async () => {
@@ -63,10 +64,12 @@ describe('UCP on the storefront', () => {
     expect((await call('/ucp/v1/checkout-sessions', { 'x-api-key': 'cmw_live_x' })).status).toBe(
       401,
     );
-    // A revoked key lets nobody in.
-    await ucp.revokePlatform('ucp_1', 1);
+    // A revoked key lets nobody in (the engine no longer knows it).
+    platforms.clear();
     expect((await call('/ucp/v1/checkout-sessions', asPlatform)).status).toBe(401);
     expect(engineFetch).not.toHaveBeenCalled();
+    // Only a hash of the key left this Worker.
+    for (const [hash] of ucpPlatform.mock.calls) expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("needs UCP-Agent on REST, naming the key's own profile", async () => {
@@ -83,7 +86,7 @@ describe('UCP on the storefront', () => {
   });
 
   it('answers 404 while agentic checkout is off', async () => {
-    workspace = new InMemoryWorkspaceStore();
+    checkoutOn = false;
     expect((await call('/ucp/v1/checkout-sessions', asPlatform)).status).toBe(404);
   });
 
@@ -102,11 +105,19 @@ describe('UCP on the storefront', () => {
     expect(sent.headers.get('cookie')).toBeNull();
     expect(
       await verifyPlatform(
-        [env.PRINCIPAL_KEY],
+        [env.STOREFRONT_KEY],
         sent.headers.get(PRINCIPAL_HEADER),
         '/ucp/v1/checkout-sessions',
       ),
     ).toEqual({ id: 'ucp_1', name: 'Agent', profileUrl: PROFILE, origin: 'https://shop.example' });
+    // Under the storefront key alone: the principal key (which this Worker never holds) opens it not.
+    expect(
+      await verifyPlatform(
+        ['some-principal-key'],
+        sent.headers.get(PRINCIPAL_HEADER),
+        '/ucp/v1/checkout-sessions',
+      ),
+    ).toBeNull();
     expect(await sent.text()).toBe('{"line_items":[]}');
   });
 
@@ -123,19 +134,15 @@ describe('UCP on the storefront', () => {
 
 describe('UCP on the Worker’s routes', () => {
   const viaWorker = (path: string, init: RequestInit = {}) =>
-    worker.fetch(new Request(`https://shop.example${path}`, init) as never, env as never);
+    worker.fetch(new Request(`https://shop.example${path}`, init) as never);
 
   beforeEach(async () => {
     engineFetch.mockClear();
     forgetUcpSettings();
-    ucp = new InMemoryUcpStore({
-      platforms: [
-        { id: 'ucp_1', name: 'Agent', profileUrl: PROFILE, keyHash: await sha256Hex(KEY) },
-      ],
-    });
-    workspace = new InMemoryWorkspaceStore({
-      settings: { [UCP_SETTINGS_KEY]: JSON.stringify({ checkoutFlowId: 'tpl-storefront-order' }) },
-    });
+    platforms = new Map([
+      [await sha256Hex(KEY), { id: 'ucp_1', name: 'Agent', profileUrl: PROFILE }],
+    ]);
+    checkoutOn = true;
   });
 
   it('serves the profile at /.well-known/ucp and forwards /ucp/* by key, from any origin', async () => {
@@ -155,15 +162,25 @@ describe('UCP on the Worker’s routes', () => {
     expect(res.status).toBe(200);
     const header = engineFetch.mock.calls[0]![0].headers.get(PRINCIPAL_HEADER);
     const path = '/ucp/v1/checkout-sessions';
-    expect(await verifyPlatform([env.PRINCIPAL_KEY], header, path)).toMatchObject({ id: 'ucp_1' });
-    expect(await verifyPrincipal([env.PRINCIPAL_KEY], header, path)).toBeNull();
-    expect(await verifyCartGuest([env.PRINCIPAL_KEY], header, path)).toBeNull();
+    expect(await verifyPlatform([env.STOREFRONT_KEY], header, path)).toMatchObject({ id: 'ucp_1' });
+    expect(await verifyPrincipal([env.STOREFRONT_KEY], header, path)).toBeNull();
+    expect(await verifyCartGuest([env.STOREFRONT_KEY], header, path)).toBeNull();
     // Signed for the path it was forwarded to, no other.
-    expect(await verifyPlatform([env.PRINCIPAL_KEY], header, '/ucp/mcp')).toBeNull();
+    expect(await verifyPlatform([env.STOREFRONT_KEY], header, '/ucp/mcp')).toBeNull();
   });
 
   it('refuses a key-less /ucp call at the Worker, before the engine', async () => {
     expect((await viaWorker('/ucp/v1/checkout-sessions', { method: 'POST' })).status).toBe(401);
     expect(engineFetch).not.toHaveBeenCalled();
+  });
+
+  it('has no database or bucket to check: its deep health asks only the engine', async () => {
+    const health = vi.fn(async () => ({ ok: true }));
+    engineHealth = health;
+    const res = await viaWorker('/health/deep');
+    expect(res.status).toBe(200);
+    expect(health).toHaveBeenCalledTimes(1);
+    health.mockResolvedValueOnce({ ok: false });
+    expect((await viaWorker('/health/deep')).status).toBe(503);
   });
 });

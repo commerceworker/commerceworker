@@ -94,12 +94,17 @@ Set in `vars` in `apps/web/wrangler.jsonc`.
 
 ## Storefront variables and secrets
 
-`apps/storefront/wrangler.jsonc` has no variables. Its one secret is `PRINCIPAL_KEY`, the same key the web
-Worker and the engine hold: it signs the envelopes the storefront forwards to the engine (a cart's buyer,
-`signCartGuest`; a UCP platform, `signPlatform`; an actor on one call, `signRpcActor`) and the cookie a start
-link sets (`signCartGuestSession`), and the previous key (`PRINCIPAL_KEY_PREVIOUS`) verifies that cookie
-during a rotation. `fleet.ts secrets storefront` writes it from the deployment's environment. A platform's
-API key and a buyer's cookie never leave this Worker; the engine gets only the signed envelope.
+`apps/storefront/wrangler.jsonc` has no variables, and no `PRINCIPAL_KEY`: the storefront is public, so a
+compromise of it must not be able to sign as staff. Its one secret is `STOREFRONT_KEY`, the HMAC-SHA256 of
+`PRINCIPAL_KEY` over the label `commerceworker-storefront` (`storefrontKey` in `packages/core/src/roles.ts`, mirrored
+in `scripts/fleet.ts`; the engine derives the same from its own `PRINCIPAL_KEY`). It signs the envelopes the
+storefront forwards to the engine (a cart's buyer, `signCartGuest`; a UCP platform, `signPlatform`; a buyer on
+one call, `signGuestActor`) and the cookie a start link sets (`signCartGuestSession`). `STOREFRONT_KEY_PREVIOUS`,
+derived from `PRINCIPAL_KEY_PREVIOUS`, verifies that cookie during a rotation, and is written only when that is set.
+`fleet.ts secrets storefront` derives both from the deployment's environment; the principal key itself is never
+written to the Worker. The engine takes these envelopes under the storefront key alone, and v1 principals and
+staff actors under `PRINCIPAL_KEY` alone. A platform's API key and a buyer's cookie never leave this Worker; the engine
+gets only the signed envelope (and a platform key's hash). In local dev the key is derived from `DEV_PRINCIPAL_KEY`.
 
 ## Web secrets
 
@@ -127,8 +132,8 @@ created through the API and stored in D1; they are not configuration.
 
 | Binding | Worker | Resource |
 |---|---|---|
-| `DB` | engine, web, storefront, catalog | D1 database `commerceworker`; migrations in `packages/db/migrations`. The catalog only writes `products.name`, `price` and `catalog_at`; a customer's database is rendered into the catalog's config at deploy (`renderCatalog`, which refuses a deployment without `d1Id`) |
-| `DOCS` | engine, web, storefront | R2 bucket `commerceworker-docs`: invoices, POs and inbound documents; a cart's files are stored here as the staff or the buyer add them |
+| `DB` | engine, web, catalog | D1 database `commerceworker`; migrations in `packages/db/migrations`. The catalog only writes `products.name`, `price` and `catalog_at`; a customer's database is rendered into the catalog's config at deploy (`renderCatalog`, which refuses a deployment without `d1Id`) |
+| `DOCS` | engine, web | R2 bucket `commerceworker-docs`: invoices, POs and inbound documents; a cart's files are stored here as the staff or the buyer add them (the buyer's through the engine: the storefront has no bucket) |
 | `ORDER_AGENT` | engine | Durable Object `OrderAgent` (SQLite-backed), one per order |
 | `ASSISTANT_AGENT` | engine | Durable Object `AssistantAgent` (SQLite-backed, migration `v2`), one per person |
 | `A2A_AGENT` | engine | Durable Object `A2AAgent` (SQLite-backed, migration `v3`), one per [A2A](https://docs.commerceworker.com/reference/a2a/) caller |
@@ -160,7 +165,7 @@ created through the API and stored in D1; they are not configuration.
 | `ANALYTICS` | delivery | Analytics Engine dataset `commerceworker_catalog_delivery` (a customer's is `commerceworker_catalog_delivery_<id>`) |
 | Queue consumer | delivery | `commerceworker-catalog-purge` (`max_batch_size` 100, `max_batch_timeout` 12 seconds, `max_concurrency` 1, `max_retries` 10, `retry_delay` 30, dead-letter queue `commerceworker-catalog-purge-dlq`, consumed by the catalog) |
 | Workers Caching | delivery | `cache: { enabled: true, cross_version_cache: true }`, and `exports`: the default (gateway) entrypoint has the cache off, `CatalogDelivery` has it on |
-| `ENGINE` | web, storefront | Service binding to `commerceworker-engine`, entrypoint `EngineApi` |
+| `ENGINE` | web, storefront | Service binding to `commerceworker-engine`: the web app's has entrypoint `EngineApi`, the storefront's `StorefrontApi` (`StorefrontRpc`: the cart and UCP calls the buyer's side needs, and no other) |
 | `PLUGIN_<ID>` | engine, web | Service binding to `commerceworker-plugin-<id>` for each plugin in the registry's `plugins` whose `runtime` is `worker` (the default; a `sandboxed` one has no Worker or binding; `pluginServices` in `scripts/fleet.ts`; none in the base `wrangler.jsonc` files). A plugin's own Worker has a `DB` D1 binding and, as secrets, `PLUGIN_KEY` and, during a rotation, `PLUGIN_KEY_PREVIOUS` (`fleet.ts secrets plugin <out> <plugin>`), to verify the principal the web Worker signs for that plugin. See [Plugins](plugins.md) |
 | `PLUGIN_KEY`, `PLUGIN_KEY_PREVIOUS` | each plugin | Secrets, one pair per plugin Worker. `PLUGIN_KEY` is the plugin's own page-signing key: the hex HMAC-SHA256 of `PRINCIPAL_KEY` over `commerceworker-plugin:<id>` (`pluginKey` in `packages/core/src/plugins.ts`, mirrored in `scripts/fleet.ts`); for a plugin an admin installed at runtime, over `commerceworker-plugin:<id>@<sha>` (its running version's bundle), so a key that leaked opens nothing for any other version (it works again only if that same bundle runs again), and `PLUGIN_KEY_PREVIOUS` the same from `PRINCIPAL_KEY_PREVIOUS`, written only when that is set. The web Worker signs a plugin's page requests with it; the engine and other plugins refuse it, and a plugin never holds `PRINCIPAL_KEY`. CI writes one secrets file per plugin. In local dev `apps/web/vite.config.ts` derives it from `DEV_PRINCIPAL_KEY` |
 | `<NAME>` (each declared secret) | each plugin | The secrets a plugin's manifest declares in `secrets` (an outside service's API key, say), set in the deployment's GitHub environment as `PLUGIN_<ID>_<NAME>` (`pluginSecretVar` in `packages/core/src/plugins.ts`) and written to that plugin's secrets file under `<NAME>` (`pluginOwnSecrets` in `scripts/fleet.ts`). Only the plugin with that prefix gets it. A required one that is missing fails the plugin's manifest, so deep health fails. In local dev, `plugins/<id>/.dev.vars`. See [Plugins](plugins.md#secrets) |
@@ -226,7 +231,7 @@ sets `default_retention`: finished instances are kept 7 days, errored ones 30, t
 keeps. `limits.cpu_ms` stops a
 runaway invocation: 5,000 for the web app and the storefront, 10,000 for the engine (the platform default is 30,000). I/O
 waits, such as model calls, don't count against it. The web, storefront and engine Workers set `placement.mode` to `smart`: the web
-app and the storefront run near D1 and the engine rather than near the visitor, and the engine runs near D1 rather
+app runs near D1 and the engine, and the storefront near the engine, rather than near the visitor, and the engine runs near D1 rather
 than near the web app (keep it only while Observability shows lower D1 latency).
 
 All five, and every plugin Worker (`renderPlugin` sets it), set `logpush: true`: their trace

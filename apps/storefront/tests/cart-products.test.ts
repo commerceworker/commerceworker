@@ -1,17 +1,17 @@
-import { type CartGuest, signCartGuestSession, verifyRpcActor } from '@commerceworker/core';
+import { type CartGuest, signCartGuestSession, verifyGuestActor } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const limit = vi.fn(async (_o: { key: string }) => ({ success: true }));
-const env = { PRINCIPAL_KEY: 'storefront-test-key', API_LIMIT: { limit } };
+const env = { STOREFRONT_KEY: 'storefront-test-key', API_LIMIT: { limit } };
 const searchCartProducts = vi.fn();
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
-vi.mock('~/lib/env.server', () => ({ engine: () => ({ searchCartProducts }), docs: () => ({}) }));
+vi.mock('~/lib/env.server', () => ({ engine: () => ({ searchCartProducts }) }));
 const route = await import('../app/routes/cart-products');
 
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
-  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
+  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.STOREFRONT_KEY, g, Date.now() + 60_000)}`;
 const found = {
   ok: true,
   currency: 'USD',
@@ -54,7 +54,7 @@ describe('searching products from a cart', () => {
     });
     expect(r.data).not.toHaveProperty('ok');
     const actor = searchCartProducts.mock.calls[0]![2];
-    expect(await verifyRpcActor([env.PRINCIPAL_KEY], actor, 'cart:cart_1')).toEqual({
+    expect(await verifyGuestActor([env.STOREFRONT_KEY], actor, 'cart:cart_1')).toEqual({
       kind: 'guest',
       id: 'guest:b1',
       name: 'Pat Buyer',
@@ -78,7 +78,7 @@ describe('searching products from a cart', () => {
     expect(await get('widget', { cookie: '__Host-ol_cart_1=forged.value' })).toMatchObject({
       status: 401,
     });
-    const lapsed = `__Host-ol_cart_1=${await signCartGuestSession(env.PRINCIPAL_KEY, guest, Date.now() - 1)}`;
+    const lapsed = `__Host-ol_cart_1=${await signCartGuestSession(env.STOREFRONT_KEY, guest, Date.now() - 1)}`;
     expect(await get('widget', { cookie: lapsed })).toMatchObject({ status: 401 });
     const otherKey = `__Host-ol_cart_1=${await signCartGuestSession('another-key', guest, Date.now() + 60_000)}`;
     expect(await get('widget', { cookie: otherKey })).toMatchObject({ status: 401 });

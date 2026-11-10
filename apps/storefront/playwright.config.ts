@@ -41,7 +41,8 @@ export default defineConfig({
   webServer: {
     command: [
       `rm -rf ${state}`,
-      `wrangler d1 migrations apply commerceworker --local --persist-to ${state}`,
+      // The engine's database (the storefront has none): the engine runs as its auxiliary Worker.
+      `wrangler d1 migrations apply commerceworker --local --persist-to ${state} --config ../engine/wrangler.jsonc`,
       `COMMERCEWORKER_E2E=1 react-router dev --port ${PORT} --strictPort`,
     ].join(' && '),
     url: `http://localhost:${PORT}/health`,

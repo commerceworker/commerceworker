@@ -33,6 +33,8 @@ import {
   secretsProblem,
   shellVars,
   signHealthCheck,
+  storefrontKey,
+  storefrontSecrets,
   toDeployment,
   tokenMatches,
   WRITE_CHECK_ATTEMPT_MS,
@@ -227,7 +229,7 @@ test('the web config binds its own engine, domain and rate-limit namespaces', ()
   assert.equal(c.d1_databases[0].migrations_dir, '../../packages/db/migrations');
 });
 
-test('the storefront config binds its own engine, host, database and documents', () => {
+test('the storefront config binds the engine’s narrow entrypoint and its own host, and no data', () => {
   const c = renderStorefront(base('storefront'), acme);
   assert.equal(acme.storefrontDomain, 'shop.acme.commerceworker.com');
   assert.equal(c.name, 'commerceworker-storefront-acme');
@@ -236,13 +238,22 @@ test('the storefront config binds its own engine, host, database and documents',
   assert.equal(c.workers_dev, false);
   assert.equal(c.preview_urls, false);
   assert.deepEqual(c.services, [
-    { binding: 'ENGINE', service: 'commerceworker-engine-acme', entrypoint: 'EngineApi' },
+    { binding: 'ENGINE', service: 'commerceworker-engine-acme', entrypoint: 'StorefrontApi' },
   ]);
-  assert.equal(c.d1_databases[0].database_name, 'commerceworker-acme');
-  assert.equal(c.d1_databases[0].database_id, 'd1-acme');
-  assert.deepEqual(c.r2_buckets, [
-    { binding: 'DOCS', bucket_name: 'commerceworker-docs-acme', jurisdiction: 'eu' },
-  ]);
+  // It is public, so nothing but the engine's StorefrontApi: no database, no bucket, no queue, no
+  // other Worker, in the template or in what a deployment renders.
+  for (const config of [c, base('storefront')])
+    for (const binding of [
+      'd1_databases',
+      'r2_buckets',
+      'kv_namespaces',
+      'queues',
+      'durable_objects',
+      'workflows',
+      'vectorize',
+      'ai',
+    ])
+      assert.equal(config[binding], undefined, `the storefront binds ${binding}`);
   // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 and <slot>007.
   assert.deepEqual(
     c.ratelimits.map((r: { name: string; namespace_id: string }) => [r.name, r.namespace_id]),
@@ -616,31 +627,41 @@ test('a demo may use a Turnstile test key', () => {
   );
 });
 
-test("the storefront's secrets file holds only the keys it signs and verifies with", () => {
+test("the storefront's secrets file holds its derived keys and never the principal key", () => {
   const dir = mkdtempSync(join(tmpdir(), 'storefront-secrets-'));
   try {
     const out = join(dir, 'storefront-secrets.json');
     const key = 'a'.repeat(64);
-    execFileSync('node', ['scripts/fleet.ts', 'secrets', 'storefront', out, 'commerceworker'], {
-      cwd: join(import.meta.dirname, '..'),
-      env: {
-        PATH: process.env.PATH,
-        PRINCIPAL_KEY: key,
-        PRINCIPAL_KEY_PREVIOUS: 'b'.repeat(64),
-        DATA_KEY: key,
-        PASSWORD_PEPPER: key,
-        STRIPE_SECRET_KEY: 'sk_test_x',
-        TURNSTILE_SECRET_KEY: 'x',
-        SETUP_TOKEN: 'x',
-      },
-      stdio: 'pipe',
+    const previous = 'b'.repeat(64);
+    const run = (extra: Record<string, string>) =>
+      execFileSync('node', ['scripts/fleet.ts', 'secrets', 'storefront', out, 'commerceworker'], {
+        cwd: join(import.meta.dirname, '..'),
+        env: {
+          PATH: process.env.PATH,
+          PRINCIPAL_KEY: key,
+          DATA_KEY: key,
+          PASSWORD_PEPPER: key,
+          STRIPE_SECRET_KEY: 'sk_test_x',
+          TURNSTILE_SECRET_KEY: 'x',
+          SETUP_TOKEN: 'x',
+          ...extra,
+        },
+        stdio: 'pipe',
+      });
+    run({ PRINCIPAL_KEY_PREVIOUS: previous });
+    // The storefront's key and its previous one (which verifies the buyer's cookie during a
+    // rotation), derived; no principal key, and nothing of the admin's: no data key, pepper, setup
+    // code or payment secret.
+    const written = JSON.parse(readFileSync(out, 'utf8'));
+    assert.deepEqual(written, {
+      STOREFRONT_KEY: storefrontKey(key),
+      STOREFRONT_KEY_PREVIOUS: storefrontKey(previous),
     });
-    // The principal keys (and the previous one, which verifies the buyer's cookie during a rotation)
-    // and nothing of the admin's: no data key, pepper, setup code or payment secret.
-    assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), {
-      PRINCIPAL_KEY: key,
-      PRINCIPAL_KEY_PREVIOUS: 'b'.repeat(64),
-    });
+    assert.ok(!readFileSync(out, 'utf8').includes(key));
+    assert.ok(!('PRINCIPAL_KEY' in written));
+    // Outside a rotation there is no previous key.
+    run({});
+    assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), { STOREFRONT_KEY: storefrontKey(key) });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -648,6 +669,38 @@ test("the storefront's secrets file holds only the keys it signs and verifies wi
   assert.equal(
     secretsProblem(toDeployment({ ...acme, payments: 'stripe' }), {}, 'storefront'),
     null,
+  );
+});
+
+test('the storefront is rendered with no PRINCIPAL_KEY secret and no D1 binding', () => {
+  for (const d of loadDeployments().filter((x) => x.d1Id)) {
+    const c = renderStorefront(base('storefront'), d);
+    assert.equal(c.d1_databases, undefined, d.id);
+    assert.equal(c.r2_buckets, undefined, d.id);
+    // A secret is never in the config; the template's comments name the one it expects.
+    assert.ok(!JSON.stringify(c).includes('PRINCIPAL_KEY'), d.id);
+  }
+  const template = readFileSync(
+    join(import.meta.dirname, '..', 'apps', 'storefront', 'wrangler.jsonc'),
+    'utf8',
+  );
+  assert.ok(!/\bDB\b|\bDOCS\b/.test(template.replace(/\/\/.*$/gm, '')));
+  // The deploy's secrets for it are derived: PRINCIPAL_KEY is not among them.
+  const secrets = storefrontSecrets({ PRINCIPAL_KEY: 'p'.repeat(40) });
+  assert.deepEqual(Object.keys(secrets), ['STOREFRONT_KEY']);
+});
+
+test("the storefront's key is derived as core derives it, and is neither the principal key nor another derived one", () => {
+  // The same vector as packages/core/tests/roles.test.ts.
+  assert.equal(
+    storefrontKey('test-principal-key'),
+    '58f5d0618f717f32946e47fdca333e17c0028a75a0f2db4c78f0bb57f17dad5d',
+  );
+  assert.notEqual(storefrontKey('test-principal-key'), 'test-principal-key');
+  assert.notEqual(storefrontKey('test-principal-key'), healthCheckKey('test-principal-key'));
+  assert.notEqual(
+    storefrontKey('test-principal-key'),
+    pluginKey('test-principal-key', 'storefront'),
   );
 });
 

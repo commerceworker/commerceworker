@@ -22,10 +22,14 @@ browser / API client / MCP / A2A client / UCP platform / channel webhook / Strip
         │  sessions, cmw_live_ API tokens, OAuth tokens (per resource), HMAC webhooks
         ▼
 apps/web  (public; resolves the caller, strips any caller-sent principal header)
-        │  x-commerceworker-principal: v1 (person/token) or u1 (UCP platform),
+        │  x-commerceworker-principal: v1 (person/token),
         │  HMAC over {principal, path, exp} under PRINCIPAL_KEY, TTL 60 s
-        ▼
-apps/engine  (reachable only through the web app's service binding; still verifies)
+        │                          apps/storefront  (public; holds NO PRINCIPAL_KEY, no D1, no DOCS)
+        │                              │  g1 (cart buyer) / u1 (UCP platform) / guest a1 actor,
+        │                              │  the same HMAC under storefrontKey(PRINCIPAL_KEY), TTL 60 s,
+        │                              │  to the engine's StorefrontApi entrypoint only
+        ▼                              ▼
+apps/engine  (reachable only through those service bindings; still verifies)
         │  connectors, Stripe, carriers, webhooks out, A2A push, AI Gateway
         ▼
 outside world
@@ -43,6 +47,16 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
 2. **A UCP platform is its own envelope.** `signPlatform` / `verifyPlatform` (`u1`) are accepted
    only on `/ucp/*`, never by `verifyPrincipal`, and the reverse. A platform acts only on the
    checkouts and orders it started.
+   **The public storefront holds a derived key, never `PRINCIPAL_KEY`.** `storefrontKey` (an HMAC
+   of the principal key under its own label) signs everything the storefront sends: the cart
+   buyer's `g1`, the platform's `u1`, a guest's `a1` actor and its own `gs1` cookie. The engine
+   verifies those under the storefront key only, and `v1` principals and staff `a1` actors under
+   `PRINCIPAL_KEY` only (`storefrontKeysOf`, `rpcActor`, `guestActor` in
+   `apps/engine/src/principal.ts`), so every envelope kind has exactly one key. The storefront is
+   bound to `StorefrontApi` (`StorefrontRpc`), not `EngineApi`: no method without an actor, and
+   its `fetch` serves only `/agents/cart-agent/*` and `/ucp/*`. A new method on it must take a
+   buyer signed for the cart and admit them only to that cart (`buyerOf`); a new envelope the
+   storefront signs goes under the storefront key.
 3. **`/mcp` and `/a2a` are separate OAuth resources** (RFC 8707, `apps/web/app/lib/oauth.server.ts`):
    a token works only at the endpoint it was granted for. A consent grants a role no higher than
    the approver's own.

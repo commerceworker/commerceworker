@@ -10,6 +10,7 @@ import {
   PRINCIPAL_HEADER,
   signCartGuest,
   signPrincipal,
+  storefrontKey,
   subjectTarget,
   verifyWebhook,
 } from '@commerceworker/core';
@@ -32,7 +33,7 @@ import { PluginHost } from '../../src/plugin-api';
 import { pluginStatuses } from '../../src/plugins';
 import { indexCartBuyers } from '../../src/retention';
 import { eraseDataSubject, exportDataSubject } from '../../src/subjects';
-import { signedActor } from '../principal';
+import { signedActor, signedGuest, storefrontApi } from '../principal';
 
 const testEnv = env as Env & { EXAMPLE_DB: D1Database; TEST_EXAMPLE_MIGRATIONS: D1Migration[] };
 const db = () => createDb(env.DB);
@@ -75,7 +76,7 @@ async function open(o: Partial<ExternalCartInput> = {}) {
   return { ...r.cart, cartId: cartId!, token: token! };
 }
 
-/** The cart's socket as its buyer, as the web app would sign it after redeeming a start link. */
+/** The cart's socket as its buyer, as the storefront would sign it after redeeming a start link. */
 async function guestSocket(
   cartId: string,
   guest: CartGuest,
@@ -84,7 +85,11 @@ async function guestSocket(
   const headers = new Headers({ Upgrade: 'websocket' });
   headers.set(
     PRINCIPAL_HEADER,
-    await signCartGuest((env as { PRINCIPAL_KEY?: string }).PRINCIPAL_KEY!, guest, path),
+    await signCartGuest(
+      await storefrontKey((env as { PRINCIPAL_KEY?: string }).PRINCIPAL_KEY!),
+      guest,
+      path,
+    ),
   );
   const res = await worker.fetch(new Request(`http://engine${path}`, { headers }), env);
   const ws = res.webSocket;
@@ -824,7 +829,7 @@ describe('an external cart that stays open while its buyer works', () => {
 
   it('never stays open past 24 hours from when it opened, and lets its buyer in for that long', async () => {
     const c = await open({ expiresAt: Date.now() + H, idleMs: MAX_EXTERNAL_CART_MS });
-    const redeemed = (await api().redeemCartStart(c.cartId, c.token))!;
+    const redeemed = (await storefrontApi().redeemCartStart(c.cartId, c.token))!;
     const { cart } = await timeOf(c.cartId);
     const cap = cart.createdAt + MAX_EXTERNAL_CART_MS;
     // The buyer's cookie covers every extension, and no more.
@@ -839,7 +844,7 @@ describe('an external cart that stays open while its buyer works', () => {
   it('keeps the time a cart opened with when it has no idle window', async () => {
     const expiresAt = Date.now() + 10 * 60_000;
     const c = await open({ expiresAt });
-    const redeemed = (await api().redeemCartStart(c.cartId, c.token))!;
+    const redeemed = (await storefrontApi().redeemCartStart(c.cartId, c.token))!;
     expect(redeemed.expiresAt).toBe(expiresAt);
     const ws = await guestSocket(c.cartId, redeemed.guest);
     if (!ws.call) throw new Error(`socket refused: ${ws.status}`);
@@ -875,9 +880,9 @@ describe('an external cart that stays open while its buyer works', () => {
     // Without the grant the gate refuses the buyer, and nothing reaching the cart moves it either.
     await withoutGrant(mine.cartId, async () => {
       expect((await guestSocket(mine.cartId, guest)).status).toBe(410);
-      await api().keepCartOpen(
+      await storefrontApi().keepCartOpen(
         mine.cartId,
-        await signedActor({ kind: 'guest', id: guest.id, name: guest.name }, `cart:${mine.cartId}`),
+        await signedGuest({ kind: 'guest', id: guest.id, name: guest.name }, `cart:${mine.cartId}`),
       );
       expect((await timeOf(mine.cartId)).expiresAt).toBe(expiresAt);
     });
@@ -895,7 +900,7 @@ describe('an external cart that stays open while its buyer works', () => {
     const c = await open({ expiresAt: Date.now() + 10 * 60_000, idleMs: 2 * H });
     const guest = (await cartAgent(c.cartId).redeemStart(c.token))!;
     const buyer = { kind: 'guest' as const, id: guest.id, name: guest.name };
-    const signed = () => signedActor(buyer, `cart:${c.cartId}`);
+    const signed = () => signedGuest(buyer, `cart:${c.cartId}`);
     const moved = async (act: () => Promise<unknown>) => {
       await atTime(c.cartId, Date.now() + 10 * 60_000);
       const t = Date.now();
@@ -904,7 +909,9 @@ describe('an external cart that stays open while its buyer works', () => {
     };
     expect(
       await moved(async () =>
-        expect(await api().searchCartProducts(c.cartId, 'widget', await signed())).toMatchObject({
+        expect(
+          await storefrontApi().searchCartProducts(c.cartId, 'widget', await signed()),
+        ).toMatchObject({
           ok: true,
         }),
       ),
@@ -913,29 +920,31 @@ describe('an external cart that stays open while its buyer works', () => {
     expect(
       await moved(async () =>
         expect(
-          await api().attachToCart(
+          await storefrontApi().addCartFile(
             c.cartId,
             {
               id,
               name: 'po.pdf',
               type: 'application/pdf',
-              size: 10,
-              key: `carts/${c.cartId}/${id}`,
+              body: new TextEncoder().encode('%PDF').buffer as ArrayBuffer,
             },
             await signed(),
           ),
         ).toEqual({ ok: true }),
       ),
     ).toBe(true);
-    expect(await moved(async () => api().keepCartOpen(c.cartId, await signed()))).toBe(true);
-    // Staff signed for the same call move nothing; nor does a cart no one opened.
+    expect(await moved(async () => storefrontApi().keepCartOpen(c.cartId, await signed()))).toBe(
+      true,
+    );
+    // Staff signed for the same call move nothing (the storefront takes no staff actor); nor does a
+    // cart no one opened.
     const ada = { kind: 'staff' as const, id: 'usr_ada', name: 'Ada', role: 'admin' as const };
     expect(
       await moved(async () =>
-        api().keepCartOpen(c.cartId, await signedActor(ada, `cart:${c.cartId}`)),
+        storefrontApi().keepCartOpen(c.cartId, await signedActor(ada, `cart:${c.cartId}`)),
       ),
     ).toBe(false);
-    await api().keepCartOpen('cart_nobody', await signedActor(buyer, 'cart:cart_nobody'));
+    await storefrontApi().keepCartOpen('cart_nobody', await signedGuest(buyer, 'cart:cart_nobody'));
   });
 
   it('keeps the index row a cancel wrote while it was moved on', async () => {
@@ -959,7 +968,7 @@ describe('an external cart that stays open while its buyer works', () => {
       idleMs: 2 * H,
       lines: [{ sku: 'WID-100', qty: 1 }],
     });
-    const redeemed = (await api().redeemCartStart(c.cartId, c.token))!;
+    const redeemed = (await storefrontApi().redeemCartStart(c.cartId, c.token))!;
     const ws = await guestSocket(c.cartId, redeemed.guest);
     if (!ws.call) throw new Error(`socket refused: ${ws.status}`);
     expect((await ws.call<{ ok: boolean }>('transfer')).result).toMatchObject({ ok: true });
@@ -1022,17 +1031,15 @@ describe('a punchout buyer’s data subject request', () => {
     expect((await ws.call('apply', [{ op: 'set_ship_to', address: home }])).result).toEqual({
       ok: true,
     });
-    await env.DOCS.put(`carts/${c.cartId}/att_b1`, '%PDF');
-    await api().attachToCart(
+    await storefrontApi().addCartFile(
       c.cartId,
       {
         id: 'att_b1',
         name: 'my-po.pdf',
         type: 'application/pdf',
-        size: 4,
-        key: `carts/${c.cartId}/att_b1`,
+        body: new TextEncoder().encode('%PDF').buffer as ArrayBuffer,
       },
-      await signedActor({ kind: 'guest', id: guest.id, name: guest.name }, `cart:${c.cartId}`),
+      await signedGuest({ kind: 'guest', id: guest.id, name: guest.name }, `cart:${c.cartId}`),
     );
     const staffer = { kind: 'staff' as const, id: 'usr_ops', name: 'Ops', role: 'admin' as const };
     await cartAgent(c.cartId).applyAs(staffer, { op: 'add', sku: 'WID-100', qty: 1 });

@@ -1,7 +1,8 @@
 /**
  * The contract between the web app and the engine's `EngineApi` RPC entrypoint, and the state
  * each order's OrderAgent syncs to browsers. The web app types its service binding with
- * `EngineRpc` rather than importing engine source.
+ * `EngineRpc` rather than importing engine source; the storefront, with the much narrower
+ * `StorefrontRpc`.
  */
 
 import type {
@@ -36,6 +37,7 @@ import type {
   PendingWait,
   TimelineEntry,
 } from './types';
+import type { UcpPlatformRef } from './ucp/profile';
 
 export type NodeRun = {
   status: NodeStatus;
@@ -398,33 +400,16 @@ export interface EngineRpc {
     by: string,
   ): Promise<Refusable<PluginCaseResult[]>>;
   /**
-   * Redeems an external cart's one-time start link: the buyer it admits and until when (the latest
-   * the cart can stay open, `externalCartEnd`), or null for a link that is unknown, used or
-   * expired, or a cart that has ended.
-   */
-  redeemCartStart(
-    cartId: string,
-    token: string,
-  ): Promise<{ guest: CartGuest; expiresAt: number } | null>;
-  /**
-   * Adds a file the web app has stored (at `cartAttachmentKey`) to a cart, as `actor`; refused
-   * for anyone who may not change the cart, a cart that has ended, or one that is full.
+   * Adds a file the web app has stored (at `cartAttachmentKey`) to a staff cart, as `actor`; refused
+   * for anyone who may not change the cart, a cart that has ended, or one that is full. An
+   * external cart's buyer adds files through the storefront's `StorefrontRpc.addCartFile`.
    */
   attachToCart(
     cartId: string,
     attachment: Omit<CartAttachment, 'by' | 'at'>,
-    /** Staff or the cart's buyer, signed for `cart:<cartId>`. */
+    /** Staff, signed for `cart:<cartId>`. */
     actor: SignedActor,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
-  /**
-   * Counts a request from an external cart's buyer (a file download, say) as activity on it, so a
-   * cart with an idle window stays open (`extendedCartExpiry`). Anyone else is ignored.
-   */
-  keepCartOpen(
-    cartId: string,
-    /** The cart's buyer, signed for `cart:<cartId>`. */
-    actor: SignedActor,
-  ): Promise<void>;
   /**
    * Finds products to add to a cart by SKU or name (`CART_SEARCH_LIMIT` at most), among those its
    * quote can price, with the unit price its flow charges where that is shown. Only for someone
@@ -433,7 +418,7 @@ export interface EngineRpc {
   searchCartProducts(
     cartId: string,
     q: string,
-    /** Staff or the cart's buyer, signed for `cart:<cartId>`. */
+    /** Staff, signed for `cart:<cartId>`. */
     actor: SignedActor,
   ): Promise<CartAnswer<CartProductPage>>;
   /**
@@ -485,6 +470,66 @@ export interface EngineRpc {
  * staff cart has.
  */
 export type CartAnswer<T> = ({ ok: true } & T) | { ok: false; error: string; notFound?: true };
+
+/**
+ * All the public storefront Worker can ask of the engine: the `StorefrontApi` entrypoint, which
+ * the storefront binds instead of `EngineApi`. Every cart call takes the buyer as an actor the
+ * storefront signed (`signGuestActor`, under `storefrontKey`) for `cart:<cartId>`, and the engine
+ * admits it only to an external cart whose buyer it is. There is no staff, order, payment, plugin
+ * or data-subject method here, and `fetch` serves only a cart's socket and `/ucp/*`.
+ */
+export interface StorefrontRpc {
+  /** A cart's socket (`/agents/cart-agent/*`) or UCP (`/ucp/*`), signed for its path; anything else is 404. */
+  fetch(request: Request): Promise<Response>;
+  /** Deep health: the engine's own D1 and R2 bindings answer. */
+  health(): Promise<HealthReport>;
+  /** The UCP business profile with `origin`'s URLs, or null while agentic checkout is off. */
+  ucpProfile(origin: string): Promise<Record<string, unknown> | null>;
+  /** Whether agentic checkout is on (a checkout flow is set); changes rarely, so callers may cache it. */
+  ucpCheckoutOn(): Promise<boolean>;
+  /**
+   * The live platform behind an API key (by its SHA-256), or null for an unknown or revoked one.
+   * The engine records its use.
+   */
+  ucpPlatform(keyHash: string): Promise<UcpPlatformRef | null>;
+  /**
+   * Redeems an external cart's one-time start link: the buyer it admits and until when (the latest
+   * the cart can stay open, `externalCartEnd`), or null for a link that is unknown, used or
+   * expired, or a cart that has ended.
+   */
+  redeemCartStart(
+    cartId: string,
+    token: string,
+  ): Promise<{ guest: CartGuest; expiresAt: number } | null>;
+  /** The cart as its agent holds it, or null unless `actor` is that external cart's buyer. */
+  cartSnapshot(cartId: string, actor: SignedActor): Promise<CartState | null>;
+  /** The name of the cart's customer, for its page, or null. */
+  cartCustomerName(cartId: string, actor: SignedActor): Promise<string | null>;
+  /**
+   * Stores a file in the documents bucket at `cartAttachmentKey` and adds it to the cart as its
+   * buyer, or says why not (a type or size the cart doesn't take, a cart that has ended or is
+   * full); a file the cart refuses is not kept.
+   */
+  addCartFile(
+    cartId: string,
+    file: { id: string; name: string; type: string; body: ArrayBuffer },
+    actor: SignedActor,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** One of the cart's files for its buyer, or null for one the cart doesn't hold. */
+  readCartFile(
+    cartId: string,
+    attachmentId: string,
+    actor: SignedActor,
+  ): Promise<{ body: ReadableStream } | null>;
+  /** Counts a request from the buyer (a file download, say) as activity (`extendedCartExpiry`). */
+  keepCartOpen(cartId: string, actor: SignedActor): Promise<void>;
+  /** Finds products to add to the cart by SKU or name, as `EngineRpc.searchCartProducts` does. */
+  searchCartProducts(
+    cartId: string,
+    q: string,
+    actor: SignedActor,
+  ): Promise<CartAnswer<CartProductPage>>;
+}
 
 /**
  * One product index run: `done` with what it embedded (`indexed`), the SKUs whose vectors it

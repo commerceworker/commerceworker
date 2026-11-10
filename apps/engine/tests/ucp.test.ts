@@ -31,8 +31,8 @@ import {
   ORIGIN,
   pay,
   platform,
+  platformKey,
   platformProfile,
-  principalKey,
   ucp,
   until,
 } from './ucp-helpers';
@@ -99,7 +99,7 @@ describe('UCP checkout', () => {
           headers: {
             'content-type': 'application/json',
             accept: 'application/json, text/event-stream',
-            [PRINCIPAL_HEADER]: await signPlatform(principalKey, alpha, path),
+            [PRINCIPAL_HEADER]: await signPlatform(platformKey, alpha, path),
           },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
         }),
@@ -308,7 +308,7 @@ describe('UCP over MCP', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [PRINCIPAL_HEADER]: await signPlatform(principalKey, alpha, '/ucp/mcp'),
+          [PRINCIPAL_HEADER]: await signPlatform(platformKey, alpha, '/ucp/mcp'),
         },
         body: JSON.stringify({ jsonrpc: '2.0', id: ++n, method, params }),
       }),
@@ -349,7 +349,7 @@ describe('UCP over MCP', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [PRINCIPAL_HEADER]: await signPlatform(principalKey, alpha, '/ucp/mcp'),
+          [PRINCIPAL_HEADER]: await signPlatform(platformKey, alpha, '/ucp/mcp'),
         },
         body: 'x'.repeat(257 * 1024),
       }),
@@ -512,7 +512,7 @@ describe('UCP discounts', () => {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            [PRINCIPAL_HEADER]: await signPlatform(principalKey, disc, '/ucp/mcp'),
+            [PRINCIPAL_HEADER]: await signPlatform(platformKey, disc, '/ucp/mcp'),
           },
           body: JSON.stringify({
             jsonrpc: '2.0',
@@ -539,7 +539,7 @@ describe('UCP discounts', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [PRINCIPAL_HEADER]: await signPlatform(principalKey, alpha, '/ucp/mcp'),
+          [PRINCIPAL_HEADER]: await signPlatform(platformKey, alpha, '/ucp/mcp'),
         },
         body: JSON.stringify({
           jsonrpc: '2.0',

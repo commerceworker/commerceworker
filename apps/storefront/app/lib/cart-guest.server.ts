@@ -6,11 +6,10 @@
  * and the admin's host never sees it.
  */
 
-import { env } from 'cloudflare:workers';
 import { type CartGuest, signCartGuestSession, verifyCartGuestSession } from '@commerceworker/core';
 import { ANY_HTTPS_FRAMER, EMBED_HEADER } from '@commerceworker/security/csp';
 import { data } from 'react-router';
-import { principalKey } from './principal.server';
+import { signingKey, verifyingKeys } from './principal.server';
 
 /** The cookie `name` carries on `request`, if any. */
 function cookie(request: Request, name: string): string | undefined {
@@ -34,19 +33,15 @@ const cookieName = (cartId: string) => `__Host-ol_${cartId}`;
  * third-party cookie there, kept in that site's partition.
  */
 export async function guestCookie(g: CartGuest, expiresAt: number): Promise<string> {
-  const value = await signCartGuestSession(principalKey(), g, expiresAt);
+  const value = await signCartGuestSession(await signingKey(), g, expiresAt);
   const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
   return `${cookieName(g.cartId)}=${value}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=${maxAge}`;
 }
 
 /** The buyer this request carries for `cartId`, or null. */
-export function cartGuest(request: Request, cartId: string): Promise<CartGuest | null> {
-  if (!COOKIE_RE.test(cartId)) return Promise.resolve(null);
-  return verifyCartGuestSession(
-    [principalKey(), (env as { PRINCIPAL_KEY_PREVIOUS?: string }).PRINCIPAL_KEY_PREVIOUS],
-    cookie(request, cookieName(cartId)),
-    cartId,
-  );
+export async function cartGuest(request: Request, cartId: string): Promise<CartGuest | null> {
+  if (!COOKIE_RE.test(cartId)) return null;
+  return verifyCartGuestSession(await verifyingKeys(), cookie(request, cookieName(cartId)), cartId);
 }
 
 /**

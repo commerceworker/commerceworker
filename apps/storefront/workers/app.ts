@@ -3,18 +3,16 @@ import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
 import { createRequestHandler } from 'react-router';
 import { cartGuest } from '../app/lib/cart-guest.server';
-import { docs, engine } from '../app/lib/env.server';
+import { engine } from '../app/lib/env.server';
 import { setGuestHeader } from '../app/lib/principal.server';
 import { ucpDiscovery, ucpFetch } from '../app/lib/ucp.server';
 
 /**
- * The deploy smoke test's check: this Worker's D1 and R2, and the engine's (over the service
- * binding, so a broken engine deploy fails it too). 503 when anything is down.
+ * The deploy smoke test's check: the engine's D1 and R2 (over the service binding, so a broken
+ * engine deploy fails it too); this Worker has no data of its own. 503 when anything is down.
  */
-async function deepHealth(env: Env): Promise<Response> {
+async function deepHealth(): Promise<Response> {
   const report = await runHealthChecks('commerceworker-storefront', {
-    db: () => env.DB.prepare('select 1').first(),
-    docs: () => docs().head('health'),
     engine: async () => {
       const r = await engine().health();
       if (!r.ok) throw new Error('engine unhealthy');
@@ -32,16 +30,16 @@ const requestHandler = createRequestHandler(
 );
 
 export default {
-  async fetch(request, env) {
-    return withSecurityHeaders(await route(request, env), new URL(request.url));
+  async fetch(request) {
+    return withSecurityHeaders(await route(request), new URL(request.url));
   },
 } satisfies ExportedHandler<Env>;
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === '/health')
     return Response.json({ ok: true, service: 'commerceworker-storefront' });
-  if (url.pathname === '/health/deep') return deepHealth(env);
+  if (url.pathname === '/health/deep') return deepHealth();
 
   // UCP (agentic checkout): the business profile is public; checkout and orders under /ucp take
   // a registered platform's key (app/lib/ucp.server.ts). Ahead of the cross-site check, as a

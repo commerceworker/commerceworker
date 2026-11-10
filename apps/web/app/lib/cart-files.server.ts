@@ -6,7 +6,7 @@
  */
 
 import type { CartFilesDeps } from '@commerceworker/cart/files';
-import type { CartActor } from '@commerceworker/core';
+import { type CartActor, cartAttachmentKey } from '@commerceworker/core';
 import { principal, setupDue } from './auth.server';
 import { docs, engine } from './env.server';
 import { signedActor } from './principal.server';
@@ -19,4 +19,35 @@ export async function cartStaff(request: Request): Promise<CartActor | null> {
     : null;
 }
 
-export const cartFiles = (): CartFilesDeps => ({ engine: engine(), docs: docs(), signedActor });
+/** Staff only: an external cart's buyer is the storefront's, never reaches this Worker. */
+const staffOnly = { ok: false as const, error: 'Only staff change a cart from here.' };
+
+/**
+ * The files in the documents bucket, which this Worker stores itself, and the engine over its
+ * binding with the staff member signed for each call (`cart:<cartId>`).
+ */
+export const cartFiles = (): CartFilesDeps => ({
+  snapshot: (cartId) => engine().cartSnapshot(cartId),
+  async add(cartId, file, actor) {
+    if (actor.kind !== 'staff') return staffOnly;
+    const key = cartAttachmentKey(cartId, file.id);
+    await docs().put(key, file.body, {
+      httpMetadata: { contentType: file.type },
+      customMetadata: { cartId, name: file.name },
+    });
+    const added = await engine().attachToCart(
+      cartId,
+      { id: file.id, name: file.name, type: file.type, size: file.body.byteLength, key },
+      await signedActor(actor, `cart:${cartId}`),
+    );
+    if (!added.ok) await docs().delete(key);
+    return added;
+  },
+  read: (cartId, attachmentId) => docs().get(cartAttachmentKey(cartId, attachmentId)),
+  // Staff's activity isn't the buyer's: nothing to keep open.
+  keepOpen: async () => {},
+  async search(cartId, q, actor) {
+    if (actor.kind !== 'staff') return { ...staffOnly };
+    return engine().searchCartProducts(cartId, q, await signedActor(actor, `cart:${cartId}`));
+  },
+});

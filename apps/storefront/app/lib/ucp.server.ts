@@ -4,12 +4,12 @@
  * engine (apps/engine/src/ucp/).
  *
  * A platform calls with its API key (`X-API-Key`, or `Authorization: Bearer`) and names its UCP
- * profile in `UCP-Agent`, which must be the profile it was registered with. The key stays here:
- * the engine gets the platform in the signed principal header (`signPlatform`), never a key.
+ * profile in `UCP-Agent`, which must be the profile it was registered with. Only the key's hash
+ * leaves this Worker, to the engine's `StorefrontApi`, which holds the platforms; the engine gets
+ * the platform in the signed header (`signPlatform`, under the storefront key), never a key.
  * Discovery (`/.well-known/ucp`) is public and comes from the engine, which holds the signing key.
  */
 
-import { readUcpAdminSettings } from '@commerceworker/application/commerce';
 import {
   type PlatformCaller,
   PRINCIPAL_HEADER,
@@ -17,52 +17,41 @@ import {
   UCP_MCP_PATH,
   UCP_PATH,
   UCP_PLATFORM_KEY_PREFIX,
-  type UcpSettings,
+  type UcpPlatformRef,
   ucpAgentProfile,
   ucpError,
 } from '@commerceworker/core';
-import type { UcpPlatform } from '@commerceworker/ports/commerce';
 import { sha256Hex } from '@commerceworker/security/credentials';
-import { afterResponse, engine } from './env.server';
-import { principalKey } from './principal.server';
+import { engine } from './env.server';
+import { signingKey } from './principal.server';
 import { overBudget } from './rate-limit';
-import { ucpStore, workspaceStore } from './wire.server';
 
 const SETTINGS_CACHE_MS = 30_000;
-let cachedSettings: { value: UcpSettings; at: number } | null = null;
+let cachedOn: { value: boolean; at: number } | null = null;
 
 /**
- * Agentic checkout's settings; off (no checkout flow) until an admin sets them. Every `/ucp`
- * call checks them and they change rarely, so each isolate keeps what it read for 30 seconds:
- * a change an admin saves reaches the storefront within that time.
+ * Whether agentic checkout is on (the engine reads it from the workspace's settings); off until
+ * an admin sets a checkout flow. Every `/ucp` call checks it and it changes rarely, so each isolate
+ * keeps what it read for 30 seconds: a change an admin saves reaches the storefront within that time.
  */
-async function ucpSettings(): Promise<UcpSettings> {
-  if (cachedSettings && Date.now() - cachedSettings.at < SETTINGS_CACHE_MS)
-    return cachedSettings.value;
-  const value = await readUcpAdminSettings({ workspace: workspaceStore() });
-  cachedSettings = { value, at: Date.now() };
+async function checkoutOn(): Promise<boolean> {
+  if (cachedOn && Date.now() - cachedOn.at < SETTINGS_CACHE_MS) return cachedOn.value;
+  const value = await engine().ucpCheckoutOn();
+  cachedOn = { value, at: Date.now() };
   return value;
 }
 export const forgetUcpSettings = () => {
-  cachedSettings = null;
+  cachedOn = null;
 };
 
-/** How often a platform's last use is written back. */
-const TOUCH_MS = 5 * 60_000;
-
-/** The platform behind a request's key, if the key is live. */
-async function platformFor(request: Request): Promise<UcpPlatform | null> {
+/** The platform behind a request's key, if the key is live (the engine looks it up and records its use). */
+async function platformFor(request: Request): Promise<UcpPlatformRef | null> {
   const key =
     request.headers.get('x-api-key') ??
     request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ??
     '';
   if (!key.startsWith(UCP_PLATFORM_KEY_PREFIX)) return null;
-  const row = await ucpStore().livePlatform(await sha256Hex(key));
-  if (!row) return null;
-  const now = Date.now();
-  if (!row.lastUsedAt || now - row.lastUsedAt > TOUCH_MS)
-    afterResponse(ucpStore().touchPlatform(row.id, now));
-  return row;
+  return engine().ucpPlatform(await sha256Hex(key));
 }
 
 const refuse = (status: number, code: string, content: string, headers?: HeadersInit) =>
@@ -92,7 +81,7 @@ export async function ucpFetch(request: Request): Promise<Response> {
     );
   if (profile && profile !== row.profileUrl)
     return refuse(403, 'forbidden', 'UCP-Agent names a different profile than this key is for.');
-  if (!(await ucpSettings()).checkoutFlowId)
+  if (!(await checkoutOn()))
     return refuse(404, 'not_found', 'Agentic checkout is not turned on for this workspace.');
   // Each platform has its own budget, like an MCP or A2A client.
   const limited = await overBudget('AGENT_LIMIT', `${UCP_PATH}:${row.id}`);
@@ -110,7 +99,7 @@ export async function ucpFetch(request: Request): Promise<Response> {
   headers.delete('x-api-key');
   headers.delete('cookie');
   headers.delete(PRINCIPAL_HEADER);
-  headers.set(PRINCIPAL_HEADER, await signPlatform(principalKey(), caller, url.pathname));
+  headers.set(PRINCIPAL_HEADER, await signPlatform(await signingKey(), caller, url.pathname));
   return engine().fetch(
     new Request(`https://engine${url.pathname}${url.search}`, new Request(request, { headers })),
   );

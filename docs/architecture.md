@@ -15,7 +15,8 @@ browser ──► commerceworker-web (apps/web, React Router on Workers)
               │  R2: order documents
               ├── CATALOG service binding ─RPC──► commerceworker-catalog (apps/catalog, CatalogApi)
               ├── ENGINE service binding ──RPC──► commerceworker-engine (apps/engine)
-              │                                     ├─ EngineApi      WorkerEntrypoint (RPC)
+              │                                     ├─ EngineApi      WorkerEntrypoint (RPC), the admin's
+              │                                     ├─ StorefrontApi  WorkerEntrypoint (RPC), the storefront's alone
               ├── /agents/order-agent/:id ─fetch─►  ├─ OrderAgent     Durable Object, one per order
               ├── /agents/assistant-agent/* ─────►  ├─ AssistantAgent Durable Object, one per person
               ├── /agents/cart-agent/:id ────────►  ├─ CartAgent      Durable Object, one per cart
@@ -27,9 +28,8 @@ inbound mail ── Email Routing ──email()───────────
                                                     └─ CATALOG ──RPC──► commerceworker-catalog (CatalogApi)
 
 buyer / AI shopping platform ──► commerceworker-storefront (apps/storefront, uncached, shop.<domain>)
-              │  D1: UCP platforms and settings, a cart's customer name (its own composition root)
-              │  R2: a cart's files
-              ├── ENGINE service binding ──RPC──► the engine, as above
+              │  no D1, no R2, no PRINCIPAL_KEY: only the key derived for it (storefrontKey)
+              ├── ENGINE service binding ──RPC──► the engine's StorefrontApi, nothing else
               ├── /cart/start/:cartId/:token, /cart/:cartId   the punchout buyer's pages
               ├── /carts/:cartId/attachments*, /carts/:cartId/products   the buyer's files and search
               ├── /agents/cart-agent/:id ─fetch─► CartAgent, for the buyer's cookie only
@@ -84,8 +84,24 @@ buyer / AI shopping platform ──► commerceworker-storefront (apps/storefron
 `EngineApi` (`apps/engine/src/api.ts`) implements it as a `WorkerEntrypoint`. Every method except
 `startOrder`, `startOrderOnce`, `copilot`, `intakeMailboxes`, `exportDataSubject`, `eraseDataSubject`, `ucpProfile`, `runReplenish`, `reindexProducts`, the tax certificate calls, `pluginCatalog`, `pluginUsage` and `pluginFetch` forwards to the order's agent via
 `orderAgent(env, orderId)` (`apps/engine/src/namespaces.ts`). `EngineApi` trusts its caller: authorization happens in the web
-app before the call. The forwarded requests (sockets, `/mcp`, `/a2a`, and the storefront's `/ucp/*` and cart socket) carry a principal the engine believes only when it is signed with `PRINCIPAL_KEY` for that path and unexpired (`forwardedPrincipal`). The web app types its `ENGINE` binding with `EngineRpc` and never imports
+app before the call. The forwarded requests (sockets, `/mcp` and `/a2a`) carry a principal the engine believes only when it is signed with `PRINCIPAL_KEY` for that path and unexpired (`forwardedPrincipal`). The web app types its `ENGINE` binding with `EngineRpc` and never imports
 engine source.
+
+**`StorefrontApi`** (`apps/engine/src/storefront-api.ts`, typed by `StorefrontRpc` in `packages/core/src/api.ts`) is the
+second entrypoint, and the only one the public storefront is bound to. It exists so a compromised storefront reaches nothing
+else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
+calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
+its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
+`readCartFile`, `keepCartOpen` and `searchCartProducts`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+(anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
+an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
+whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
+no staff cart. **Which key signs what:** the storefront holds `storefrontKey(PRINCIPAL_KEY)` (an HMAC of it under the label
+`commerceworker-storefront`) and never `PRINCIPAL_KEY`. The engine derives the same key and takes the storefront's envelopes
+(a cart's buyer `g1`, a UCP platform `u1`, a guest's `a1` actor; the storefront's own cookie `gs1` is checked only by the
+storefront) under it alone, and the staff envelopes (`v1` principals, staff `a1` actors) under `PRINCIPAL_KEY` alone
+(`storefrontKeysOf`, `rpcActor` and `guestActor` in `apps/engine/src/principal.ts`). So a compromised storefront can speak as
+a buyer or a platform, never as staff; `apps/engine/tests/storefront-api.test.ts` holds each refusal.
 
 ## Request routing
 
@@ -129,11 +145,13 @@ receives messages from Email Routing and hands them to `receiveEmail`; see
 ### Storefront routing
 
 `apps/storefront/workers/app.ts` is the buyer's side. It serves no admin, has no sign-in and holds no
-session: a buyer's only credential is the cookie a start link sets, and a platform's only one is its key.
+session: a buyer's only credential is the cookie a start link sets, and a platform's only one is its key. It binds no
+database and no bucket and holds no `PRINCIPAL_KEY`: it reaches the engine only through `StorefrontApi` (see
+[Engine RPC](#engine-rpc)) and signs with its derived key.
 
 | Path | Handling |
 |---|---|
-| `GET /health`, `GET /health/deep` | `{ ok: true, service: "commerceworker-storefront" }`; the deep check (the deploy smoke test's) tries this Worker's D1 and R2 and the engine over the service binding, `503` when any is down |
+| `GET /health`, `GET /health/deep` | `{ ok: true, service: "commerceworker-storefront" }`; the deep check (the deploy smoke test's) asks the engine over the service binding (its D1 and R2; this Worker has neither), `503` when it is down |
 | `GET /.well-known/ucp` | `ucpDiscovery` (`apps/storefront/app/lib/ucp.server.ts`), public: the profile the engine builds for this host. See [UCP](#ucp-agentic-checkout) |
 | `/ucp`, `/ucp/*` | `ucpFetch`, by a registered platform's key, before the cross-site check (a platform is no browser and holds no cookie) |
 | any state-changing request or WebSocket upgrade | `crossOrigin` (`@commerceworker/security/origin`): its `Origin` must be this host, or `403`. The buyer's cookie is `SameSite=None` (their system frames the cart), so this is what stops another site posting with it |
@@ -146,7 +164,7 @@ files and product search are `@commerceworker/cart/files` (`uploadAttachment`, `
 buyer's cookie), so what a cart may hold, when a buyer's access has lapsed and what a download runs
 under are written once. The admin's `/carts/:cartId/attachments*` and `/carts/:cartId/products` admit
 a signed-in person only (`cartStaff`, `apps/web/app/lib/cart-files.server.ts`); the storefront's admit
-the buyer's cookie only (`cartBuyer`). A staff session is no way onto the storefront and a buyer's
+the buyer's cookie only (`cartBuyer`), and hand the engine's `StorefrontApi` the buyer signed for the cart. A staff session is no way onto the storefront and a buyer's
 cookie is no way onto the admin: they are different hosts, and neither Worker looks for the other's
 credential. `apps/web/tests/buyer-surfaces.test.ts` holds the admin to serving none of the buyer's
 routes.
@@ -392,17 +410,16 @@ message signatures (`signature.ts`, ES256 and `Content-Digest`), RFC 8941 struct
 schemas. The engine serves it from `apps/engine/src/ucp/`.
 
 **Boundary.** A platform is not a `Principal`: it has no role and acts only on its own checkouts
-and orders. The storefront Worker (`ucpFetch`, `apps/storefront/app/lib/ucp.server.ts`; platforms are registered on the admin) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_` and the
-SHA-256 in `ucp_platforms.key_hash`, revoked rows excluded), requires `UCP-Agent` to equal the
+and orders. The storefront Worker (`ucpFetch`, `apps/storefront/app/lib/ucp.server.ts`; platforms are registered on the admin) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_`; only the key's SHA-256 leaves the Worker, to `StorefrontApi.ucpPlatform`, which looks it up in `ucp_platforms.key_hash`, revoked rows excluded, and records its use), requires `UCP-Agent` to equal the
 registered `profile_url` (MCP may omit the header; the engine checks `meta["ucp-agent"]` against the
-same profile), answers `404` while `checkoutFlowId` is unset (`ucpSettings`, kept 30 seconds per isolate, so a change an admin saves reaches the storefront within that time; a revoked key is refused at once, as keys are read from D1 on every call), spends the `AGENT_LIMIT` budget per
+same profile), answers `404` while `checkoutFlowId` is unset (`StorefrontApi.ucpCheckoutOn`, kept 30 seconds per isolate, so a change an admin saves reaches the storefront within that time; a revoked key is refused at once, as the engine reads keys on every call), spends the `AGENT_LIMIT` budget per
 platform (`/ucp:<platform id>`), deletes `authorization`, `x-api-key` and `cookie`, and signs a
 `PlatformCaller` onto `x-commerceworker-principal` with `signPlatform`. That is a separate envelope
-(`u1`, not `v1`) over the same key, path and 60-second expiry, so `verifyPrincipal` never accepts it
+(`u1`, not `v1`) over the storefront key, the path and a 60-second expiry, so `verifyPrincipal` never accepts it
 and `verifyPlatform` never accepts a principal: a platform's header is refused at `/mcp`, `/a2a` and
 the sockets, and a person's at `/ucp`. The engine's `handleUcp` (`rest.ts`) believes only that
-header. The engine does not import web or storefront code; the storefront reaches the profile through
-`EngineRpc.ucpProfile(origin)`, so the profile's URLs are on the storefront's host.
+header, checked under the storefront key. The engine does not import web or storefront code; the storefront reaches the profile through
+`StorefrontRpc.ucpProfile(origin)`, so the profile's URLs are on the storefront's host.
 
 **Discovery.** `ucpProfile` (`config.ts`) builds the business profile for the request's origin:
 services, `UCP_CAPABILITIES`, the payment handlers (`paymentHandlers`: `com.commerceworker.stripe` with
@@ -1093,7 +1110,7 @@ Bundle: about 10 KiB gzipped (segmented listings added about 1 KiB to the 9.4 it
 | `DB` | both | D1 `commerceworker`, migrations in `packages/db/migrations` |
 | `DOCS` | both | R2 `commerceworker-docs` |
 | `AI` | engine | Workers AI |
-| `ENGINE` | web | Service `commerceworker-engine`, entrypoint `EngineApi` |
+| `ENGINE` | web | Service `commerceworker-engine`, entrypoint `EngineApi` (the storefront's is entrypoint `StorefrontApi`) |
 | `CATALOG` | web | Service `commerceworker-catalog`, entrypoint `CatalogApi` (`/api/v1/catalog`) |
 | `OAUTH_KV` | web | KV namespace for MCP and A2A OAuth clients, grants and tokens; created on first deploy |
 | `PLUGIN_<ID>` | engine, web | Service `commerceworker-plugin-<id>`, one per installed `worker` plugin, rendered from the registry's `plugins`; the default entrypoint implements `PluginRpc`. The plugin's Worker holds its own `PLUGIN_KEY`, never `PRINCIPAL_KEY` ([Plugins](plugins.md)) |
@@ -1336,9 +1353,10 @@ the rest is in its SQL, paged by `history`).
   `ucp/quote.ts`, the same draft the quote uses: contract prices and price rules, before
   promotions, shipping and tax). A flow that prices at cost shows a guest no prices, and a search
   never returns cost, stock or supplier. The SKU box stays for a SKU the person knows.
-- **Files.** The admin or the storefront (`uploadAttachment`, `packages/cart/src/files.ts`) stores an upload (at most 10 MB, `ATTACHMENT_TYPES` only, 20 a cart) at
-  `carts/<cartId>/<id>` in `DOCS` and hands it to `EngineRpc.attachToCart`, which the agent
-  (`attachAs`) refuses for anyone who may not change the cart, a cart that has ended or a key not
+- **Files.** The admin stores an upload (`uploadAttachment`, `packages/cart/src/files.ts`; at most 10 MB, `ATTACHMENT_TYPES` only, 20 a cart) at
+  `carts/<cartId>/<id>` in `DOCS` and hands it to `EngineRpc.attachToCart`; the storefront, which has no bucket, hands the bytes to
+  `StorefrontRpc.addCartFile`, and the engine stores them. Either way the agent
+  (`attachAs`) refuses anyone who may not change the cart, a cart that has ended or a key not
   under the cart; a refused file is deleted. `detach` (whoever added it, or an operator) removes and
   deletes it. Downloads (`/carts/<cartId>/attachments/<id>`, `downloadAttachment`) go to staff on the admin and to the
   cart's own buyer on the storefront, as attachments under a sandboxing CSP.
@@ -1396,7 +1414,7 @@ or not), or the plugin loses its grant; the buyer's page and file downloads refu
 its alarm runs, and an alarm that fires mid-return looks again 10 seconds later. A cart whose plugin set
 `idleMs` stays open while its buyer works on it: the guest of that cart connecting to its socket
 or calling it, searching it, adding a file or downloading one (`keepOpen`; `keepOpenFor` from
-`attachAs`, `EngineRpc.searchCartProducts` and `EngineRpc.keepCartOpen`, which the storefront calls
+`attachAs`, `StorefrontRpc.searchCartProducts` and `StorefrontRpc.keepCartOpen`, which the storefront calls
 for a buyer's download) moves `expiresAt` to `idleMs` from now (`extendedCartExpiry`:
 only by a minute or more, `CART_EXTEND_STEP_MS`, or the last step to the cap; never past
 `createdAt + MAX_EXTERNAL_CART_MS`, `externalCartCap`; never once it has ended or closed), without
@@ -1412,15 +1430,15 @@ closes at the time it opened with. `transfer` (the buyer only) sends the cart ba
 On the storefront the start path is the route `/cart/start/:cartId/:token`, and `startUrl` is on its origin
 (`STOREFRONT_ORIGIN`; a plugin's redirect to it is the one place off its own pages the admin lets one send
 anyone): it redeems the link
-(`EngineRpc.redeemCartStart`) and sets a cookie for that cart alone (`ol_<cartId>`, the `gs1`
-envelope `signCartGuestSession`, `HttpOnly; Secure; SameSite=None; Partitioned`, until the latest the cart can stay open,
+(`StorefrontRpc.redeemCartStart`) and sets a cookie for that cart alone (`ol_<cartId>`, the `gs1`
+envelope `signCartGuestSession`, under the storefront key, `HttpOnly; Secure; SameSite=None; Partitioned`, until the latest the cart can stay open,
 `externalCartEnd`: its `expiresAt`, or its cap when it has `idleMs`, so no extension outlives the
 cookie; the cart's own time still decides whether the gate, the page and its downloads admit them,
 returned or not), then goes to `/cart/:cartId`, the cart without staff controls (`CartView` in
 `packages/cart/src/cart-view.tsx`, shared with the staff page). That page's CSP lets the
 cart's `frameOrigins` frame it and its form post to the cart's `returnUrl` (`EMBED_HEADER`, folded
 in by `entry.server.tsx`; `withSecurityHeaders` then leaves out `X-Frame-Options`). Its socket is
-proxied with the cookie's guest signed for the path (`setGuestHeader`). Sending the cart back
+proxied with the cookie's guest signed for the path under the storefront key (`setGuestHeader`). Sending the cart back
 posts the fields from the page itself, in the same window, with a button if the post doesn't
 start. While the cart is open the page says when its session ends, and how to keep it open when it
 has `idleMs`; in the last 10 minutes, or at its cap, that turns into a warning (`SessionEnds`).

@@ -13,7 +13,7 @@ import { data, type ShouldRevalidateFunctionArgs, useLoaderData } from 'react-ro
 import { CartRefusal } from '~/components/cart-refusal';
 import { cartGuest, cartRefusal } from '~/lib/cart-guest.server';
 import { engine } from '~/lib/env.server';
-import { pricingStore } from '~/lib/wire.server';
+import { signedActor } from '~/lib/principal.server';
 import type { Route } from './+types/cart-buy';
 
 export const meta = ({ loaderData: d }: Route.MetaArgs) => [
@@ -23,7 +23,12 @@ export const meta = ({ loaderData: d }: Route.MetaArgs) => [
 export async function loader({ request, params }: Route.LoaderArgs) {
   const guest = await cartGuest(request, params.cartId);
   if (!guest) throw cartRefusal('Open this cart from your purchasing system.', 401);
-  const snapshot = await engine().cartSnapshot(params.cartId);
+  // The engine admits the buyer only to the cart they were let into, and answers null otherwise.
+  const actor = await signedActor(
+    { kind: 'guest', id: guest.id, name: guest.name },
+    `cart:${params.cartId}`,
+  );
+  const snapshot = await engine().cartSnapshot(params.cartId, actor);
   const cart = snapshot?.cart;
   const external = cart?.external;
   if (!snapshot || !cart || !external) throw cartRefusal('This cart doesn’t exist.', 404);
@@ -35,12 +40,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       'This cart has closed. Go back to your purchasing system and open the catalog again.',
       410,
     );
-  const customer = cart.customerId ? (await pricingStore().customers([cart.customerId]))[0] : null;
+  const customerName = cart.customerId
+    ? await engine().cartCustomerName(params.cartId, actor)
+    : null;
   return data(
     {
       snapshot,
       guest,
-      customerName: customer?.name ?? null,
+      customerName,
     },
     {
       headers: {

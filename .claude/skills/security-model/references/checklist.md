@@ -7,11 +7,17 @@ candidate finding that still needs a concrete attacker before it is reported.
 
 - Does every new forwarded route set the header with `signPrincipal(key, p, path)` for **its own
   path**, after deleting any copy the caller sent? (`apps/web/app/lib/principal.server.ts`,
-  `apps/storefront/app/lib/ucp.server.ts` `ucpFetch`, `principal.server.ts` `setGuestHeader`.)
+  `apps/storefront/app/lib/ucp.server.ts` `ucpFetch`, `principal.server.ts` `setGuestHeader`; the
+  storefront signs with `storefrontKey`, never `PRINCIPAL_KEY`.)
 - Does every new engine entry point call `verifyPrincipal` (or `verifyPlatform` on `/ucp/*`) with
   the current and previous keys, and refuse on null, rather than reading the header raw?
   `grep -rn "PRINCIPAL_HEADER" apps/engine/src`.
 - Is the path the engine verifies the path it was actually called on (not a value from the body)?
+- Is each envelope checked under exactly one key? v1 and staff `a1` under `PRINCIPAL_KEY`; `g1`,
+  `u1`, guest `a1` and `gs1` under the storefront key (`storefrontKeysOf`). A new storefront
+  envelope or method belongs on `StorefrontApi`, with the buyer checked against the cart
+  (`buyerOf`), and the storefront still binds no D1, `DOCS` or `EngineApi`
+  (`scripts/composition-root.test.ts`, `scripts/fleet.test.ts`).
 - Does anything widen `PRINCIPAL_TTL_MS`, accept a missing `exp`, or fall back to
   `DEV_PRINCIPAL_KEY` outside local dev?
 - Does a new socket method re-check the principal or session it needs, rather than trusting the

@@ -67,26 +67,42 @@ test('the web composition root does bind the D1 adapters', () => {
   assert.match(readFileSync(WEB_ROOT, 'utf8'), D1_ADAPTERS);
 });
 
-// The storefront follows the same rule: its composition root is apps/storefront/app/lib/wire.server.ts,
-// the one storefront file that imports the D1 adapters, calls `createDb` or touches the `DB`
-// binding. The buyer's Worker reads only agentic checkout's platforms and settings and a customer's
-// name; everything else goes to the engine (`EngineRpc`).
-const STOREFRONT = 'apps/storefront/app';
-const STOREFRONT_ROOT = join(STOREFRONT, 'lib/wire.server.ts');
+// The storefront has no composition root: it is public, so it binds no database and no bucket, and
+// imports no store, adapter or use-case. What it needs from D1 or R2 (a platform's key, a customer's
+// name, a cart's files) it asks the engine for, through `StorefrontRpc` (`StorefrontApi` in
+// apps/engine/src/storefront-api.ts, which is bound in the engine's own composition root).
+const STOREFRONT = 'apps/storefront';
+const STOREFRONT_SOURCES = ['app', 'workers', 'tests', 'e2e'].flatMap((d) =>
+  files(join(STOREFRONT, d)),
+);
+const STOREFRONT_DATA =
+  /@commerceworker\/(?:db|ports|application|store|adapters|platform|test-kit)\b|\bcreateDb\(|\benv\.(?:DB|DOCS)\b|\bwire\.server\b/;
 
-test('the storefront reaches D1 only through its composition root', () => {
-  const reaching = files(STOREFRONT)
-    .filter((f) => f !== STOREFRONT_ROOT)
-    .filter((f) => WEB_D1(readFileSync(f, 'utf8')));
+test('the storefront imports no @commerceworker/db and reaches no database or bucket', () => {
+  const reaching = STOREFRONT_SOURCES.filter((f) =>
+    STOREFRONT_DATA.test(readFileSync(f, 'utf8')),
+  ).map((f) => relative('.', f));
   assert.deepEqual(
     reaching,
     [],
-    `Reach D1 through a port bound in apps/storefront/app/lib/wire.server.ts:\n${reaching.join('\n')}`,
+    `Ask the engine through StorefrontRpc (packages/core/src/api.ts) instead:\n${reaching.join('\n')}`,
   );
 });
 
-test('the storefront composition root does bind the D1 adapters', () => {
-  assert.match(readFileSync(STOREFRONT_ROOT, 'utf8'), D1_ADAPTERS);
+test('the storefront declares no data dependency and binds no database or bucket', () => {
+  const pkg = JSON.parse(readFileSync(join(STOREFRONT, 'package.json'), 'utf8'));
+  const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  assert.deepEqual(
+    deps.filter((d) => /^@commerceworker\/(db|ports|application|store|adapters|platform)$/.test(d)),
+    [],
+  );
+  const wrangler = readFileSync(join(STOREFRONT, 'wrangler.jsonc'), 'utf8').replace(
+    /\/\/.*$/gm,
+    '',
+  );
+  assert.doesNotMatch(wrangler, /d1_databases|r2_buckets|kv_namespaces|"queues"|durable_objects/);
+  assert.match(wrangler, /"entrypoint": "StorefrontApi"/);
+  assert.doesNotMatch(wrangler, /"entrypoint": "EngineApi"/);
 });
 
 // The HTTP surface (packages/http) is a library: it takes its adapters as deps and binds none.

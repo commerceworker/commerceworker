@@ -13,42 +13,50 @@ import {
   attachmentName,
   attachmentProblem,
   type CartActor,
+  type CartAnswer,
   type CartProductPage,
+  type CartState,
   canReadCart,
   cartAttachmentKey,
-  type EngineRpc,
   guestCartOpen,
   newId,
-  type RpcActor,
-  type SignedActor,
 } from '@commerceworker/core';
 
-/** The slice of the documents bucket (`DOCS`) a cart's files use. */
-type Bucket = {
-  put(
-    key: string,
-    body: ArrayBuffer,
-    options: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
-  ): Promise<unknown>;
-  get(key: string): Promise<{ body: ReadableStream } | null>;
-  delete(key: string): Promise<unknown>;
-};
-
-/** What the serving Worker hands over: its engine binding, the bucket, and how it signs an actor. */
+/**
+ * What the serving Worker hands over: how it reaches the cart's agent and the documents bucket for
+ * `actor`, whom it has already admitted. The admin stores the file itself and signs a staff actor
+ * for each engine call; the storefront holds no bucket and asks the engine's `StorefrontApi`, with
+ * the buyer signed under its own key.
+ */
 export type CartFilesDeps = {
-  engine: Pick<EngineRpc, 'cartSnapshot' | 'attachToCart' | 'keepCartOpen' | 'searchCartProducts'>;
-  docs: Bucket;
-  /** Who acts, signed for one call (`cart:<cartId>`): the engine takes it from nothing else. */
-  signedActor: (actor: RpcActor, call: string) => Promise<SignedActor>;
+  /** The cart as its agent holds it, or null. */
+  snapshot(cartId: string, actor: CartActor): Promise<CartState | null>;
+  /**
+   * Stores a file at `cartAttachmentKey` and adds it to the cart as `actor`; a file the cart refuses
+   * is not kept.
+   */
+  add(
+    cartId: string,
+    file: { id: string; name: string; type: string; body: ArrayBuffer },
+    actor: CartActor,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** The stored bytes of one of the cart's files, or null. */
+  read(
+    cartId: string,
+    attachmentId: string,
+    actor: CartActor,
+  ): Promise<{ body: ReadableStream } | null>;
+  /** Counts a request from the cart's buyer as activity on it (`extendedCartExpiry`). */
+  keepOpen(cartId: string, actor: CartActor): Promise<void>;
+  /** The engine's product search for the cart (`searchCartProducts`). */
+  search(cartId: string, q: string, actor: CartActor): Promise<CartAnswer<CartProductPage>>;
 };
-
-const forCart = (cartId: string) => `cart:${cartId}`;
 
 export type Failure = { ok: false; error: string; status: number };
 
 /**
  * Stores an uploaded file and adds it to the cart, or says why not. The agent decides whether the
- * caller may change the cart; a file it refuses is deleted again.
+ * caller may change the cart; a file it refuses is not kept.
  */
 export async function uploadAttachment(
   deps: CartFilesDeps,
@@ -58,28 +66,23 @@ export async function uploadAttachment(
 ): Promise<{ ok: true } | Failure> {
   const file = form.get('file');
   if (!(file instanceof File)) return { ok: false, error: 'Choose a file.', status: 400 };
-  const snapshot = await deps.engine.cartSnapshot(cartId);
+  const snapshot = await deps.snapshot(cartId, actor);
   if (!snapshot?.cart) return { ok: false, error: 'No such cart.', status: 404 };
   if (!canReadCart(snapshot.cart, actor) || (actor.kind === 'guest' && !snapshot.cart.external))
     return { ok: false, error: 'Forbidden', status: 403 };
   const problem = attachmentProblem(file, snapshot.attachments?.length ?? 0);
   if (problem) return { ok: false, error: problem, status: 400 };
-  const id = newId('att');
-  const key = cartAttachmentKey(cartId, id);
-  const name = attachmentName(file.name);
-  await deps.docs.put(key, await file.arrayBuffer(), {
-    httpMetadata: { contentType: file.type },
-    customMetadata: { cartId, name },
-  });
-  const added = await deps.engine.attachToCart(
+  const added = await deps.add(
     cartId,
-    { id, name, type: file.type, size: file.size, key },
-    await deps.signedActor(actor, forCart(cartId)),
+    {
+      id: newId('att'),
+      name: attachmentName(file.name),
+      type: file.type,
+      body: await file.arrayBuffer(),
+    },
+    actor,
   );
-  if (!added.ok) {
-    await deps.docs.delete(key);
-    return { ok: false, error: added.error, status: 400 };
-  }
+  if (!added.ok) return { ok: false, error: added.error, status: 400 };
   return { ok: true };
 }
 
@@ -93,7 +96,7 @@ export async function downloadAttachment(
   id: string,
   actor: CartActor,
 ): Promise<Response | null> {
-  const snapshot = await deps.engine.cartSnapshot(cartId);
+  const snapshot = await deps.snapshot(cartId, actor);
   const cart = snapshot?.cart;
   if (!cart || !canReadCart(cart, actor)) return null;
   // A guest's cookie is for this cart only; the Worker already scoped it to `cartId`. It works
@@ -107,11 +110,10 @@ export async function downloadAttachment(
     return null;
   const a = snapshot.attachments?.find((f) => f.id === id);
   if (!a || a.key !== cartAttachmentKey(cartId, id)) return null;
-  const obj = await deps.docs.get(a.key);
+  const obj = await deps.read(cartId, id, actor);
   if (!obj) return null;
   // Fetching a file is the buyer working on the cart, as much as editing it.
-  if (actor.kind === 'guest')
-    await deps.engine.keepCartOpen(cartId, await deps.signedActor(actor, forCart(cartId)));
+  if (actor.kind === 'guest') await deps.keepOpen(cartId, actor);
   return new Response(obj.body, {
     headers: {
       'content-type': a.type,
@@ -144,11 +146,7 @@ export async function searchProducts(
   actor: CartActor,
   q: string | null,
 ): Promise<{ ok: true; page: CartProductPage } | Failure> {
-  const r = await deps.engine.searchCartProducts(
-    cartId,
-    (q ?? '').slice(0, MAX_Q),
-    await deps.signedActor(actor, forCart(cartId)),
-  );
+  const r = await deps.search(cartId, (q ?? '').slice(0, MAX_Q), actor);
   if (!r.ok) return { ok: false, error: r.error, status: r.notFound ? 404 : 403 };
   const { ok: _ok, ...page } = r;
   return { ok: true, page };

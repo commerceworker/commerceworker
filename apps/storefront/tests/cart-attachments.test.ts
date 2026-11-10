@@ -4,31 +4,20 @@ import {
   type CartGuest,
   type CartState,
   signCartGuestSession,
-  verifyRpcActor,
+  verifyGuestActor,
 } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const env = { PRINCIPAL_KEY: 'storefront-test-key' };
+const env = { STOREFRONT_KEY: 'storefront-test-key' };
 const cartSnapshot = vi.fn();
-const attachToCart = vi.fn();
+const addCartFile = vi.fn();
+const readCartFile = vi.fn();
 const keepCartOpen = vi.fn();
-const objects = new Map<string, { body: ArrayBuffer; type?: string }>();
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
+// This Worker holds no bucket: the engine's StorefrontApi stores and reads the files.
 vi.mock('~/lib/env.server', () => ({
-  engine: () => ({ cartSnapshot, attachToCart, keepCartOpen }),
-  docs: () => ({
-    put: async (key: string, body: ArrayBuffer, o: { httpMetadata?: { contentType?: string } }) => {
-      objects.set(key, { body, type: o.httpMetadata?.contentType });
-    },
-    get: async (key: string) => {
-      const o = objects.get(key);
-      return o ? { body: new Blob([o.body]).stream() } : null;
-    },
-    delete: async (key: string) => {
-      objects.delete(key);
-    },
-  }),
+  engine: () => ({ cartSnapshot, addCartFile, readCartFile, keepCartOpen }),
 }));
 const upload = await import('../app/routes/cart-attachments');
 const download = await import('../app/routes/cart-attachment');
@@ -38,7 +27,7 @@ const state = (c: Partial<Cart> = {}, attachments: CartAttachment[] = []) =>
   ({ cart: cart(c), members: [], chat: [], attachments }) as unknown as CartState;
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
-  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
+  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.STOREFRONT_KEY, g, Date.now() + 60_000)}`;
 
 const post = (file: File | null, headers: Record<string, string> = {}, cartId = 'cart_1') => {
   const body = new FormData();
@@ -67,37 +56,44 @@ const pdf = () =>
   new File(['%PDF-1.7 spec'], 'C:\\specs\\widget "spec".pdf', { type: 'application/pdf' });
 
 beforeEach(() => {
-  objects.clear();
   cartSnapshot.mockReset();
-  attachToCart.mockReset();
+  addCartFile.mockReset();
+  readCartFile.mockReset();
   keepCartOpen.mockReset();
 });
 
 describe('adding a file to a cart', () => {
   const external = () => state({ external: {} as Cart['external'] });
 
-  it('stores it under the cart and hands it to the cart’s agent as the buyer', async () => {
+  it('hands it to the engine as the buyer, signed for this cart', async () => {
     cartSnapshot.mockResolvedValue(external());
-    attachToCart.mockResolvedValue({ ok: true });
+    addCartFile.mockResolvedValue({ ok: true });
     expect(await post(pdf(), { cookie: await guestCookie() })).toEqual({ ok: true });
-    const [cartId, a, actor] = attachToCart.mock.calls[0]!;
+    const [cartId, file, actor] = addCartFile.mock.calls[0]!;
     expect(cartId).toBe('cart_1');
-    expect(a).toMatchObject({ name: 'widget spec.pdf', type: 'application/pdf', size: 13 });
-    expect(a.key).toBe(`carts/cart_1/${a.id}`);
-    // Signed for this cart: the engine believes nothing else.
-    expect(await verifyRpcActor([env.PRINCIPAL_KEY], actor, 'cart:cart_1')).toEqual({
+    expect(file).toMatchObject({ name: 'widget spec.pdf', type: 'application/pdf' });
+    expect(file.id).toMatch(/^att_/);
+    expect(file.body.byteLength).toBe(13);
+    // Signed for this cart, as a guest: the engine believes nothing else.
+    expect(await verifyGuestActor([env.STOREFRONT_KEY], actor, 'cart:cart_1')).toEqual({
       kind: 'guest',
       id: 'guest:b1',
       name: 'Pat Buyer',
     });
-    expect([...objects.keys()]).toEqual([a.key]);
+    expect(await verifyGuestActor([env.STOREFRONT_KEY], actor, 'cart:cart_2')).toBeNull();
+    // The snapshot it checked first was asked for as the same buyer.
+    expect(
+      await verifyGuestActor([env.STOREFRONT_KEY], cartSnapshot.mock.calls[0]![1], 'cart:cart_1'),
+    ).not.toBeNull();
   });
 
-  it('deletes the file again when the agent refuses it', async () => {
+  it('says why when the engine refuses the file', async () => {
     cartSnapshot.mockResolvedValue(external());
-    attachToCart.mockResolvedValue({ ok: false, error: "You can't change this cart." });
-    expect(await post(pdf(), { cookie: await guestCookie() })).toMatchObject({ status: 400 });
-    expect(objects.size).toBe(0);
+    addCartFile.mockResolvedValue({ ok: false, error: "You can't change this cart." });
+    expect(await post(pdf(), { cookie: await guestCookie() })).toMatchObject({
+      status: 400,
+      data: { error: "You can't change this cart." },
+    });
   });
 
   it('refuses a stranger, a wrong type, and a buyer’s cookie for another cart', async () => {
@@ -113,14 +109,20 @@ describe('adding a file to a cart', () => {
     expect(await post(pdf(), { cookie: await guestCookie() }, 'cart_2')).toMatchObject({
       status: 401,
     });
-    expect(objects.size).toBe(0);
+    expect(addCartFile).not.toHaveBeenCalled();
   });
 
   it('refuses a buyer a staff cart, even with their own cookie', async () => {
     cartSnapshot.mockResolvedValue(state());
     expect(await post(pdf(), { cookie: await guestCookie() })).toMatchObject({ status: 403 });
-    expect(attachToCart).not.toHaveBeenCalled();
-    expect(objects.size).toBe(0);
+    expect(addCartFile).not.toHaveBeenCalled();
+  });
+
+  it('is told nothing of a cart the engine will not show it', async () => {
+    // The engine answers null for a cart the signed buyer isn't the buyer of.
+    cartSnapshot.mockResolvedValue(null);
+    expect(await post(pdf(), { cookie: await guestCookie() })).toMatchObject({ status: 404 });
+    expect(addCartFile).not.toHaveBeenCalled();
   });
 });
 
@@ -137,7 +139,7 @@ describe('downloading a cart’s file', () => {
   const external = (expiresAt: number) => ({ expiresAt }) as Cart['external'];
 
   it('serves it as a download that runs nothing, to the buyer', async () => {
-    objects.set(file.key, { body: new TextEncoder().encode('%PDF').buffer as ArrayBuffer });
+    readCartFile.mockResolvedValue({ body: new Blob(['%PDF']).stream() });
     cartSnapshot.mockResolvedValue(state({ external: external(Date.now() + 60_000) }, [file]));
     const res = await get('att_1', { cookie: await guestCookie() });
     expect(res.status).toBe(200);
@@ -146,6 +148,11 @@ describe('downloading a cart’s file', () => {
     );
     expect(res.headers.get('content-security-policy')).toContain('sandbox');
     expect(await res.text()).toBe('%PDF');
+    const [cartId, id, actor] = readCartFile.mock.calls[0]!;
+    expect([cartId, id]).toEqual(['cart_1', 'att_1']);
+    expect(await verifyGuestActor([env.STOREFRONT_KEY], actor, 'cart:cart_1')).toMatchObject({
+      id: 'guest:b1',
+    });
   });
 
   it('is not found for a file another cart lists, and unauthorized for a stranger', async () => {
@@ -157,7 +164,7 @@ describe('downloading a cart’s file', () => {
   });
 
   it('lets the buyer download while the cart is open or returned until its time, not once it closed', async () => {
-    objects.set(file.key, { body: new TextEncoder().encode('%PDF').buffer as ArrayBuffer });
+    readCartFile.mockResolvedValue({ body: new Blob(['%PDF']).stream() });
     const as = async (c: Partial<Cart>) => {
       cartSnapshot.mockResolvedValue(state(c, [file]));
       return (await get('att_1', { cookie: await guestCookie() })).status;
@@ -174,7 +181,7 @@ describe('downloading a cart’s file', () => {
     expect(keepCartOpen).toHaveBeenCalledTimes(2);
     const [cartId, actor] = keepCartOpen.mock.calls[0]!;
     expect(cartId).toBe('cart_1');
-    expect(await verifyRpcActor([env.PRINCIPAL_KEY], actor, 'cart:cart_1')).toMatchObject({
+    expect(await verifyGuestActor([env.STOREFRONT_KEY], actor, 'cart:cart_1')).toMatchObject({
       kind: 'guest',
       id: guest.id,
     });

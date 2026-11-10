@@ -6,13 +6,17 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { EngineApi } from '../src/api';
 import { createCart } from '../src/cart/carts';
 import { ensureTemplates } from '../src/flows';
-import { signedActor } from './principal';
+import { signedFor, storefrontApi } from './principal';
 
 const db = () => createDb(env.DB);
 const api = () => new EngineApi({ waitUntil() {}, passThroughOnException() {} } as never, env);
 /** As the web app calls it: the actor signed for this cart. */
-const search = async (id: string, q: string, a: CartActor, signedFor = id) =>
-  api().searchCartProducts(id, q, await signedActor(a, `cart:${signedFor}`));
+const search = async (id: string, q: string, a: CartActor, signedForCart = id) =>
+  (a.kind === 'guest' ? storefrontApi() : api()).searchCartProducts(
+    id,
+    q,
+    await signedFor(a, `cart:${signedForCart}`),
+  );
 
 const ada: CartActor = { kind: 'staff', id: 'usr_ada', name: 'Ada', role: 'operator' };
 const vee: CartActor = { kind: 'staff', id: 'usr_vee', name: 'Vee', role: 'viewer' };
@@ -149,7 +153,7 @@ describe('who may search a cart', () => {
     // A buyer only on the external cart they were admitted to.
     expect(await search(id, 'widget', buyer)).toEqual({
       ok: false,
-      error: "You can't change this cart.",
+      error: 'This isn’t your cart.',
     });
   });
 

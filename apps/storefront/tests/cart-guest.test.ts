@@ -5,23 +5,22 @@ import {
   PRINCIPAL_HEADER,
   signCartGuestSession,
   verifyCartGuest,
+  verifyGuestActor,
   verifyPrincipal,
 } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const env = { PRINCIPAL_KEY: 'storefront-test-key' };
+const env = { STOREFRONT_KEY: 'storefront-test-key' };
 const engineFetch = vi.fn(async (_r: Request) => new Response('ok'));
 const redeemCartStart = vi.fn();
 const cartSnapshot = vi.fn();
-const customers = vi.fn(async (_ids: string[]): Promise<{ id: string; name: string }[]> => []);
+const cartCustomerName = vi.fn(async (_id: string, _actor: string): Promise<string | null> => null);
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
 vi.mock('~/lib/env.server', () => ({
-  engine: () => ({ fetch: engineFetch, redeemCartStart, cartSnapshot }),
-  docs: () => ({}),
+  engine: () => ({ fetch: engineFetch, redeemCartStart, cartSnapshot, cartCustomerName }),
 }));
-vi.mock('~/lib/wire.server', () => ({ pricingStore: () => ({ customers }) }));
 
 const { default: worker } = await import('../workers/app');
 const cartStart = await import('../app/routes/cart-start');
@@ -29,13 +28,12 @@ const cartBuy = await import('../app/routes/cart-buy');
 
 const guest: CartGuest = { cartId: 'cart_1', id: 'guest:b1', name: 'Pat Buyer' };
 const guestCookie = async (g = guest) =>
-  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.PRINCIPAL_KEY, g, Date.now() + 60_000)}`;
+  `__Host-ol_${g.cartId}=${await signCartGuestSession(env.STOREFRONT_KEY, g, Date.now() + 60_000)}`;
 const socket = (path: string, headers: Record<string, string> = {}) =>
   worker.fetch(
     new Request(`https://shop.test${path}`, {
       headers: { upgrade: 'websocket', origin: 'https://shop.test', ...headers },
     }) as never,
-    env as never,
   );
 
 describe('an external cart’s buyer on its socket', () => {
@@ -54,14 +52,14 @@ describe('an external cart’s buyer on its socket', () => {
     expect(forwarded.headers.get('cookie')).toBeNull();
     expect(forwarded.headers.get('authorization')).toBeNull();
     const header = forwarded.headers.get(PRINCIPAL_HEADER);
-    expect(await verifyCartGuest([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_1')).toEqual(
-      guest,
-    );
+    expect(
+      await verifyCartGuest([env.STOREFRONT_KEY], header, '/agents/cart-agent/cart_1'),
+    ).toEqual(guest);
     // Signed for this path alone, and never as a principal.
-    expect(await verifyCartGuest([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_2')).toBe(
+    expect(await verifyCartGuest([env.STOREFRONT_KEY], header, '/agents/cart-agent/cart_2')).toBe(
       null,
     );
-    expect(await verifyPrincipal([env.PRINCIPAL_KEY], header, '/agents/cart-agent/cart_1')).toBe(
+    expect(await verifyPrincipal([env.STOREFRONT_KEY], header, '/agents/cart-agent/cart_1')).toBe(
       null,
     );
   });
@@ -121,7 +119,6 @@ describe('an external cart’s buyer on its socket', () => {
           headers: { cookie: await guestCookie(), origin },
           body: form,
         }) as never,
-        env as never,
       );
       expect(res.status, origin).toBe(403);
     }
@@ -214,8 +211,8 @@ describe('the buyer’s pages refuse in a frame they can show', () => {
 });
 
 describe('the buyer’s cart page', () => {
-  it('names the customer the cart is for, read here and never from the admin', async () => {
-    customers.mockResolvedValueOnce([{ id: 'cus_1', name: 'Contoso Ltd' }]);
+  it('names the customer the cart is for, as the engine says and never from a database here', async () => {
+    cartCustomerName.mockResolvedValueOnce('Contoso Ltd');
     cartSnapshot.mockResolvedValueOnce(snapshot({ customerId: 'cus_1' }));
     const page = (await cartBuy.loader({
       request: new Request('https://shop.test/cart/cart_1', {
@@ -223,7 +220,17 @@ describe('the buyer’s cart page', () => {
       }),
       params: { cartId: 'cart_1' },
     } as never)) as unknown as { data: { customerName: string | null; guest: CartGuest } };
-    expect(customers).toHaveBeenCalledWith(['cus_1']);
+    // Both calls carry the buyer, signed for this cart alone.
+    for (const mock of [cartSnapshot, cartCustomerName]) {
+      expect(mock.mock.calls[0]![0]).toBe('cart_1');
+      expect(
+        await verifyGuestActor([env.STOREFRONT_KEY], mock.mock.calls[0]![1], 'cart:cart_1'),
+      ).toEqual({
+        kind: 'guest',
+        id: 'guest:b1',
+        name: 'Pat Buyer',
+      });
+    }
     expect(page.data.customerName).toBe('Contoso Ltd');
     expect(page.data.guest).toEqual(guest);
   });

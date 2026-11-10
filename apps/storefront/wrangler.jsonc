@@ -17,7 +17,7 @@
   // A runaway request stops at 5 s of CPU (the default is 30 s). A cart page renders in well under
   // a second.
   "limits": { "cpu_ms": 5000 },
-  // Runs near D1 and the engine rather than near the buyer: every request calls the engine.
+  // Runs near the engine rather than near the buyer: every request calls it.
   "placement": { "mode": "smart" },
   "upload_source_maps": true,
   // Trace events also go to Workers Logpush, like the web Worker's (docs/operations.md, "Logs").
@@ -27,19 +27,11 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "shop.commerceworker.com", "custom_domain": true }],
-  // Only agentic checkout's platforms and settings are read from D1 (app/lib/wire.server.ts).
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "commerceworker",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "../../packages/db/migrations"
-    }
-  ],
-  // Same bucket as the engine and the web app: a cart's files are stored here, as the buyer adds them.
-  "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
+  // No database and no documents bucket: this Worker is public, so everything it needs from either
+  // (a platform's key, a cart's files, a customer's name) is asked of the engine, and only through
+  // the narrow StorefrontApi entrypoint (StorefrontRpc in @commerceworker/core), never EngineApi.
   "services": [
-    { "binding": "ENGINE", "service": "commerceworker-engine", "entrypoint": "EngineApi" }
+    { "binding": "ENGINE", "service": "commerceworker-engine", "entrypoint": "StorefrontApi" }
   ],
   // Per caller (app/lib/rate-limit.ts): a cart's buyer on product search, each UCP platform. The
   // registry's `limits` changes them per deployment, as it does the web Worker's.
@@ -47,7 +39,10 @@
     { "name": "API_LIMIT", "namespace_id": "1006", "simple": { "limit": 600, "period": 60 } },
     { "name": "AGENT_LIMIT", "namespace_id": "1007", "simple": { "limit": 300, "period": 60 } }
   ]
-  // Secrets (wrangler secret put): PRINCIPAL_KEY — signs what this Worker forwards to the engine
-  // (a cart's buyer, a UCP platform) and the cookie a start link sets; the same key as the web
-  // Worker's and the engine's.
+  // Secrets (set by the deploy, `scripts/fleet.ts secrets storefront`): STOREFRONT_KEY — signs what
+  // this Worker forwards to the engine (a cart's buyer, a UCP platform) and the cookie a start link
+  // sets. It is derived from PRINCIPAL_KEY (`storefrontKey` in @commerceworker/core), which this
+  // Worker never holds: the engine checks these envelopes under the derived key alone, so a
+  // compromised storefront can't sign as staff. STOREFRONT_KEY_PREVIOUS: the key before it,
+  // while a rotation finishes.
 }

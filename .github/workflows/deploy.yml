@@ -278,8 +278,9 @@ jobs:
           secrets=()
           [ "$(cat "$RUNNER_TEMP/engine-secrets.json")" != "{}" ] && secrets=(--secrets-file "$RUNNER_TEMP/engine-secrets.json")
           retry pnpm --filter @commerceworker/engine exec wrangler deploy --config "$CONFIG" "${secrets[@]}"
-      # The storefront binds to the engine too (buyers' pages, UCP), so it follows it. Its only
-      # secrets are the principal keys, and nothing the web app deploys depends on it.
+      # The storefront binds the engine's StorefrontApi (buyers' pages, UCP), so it follows it. Its
+      # only secrets are the keys derived from PRINCIPAL_KEY for it (never the key itself), and
+      # nothing the web app deploys depends on it.
       - name: Build storefront
         run: COMMERCEWORKER_WRANGLER_CONFIG="$CONFIG" pnpm --filter @commerceworker/storefront build
       # `wrangler deploy` picks up the build's own config (.wrangler/deploy), made from $CONFIG.
@@ -325,7 +326,7 @@ jobs:
           curl -fsSL --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 -o /dev/null "https://$DOMAIN/login"
           # The public catalog API answers on its own host.
           curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$CATALOG_DOMAIN/health"
-          # The storefront answers on its own host, and reaches its D1, R2 and the engine.
+          # The storefront answers on its own host, and reaches the engine (it binds nothing else).
           curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$STOREFRONT_DOMAIN/health"
           curl -fsS --max-time 20 --retry 30 --retry-all-errors --retry-delay 10 --retry-max-time 300 "https://$STOREFRONT_DOMAIN/health/deep"
       # A latency budget on the deployed app, once it is up. It warns rather than fails: a slow

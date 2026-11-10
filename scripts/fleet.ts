@@ -75,9 +75,7 @@ type Ring = (typeof RINGS)[number];
 
 /** Each app's secrets, read from the deploy job's environment (a GitHub environment's secrets). */
 const SECRETS = {
-  // The storefront signs what it forwards to the engine, and verifies a buyer's cookie, with the
-  // same keys as the web Worker: nothing else.
-  storefront: ['PRINCIPAL_KEY', 'PRINCIPAL_KEY_PREVIOUS'],
+  // (The storefront's are derived, not read as they are: `storefrontSecrets`.)
   web: [
     'PRINCIPAL_KEY',
     'DATA_KEY',
@@ -1171,8 +1169,9 @@ function rateLimits(ratelimits: Config[], d: Deployment): Config[] {
 }
 
 /**
- * The storefront: buyers' pages and agentic checkout at its own host, on the deployment's engine,
- * database and documents bucket. It has no resource of its own to provision.
+ * The storefront: buyers' pages and agentic checkout at its own host, on the deployment's engine.
+ * It is public, so it binds nothing else: no database, no documents bucket (the engine's
+ * `StorefrontApi` does that work) and no principal key. It has no resource of its own to provision.
  */
 export function renderStorefront(base: Config, d: Deployment): Config {
   const config = structuredClone(base);
@@ -1184,7 +1183,6 @@ export function renderStorefront(base: Config, d: Deployment): Config {
     s.binding === 'ENGINE' ? { ...s, service: names(d).engine } : s,
   );
   config.ratelimits = rateLimits(config.ratelimits, d);
-  storage(config, d);
   return config;
 }
 
@@ -1282,7 +1280,8 @@ export function matrix(list: Deployment[]): Record<Ring, Deployment[]> {
  * Why the environment's secrets can't run `app` for `d`, or null. The engine of a Stripe
  * deployment needs STRIPE_SECRET_KEY, in the same mode (test or live) as its publishable key. The
  * web Worker of a deployment with a Turnstile site key needs TURNSTILE_SECRET_KEY: without it every
- * password sign-in would be refused. The storefront needs only the principal key every app needs.
+ * password sign-in would be refused. The storefront needs only the principal key every app needs,
+ * which it is given as a derived key.
  */
 export function secretsProblem(
   d: Deployment,
@@ -1302,6 +1301,18 @@ export function secretsProblem(
   if (d.stripePublishableKey && live(sk) !== live(d.stripePublishableKey))
     return `${d.id}: STRIPE_SECRET_KEY and stripePublishableKey are not both test or both live keys`;
   return null;
+}
+
+/**
+ * The storefront's secrets: `storefrontKey` of the principal key and of the previous one while a
+ * rotation finishes. The principal key itself never reaches it.
+ */
+export function storefrontSecrets(env: Record<string, string | undefined>) {
+  const [current, previous] = [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS];
+  return {
+    ...(current ? { STOREFRONT_KEY: storefrontKey(current) } : {}),
+    ...(previous ? { STOREFRONT_KEY_PREVIOUS: storefrontKey(previous) } : {}),
+  };
 }
 
 function secrets(app: string | undefined, out: string | undefined, id?: string, more?: string) {
@@ -1327,9 +1338,12 @@ function secrets(app: string | undefined, out: string | undefined, id?: string, 
   const problem = id ? secretsProblem(byId(id), process.env, app) : null;
   if (problem) throw new Error(problem);
   // Only the ones set: `--secrets-file` adds to a Worker's secrets and never removes one.
-  const values = Object.fromEntries(
-    SECRETS[app].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : [])),
-  );
+  const values =
+    app === 'storefront'
+      ? storefrontSecrets(process.env)
+      : Object.fromEntries(
+          SECRETS[app].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : [])),
+        );
   writeFileSync(out, JSON.stringify(values), { mode: 0o600 });
   console.log(`${app}: ${Object.keys(values).join(', ') || 'no secrets set'}`);
 }
@@ -1615,6 +1629,14 @@ const HEALTH_CHECK_HEADER = 'x-commerceworker-health-check';
  */
 export const healthCheckKey = (principalKey: string) =>
   createHmac('sha256', principalKey).update('commerceworker-health-check').digest('hex');
+
+/**
+ * The key the storefront signs and verifies with: the HMAC of the deployment's principal key with
+ * the storefront's own label, as `storefrontKey` in @commerceworker/core derives it (fleet.test.ts
+ * holds the two to the same vector). The storefront gets this and never the principal key itself.
+ */
+export const storefrontKey = (principalKey: string) =>
+  createHmac('sha256', principalKey).update('commerceworker-storefront').digest('hex');
 
 /** The write check's header value, good for a minute (`signHealthCheck` in @commerceworker/core). */
 export function signHealthCheck(principalKey: string, now = Date.now()): string {

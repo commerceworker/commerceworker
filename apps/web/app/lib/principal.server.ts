@@ -5,8 +5,8 @@ import {
   type Principal,
   type ProxiedPrincipal,
   pluginKey,
-  type RpcActor,
   type SignedActor,
+  type StaffActor,
   signPrincipal,
   signRpcActor,
 } from '@commerceworker/core';
@@ -45,12 +45,12 @@ export async function setPluginPrincipalHeader(
  * Who is acting on an `EngineRpc` call, signed for that one call (`decide:<orderId>`,
  * `cart:<cartId>`): the engine takes it from nothing else.
  */
-export function signedActor(actor: RpcActor, call: string): Promise<SignedActor> {
+export function signedActor(actor: StaffActor, call: string): Promise<SignedActor> {
   return signRpcActor(principalKey(), actor, call);
 }
 
 /** A person or token as the staff actor on an approval: the record names them as `by`. */
-export const decider = (p: Pick<Principal, 'id' | 'role'>, by: string): RpcActor => ({
+export const decider = (p: Pick<Principal, 'id' | 'role'>, by: string): StaffActor => ({
   kind: 'staff',
   id: p.id,
   name: by,
