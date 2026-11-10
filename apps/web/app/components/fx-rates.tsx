@@ -106,8 +106,8 @@ export function FxRates({ rates }: { rates: FxRateRow[] }) {
       <h3 className="px-4 pt-3 font-medium text-sm">Exchange rates</h3>
       <p className="max-w-measure px-4 pt-0.5 pb-2 text-muted-foreground text-xs">
         Units of each currency per 1 {BASE_CURRENCY}. Orders convert at the rate when they are
-        priced and keep it. The daily refresh from the European Central Bank replaces a rate for the
-        currencies the deployment names.
+        priced and keep it. The European Central Bank's daily refresh keeps the deployment's
+        currencies current, except a rate a person set, which holds until someone changes it.
         {canAdmin ? '' : ' An admin edits them.'}
       </p>
       <Table stack="cards" scroll caption="Exchange rates">
