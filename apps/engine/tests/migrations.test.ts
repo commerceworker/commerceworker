@@ -463,3 +463,64 @@ describe('0069_credit_ledger', () => {
     ).toEqual({ status: 'held' });
   });
 });
+
+describe('0071_budgets', () => {
+  it('adds the budgets and their spend ledger beside what is there, with the plan’s defaults', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0071_');
+    await applyD1Migrations(db, applied);
+    await db.batch([
+      db.prepare(
+        `INSERT INTO customers (id, name, email, kind) VALUES ('bd_biz', 'Biz', 'b@x.test', 'business')`,
+      ),
+      db.prepare(
+        `INSERT INTO orders (id, model, status, flow_id, flow_version, customer_id, created_at, updated_at)
+         VALUES ('bd_o', 'b2b', 'completed', 'f', 1, 'bd_biz', 1, 1)`,
+      ),
+    ]);
+    await applyD1Migrations(db, [next]);
+
+    // Existing rows are untouched, and nothing was written for them.
+    expect(await db.prepare("SELECT customer_id FROM orders WHERE id = 'bd_o'").first()).toEqual({
+      customer_id: 'bd_biz',
+    });
+    for (const table of ['budgets', 'budget_spend'])
+      expect(await db.prepare(`SELECT count(*) AS n FROM ${table}`).first()).toEqual({ n: 0 });
+
+    // A budget is advisory and active unless it says otherwise (D5).
+    await db
+      .prepare(
+        `INSERT INTO budgets (id, company_id, name, amount, period, anchor, created_at, updated_at)
+         VALUES ('bud_1', 'bd_biz', 'Office', 500, 'monthly', 0, 1, 1)`,
+      )
+      .run();
+    expect(
+      await db
+        .prepare("SELECT enforcement, status, team_id FROM budgets WHERE id = 'bud_1'")
+        .first(),
+    ).toEqual({ enforcement: 'advisory', status: 'active', team_id: null });
+
+    // A commit is keyed by order, step and budget: the same key again is refused by the table, and
+    // a reversal is a row of its own, so a window sums to nothing once both are there.
+    const spend = (id: string, amount: number, kind: string) =>
+      db
+        .prepare(
+          `INSERT INTO budget_spend (id, budget_id, order_id, amount, kind, window_start, at)
+           VALUES (?, 'bud_1', 'bd_o', ?, ?, 100, 1)`,
+        )
+        .bind(id, amount, kind);
+    await spend('bsp_bd_o_budget_1_bud_1', 40, 'commit').run();
+    await expect(spend('bsp_bd_o_budget_1_bud_1', 40, 'commit').run()).rejects.toThrow(
+      /UNIQUE|PRIMARY/,
+    );
+    await spend('rev_bsp_bd_o_budget_1_bud_1', -40, 'reverse').run();
+    expect(
+      await db
+        .prepare(
+          'SELECT sum(amount) AS spent FROM budget_spend WHERE budget_id = ? AND window_start = ?',
+        )
+        .bind('bud_1', 100)
+        .first(),
+    ).toEqual({ spent: 0 });
+  });
+});

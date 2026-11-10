@@ -13,6 +13,8 @@ import {
   applyPromotions,
   bookReturnLabel,
   bookShipment,
+  checkBudgets,
+  commitBudgetSpend,
   handOverOrder,
   holdCredit,
   MissingExchangeRateError,
@@ -20,6 +22,7 @@ import {
   priceOrder,
   rateShipping,
   releaseCredit,
+  reverseBudgetSpend,
   routeFulfillment,
   schedulePayouts,
   splitBySeller,
@@ -79,6 +82,7 @@ import { provide } from './providers';
 import { liveCarrierQuote } from './shipping-rates';
 import {
   balanceStore,
+  budgetStore,
   commercePorts,
   companyDirectory,
   documentStore,
@@ -450,13 +454,42 @@ export const EXECUTORS: Record<string, Exec> = {
     };
   },
 
-  'commerce.budget_check': async ({ ctx, config }) => {
-    const budget = num(config.budget, DEFAULT_ORDER_BUDGET);
-    const { within } = budgetCheck(ctx.order, budget);
+  'commerce.budget_check': async ({ env, ctx, config, stepKey }) => {
+    if (str(config.source, 'node') !== 'company') {
+      const budget = num(config.budget, DEFAULT_ORDER_BUDGET);
+      const { within } = budgetCheck(ctx.order, budget);
+      return {
+        branches: [within ? 'within' : 'over'],
+        output: { budget },
+        summary: `${within ? 'Within' : 'Over'} budget of ${budget} ${BASE_CURRENCY}`,
+      };
+    }
+    // The company's budgets, by the calendar period the step runs in (not the run's start: an
+    // order that waited for an approval counts when it is checked). A retry judges them as the
+    // first attempt did, and the commit is keyed by this step, so it records once.
+    const ports = { budgets: budgetStore(env), companies: companyDirectory(env) };
+    const now = Date.now();
+    const r = await checkBudgets(ports, ctx.order, stepKey, ctx.buyer?.team ?? null, now);
+    const commit = config.commit === true && r.within && r.uses.length > 0;
+    // The commit is guarded against what other orders recorded since the read: one that lost the
+    // race for a strict budget goes over, with nothing recorded.
+    const committed = commit && (await commitBudgetSpend(ports, ctx.order, stepKey, r.uses, now));
+    const within = r.within && (!commit || committed);
+    const strict = r.checks.filter((c) => c.exceeded && c.enforcement === 'strict');
+    const warnings = r.checks.flatMap((c) => (c.warning ? [c.warning] : []));
     return {
       branches: [within ? 'within' : 'over'],
-      output: { budget },
-      summary: `${within ? 'Within' : 'Over'} budget of ${budget} ${BASE_CURRENCY}`,
+      output: { total: r.total, committed, budgets: r.checks, currency: BASE_CURRENCY },
+      summary: !r.checks.length
+        ? 'No budgets apply'
+        : !within
+          ? strict.length
+            ? `Over ${strict.map((c) => c.name).join(', ')}`
+            : 'A strict budget filled before the order could be recorded'
+          : [
+              `Within ${plural(r.checks.length, 'budget')}${committed ? ', spend recorded' : ''}`,
+              ...warnings,
+            ].join('; '),
     };
   },
 
@@ -1139,6 +1172,9 @@ export const ROLLBACKS: Record<
   },
   'commerce.credit_check': async (env, orderId) =>
     `Released ${plural(await releaseCredit({ balances: balanceStore(env) }, orderId), 'credit hold')}`,
+  // Gives back what the order recorded against its company's budgets, so its window has the room again.
+  'commerce.budget_check': async (env, orderId) =>
+    `Gave back ${plural(await reverseBudgetSpend({ budgets: budgetStore(env) }, orderId, Date.now()), 'budget spend')}`,
   'commerce.invoice': async (env, orderId) => {
     // Void first: an invoice Stripe reports paid keeps its account charge, which the payment settles.
     const { voided, paid } = await billing.voidInvoices(env, orderId);

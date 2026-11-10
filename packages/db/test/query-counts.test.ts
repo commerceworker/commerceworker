@@ -23,6 +23,7 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest';
 import { d1BackOffice } from '../src/back-office';
 import { d1BalanceStore } from '../src/balance-store';
+import { d1BudgetStore } from '../src/budget-store';
 import { d1CartRecords } from '../src/cart-records';
 import { d1CheckoutSessions } from '../src/checkout-sessions';
 import { d1CompanyDirectory } from '../src/company-directory';
@@ -85,6 +86,7 @@ function stores(d1: D1Database) {
     carts: d1CartRecords(d1, clock),
     checkouts: d1CheckoutSessions(d1),
     companies: d1CompanyDirectory(d1),
+    budgets: d1BudgetStore(d1),
   };
 }
 
@@ -263,6 +265,48 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     'commerce.validate: the company and its buyer',
     () => ports.companies.access(ALL, id('co'), id('mem')),
   ],
+  ['budgets: a page', () => ports.budgets.budgets(ALL, { companyId: id('co'), limit: 25 })],
+  ['budgets: one budget', () => ports.budgets.budget(ALL, id('budget'))],
+  [
+    'commerce.budget_check: the budgets in force',
+    () => ports.budgets.applicable(ALL, id('co'), [id('team')]),
+  ],
+  [
+    'commerce.budget_check: spend in their windows',
+    () =>
+      ports.budgets.spentIn(
+        [
+          { budgetId: id('budget'), windowStart: 0 },
+          { budgetId: id('strict'), windowStart: 0 },
+        ],
+        [id('own')],
+      ),
+  ],
+  [
+    'commerce.budget_check: record the spend',
+    () =>
+      ports.budgets.commit({
+        orderId: id('budget-order'),
+        stepKey: 'budget#1',
+        at: now,
+        lines: [
+          { budgetId: id('budget'), amount: 10, window: { start: 0, end: null } },
+          { budgetId: id('strict'), amount: 10, window: { start: 0, end: null } },
+        ],
+      }),
+  ],
+  [
+    'rollback commerce.budget_check: give back the spend',
+    () => ports.budgets.reverse(id('budget-order'), now),
+  ],
+  [
+    'budgets: a budget’s ledger',
+    () => ports.budgets.entries(ALL, { budgetId: id('budget'), limit: 20 }),
+  ],
+  [
+    'budgets: change a budget’s status',
+    () => ports.budgets.transition(ALL, id('budget'), 'active', 'paused', now),
+  ],
   ['admin new order: every record for the pickers', () => ports.office.everything()],
   ['admin: currencies', () => ports.office.currencies()],
   ['admin price books: a page', () => ports.books.list({ after: null, limit: 25 })],
@@ -333,6 +377,22 @@ describe('commerce D1 query counts', () => {
         `INSERT INTO price_rules (id, source_id, name, sku, min_qty, price, created_at, book_id) VALUES (?1, 'price_book', 'x', 'PC-SKU-1', 1, 7, 0, ?2)`,
       ).bind(id('entry'), id('book')),
     ]);
+    const budgets = d1BudgetStore(DB);
+    const budget = (name: string, enforcement: 'strict' | 'advisory') => ({
+      id: id(name),
+      companyId: id('co'),
+      teamId: null,
+      name,
+      amount: 1000,
+      period: 'one_time' as const,
+      anchor: 0,
+      enforcement,
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await budgets.put(budget('budget', 'advisory'));
+    await budgets.put(budget('strict', 'strict'));
     counter = countingD1(DB);
     ports = stores(counter.d1);
   }, 60_000);

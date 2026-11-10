@@ -3,6 +3,7 @@ export * from './audit';
 export * from './auth';
 export * from './back-office';
 export * from './balances';
+export * from './budgets';
 export * from './carts';
 export * from './checkouts';
 export * from './companies';

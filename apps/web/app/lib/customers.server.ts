@@ -9,6 +9,8 @@
 import {
   getCompany,
   getCreditAccount,
+  listBudgetSpend,
+  listBudgets,
   listCompanyMembers,
 } from '@commerceworker/application/commerce';
 import {
@@ -28,7 +30,13 @@ import { actorName } from './audit.server';
 import { docs, engine } from './env.server';
 import { signedActor } from './principal.server';
 import { expiryFrom, parseTaxPlaces } from './tax-certificates';
-import { addressBook, balanceStore, companyDirectory, pricingStore } from './wire.server';
+import {
+  addressBook,
+  balanceStore,
+  budgetStore,
+  companyDirectory,
+  pricingStore,
+} from './wire.server';
 
 export async function customerById(id: string) {
   return (await pricingStore().customer(id)) ?? null;
@@ -177,5 +185,42 @@ export async function companyOf(customerId: string, params: URLSearchParams, rea
     parent: parent ? { id: parent.company.id, name: parent.company.name } : null,
     members: page?.ok ? page : null,
     memberFilter: { status: status ?? null, role: role ?? null },
+  };
+}
+
+/** Budgets a page of the customer's page lists. */
+export const BUDGETS_PAGE = 10;
+/** Ledger rows a page of one budget's spend lists. */
+export const LEDGER_PAGE = 10;
+
+/**
+ * A company's budgets, each with what its current window has spent (`budgets-after` pages them),
+ * and the spend ledger of the one named by `ledger` (`ledger-after` pages it). The ledger is read
+ * only for a budget of this company: the scope is the company, so another's id reads nothing.
+ */
+export async function budgetsOf(customerId: string, params: URLSearchParams) {
+  const ports = { budgets: budgetStore() };
+  const now = Date.now();
+  const list = await listBudgets(
+    ports,
+    { companyId: customerId },
+    {
+      companyId: customerId,
+      cursor: params.get('budgets-after') ?? undefined,
+      limit: BUDGETS_PAGE,
+    },
+    now,
+  );
+  const ledgerOf = params.get('ledger');
+  const ledger = ledgerOf
+    ? await listBudgetSpend(
+        ports,
+        { companyId: customerId },
+        { budgetId: ledgerOf, cursor: params.get('ledger-after') ?? undefined, limit: LEDGER_PAGE },
+      )
+    : null;
+  return {
+    ...(list.ok ? list : { budgets: [], total: 0, cursor: null }),
+    ledger: ledger?.ok ? { budgetId: ledgerOf as string, ...ledger } : null,
   };
 }

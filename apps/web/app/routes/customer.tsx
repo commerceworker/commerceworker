@@ -47,6 +47,7 @@ import {
   useNavigation,
   useRevalidator,
 } from 'react-router';
+import { BudgetsSection } from '~/components/budgets';
 import { CompanySection, EditCustomer, MembersSection, TeamsSection } from '~/components/company';
 import { FormSheet, useFormSheet } from '~/components/form-sheet';
 import { StatusBadge, ToneBadge } from '~/components/status';
@@ -57,6 +58,7 @@ import { amountFrom, ENTRY_KINDS } from '~/lib/credit';
 import {
   addCertificate,
   addressesOf,
+  budgetsOf,
   companyOf,
   creditOf,
   customerById,
@@ -96,6 +98,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     creditOf(params.customerId, after, CREDIT_ENTRIES),
   ]);
   if (!customer || !certificates) throw data('Customer not found', { status: 404 });
+  // A company's budgets, shown to every role that can see the page.
+  const budgets = company
+    ? await budgetsOf(params.customerId, new URL(request.url).searchParams)
+    : null;
   const { stripeCustomerId: _c, stripePaymentMethodId: _pm, ...shown } = customer;
   return {
     customer: shown,
@@ -108,6 +114,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     company,
     credit,
     after: after ?? null,
+    budgets,
     // The next certificate's id, minted here so a form sent twice adds it once.
     nextId: newId('txc'),
   };
@@ -142,6 +149,7 @@ export default function CustomerPage() {
     company,
     credit,
     after,
+    budgets,
     nextId,
     pricing,
   } = useLoaderData<typeof loader>();
@@ -287,6 +295,12 @@ export default function CustomerPage() {
               <MembersSection data={company} canOperate={canOperate} />
               <TeamsSection data={company} canOperate={canOperate} />
             </div>
+            {budgets ? (
+              <BudgetsSection
+                data={{ ...budgets, company: company.company, teams: company.teams }}
+                canOperate={canOperate}
+              />
+            ) : null}
           </>
         ) : null}
         {credit ? <CreditSection customerId={c.id} credit={credit} after={after} /> : null}

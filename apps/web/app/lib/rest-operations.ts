@@ -72,6 +72,13 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'GET', path: '/customers/{customerId}/credit', tool: 'get_credit_account' },
   { method: 'POST', path: '/customers/{customerId}/credit/limit', tool: 'set_credit_limit' },
   { method: 'POST', path: '/customers/{customerId}/credit/adjustments', tool: 'adjust_credit' },
+  { method: 'GET', path: '/companies/{companyId}/budgets', tool: 'list_budgets' },
+  { method: 'POST', path: '/companies/{companyId}/budgets', tool: 'put_budget' },
+  {
+    method: 'POST',
+    path: '/companies/{companyId}/budgets/{budgetId}/status',
+    tool: 'set_budget_status',
+  },
   { method: 'POST', path: '/stock/review', tool: 'run_stock_review' },
   { method: 'GET', path: '/stock', tool: 'find_products' },
   { method: 'POST', path: '/orders/{orderId}/assess', tool: 'assess_order' },

@@ -196,7 +196,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        23,
+        24,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -274,6 +274,7 @@ describe('MCP', () => {
       'get_price_book',
       'get_product',
       'get_product_sheet',
+      'list_budgets',
       'list_carts',
       'list_catalog_channels',
       'list_catalog_feeds',
@@ -298,7 +299,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(72);
+    expect(operator).toHaveLength(75);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -329,6 +330,18 @@ describe('MCP', () => {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       });
     expect(viewer.map((t) => t.name)).not.toContain('list_companies');
+    // Budgets: a viewer reads them with their spend; an operator changes them, and archiving is final.
+    expect(viewer.find((t) => t.name === 'list_budgets')).toMatchObject({
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      outputSchema: { type: 'object' },
+    });
+    expect(viewer.map((t) => t.name)).not.toContain('put_budget');
+    expect(operator.find((t) => t.name === 'set_budget_status')).toMatchObject({
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    });
+    expect(operator.find((t) => t.name === 'put_budget')).toMatchObject({
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    });
     // An admin also drafts plugins: no confirm, but it saves a draft, so it isn't read-only.
     // A cart is saved without a confirm (nothing is ordered); submitting it is an action.
     expect(operator.find((t) => t.name === 'change_cart')).toMatchObject({
@@ -344,7 +357,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(95);
+    expect(admin).toHaveLength(98);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -856,6 +869,75 @@ describe('MCP', () => {
         (await call(operator, 'create_customer', { ...args, name: 'Changed', confirmation: code }))
           .isError,
       ).toBe(true);
+    });
+  });
+
+  describe('budgets', () => {
+    const operator = person('operator', 'ops@example.com');
+    const viewer = person('viewer', 'view@example.com');
+
+    async function confirm(tool: string, args: Record<string, unknown>) {
+      const first = await call(operator, tool, args);
+      expect(first.isError, first.content[0]?.text).toBeFalsy();
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(operator, tool, { ...args, confirmation: code });
+      expect(done.isError, done.content[0]?.text).toBeFalsy();
+      // A code works once.
+      expect((await call(operator, tool, { ...args, confirmation: code })).isError).toBe(true);
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+      };
+    }
+
+    it('adds, reads and archives a budget on a code each, and a viewer may read it', async () => {
+      const company = await confirm('create_customer', {
+        name: `Budget Co ${crypto.randomUUID().slice(0, 6)}`,
+        email: `${crypto.randomUUID().slice(0, 8)}@mcp.test`,
+      });
+      const companyId = company.done.id as string;
+      const args = { companyId, name: 'Office', amount: 500, period: 'monthly' };
+      const added = await confirm('put_budget', args);
+      expect(added.preview.title).toContain('Add budget Office');
+      expect(added.preview.consequences.join('\n')).toContain('Advisory');
+      const id = added.done.id as string;
+
+      const listed = await call(viewer, 'list_budgets', { companyId });
+      expect(listed.structuredContent).toMatchObject({
+        total: 1,
+        cursor: null,
+        budgets: [{ id, name: 'Office', amount: 500, spent: 0, remaining: 500, status: 'active' }],
+      });
+
+      const archived = await confirm('set_budget_status', {
+        companyId,
+        budgetId: id,
+        status: 'archived',
+      });
+      expect(archived.preview.consequences.join('\n')).toContain('Final');
+      // Final: an archived budget moves nowhere, and the preview says so with no code.
+      const again = await call(operator, 'set_budget_status', {
+        companyId,
+        budgetId: id,
+        status: 'active',
+      });
+      expect(again.isError).toBe(true);
+      expect(again.content[0]?.text).toContain('archived, which is final');
+      expect(again.structuredContent?.confirmation).toBeUndefined();
+    });
+
+    it('hides the changes from a viewer, and refuses an unknown company and a bad cursor', async () => {
+      expect((await tools(viewer)).map((t) => t.name)).not.toContain('put_budget');
+      const missing = await call(operator, 'put_budget', {
+        companyId: 'cus_nobody',
+        name: 'N',
+        amount: 5,
+        period: 'weekly',
+      });
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0]?.text).toBe('No such company.');
+      const junk = await call(viewer, 'list_budgets', { companyId: 'cus_ada', cursor: 'junk' });
+      expect(junk.isError).toBe(true);
     });
   });
 

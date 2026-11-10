@@ -39,6 +39,7 @@ import {
 import { pluginStatuses, pluginUsage } from '../plugins';
 import { auditLog, integrationStore, ucpStore, webhookOutbox, workspaceStore } from '../wire';
 import { runCases } from './admin';
+import { readBudgets } from './budgets';
 import { draftCartReply } from './cart-reply';
 import { changeCart, getCart, listCarts, openCart } from './carts';
 import { acceptProductDrafts, discardProductEdits, stageProductEdits } from './catalog';
@@ -137,6 +138,8 @@ export const ACTION_TOOLS: ActionTool[] = [
   'put_company_members',
   'remove_company_member',
   'put_company_team',
+  'put_budget',
+  'set_budget_status',
   'set_member_role',
   'set_approval_separation',
   'set_assistant_routing',
@@ -352,6 +355,8 @@ export async function runTool<T extends AssistantTool>(
       return readPriceBook(env, input as ToolInput<'get_price_book'>);
     case 'preview_price':
       return readPricePreview(env, input as ToolInput<'preview_price'>);
+    case 'list_budgets':
+      return readBudgets(env, input as ToolInput<'list_budgets'>);
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

@@ -143,6 +143,9 @@ export type AssistantTool =
   | 'get_credit_account'
   | 'set_credit_limit'
   | 'adjust_credit'
+  | 'list_budgets'
+  | 'put_budget'
+  | 'set_budget_status'
   | 'set_member_role'
   | 'set_approval_separation'
   | 'set_plugin_enabled'
@@ -827,6 +830,30 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Adjust a customer’s balance',
     description:
       'Record a credit memo or a payment received off the platform (a negative amount, lowering what is owed) or a debit (positive), with a reason. It is an immutable ledger entry; undo one with another adjustment.',
+  },
+  list_budgets: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Listed budgets',
+    title: 'List a company’s budgets',
+    description:
+      'A company’s budgets a page at a time by name: amount, period, strict or advisory, team and status, each with what its current window has spent and what is left. Narrow by team or status; pass the cursor a page returned for the next.',
+  },
+  put_budget: {
+    role: 'operator',
+    confirm: true,
+    label: 'Add or change a budget',
+    title: 'Add or change a budget',
+    description:
+      'Add a budget for a company or one of its teams (which also covers the teams under it), or change one’s name, amount or enforcement. A strict budget declines an order that would take it below zero; an advisory one only warns. Budgets count in the base currency, per calendar period.',
+  },
+  set_budget_status: {
+    role: 'operator',
+    confirm: true,
+    label: 'Change a budget’s status',
+    title: 'Pause, resume or archive a budget',
+    description:
+      'Pause a budget (orders aren’t held to it, and its spend is kept), resume it, or archive it for good.',
   },
   // The Team and Plugins pages' changes, for admins. Those the pages ask a step-up for need one on
   // the card too (`ActionPreview.stepUp`).

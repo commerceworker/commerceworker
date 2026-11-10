@@ -8,6 +8,7 @@ import { createDb, probeDb } from '@commerceworker/db';
 import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
 import { d1BalanceStore } from '@commerceworker/db/balance-store';
+import { d1BudgetStore } from '@commerceworker/db/budget-store';
 import { d1CartRecords } from '@commerceworker/db/cart-records';
 import { d1CheckoutSessions } from '@commerceworker/db/checkout-sessions';
 import { d1CompanyDirectory } from '@commerceworker/db/company-directory';
@@ -42,6 +43,7 @@ import type {
   AuditArchive,
   AuditLog,
   BalanceStore,
+  BudgetStore,
   CartRecords,
   CartRuntime,
   CheckoutSessionStore,
@@ -333,6 +335,9 @@ export const priceBookStore = (env: Pick<Env, 'DB'>): PriceBookStore => d1PriceB
 export const taxCertificateStore = (env: Pick<Env, 'DB'>): TaxCertificateStore =>
   d1TaxCertificateStore(env.DB);
 
+/** Companies' budgets and their spend ledger. */
+export const budgetStore = (env: Pick<Env, 'DB'>): BudgetStore => d1BudgetStore(env.DB);
+
 /** Companies, their teams and members, and the customer accounts they hang off. */
 export const companyDirectory = (env: Pick<Env, 'DB'>): CompanyDirectory =>
   d1CompanyDirectory(env.DB);
@@ -415,6 +420,7 @@ export const commercePorts = (env: Env) => ({
   inventory: inventoryStore(env),
   fulfillment: fulfillmentStore(env),
   balances: balanceStore(env),
+  budgets: budgetStore(env),
   marketplace: marketplaceStore(env),
   shipping: shippingStore(env),
   labels: labelService(env),
