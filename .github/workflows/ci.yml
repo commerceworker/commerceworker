@@ -102,7 +102,9 @@ jobs:
   # 26.04 left it unable to start. Move it on purpose, once Playwright supports the new image.
   devices:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # Up to 15 minutes for the system libraries when the mirror is slow (5, then a 10 minute
+    # retry), and the device tests' own 20: a slow mirror never eats the tests' time.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -114,8 +116,9 @@ jobs:
       # The browser download is cached by Playwright version and Ubuntu release (a build for one
       # release can't load another's system libraries), so it is fetched only on a miss. The
       # system libraries come from apt, which the runner's Ubuntu mirror sometimes serves very
-      # slowly (two runs spent all 25 minutes there), so that step has its own short timeout and
-      # one retry instead of the job's whole budget.
+      # slowly (two runs spent all 25 minutes there, and one spent 13 on both attempts, leaving the
+      # tests too little), so that step has its own short timeout and one retry, and the tests
+      # have their own budget after it.
       - name: Resolve the Playwright version
         id: playwright
         # `pnpm exec` can print more than Playwright's one line, and a line without `key=` breaks
@@ -152,6 +155,7 @@ jobs:
           done
           pnpm --filter @commerceworker/web exec playwright install-deps webkit
       - name: Device tests
+        timeout-minutes: 20
         run: pnpm --filter @commerceworker/web e2e
       # A failure's traces (DOM, network, console at each step): open with `playwright show-trace`.
       - name: Keep the failures' traces
