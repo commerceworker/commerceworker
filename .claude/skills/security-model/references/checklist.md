@@ -92,7 +92,7 @@ candidate finding that still needs a concrete attacker before it is reported.
 
 ## Catalog and edge
 
-- catalog-edge stays read-only: no binding that can write, no route that reaches the catalog's
+- delivery's catalog entrypoint stays read-only: no binding that can write, no route that reaches the catalog's
   RPC write methods.
 - Cache keys are the canonical URL, so a query string or header can't poison another product's
   entry.

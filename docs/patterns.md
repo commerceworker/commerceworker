@@ -42,7 +42,7 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Transactional outbox → queue → consumers (webhooks, search, purges, agents) | both | Content: merged · Commerce: P1 (catalog and webhooks have it) | `apps/pipeline` |
 | Apps are thin entries; shared code lives in packages | Platform | Content: merged · Commerce: P1–P3 | `apps/{studio,api,delivery,media,pipeline}` |
 | Workers split by traffic profile (admin, api, storefront, delivery, media, engine) | Platform | Content: merged · Commerce: P2–P3 (storefront split) | AGENTS.md, Layout |
-| Cached delivery entrypoint behind an uncached gateway; rationed purges | both | Merged | `apps/catalog-edge` |
+| Cached delivery entrypoint behind an uncached gateway; rationed purges | both | Merged | `apps/delivery` |
 | D1 limits as design inputs (100 parameters, one writer, 10 GB) | Platform | Merged (rule) | AGENTS.md, ADR 0001 |
 | Statement counts per request snapshotted; read paths may only go down | Platform | Merged | `packages/store/test/query-counts.json`, `packages/db/test/query-counts.json` (one counter and drift report, `@commerceworker/test-kit/d1`) |
 | A store contract run against both the D1 and the in-memory store | Platform | Content: merged · Commerce: partial (pricing, inventory, fulfillment, balances, marketplace, shipping, documents, payments, invoices, order and cart records, checkout sessions, retention, data subjects, order queries, flows, workspace, plugin installs, sealed secrets, tax certificates, addresses, identity, confirmations, UCP, outbox, product index, logs, audit) | `packages/test-kit/src/commerce/pricing-store-contract.ts`, `packages/db/test`, `packages/test-kit/test` |

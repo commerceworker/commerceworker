@@ -98,8 +98,8 @@
 ^scripts/(fleet\.ts|provision\.sh)$	docs/deploy.md docs/operations.md docs/configuration.md docs/testing.md	prose
 ^apps/catalog/src/	guides/product-catalog docs/architecture.md docs/data-model.md docs/configuration.md docs/testing.md	prose
 ^apps/catalog/wrangler\.jsonc$	docs/configuration.md docs/deploy.md docs/architecture.md docs/data-model.md	prose
-^apps/catalog-edge/(src/|vitest\.config\.ts$)	guides/product-catalog docs/architecture.md docs/data-model.md docs/testing.md docs/local-development.md	prose
-^apps/catalog-edge/wrangler\.jsonc$	docs/configuration.md docs/deploy.md docs/architecture.md docs/operations.md	prose
+^apps/delivery/(src/catalog/|test/catalog/)	guides/product-catalog docs/architecture.md docs/data-model.md docs/testing.md docs/local-development.md	prose
+^apps/delivery/wrangler(\.catalog)?\.jsonc$	docs/configuration.md docs/deploy.md docs/architecture.md docs/operations.md	prose
 ^packages/core/(src/product/|package\.json$)	guides/product-catalog docs/architecture.md docs/data-model.md docs/testing.md	prose
 ^deployments/	docs/operations.md	prose
 ^packages/core/package\.json$	docs/architecture.md	prose

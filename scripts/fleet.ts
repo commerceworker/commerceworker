@@ -1,7 +1,7 @@
 /**
  * The fleet: one CommerceWorker deployment per customer, each listed in deployments/<id>.jsonc.
  *
- *   node scripts/fleet.ts render <id>             write apps/{catalog,catalog-edge,engine,web}/wrangler.<id>.json
+ *   node scripts/fleet.ts render <id>             write apps/{catalog,delivery,engine,web}/wrangler.<id>.json
  *                                                 and plugins/<plugin>/wrangler.<id>.json for each plugin
  *   node scripts/fleet.ts matrix                  print the deployments of each ring for CI
  *   node scripts/fleet.ts secrets <engine|web> <out> [id]  write this app's secrets from the
@@ -667,7 +667,7 @@ export const names = (d: Deployment) => ({
   catalogKv: `commerceworker-catalog-cards${d.suffix}`,
   catalogFeedParts: `commerceworker-catalog-feed-parts${d.suffix}`,
   catalogFeedPartsDlq: `commerceworker-catalog-feed-parts-dlq${d.suffix}`,
-  catalogEdge: `commerceworker-catalog-edge${d.suffix}`,
+  delivery: `commerceworker-delivery${d.suffix}`,
   catalogPurge: `commerceworker-catalog-purge${d.suffix}`,
   catalogChanges: `commerceworker-catalog-changes${d.suffix}`,
   catalogChangesDlq: `commerceworker-catalog-changes-dlq${d.suffix}`,
@@ -677,7 +677,7 @@ export const names = (d: Deployment) => ({
   logpushJob: `commerceworker-workers${d.suffix}`,
   logpushToken: `commerceworker-logpush${d.suffix}`,
   // Analytics Engine dataset names allow letters, digits and underscores.
-  catalogEdgeDataset: `commerceworker_catalog_edge${d.suffix.replaceAll('-', '_')}`,
+  catalogDataset: `commerceworker_catalog_delivery${d.suffix.replaceAll('-', '_')}`,
   /** A plugin's Worker and its D1 database share a name. */
   plugin: (p: string) => `commerceworker-plugin-${p}${d.suffix}`,
 });
@@ -712,7 +712,7 @@ const LOGPUSH_FILTER_MAX = 1000;
  */
 export function logpushJob(d: Deployment) {
   const n = names(d);
-  const scripts = [n.web, n.engine, n.catalog, n.catalogEdge, ...workerPlugins(d).map(n.plugin)];
+  const scripts = [n.web, n.engine, n.catalog, n.delivery, ...workerPlugins(d).map(n.plugin)];
   const filter = JSON.stringify({ where: { key: 'ScriptName', operator: 'in', value: scripts } });
   if (filter.length > LOGPUSH_FILTER_MAX)
     throw new Error(`${d.id}: its Logpush filter (${filter.length} bytes) is too long`);
@@ -1094,12 +1094,17 @@ export function renderCatalog(base: Config, d: Deployment): Config {
   return config;
 }
 
-export function renderCatalogEdge(base: Config, d: Deployment): Config {
+/**
+ * The delivery Worker as the fleet deploys it: `wrangler.catalog.jsonc` (the catalog's public read
+ * API, content off) at `catalog.<domain>`. The content stack's template, `wrangler.jsonc`, isn't
+ * rendered here.
+ */
+export function renderDelivery(base: Config, d: Deployment): Config {
   if (!d.catalogKvId)
     throw new Error(`${d.id} has no catalogKvId: run scripts/provision.sh ${d.id}`);
   const config = structuredClone(base);
   const n = names(d);
-  config.name = n.catalogEdge;
+  config.name = n.delivery;
   config.routes = [{ pattern: d.catalogDomain, custom_domain: true }];
   config.services = config.services.map((s: Config) =>
     s.binding === 'CATALOG' ? { ...s, service: n.catalog } : s,
@@ -1121,7 +1126,7 @@ export function renderCatalogEdge(base: Config, d: Deployment): Config {
   };
   config.analytics_engine_datasets = config.analytics_engine_datasets.map((a: Config) => ({
     ...a,
-    dataset: n.catalogEdgeDataset,
+    dataset: n.catalogDataset,
   }));
   return config;
 }
@@ -1186,14 +1191,15 @@ function render(id: string | undefined) {
   const d = byId(id);
   for (const [app, fn] of [
     ['catalog', renderCatalog],
-    ['catalog-edge', renderCatalogEdge],
+    ['delivery', renderDelivery],
     ['engine', renderEngine],
     ['web', renderWeb],
   ] as const) {
     const out = join(ROOT, 'apps', app, `wrangler.${d.id}.json`);
+    const template = app === 'delivery' ? 'wrangler.catalog.jsonc' : 'wrangler.jsonc';
     writeFileSync(
       out,
-      `${JSON.stringify(fn(readJsonc(join(ROOT, 'apps', app, 'wrangler.jsonc')), d), null, 2)}\n`,
+      `${JSON.stringify(fn(readJsonc(join(ROOT, 'apps', app, template)), d), null, 2)}\n`,
     );
     console.log(out);
   }

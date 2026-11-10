@@ -1,21 +1,22 @@
 /**
- * catalog-edge: the public, read-only catalog API. This default entrypoint is the gateway, with no
- * cache in front of it: it answers `/health` and CORS preflights, refuses what isn't a read,
- * parses the route and forwards the route's canonical URL to the cached Delivery entrypoint
+ * The catalog side of the delivery Worker: the public, read-only catalog API. `catalogFetch` is the
+ * gateway, with no cache in front of it: it answers CORS preflights, refuses what isn't a read,
+ * parses the route and forwards the route's canonical URL to the cached CatalogDelivery entrypoint
  * (delivery.ts). It records each request in Analytics Engine without waiting on it.
  *
- * Its queue consumer drains the catalog's purge queue: one batch at a time, up to 100 tags a call,
+ * `catalogQueue` drains the catalog's purge queue: one batch at a time, up to 100 tags a call,
  * one call every 12 seconds (purges are rationed: 5 a minute).
+ *
+ * Imports nothing of the content stack (a test bundles this module alone and holds its size).
  */
 import type { PurgeMessage } from '@commerceworker/core/product';
-import type { Delivery } from './delivery';
+import type { CatalogDelivery } from './delivery';
+import type { CatalogEnv } from './env';
 import { canonical, parse } from './routes';
-
-export { Delivery } from './delivery';
 
 // On every response: readable from any origin (the catalog is public and read-only), never
 // sniffed as anything but its content type, and only ever over HTTPS.
-const PUBLIC = {
+export const CATALOG_PUBLIC = {
   'access-control-allow-origin': '*',
   'access-control-expose-headers': 'etag, cf-cache-status',
   'timing-allow-origin': '*',
@@ -23,7 +24,7 @@ const PUBLIC = {
   'strict-transport-security': 'max-age=31536000',
 };
 
-type Exports = { Delivery: Service<Delivery> };
+type Exports = { CatalogDelivery: Service<CatalogDelivery> };
 
 /** Tags per purge call, and the pause after each call: Cloudflare allows 5 calls a minute. */
 export const PURGE_TAGS = 100;
@@ -94,59 +95,64 @@ export async function drain(
   }
 }
 
-export default {
-  async fetch(request, env, ctx) {
-    const started = Date.now();
-    const url = new URL(request.url);
-    if (url.pathname === '/health') return Response.json({ ok: true });
-    if (request.method === 'OPTIONS')
-      return new Response(null, {
-        status: 204,
-        headers: {
-          ...PUBLIC,
-          'access-control-allow-methods': 'GET, HEAD',
-          'access-control-allow-headers': 'if-none-match',
-          'access-control-max-age': '86400',
-        },
-      });
-    if (request.method !== 'GET' && request.method !== 'HEAD')
-      return new Response(JSON.stringify({ error: 'read only' }), {
-        status: 405,
-        headers: { ...PUBLIC, allow: 'GET, HEAD, OPTIONS', 'content-type': 'application/json' },
-      });
-    const parsed = parse(url);
-    if (!parsed.ok)
-      return new Response(JSON.stringify({ error: parsed.error }), {
-        status: parsed.status,
-        headers: { ...PUBLIC, 'content-type': 'application/json' },
-      });
-
-    // Only the canonical URL and a validator reach the cache: no cookies, no client headers.
-    const headers = new Headers();
-    const inm = request.headers.get('if-none-match');
-    if (inm) headers.set('if-none-match', inm);
-    const exports = (ctx as unknown as { exports: Exports }).exports;
-    const upstream = await exports.Delivery.fetch(
-      new Request(canonical(parsed.route), { headers }),
-    );
-    const response = new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
-    for (const [k, v] of Object.entries(PUBLIC)) response.headers.set(k, v);
-
-    env.ANALYTICS?.writeDataPoint({
-      blobs: [
-        parsed.route.kind,
-        parsed.route.channel,
-        String(response.status),
-        response.headers.get('cf-cache-status') ?? 'NONE',
-      ],
-      doubles: [Date.now() - started],
-      indexes: [parsed.route.channel],
+export async function catalogFetch(
+  request: Request,
+  env: CatalogEnv,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  const started = Date.now();
+  const url = new URL(request.url);
+  if (request.method === 'OPTIONS')
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...CATALOG_PUBLIC,
+        'access-control-allow-methods': 'GET, HEAD',
+        'access-control-allow-headers': 'if-none-match',
+        'access-control-max-age': '86400',
+      },
     });
-    return response;
-  },
+  if (request.method !== 'GET' && request.method !== 'HEAD')
+    return new Response(JSON.stringify({ error: 'read only' }), {
+      status: 405,
+      headers: {
+        ...CATALOG_PUBLIC,
+        allow: 'GET, HEAD, OPTIONS',
+        'content-type': 'application/json',
+      },
+    });
+  const parsed = parse(url);
+  if (!parsed.ok)
+    return new Response(JSON.stringify({ error: parsed.error }), {
+      status: parsed.status,
+      headers: { ...CATALOG_PUBLIC, 'content-type': 'application/json' },
+    });
 
-  async queue(batch, _env, ctx) {
-    const exports = (ctx as unknown as { exports: Exports }).exports;
-    await drain(batch as MessageBatch<PurgeMessage>, (t) => exports.Delivery.purge(t));
-  },
-} satisfies ExportedHandler<Env>;
+  // Only the canonical URL and a validator reach the cache: no cookies, no client headers.
+  const headers = new Headers();
+  const inm = request.headers.get('if-none-match');
+  if (inm) headers.set('if-none-match', inm);
+  const exports = (ctx as unknown as { exports: Exports }).exports;
+  const upstream = await exports.CatalogDelivery.fetch(
+    new Request(canonical(parsed.route), { headers }),
+  );
+  const response = new Response(request.method === 'HEAD' ? null : upstream.body, upstream);
+  for (const [k, v] of Object.entries(CATALOG_PUBLIC)) response.headers.set(k, v);
+
+  env.ANALYTICS?.writeDataPoint({
+    blobs: [
+      parsed.route.kind,
+      parsed.route.channel,
+      String(response.status),
+      response.headers.get('cf-cache-status') ?? 'NONE',
+    ],
+    doubles: [Date.now() - started],
+    indexes: [parsed.route.channel],
+  });
+  return response;
+}
+
+export async function catalogQueue(batch: MessageBatch, ctx: ExecutionContext): Promise<void> {
+  const exports = (ctx as unknown as { exports: Exports }).exports;
+  await drain(batch as MessageBatch<PurgeMessage>, (t) => exports.CatalogDelivery.purge(t));
+}

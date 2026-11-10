@@ -29,14 +29,14 @@ inbound mail ── Email Routing ──email()───────────
 
 | Path | Role |
 |---|---|
-| `packages/core` (`@commerceworker/core`) | Flow schema, node catalog, planner and validation, inbound order payload and routing, layout, JSON Logic expressions, policy rules, address checks, the pricing chain resolver, templates, webhook signing, the `EngineRpc` contract. The product catalog's pure model is its own entry point, `@commerceworker/core/product` (`src/product/`): types, validation, routing, rendering, the listing index and `listingSpec`, feed parsing and the `ProductCatalogRpc` contract. Where published objects live and their cache tags are the zod-free `@commerceworker/core/product/paths` (`DOC_FORMAT`, the `CODE`, `LOCALE` and `SLUG` patterns, `BATCH_MAX`, `paths`, `tags`), and the listing index's decoder and merged query are the zod-free `@commerceworker/core/product/listing` (`ListingIndex`, `queryListing`, the cursor functions and `LISTING_SEGMENTS`, re-exported from `routing.ts`, which imports nothing); `catalog-edge` imports only those two. No bindings and no Cloudflare imports |
+| `packages/core` (`@commerceworker/core`) | Flow schema, node catalog, planner and validation, inbound order payload and routing, layout, JSON Logic expressions, policy rules, address checks, the pricing chain resolver, templates, webhook signing, the `EngineRpc` contract. The product catalog's pure model is its own entry point, `@commerceworker/core/product` (`src/product/`): types, validation, routing, rendering, the listing index and `listingSpec`, feed parsing and the `ProductCatalogRpc` contract. Where published objects live and their cache tags are the zod-free `@commerceworker/core/product/paths` (`DOC_FORMAT`, the `CODE`, `LOCALE` and `SLUG` patterns, `BATCH_MAX`, `paths`, `tags`), and the listing index's decoder and merged query are the zod-free `@commerceworker/core/product/listing` (`ListingIndex`, `queryListing`, the cursor functions and `LISTING_SEGMENTS`, re-exported from `routing.ts`, which imports nothing); the delivery Worker imports only those two. No bindings and no Cloudflare imports |
 | `plugins/<id>` | Optional features, each its own Worker and D1 database or a sandboxed bundle the engine loads, installed per deployment; see [Plugins](plugins.md). `plugins/example` is a test-only fixture |
 | `packages/plugin-sdk` (`@commerceworker/plugin-sdk`) | What plugins are built with: `definePlugin` (the `PluginRpc` entrypoint), the `pluginContract` suite and `bundlePlugin` for tests; see [Plugins](plugins.md) |
 | `packages/db` (`@commerceworker/db`) | Drizzle schema for D1, numbered SQL migrations, demo seed data (`seed/`, local and tests only), flow persistence (`getFlowVersionJson`, `publishFlow`) |
 | `packages/ui` (`@commerceworker/ui`) | shadcn/ui primitives, consumed as raw `.tsx` |
 | `apps/engine` (`@commerceworker/engine`) | `OrderAgent`, `AssistantAgent`, `CartAgent`, `CommerceWorker`, `Replenish`, node executors, connectors, AI calls, outbox, `EngineApi` |
 | `apps/catalog` (`@commerceworker/catalog`) | The product catalog Worker: `CatalogShard`, `CatalogMeta` and `CatalogPublisher` Durable Objects, the publisher, `CatalogApi` |
-| `apps/catalog-edge` (`@commerceworker/catalog-edge`) | The public, read-only catalog API: the gateway, the cached `Delivery` entrypoint and the purge queue consumer |
+| `apps/delivery` (`@commerceworker/delivery`) | The public delivery Worker: content (gateway and cached `Delivery`, on when its stack is bound) and the read-only catalog API (gateway, cached `CatalogDelivery`, purge queue consumer), served at `catalog.<domain>` by the fleet |
 | `apps/web` (`@commerceworker/web`) | Dashboard, editor, live order view, approvals inbox, Commerce page, Catalog page (the product editor's board, [Product editor](product-editor.md#the-catalog-page)), `/api/v1` |
 | `apps/docs` (`@commerceworker/docs`) | This site |
 
@@ -464,12 +464,12 @@ seals a new secret and moves the old, still sealed, to `previous_secret` with `p
 ## Product catalog
 
 `commerceworker-catalog` (`apps/catalog`) is the write side of a product catalog, and
-`commerceworker-catalog-edge` (`apps/catalog-edge`) the read side. The pure model lives in
+`commerceworker-delivery` (`apps/delivery`) the read side. The pure model lives in
 `@commerceworker/core/product`; the catalog Worker adds storage and publishing. It has no routes, no
 `workers_dev` and no preview URLs: it answers `GET /health` and `404` otherwise, and its callers
 reach it through service bindings. The web app binds its `CatalogApi` entrypoint as `CATALOG` and
 forwards `/api/v1/catalog/*` to it ([Catalog admin API](#catalog-admin-api)); it is the only
-writer. `catalog-edge` shares its R2 bucket, KV namespace
+writer. The delivery Worker's catalog side shares its R2 bucket, KV namespace
 and purge queue with it and binds its `SearchApi` entrypoint for keyword search (see
 [Catalog edge](#catalog-edge)); every other read path never touches a Durable Object.
 
@@ -584,7 +584,7 @@ Measured on production in October 2026 (a pass is 100 products, about 500 writes
 
 Publishing also writes the product's `uid` entry to KV (`u:f1:<key>`, `paths.uid`) the first time
 the product publishes in any channel, and again when the key's uid changed (a key deleted and
-created again), which is how `catalog-edge` finds cards by key. Publishing a deleted product deletes
+created again), which is how the delivery Worker finds cards by key. Publishing a deleted product deletes
 the entry, so the batch lookup can't reach a card through a uid that is gone. After the alarm has published a pass, it sends the cache tag `p:<key>` of every product whose
 outbox rows were `urgent` to the `PURGE` queue (`PurgeMessage`: `{ tags }`), up to 100 tags a
 message (what one purge call takes), in one `sendBatch`. It sends after publishing so a purge never
@@ -681,7 +681,7 @@ have a null `catalog_at`. See [Data model](data-model.md#product-catalog).
 ### Listing indexes
 
 A category page is answered from `LISTING_SEGMENTS` (8) binary blobs per channel and category, built
-by the catalog and read by `catalog-edge` (format, builder and the merged query in
+by the catalog and read by the delivery Worker (format, builder and the merged query in
 `packages/core/src/product/listing-index.ts`). A product's key picks its segment
 (`listingSegment(key)`, FNV-1a of `l:<key>` mod 8, in `routing.ts`), the same in every category, and
 each segment has its own indexer and its own blob, so no single build or object grows with the whole
@@ -695,7 +695,7 @@ batches queued behind the rebuild until the object refused them (`Durable Object
 object was reset, so the index stopped publishing until the feed ended. Leaf categories of up to
 250,000 were fine.
 
-How large a category can be is set by the edge, not the indexers: `catalog-edge` holds a listing's
+How large a category can be is set by the edge, not the indexers: the delivery Worker holds a listing's
 segments whole, in an isolate of 128 MB, so their bytes together are capped at `LISTING_MAX_BYTES`
 (64 MiB). A member with four facets, a price on three variants and a sorted price, and one more number
 costs about 40 bytes (the size test in `product-listing.test.ts`), so a category holds about 1.5
@@ -801,7 +801,7 @@ own Durable Objects (`apps/catalog/src/search.ts`; query handling in
   batch of `commerceworker-catalog-changes*` messages; `applySearch` sends each shard its items in one
   call. A failed batch retries whole, and both halves are idempotent by `at`. Products published
   before search existed enter it on `reindex`.
-- **`SearchApi`** is a `WorkerEntrypoint` for `catalog-edge`: `search(channel, locale, q, limit,
+- **`SearchApi`** is a `WorkerEntrypoint` for the delivery Worker: `search(channel, locale, q, limit,
   offset)` normalizes the query, asks all 16 shards for their best `min(offset + limit,
   SEARCH_DEPTH)` in parallel, merges by score (ties by uid) and answers `{ total, uids }`. A page is
   one round of 16 small queries.
@@ -848,7 +848,7 @@ Part ids are deterministic and the shard batch id is the part id, so a retried s
 message never applies a row twice.
 
 **Dead letters.** The catalog Worker also consumes the three dead-letter
-queues: its own two and catalog-edge's purge one, which catalog-edge, being read-only, doesn't
+queues: its own two and delivery's purge one, which delivery, being read-only, doesn't
 consume itself (`dead-letters.ts`; `isDeadLetterQueue` tells them from their queues by the `-dlq`
 before the suffix, and they are dispatched first since their names start like their queues').
 Nothing is applied: each message is written to the catalog's R2 bucket at
@@ -928,26 +928,43 @@ any other value throws). See [Data residency](data-model.md#data-residency).
 
 ## Catalog edge
 
-`commerceworker-catalog-edge` (`apps/catalog-edge`) is the public, read-only catalog API. It is a
-Worker on the custom domain `catalog.<domain>` (`catalog.commerceworker.com` for the `commerceworker`
-deployment), with no `workers_dev` or preview URLs. It reads what the catalog published (R2
-`PUBLISHED`, KV `CARDS`) and holds no state of its own. It has two entrypoints, and Workers Caching
-(`cache.enabled`, with `cross_version_cache`, so a deploy doesn't empty the cache: paths carry
-`DOC_FORMAT`) sits between them:
+`commerceworker-delivery` (`apps/delivery`) is the public delivery Worker, and its catalog side is the
+public, read-only catalog API. The Worker has two surfaces, each off unless its bindings are bound:
+content (`/delivery/*`, on when `DB` is bound; `src/content.ts`, with the cached `Delivery` entrypoint)
+and the catalog (`/v1/<channel>/<locale>/…`, on when `PUBLISHED` and `CARDS` are bound;
+`src/catalog/`, with the cached `CatalogDelivery` entrypoint). `src/index.ts` picks the surface by
+path, answers `404` for a surface that isn't bound, and has `/health` name only what is bound
+(`{ "ok": true, "serves": ["catalog"] }`; a content-only deployment answers `{ "ok": true }` as
+before). Each surface sets its own CORS and security headers, and the queue handler routes on the
+batch's queue: the catalog's purge queue to the catalog, every other to content. The fleet deploys
+`apps/delivery/wrangler.catalog.jsonc` (rendered by `renderDelivery`), whose entry is
+`src/catalog/worker.ts`: the catalog's bindings and none of the content stack's, and no content code
+in the deployed script, on the custom domain `catalog.<domain>` (`catalog.commerceworker.com`
+for the `commerceworker` deployment), with no `workers_dev` or preview URLs. `wrangler.jsonc` stays
+the content stack's template.
 
-- **The gateway** (default export, `src/index.ts`; its `exports` entry turns the cache off, since
-  caching in front of it would skip normalizing). It answers `GET /health` with `{ ok: true }` and
-  `OPTIONS` with `204` (`access-control-allow-methods: GET, HEAD`, allowed header `if-none-match`,
+The catalog surface reads what the catalog published (R2 `PUBLISHED`, KV `CARDS`) and holds no state
+of its own. It has two entrypoints, and Workers Caching (`cache.enabled`, with
+`cross_version_cache`, so a deploy doesn't empty the cache: paths carry `DOC_FORMAT`) sits between
+them. Its modules import core only through the zod-free subpaths and nothing of the content stack,
+so the deployed script stays about 10 KiB gzipped: `test/catalog-bundle.test.ts` bundles
+`src/catalog/worker.ts` and fails above 10 KiB (8.1 KiB when set), or on any import outside
+`src/catalog/`. That entry answers `/health` with `{ "ok": true }` and serves only the catalog;
+`src/index.ts`, the dispatcher described above, is for a deployment with content on too.
+
+- **The gateway** (`catalogFetch` in `src/catalog/gateway.ts`, called from the default export, whose
+  `exports` entry turns the cache off, since caching in front of it would skip normalizing). It
+  answers `OPTIONS` with `204` (`access-control-allow-methods: GET, HEAD`, allowed header `if-none-match`,
   max-age 86400), refuses anything but `GET` and `HEAD` with `405` (`{ "error": "read only" }`,
-  `allow: GET, HEAD, OPTIONS`), then parses the route (`routes.ts`; `404` for an unknown path,
+  `allow: GET, HEAD, OPTIONS`), then parses the route (`src/catalog/routes.ts`; `404` for an unknown path,
   `400` for a bad channel, locale, key, SKU, slug, or `keys`). It forwards only the route's
   canonical URL (`https://catalog.internal/v1/<channel>/<locale>/…`, unused query parameters
-  dropped, keys deduplicated) and the request's `If-None-Match` to `ctx.exports.Delivery.fetch`, so
+  dropped, keys deduplicated) and the request's `If-None-Match` to `ctx.exports.CatalogDelivery.fetch`, so
   every way of asking for the same thing is one cache entry and no cookie or other client header
   reaches it. It adds `access-control-allow-origin: *`, exposes `etag` and `cf-cache-status`, and
   writes one Analytics Engine data point per routed request without waiting on it (blobs: route kind,
   channel, status, `cf-cache-status` or `NONE`; double: latency in ms; index: channel).
-- **`Delivery`** (`src/delivery.ts`, a `WorkerEntrypoint` with the cache enabled). A hit never runs
+- **`CatalogDelivery`** (`src/catalog/delivery.ts`, a `WorkerEntrypoint` with the cache enabled). A hit never runs
   it; concurrent misses for a URL run it once; a stale entry is served while one background request
   revalidates it. It reads and streams stored bytes and never parses a document.
 
@@ -966,7 +983,7 @@ and, for documents and category trees, `Cache-Control: public, max-age=60, stale
 stale-if-error=604800` (a minute fresh, a day stale while revalidating, a week if R2 fails). A
 missing product, SKU, slug or category tree is `404` with `{ "error": … }` and `public, max-age=30`.
 Batches, listing pages and searches carry the same fresh `Cache-Control`. Batches and listing pages,
-which `Delivery` assembles, carry a strong `etag` (the first 16 bytes of the body's SHA-256, in hex),
+which `CatalogDelivery` assembles, carry a strong `etag` (the first 16 bytes of the body's SHA-256, in hex),
 and a request whose `If-None-Match` names it is a `304` with no body, so the cache revalidates them
 without storing them again. A batch keeps key → uid entries in the isolate (up to 50,000, oldest out
 first); a remembered uid whose card is missing is read from KV again, since a product deleted and
@@ -975,12 +992,12 @@ refilled at another location can still carry the old card for up to about a minu
 document (a SKU or slug miss only `ch:<channel>`), `cats` and `ch:<channel>` on a category tree,
 `ch:<channel>` and one `p:<key>` per key on a batch, `cat:<code>` and `ch:<channel>` on a listing page, `ch:<channel>` on a search page.
 
-**Search.** The gateway's canonical URL for `search` keeps the normalized `q` and drops `cursor=0` and the default `limit`. `Delivery.search` calls `env.CATALOG` (a service binding to the catalog's `SearchApi` entrypoint) for the page's uids, and in parallel, on the first page only, looks for an exact SKU: when the normalized query is one code-like word (`CODE`) it reads the SKU alias pointer in R2 for the query upper-cased and then as typed, and the uid in KV, and puts that product first (and removes it from its later place; `total` counts it once more when full-text search didn't match it). It then reads the cards in one bulk KV `get` (a missing card is skipped). The response carries the fresh `Cache-Control` and the tag `ch:<channel>`, so a channel's searches go in one purge. When a search shard fails, `SearchApi` leaves its matches out instead of failing the search (and logs the shard); the response then has `"partial": true` and is cached only 30 s, so the full answer replaces it soon. Search needs the catalog Worker to exist and be reachable; the other routes don't.
+**Search.** The gateway's canonical URL for `search` keeps the normalized `q` and drops `cursor=0` and the default `limit`. `CatalogDelivery.search` calls `env.CATALOG` (a service binding to the catalog's `SearchApi` entrypoint) for the page's uids, and in parallel, on the first page only, looks for an exact SKU: when the normalized query is one code-like word (`CODE`) it reads the SKU alias pointer in R2 for the query upper-cased and then as typed, and the uid in KV, and puts that product first (and removes it from its later place; `total` counts it once more when full-text search didn't match it). It then reads the cards in one bulk KV `get` (a missing card is skipped). The response carries the fresh `Cache-Control` and the tag `ch:<channel>`, so a channel's searches go in one purge. When a search shard fails, `SearchApi` leaves its matches out instead of failing the search (and logs the shard); the response then has `"partial": true` and is cached only 30 s, so the full answer replaces it soon. Search needs the catalog Worker to exist and be reachable; the other routes don't.
 
 **Listing pages.** The gateway's canonical URL for a listing sorts filters by attribute and values
 within each, joins them with `,`, and omits `sort=newest`, the first page's cursor
 (`0.0.0.0.0.0.0.0`) and the default `limit`, so equivalent requests share one cache entry; a cursor
-is accepted only in its one spelling. `Delivery` loads every segment of the listing in parallel, each through its own
+is accepted only in its one spelling. `CatalogDelivery` loads every segment of the listing in parallel, each through its own
 `/_idx/<channel>/<category>/<segment>` path, called on itself so it goes through Workers Caching
 (`public, max-age=30, stale-while-revalidate=300`, tags `cat:<code>` and `ch:<channel>`); the
 gateway never routes `/_idx/`, so it is not public. A segment that doesn't exist (a small category
@@ -1004,9 +1021,9 @@ An unknown category is `404` (`no such category`, `MISSING`); a sort the index l
 (`unsupported sort`, with the available `sorts`); a malformed filter, range, sort, cursor or limit is `400`.
 
 The Worker is also the consumer of the purge queue (`commerceworker-catalog-purge`) the catalog's
-`PURGE` binding feeds. `drain` (`src/index.ts`) takes a batch's messages oldest first, packs whole
+`PURGE` binding feeds. `drain` (`src/catalog/gateway.ts`) takes a batch's messages oldest first, packs whole
 messages into calls of at most `PURGE_TAGS` (100) deduplicated tags (a larger message is split) and
-purges through `Delivery.purge`, since Workers Caching scopes a purge to the entrypoint that calls it.
+purges through `CatalogDelivery.purge`, since Workers Caching scopes a purge to the entrypoint that calls it.
 Purges are rationed (the Free-plan limits: about 5 calls a minute), so the consumer runs one batch at
 a time and waits `PURGE_PACE_MS` (12 seconds, `scheduler.wait`) after each call. A message is never
 dropped for its age: documents stay servable stale for a day (`stale-while-revalidate`), so a missed
@@ -1058,11 +1075,11 @@ Bundle: about 10 KiB gzipped (segmented listings added about 1 KiB to the 9.4 it
 | `PUBLISHED` | catalog | R2 `commerceworker-catalog`: product documents, alias pointers, category trees, listing indexes, and the backups (`backups/`) |
 | `PURGE` | catalog | Queue producer for `commerceworker-catalog-purge` (`{ tags }` messages) |
 | `CARDS` | catalog | KV namespace of listing cards and `u:f1:<key>` uid entries; created by `provision.sh` |
-| `PUBLISHED` | catalog-edge | R2 `commerceworker-catalog`, read |
-| `CARDS` | catalog-edge | The same KV namespace, read |
-| `CATALOG` | catalog-edge | Service `commerceworker-catalog`, entrypoint `SearchApi` (keyword search) |
-| `ANALYTICS` | catalog-edge | Analytics Engine dataset `commerceworker_catalog_edge` |
-| (queue consumer) | catalog-edge | `commerceworker-catalog-purge`, dead-letter queue `commerceworker-catalog-purge-dlq` |
+| `PUBLISHED` | delivery | R2 `commerceworker-catalog`, read |
+| `CARDS` | delivery | The same KV namespace, read |
+| `CATALOG` | delivery | Service `commerceworker-catalog`, entrypoint `SearchApi` (keyword search) |
+| `ANALYTICS` | delivery | Analytics Engine dataset `commerceworker_catalog_delivery` |
+| (queue consumer) | delivery | `commerceworker-catalog-purge`, dead-letter queue `commerceworker-catalog-purge-dlq` |
 
 Variables and secrets are listed in [Configuration](configuration.md).
 

@@ -22,7 +22,7 @@ for the package you're in before adding a test; this page is the part you need e
 | Engine with a plugin bound | `apps/engine/tests/plugins/**` (project `plugins`) | workerd |
 | Payments with Stripe's shapes | `apps/engine/tests/stripe/**` (project `stripe`, `tests/stripe-fake.ts`) | workerd |
 | A migration that moves data | `apps/engine/tests/migrations.test.ts` | workerd |
-| `apps/catalog`, `apps/catalog-edge` | their `tests/` | workerd |
+| `apps/catalog`; `apps/delivery` (catalog entrypoint, `test/catalog/`) | their `tests/`; `test/` | workerd |
 | `apps/web/app/lib/**` | `apps/web/tests/*.test.ts` | node |
 | `deployments/`, `scripts/fleet.ts` | `scripts/fleet.test.ts` (`pnpm test:fleet`) | node `--test` |
 | `.claude/` hooks | `.claude/hooks/tests/*.test.sh` (`pnpm test:toolkit`) | bash |

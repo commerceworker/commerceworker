@@ -1,6 +1,6 @@
 /**
  * Where published things live, and their cache tags: the contract between the catalog's publisher
- * and catalog-edge. Free of zod and the model, so the edge Worker bundles only this. Pure.
+ * and delivery. Free of zod and the model, so the edge Worker bundles only this. Pure.
  */
 
 /** Bumped when a published document's shape changes; published paths carry it (`f1`). */
@@ -13,7 +13,7 @@ export const LOCALE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 /** A slug: lowercase words (any script) joined by "-". */
 export const SLUG = /^[\p{Ll}\p{Lo}\p{N}]+(-[\p{Ll}\p{Lo}\p{N}]+)*$/u;
 
-/** Products one batch lookup on catalog-edge returns at most. */
+/** Products one batch lookup on delivery returns at most. */
 export const BATCH_MAX = 100;
 
 /** Published object paths. Every path carries the doc format, so a format change is a new tree. */

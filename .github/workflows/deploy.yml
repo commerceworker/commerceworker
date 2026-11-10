@@ -218,11 +218,12 @@ jobs:
       - name: Deploy catalog
         id: catalog
         run: retry pnpm --filter @commerceworker/catalog exec wrangler deploy --config "$CONFIG"
-      # The public catalog API, reading what the catalog publishes; it consumes the purge queue the
+      # The delivery Worker as the public catalog API (the content stack is off: apps/delivery/
+      # wrangler.catalog.jsonc), reading what the catalog publishes; it consumes the purge queue the
       # catalog sends to.
-      - name: Deploy catalog-edge
-        id: catalog_edge
-        run: retry pnpm --filter @commerceworker/catalog-edge exec wrangler deploy --config "$CONFIG"
+      - name: Deploy delivery
+        id: delivery
+        run: retry pnpm --filter @commerceworker/delivery exec wrangler deploy --config "$CONFIG"
       # Each plugin's own D1 migrations, then its Worker: the engine and the web Worker bind to it,
       # so it goes before them. Like the core's, a plugin's migrations must be additive. Each one
       # deployed is listed, so a failure rolls it back with the rest.
@@ -332,7 +333,7 @@ jobs:
           check "https://$DOMAIN/health/deep" 1.0
           check "https://$CATALOG_DOMAIN/health" 0.5
       # Any failure once the catalog has shipped puts each Worker that deployed back on its
-      # previous version: the engine, then the web app, the plugins, catalog-edge and the catalog.
+      # previous version: the engine, then the web app, the plugins, delivery and the catalog.
       # The engine goes first because it is the one that can refuse (Cloudflare won't roll a Worker
       # back past a Durable Object migration). If it can't go back, nothing else is rolled back
       # either: the web app, plugins and catalog stay on the versions the new engine was deployed
@@ -347,7 +348,7 @@ jobs:
         env:
           ENGINE: ${{ steps.engine.outcome }}
           WEB: ${{ steps.web.outcome }}
-          CATALOG_EDGE: ${{ steps.catalog_edge.outcome }}
+          DELIVERY: ${{ steps.delivery.outcome }}
         run: |
           msg="Deploy failed for ${GITHUB_SHA::7}"
           # rollback <name> <pnpm filter>: 0 rolled back, 2 no earlier version, 1 failed. Retries
@@ -391,8 +392,8 @@ jobs:
               rollback "plugin $p" "./plugins/$p" || [ $? = 2 ] || failed=1
             done <"$RUNNER_TEMP/plugins-deployed"
           fi
-          if [ "$CATALOG_EDGE" = success ]; then
-            rollback catalog-edge @commerceworker/catalog-edge || [ $? = 2 ] || failed=1
+          if [ "$DELIVERY" = success ]; then
+            rollback delivery @commerceworker/delivery || [ $? = 2 ] || failed=1
           fi
           rollback catalog @commerceworker/catalog || [ $? = 2 ] || failed=1
           exit "$failed"

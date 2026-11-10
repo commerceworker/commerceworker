@@ -1,7 +1,7 @@
 /**
  * Measures a deployment's product catalog end to end: streams a generated feed of N products
  * through the REST API, times the import and how long until every product is published and listed
- * on the public catalog, samples catalog-edge latencies (cache misses and hits), then deletes the
+ * on the public catalog, samples delivery latencies (cache misses and hits), then deletes the
  * products and checks nothing is still served. See docs/testing.md, "Catalog benchmark".
  *
  *   COMMERCEWORKER_API_TOKEN=ol_… node scripts/catalog-bench.ts <deployment id> [products] [--keep]

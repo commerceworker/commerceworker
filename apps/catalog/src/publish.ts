@@ -65,7 +65,7 @@ export async function publishKeys(
     const before = new Map(shard.publishedState(key).map((s) => [s.channel, s]));
     // A uid lasts as long as its product: written the first time it publishes, written again when
     // a deleted key was created anew (a new uid) before the delete published, and removed with the
-    // product, so catalog-edge's batch lookup can't reach a card through a uid that is gone.
+    // product, so delivery's batch lookup can't reach a card through a uid that is gone.
     const uidMoved = current && [...before.values()].some((s) => s.uid !== current.uid);
     if (current && (before.size === 0 || uidMoved))
       tasks.push({ put: 'kv', key: paths.uid(DOC_FORMAT, key), value: String(current.uid) });

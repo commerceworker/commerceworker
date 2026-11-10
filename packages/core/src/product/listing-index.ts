@@ -15,7 +15,7 @@
  * member's distinct values (CSR layout), so a range filter matches a product when any of its
  * variants' values is in range; a column where no member has more than one keeps one value per
  * member and no offsets. The edge holds a listing's segments whole, so their bytes are what limits
- * a category's size (`LISTING_MAX_BYTES`). Pure, and free of zod: catalog-edge imports this module
+ * a category's size (`LISTING_MAX_BYTES`). Pure, and free of zod: delivery imports this module
  * on its own.
  */
 import type { IndexEntry } from './render';

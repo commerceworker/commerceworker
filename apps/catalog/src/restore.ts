@@ -19,7 +19,7 @@
  * Either way it ends as a reindex does, and more: every channel published somewhere (the shards'
  * `published` rows, R2's document tree) that the restored config lacks is taken down, the category
  * trees republished, and every product, and every key published before, republished in full, so
- * catalog-edge, listings, search and the order prices follow the restored catalog and nothing it
+ * delivery, listings, search and the order prices follow the restored catalog and nothing it
  * removed stays published.
  *
  * What the catalog was before (its revision, channels and each object's bookmark: the `undo`) is

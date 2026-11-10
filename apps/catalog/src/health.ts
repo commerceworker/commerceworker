@@ -2,7 +2,7 @@
  * The catalog's part of the deploy smoke test's write check (`CatalogApi.writeHealth`): a row
  * through CatalogMeta's SQLite and one shard's, and an object through the published bucket. Each
  * write goes to a place of its own (a `health_probes` table, a `health/` key) that no product,
- * outbox, backup or catalog-edge route reads, and is gone again before the check answers.
+ * outbox, backup or delivery route reads, and is gone again before the check answers.
  */
 
 /** A probe row older than this is one whose check stopped before its delete; the next clears it. */
@@ -28,7 +28,7 @@ export async function probeStorage(storage: DurableObjectStorage, id: string): P
 }
 
 /**
- * An object under `health/` written, read back and deleted. catalog-edge reads only the keys the
+ * An object under `health/` written, read back and deleted. delivery reads only the keys the
  * publisher writes (`paths`), and the bucket's lock covers `backups/` alone.
  */
 export function probeBucket(

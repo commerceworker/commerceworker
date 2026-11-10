@@ -23,8 +23,8 @@ in [references/invariants.md](references/invariants.md); read the sections your 
   (`agent.ts`), node executors and compensations (`nodes.ts`), MCP, A2A, UCP, the assistant.
 - `apps/web`: React Router on Workers. Reaches the engine only through `EngineRpc` and the routes
   it forwards with a signed principal.
-- `apps/catalog` (sharded product catalog, outbox publishing) and `apps/catalog-edge` (read-only
-  cached delivery).
+- `apps/catalog` (sharded product catalog, outbox publishing) and the catalog entrypoint of `apps/delivery`
+  (read-only, cached).
 - `packages/db`: D1 schema (`src/schema.ts`) and numbered migrations.
 - `plugins/<id>`: optional Workers bound as `PLUGIN_<ID>`.
 - `deployments/*.jsonc` + `scripts/fleet.ts`: one deployment per customer, deployed by CI in rings.
@@ -52,7 +52,7 @@ The ones that need judgement, in the order reviews most often find them broken:
    names `${nodeId}#${run}` stable for published flows; scheduling only in `graph.ts`.
 2. **Idempotency.** Connector writes keyed by step key; compensations idempotent; agent updates
    idempotent; plugin writes keyed by order id + step key.
-3. **Boundaries.** core has no `env`; web never imports engine source; catalog-edge imports core
+3. **Boundaries.** core has no `env`; web never imports engine source; the catalog entrypoint (`apps/delivery/src/catalog`) imports core
    only through zod-free subpaths (`product/paths`, `product/listing`, `product/search`); the core never imports plugin code.
 4. **Trust.** The engine trusts only a principal signed for that path and unexpired; UCP
    platforms act only on their own checkouts; `/mcp` and `/a2a` tokens are not interchangeable.

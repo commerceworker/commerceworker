@@ -1,5 +1,5 @@
 /**
- * The product catalog Worker. No public routes: the web app and catalog-edge reach it through the
+ * The product catalog Worker. No public routes: the web app and delivery reach it through the
  * CatalogApi entrypoint over service bindings. Its queue consumer applies feed parts, routes
  * listing changes to their indexers and keeps what the three dead-letter queues receive.
  */

@@ -404,33 +404,14 @@ importers:
         specifier: 'catalog:'
         version: 4.149.0(@cloudflare/workers-types@5.20261013.1)(@types/node@26.6.6)
 
-  apps/catalog-edge:
-    dependencies:
-      '@commerceworker/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-    devDependencies:
-      '@cloudflare/vitest-plugin':
-        specifier: 'catalog:'
-        version: 1.4.0(@cloudflare/workers-types@5.20261013.1)(@types/node@26.6.6)(vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@30.1.3)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
-      '@commerceworker/typescript-config':
-        specifier: workspace:*
-        version: link:../../packages/typescript-config
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-      vitest:
-        specifier: 'catalog:'
-        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@30.1.3)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
-      wrangler:
-        specifier: 'catalog:'
-        version: 4.149.0(@cloudflare/workers-types@5.20261013.1)(@types/node@26.6.6)
-
   apps/delivery:
     dependencies:
       '@commerceworker/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@commerceworker/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@commerceworker/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -444,6 +425,9 @@ importers:
         specifier: 'catalog:'
         version: 4.13.13
     devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: 'catalog:'
+        version: 1.4.0(@cloudflare/workers-types@5.20261013.1)(@types/node@26.6.6)(vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@30.1.3)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261013.1
@@ -453,6 +437,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.28.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

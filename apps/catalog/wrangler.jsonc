@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  // Reachable only through service bindings (the web app, catalog-edge): no workers.dev URL, no
+  // Reachable only through service bindings (the web app, delivery): no workers.dev URL, no
   // routes.
   "workers_dev": false,
   "preview_urls": false,
@@ -67,7 +67,7 @@
   "queues": {
     "producers": [
       { "binding": "FEED_PARTS", "queue": "commerceworker-catalog-feed-parts" },
-      // Cache tags of urgent changes, for catalog-edge to purge.
+      // Cache tags of urgent changes, for delivery to purge.
       { "binding": "PURGE", "queue": "commerceworker-catalog-purge" },
       // What each publish changes in the listings, for the indexers.
       { "binding": "CHANGES", "queue": "commerceworker-catalog-changes" }
@@ -93,7 +93,7 @@
         "retry_delay": 30,
         "dead_letter_queue": "commerceworker-catalog-changes-dlq"
       },
-      // The dead-letter queues, catalog-edge's purge one too: each message is kept in PUBLISHED
+      // The dead-letter queues, delivery's purge one too: each message is kept in PUBLISHED
       // under dlq/ and logged (dead-letters.ts). They have no dead-letter queue of their own.
       {
         "queue": "commerceworker-catalog-feed-parts-dlq",
@@ -121,7 +121,7 @@
   // Feed steps parse and validate thousands of products each.
   "limits": { "cpu_ms": 300000 },
   // Published documents (product docs, alias pointers, category trees, listing indexes), read by
-  // catalog-edge. Strongly consistent, so a purge is never undone by a stale read.
+  // delivery. Strongly consistent, so a purge is never undone by a stale read.
   "r2_buckets": [{ "binding": "PUBLISHED", "bucket_name": "commerceworker-catalog" }],
   // CommerceWorker's own database: the catalog keeps each variant's name and list price in `products`
   // (orders.ts). Migrations are the web app's; the catalog only writes those columns.
@@ -132,7 +132,7 @@
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
-  // Listing cards, read in bulk by catalog-edge.
+  // Listing cards, read in bulk by delivery.
   "kv_namespaces": [{ "binding": "CARDS", "id": "00000000000000000000000000000000" }],
   "vars": {
     // Where the shards keep their data (`eu`, `fedramp`), as the deployment's D1 and R2 do; set

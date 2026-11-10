@@ -48,7 +48,7 @@ describe('search', () => {
   });
 
   it('caches equivalent queries under one URL', async () => {
-    const { canonical, parse } = await import('../src/routes');
+    const { canonical, parse } = await import('../../src/catalog/routes');
     const c = (q: string) => {
       const p = parse(new URL(`https://x/v1/web/en/search?${q}`));
       if (!p.ok) throw new Error(p.error);
