@@ -631,6 +631,58 @@ describe('UCP discounts', () => {
     expect(Math.round(state.order!.total * 100)).toBe(amountOf(c, 'total'));
   });
 
+  describe('with promotion conditions', () => {
+    const at = Date.now();
+    const rows = [
+      // Met: a checkout started by an agent.
+      {
+        id: 'promo_UCPAGENT',
+        code: 'UCPAGENT',
+        name: 'Agents',
+        kind: 'amount',
+        value: 10,
+        condition: JSON.stringify({ '==': [{ var: 'order.channel' }, 'agent'] }),
+      },
+      // Not met: no checkout here is that large, and the merchant says why.
+      {
+        id: 'promo_UCPBIG',
+        code: 'UCPBIG',
+        name: 'Big baskets',
+        kind: 'amount',
+        value: 10,
+        condition: JSON.stringify({ '>=': [{ var: 'order.baseSubtotal' }, 1_000_000] }),
+        conditionMessage: 'Needs a basket of $1,000,000.',
+      },
+    ].map((r) => ({ ...r, createdAt: at, updatedAt: at }));
+    beforeAll(async () => {
+      await db().insert(promotions).values(rows).onConflictDoNothing();
+    });
+    afterAll(async () => {
+      await db().delete(promotions).where(eq(promotions.id, 'promo_UCPAGENT'));
+      await db().delete(promotions).where(eq(promotions.id, 'promo_UCPBIG'));
+    });
+
+    it('prices a code whose condition holds, and tells the agent why another does not', async () => {
+      const { body: c } = await ucp(
+        disc,
+        'POST',
+        '/ucp/v1/checkout-sessions',
+        withCodes(['ucpagent', 'ucpbig']),
+      );
+      expect(c.status).toBe('ready_for_complete');
+      expect(c.discounts.applied).toEqual([
+        expect.objectContaining({ code: 'UCPAGENT', amount: 1000 }),
+      ]);
+      expect(c.messages).toEqual([
+        expect.objectContaining({
+          path: '$.discounts.codes[1]',
+          content: 'Needs a basket of $1,000,000.',
+        }),
+      ]);
+      expect(sums(c)).toBe(amountOf(c, 'total'));
+    });
+  });
+
   describe('with promotions that combine', () => {
     const at = Date.now();
     const rows = [

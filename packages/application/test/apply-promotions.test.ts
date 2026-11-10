@@ -26,14 +26,17 @@ const promo = (over: Partial<Promotion> & { id: string }): Promotion => ({
   priority: 0,
   stacking: 'exclusive',
   maxDiscount: null,
+  condition: null,
+  conditionMessage: null,
   ...over,
 });
 const storeWith = (...promotions: Promotion[]) =>
   new InMemoryPricingStore({ ...PRICING_FIXTURE, promotions }, new FixedClock());
-const order = (promoCodes: unknown, id = 'ord_promo'): Order =>
+const order = (promoCodes: unknown, id = 'ord_promo', meta: object = {}): Order =>
   ({
     id,
     createdAt: now,
+    channel: 'web',
     customerId: 'pc_northwind',
     currency: 'USD',
     lines: [
@@ -44,7 +47,7 @@ const order = (promoCodes: unknown, id = 'ord_promo'): Order =>
     shipping: 5,
     tax: 0,
     total: 50,
-    meta: { promoCodes },
+    meta: { promoCodes, ...meta },
   }) as unknown as Order;
 
 describe('applying promotion codes to an order', () => {
@@ -184,5 +187,100 @@ describe('applying promotion codes to an order', () => {
     expect(
       (await applyPromotions({ pricing }, order(undefined, 'ord_other'), opts)).applied,
     ).toHaveLength(1);
+  });
+
+  describe('with a condition', () => {
+    const us = { '==': [{ var: 'order.meta.shipTo.country' }, 'US'] };
+    const shipTo = (country: string) => ({
+      shipTo: { line1: '1 Main St', city: 'Austin', postalCode: '78701', country },
+    });
+
+    it('refuses a code whose condition fails, in the merchant’s words or the default', async () => {
+      const pricing = storeWith(
+        promo({ id: 'a', code: 'USONLY', condition: us, conditionMessage: 'Only for US orders.' }),
+        promo({ id: 'b', code: 'PLAIN', condition: us }),
+      );
+      const r = await applyPromotions(
+        { pricing },
+        order(['usonly', 'plain'], 'ord_promo', shipTo('DE')),
+        opts,
+      );
+      expect(r.applied).toEqual([]);
+      expect(r.refused).toEqual([
+        { code: 'USONLY', reason: 'Only for US orders.' },
+        { code: 'PLAIN', reason: "This order doesn't qualify for PLAIN." },
+      ]);
+      // Nothing was held for a refused code.
+      expect(r.order?.subtotal).toBe(45);
+    });
+
+    it('applies the same codes once the order meets the condition', async () => {
+      const pricing = storeWith(promo({ id: 'a', code: 'USONLY', condition: us }));
+      const r = await applyPromotions(
+        { pricing },
+        order(['usonly'], 'ord_promo', shipTo('USA')),
+        opts,
+      );
+      expect(r.applied.map((a) => a.code)).toEqual(['USONLY']);
+      expect(r.refused).toEqual([]);
+    });
+
+    it('drops an automatic promotion whose condition fails, with nothing refused', async () => {
+      const pricing = storeWith(promo({ id: 'auto', name: 'US sale', condition: us }));
+      const dropped = await applyPromotions(
+        { pricing },
+        order(undefined, 'o1', shipTo('DE')),
+        opts,
+      );
+      expect(dropped.applied).toEqual([]);
+      expect(dropped.refused).toEqual([]);
+      // No ship-to at all reads as null, not as a match.
+      expect((await applyPromotions({ pricing }, order(undefined, 'o2'), opts)).applied).toEqual(
+        [],
+      );
+      const met = await applyPromotions({ pricing }, order(undefined, 'o3', shipTo('US')), opts);
+      expect(met.applied.map((a) => a.name)).toEqual(['US sale']);
+    });
+
+    it('asks about the buyer: their tier, and a guest has none', async () => {
+      const gold = { '==': [{ var: 'customer.tier' }, 'gold'] };
+      const pricing = storeWith(promo({ id: 'g', code: 'GOLD', condition: gold }));
+      expect(
+        (await applyPromotions({ pricing }, order(['gold']), opts)).applied.map((a) => a.code),
+      ).toEqual(['GOLD']);
+      const guest = { ...order(['gold'], 'ord_guest'), customerId: undefined } as Order;
+      expect((await applyPromotions({ pricing }, guest, opts)).refused).toEqual([
+        { code: 'GOLD', reason: "This order doesn't qualify for GOLD." },
+      ]);
+    });
+
+    it('lets a condition choose among stackable promotions by what is in the order', async () => {
+      const pricing = storeWith(
+        promo({
+          id: 'sku2',
+          name: 'Two or more of SKU 1',
+          stacking: 'stackable',
+          condition: {
+            some: [
+              { var: 'order.lines' },
+              { and: [{ '==': [{ var: 'sku' }, 'PC-SKU-1'] }, { '>=': [{ var: 'qty' }, 2] }] },
+            ],
+          },
+        }),
+        promo({
+          id: 'sku3',
+          name: 'Three or more of SKU 1',
+          stacking: 'stackable',
+          condition: {
+            some: [
+              { var: 'order.lines' },
+              { and: [{ '==': [{ var: 'sku' }, 'PC-SKU-1'] }, { '>=': [{ var: 'qty' }, 3] }] },
+            ],
+          },
+        }),
+      );
+      const r = await applyPromotions({ pricing }, order(undefined), opts);
+      expect(r.applied.map((a) => a.id)).toEqual(['sku2']);
+    });
   });
 });

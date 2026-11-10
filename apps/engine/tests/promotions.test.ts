@@ -152,6 +152,61 @@ describe('commerce.discount', () => {
     expect(paused.summary).toBe('No promotions');
   });
 
+  describe('with a condition', () => {
+    const shipTo = (country: string) => ({
+      shipTo: { line1: '1 Main St', city: 'Austin', postalCode: '78701', country },
+    });
+    const us = JSON.stringify({ '==': [{ var: 'order.meta.shipTo.country' }, 'US'] });
+
+    it('applies a conditional automatic promotion only to the orders that meet it', async () => {
+      await addPromotion({ code: null, name: 'US sale', condition: us });
+      const met = await discount(order({ meta: shipTo('US') }));
+      expect(met.order).toMatchObject({ subtotal: 180 });
+      expect(met.summary).toBe('US sale · $20.00 off');
+      // Elsewhere it is dropped without a word, and nothing is redeemed.
+      const elsewhere = await discount(order({ meta: shipTo('DE') }));
+      expect(elsewhere.order?.subtotal).toBe(200);
+      expect(elsewhere.summary).toBe('No promotions');
+      expect(await redemptions('US sale')).toHaveLength(1);
+    });
+
+    it('reads the buyer’s record and the order’s lines from D1', async () => {
+      await addPromotion({
+        code: null,
+        name: 'Gold widgets',
+        condition: JSON.stringify({
+          and: [
+            { '==': [{ var: 'customer.tier' }, 'gold'] },
+            { '==': [{ var: 'customer.kind' }, 'business'] },
+            { some: [{ var: 'order.lines' }, { '>=': [{ var: 'qty' }, 2] }] },
+          ],
+        }),
+      });
+      expect((await discount(order({ meta: {} }))).order?.subtotal).toBe(180);
+      // A guest has no tier.
+      expect((await discount(order({ meta: {}, customerId: undefined }))).order?.subtotal).toBe(
+        200,
+      );
+    });
+
+    it('refuses a code with the merchant’s message, and a stored condition that isn’t allowed', async () => {
+      await addPromotion({
+        code: 'USONLY',
+        condition: us,
+        conditionMessage: 'US orders only.',
+      });
+      await addPromotion({ code: 'BROKEN', condition: JSON.stringify({ exec: [] }) });
+      const r = await discount(
+        order({ meta: { ...shipTo('DE'), promoCodes: ['usonly', 'broken'] } }),
+      );
+      expect((r.output as { refused: unknown[] }).refused).toEqual([
+        { code: 'USONLY', reason: 'US orders only.' },
+        { code: 'BROKEN', reason: "This order doesn't qualify for BROKEN." },
+      ]);
+      expect(await redemptions('USONLY')).toEqual([]);
+    });
+  });
+
   it('combines stackable promotions by priority and caps each', async () => {
     await addPromotion({
       code: null,
@@ -325,6 +380,8 @@ describe('through the assistant', () => {
       priority: 5,
       stacking: 'stackable',
       maxDiscount: 40,
+      condition: { '==': [{ var: 'order.channel' }, 'pos'] },
+      conditionMessage: 'In store only.',
     });
     const card = await previewAction(env, ops, 'create_promotion', input);
     expect(card.title).toBe('Add the automatic promotion “Spring sale”');
@@ -332,6 +389,8 @@ describe('through the assistant', () => {
       expect.arrayContaining([
         '15% off',
         'Takes off at most $40.00 from one order',
+        'Only when {"==":[{"var":"order.channel"},"pos"]}',
+        'Otherwise a buyer is told “In store only.”',
         'Combines with other stackable promotions · priority 5',
         'Active at once: it applies to every order it fits, with no code to enter',
       ]),
@@ -345,6 +404,8 @@ describe('through the assistant', () => {
       stacking: 'stackable',
       priority: 5,
       maxDiscount: 40,
+      condition: '{"==":[{"var":"order.channel"},"pos"]}',
+      conditionMessage: 'In store only.',
     });
     // A second one is no clash: automatic promotions have no code to repeat.
     expect((await previewAction(env, ops, 'create_promotion', input)).blocked).toBeUndefined();

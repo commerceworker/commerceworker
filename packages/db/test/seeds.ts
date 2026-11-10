@@ -86,6 +86,7 @@ export async function seedPricing(f: PricingFixture) {
     await db.insert(promotions).values({
       ...p,
       skus: p.skus ? JSON.stringify(p.skus) : null,
+      condition: p.condition ? JSON.stringify(p.condition) : null,
       createdAt: t,
       updatedAt: t,
     });

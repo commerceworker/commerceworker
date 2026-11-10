@@ -34,6 +34,11 @@ import {
   catalogTypeInput,
 } from './product/inputs';
 import { BOARD_PAGE_LIMIT, FEEDS_LIMIT } from './product/reads';
+import {
+  MAX_CONDITION_MESSAGE,
+  PROMOTION_CONDITION_VARIABLES,
+  promotionConditionProblem,
+} from './promotion-conditions';
 import { PROMOTION_KINDS, PROMOTION_STACKING } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
@@ -372,10 +377,29 @@ export const TOOL_INPUTS = {
         .positive()
         .optional()
         .describe('The most it takes off one order, in the base currency'),
+      condition: z
+        .record(z.string(), z.unknown())
+        .superRefine((c, ctx) => {
+          const why = promotionConditionProblem(c);
+          if (why) ctx.addIssue({ code: 'custom', message: why });
+        })
+        .optional()
+        .describe(
+          `A JSON Logic expression the order must also meet, over ${Object.keys(PROMOTION_CONDITION_VARIABLES).join(', ')}`,
+        ),
+      conditionMessage: z
+        .string()
+        .max(MAX_CONDITION_MESSAGE)
+        .optional()
+        .describe('What a buyer entering the code is told when the condition fails'),
     })
     .refine((p) => p.code !== undefined || !!p.name?.trim(), {
       message: 'A promotion without a code needs a name',
       path: ['name'],
+    })
+    .refine((p) => p.conditionMessage === undefined || p.condition !== undefined, {
+      message: 'A condition message needs a condition',
+      path: ['conditionMessage'],
     }),
   set_promotion_status: z.object({
     promotionId: z.string().max(60),

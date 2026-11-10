@@ -16,6 +16,7 @@ import {
   type Principal,
   type PromotionKind,
   type PromotionStacking,
+  promotionConditionProblem,
   promotionLabel,
   type RpcActor,
   type TaxCertificate,
@@ -47,6 +48,8 @@ export type PromotionInput = {
   priority?: number;
   stacking?: PromotionStacking;
   maxDiscount?: number;
+  condition?: object;
+  conditionMessage?: string;
 };
 
 const what = (p: { kind: string; value: number }) =>
@@ -74,6 +77,7 @@ function promotionProblem(i: PromotionInput): string | null {
     return 'A percentage is above 0 and at most 100.';
   if (i.kind === 'amount' && !(value > 0)) return 'An amount off is above 0.';
   if (!i.code && !i.name?.trim()) return 'A promotion without a code needs a name.';
+  if (i.condition) return promotionConditionProblem(i.condition);
   return null;
 }
 
@@ -95,6 +99,15 @@ export async function previewCreatePromotion(
       ...(i.maxDiscount ? [`Takes off at most ${money(i.maxDiscount)} from one order`] : []),
       stackingLine(i),
       ...(i.minSubtotal ? [`On a subtotal of ${money(i.minSubtotal)} or more`] : []),
+      // As written: the flows have no expression describer to put it in words.
+      ...(i.condition
+        ? [
+            `Only when ${boundText(JSON.stringify(i.condition), 400)}`,
+            ...(i.conditionMessage
+              ? [`Otherwise a buyer is told “${boundText(i.conditionMessage, 200)}”`]
+              : []),
+          ]
+        : []),
       ...(i.skus?.length
         ? [
             `Only on ${i.skus.length} SKU${i.skus.length === 1 ? '' : 's'}: ${i.skus
@@ -140,6 +153,8 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
       priority: i.priority ?? 0,
       stacking: i.stacking ?? 'exclusive',
       maxDiscount: i.maxDiscount ?? null,
+      condition: i.condition ?? null,
+      conditionMessage: i.conditionMessage?.trim() || null,
     },
     p.id,
   );
@@ -162,6 +177,8 @@ export async function runCreatePromotion(env: Env, p: Principal, i: PromotionInp
       priority: i.priority ?? 0,
       stacking: i.stacking ?? 'exclusive',
       maxDiscount: i.maxDiscount ?? null,
+      // The condition itself is what the record is for: it decides who gets the discount.
+      condition: i.condition ?? null,
       ...trail,
     },
   });

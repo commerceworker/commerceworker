@@ -29,6 +29,8 @@ const promo = (p: Partial<Promotion> = {}): Promotion => ({
   priority: 0,
   stacking: 'exclusive',
   maxDiscount: null,
+  condition: null,
+  conditionMessage: null,
   ...p,
 });
 const lines: OrderLine[] = [
@@ -40,6 +42,9 @@ const ctx = {
   customerId: 'cus_1',
   currency: 'USD',
   fxRate: 1,
+  channel: 'web',
+  customer: undefined,
+  meta: undefined,
   lines,
   redeemed: { total: 0, byCustomer: 0 },
 };
@@ -86,6 +91,36 @@ describe('promotion codes', () => {
     expect(promotionProblem(promo({ skus: ['Z'] }), ctx)).toMatch(/doesn't cover/);
     expect(promotionProblem(promo({ minSubtotal: 201 }), ctx)).toMatch(/at least 201/);
     expect(promotionProblem(promo({ minSubtotal: 200 }), ctx)).toBeNull();
+  });
+
+  it('judges the condition after the typed fields, and answers a failure in the merchant’s words', () => {
+    const channel = { '==': [{ var: 'order.channel' }, 'pos'] };
+    expect(
+      promotionProblem(promo({ condition: { '==': [{ var: 'order.channel' }, 'web'] } }), ctx),
+    ).toBeNull();
+    expect(promotionProblem(promo({ condition: channel }), ctx)).toBe(
+      "This order doesn't qualify for SAVE10.",
+    );
+    expect(
+      promotionProblem(promo({ condition: channel, conditionMessage: 'In store only.' }), ctx),
+    ).toBe('In store only.');
+    // A named automatic promotion reads as its name.
+    expect(promotionProblem(promo({ code: null, name: 'Sale', condition: channel }), ctx)).toBe(
+      "This order doesn't qualify for Sale.",
+    );
+    // A typed limit that fails says its own reason, not the condition's message.
+    expect(
+      promotionProblem(promo({ minSubtotal: 201, condition: channel, conditionMessage: 'x' }), ctx),
+    ).toMatch(/at least 201/);
+    // Another customer's code still reads as unknown, whatever its condition.
+    expect(
+      promotionProblem(
+        promo({ customerId: 'cus_2', condition: channel, conditionMessage: 'x' }),
+        ctx,
+      ),
+    ).toBe(unknownPromotion('SAVE10'));
+    // A stored condition that isn't allowed never qualifies an order.
+    expect(promotionProblem(promo({ condition: { exec: [] } }), ctx)).toMatch(/qualify/);
   });
 });
 

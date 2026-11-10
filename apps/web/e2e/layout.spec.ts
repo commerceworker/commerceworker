@@ -80,6 +80,30 @@ test('fields are 16px on touch screens, so iOS does not zoom into them', async (
   }
 });
 
+test('the new promotion form, condition included, fits the screen and reads at 16px', async ({
+  page,
+}, info) => {
+  await open(page, '/promotions');
+  await page.getByRole('button', { name: 'New promotion' }).click();
+  const sheet = page.getByRole('dialog');
+  const condition = sheet.getByLabel('JSON Logic (optional)');
+  await condition.scrollIntoViewIfNeeded();
+  await expect(condition).toBeVisible();
+  const box = await condition.boundingBox();
+  const width = page.viewportSize()!.width;
+  expect(box!.x, 'the field starts inside the screen').toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width, 'and ends inside it').toBeLessThanOrEqual(width);
+  // The sheet scrolls up and down, never sideways.
+  expect(
+    await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    'the sheet has no sideways scroll',
+  ).toBe(true);
+  if (isTouch(info))
+    expect(
+      await condition.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize)),
+    ).toBeGreaterThanOrEqual(16);
+});
+
 test('at double text size the sidebar and header fit without scrolling sideways', async ({
   page,
 }, info) => {

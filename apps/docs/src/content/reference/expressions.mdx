@@ -45,6 +45,8 @@ CommerceWorker adds three operations:
 A condition is true by JSON Logic's truthiness: empty arrays, `0`, `""` and `null` are false. A plain
 value (a number, `true`) is its own result, which is why Loop's default `while` is `true`.
 
+A [promotion's condition](/guides/promotions/#conditions) is also JSON Logic, over a smaller context (`now`, `order.channel`, `order.lines`, `order.meta.shipTo`, `customer`, …) and a shorter list of operators.
+
 A node's result, including any clock it read, is recorded once, so an order that resumes or
 retries later sees the same value.
 

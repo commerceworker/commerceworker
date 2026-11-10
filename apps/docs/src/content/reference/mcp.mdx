@@ -108,6 +108,8 @@ An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order
 `uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
 
+`create_promotion` takes an optional `condition`, a JSON Logic expression over a documented context, and a `conditionMessage` for a buyer whose order doesn't meet it; the call is refused, with the reason, for a variable or operator the [promotions guide](/guides/promotions/#conditions) doesn't list, and the person's card shows the condition as written.
+
 ### Clients that ask their person
 
 A client on the 2026-07-28 revision that declares form elicitation is asked to confirm. The
