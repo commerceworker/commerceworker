@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./company-directory": "./src/company-directory.ts",
     "./pricing-store": "./src/pricing-store.ts",
+    "./price-book-store": "./src/price-book-store.ts",
     "./integration-store": "./src/integration-store.ts",
     "./inventory-store": "./src/inventory-store.ts",
     "./fulfillment-store": "./src/fulfillment-store.ts",

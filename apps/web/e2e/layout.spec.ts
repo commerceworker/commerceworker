@@ -140,6 +140,54 @@ test('a customer’s credit section shows its figures and ledger, and its two fo
   }
 });
 
+test('the new price book form fits the screen and reads at 16px on touch', async ({
+  page,
+}, info) => {
+  await open(page, '/price-books');
+  await page.getByRole('button', { name: 'New price book' }).click();
+  const sheet = page.getByRole('dialog');
+  const width = page.viewportSize()!.width;
+  for (const name of ['Code', 'Name', /^Priority/, /^First day/, /^Last day/]) {
+    const field = sheet.getByLabel(name);
+    await field.scrollIntoViewIfNeeded();
+    await expect(field).toBeVisible();
+    const box = await field.boundingBox();
+    expect(box!.x, `${name} starts inside the screen`).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width, `${name} ends inside it`).toBeLessThanOrEqual(width);
+    if (isTouch(info))
+      expect(
+        await field.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize)),
+      ).toBeGreaterThanOrEqual(16);
+  }
+  expect(
+    await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    'the sheet has no sideways scroll',
+  ).toBe(true);
+});
+
+test('a price book’s entries and assignees fit the screen and its fields read at 16px on touch', async ({
+  page,
+}, info) => {
+  await open(page, '/price-books/pb_demo_wholesale');
+  await expect(page.locator('h1').first()).toHaveText('Wholesale 2027');
+  const width = page.viewportSize()!.width;
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    'the page has no sideways scroll',
+  ).toBe(true);
+  for (const field of [page.getByLabel('Add or replace entries'), page.getByLabel('Customer id')]) {
+    await field.scrollIntoViewIfNeeded();
+    await expect(field).toBeVisible();
+    const box = await field.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    if (isTouch(info))
+      expect(
+        await field.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize)),
+      ).toBeGreaterThanOrEqual(16);
+  }
+});
+
 test('the new promotion form shows the buy X, get Y fields inside the screen, at 16px on touch', async ({
   page,
 }, info) => {

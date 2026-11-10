@@ -30,7 +30,7 @@ export interface PriceOrderOptions {
   readonly useContracts: boolean;
   /** Whether price-book and volume rules count. */
   readonly usePriceRules: boolean;
-  /** Milliseconds: rules with a start or end date are checked against it. */
+  /** Milliseconds: rules with a start or end date, and price books, are checked against it. */
   readonly now: number;
 }
 
@@ -38,7 +38,10 @@ export interface PricedLine {
   readonly sku: string;
   readonly unitPrice: number;
   readonly by: PricedBy['source'];
+  /** What priced it: the price book's name for a book, else the rule's name. */
   readonly rule: string;
+  /** The price book that priced it, when one did. */
+  readonly bookId: string | null;
 }
 
 export interface PricedOrder {
@@ -68,6 +71,7 @@ export async function priceOrder(
     order.currency,
     order.customerId,
     !buying,
+    options.now,
   );
   if (fx === null) throw new MissingExchangeRateError(order.currency);
   const products = new Map(rows.map((p) => [p.sku, p]));
@@ -79,7 +83,13 @@ export async function priceOrder(
   const lines = order.lines.map((l): OrderLine => {
     const p = products.get(l.sku);
     if (l.unitPrice !== undefined) {
-      priced.push({ sku: l.sku, unitPrice: l.unitPrice, by: 'list', rule: 'Given on the order' });
+      priced.push({
+        sku: l.sku,
+        unitPrice: l.unitPrice,
+        by: 'list',
+        rule: 'Given on the order',
+        bookId: null,
+      });
       return l;
     }
     if (!chain) return { ...l, unitPrice: fromBase(p?.cost ?? 0, fx) };
@@ -89,7 +99,13 @@ export async function priceOrder(
       now: options.now,
     });
     const unitPrice = fromBase(r.unitPrice, fx);
-    priced.push({ sku: l.sku, unitPrice, by: r.by.source, rule: r.by.name });
+    priced.push({
+      sku: l.sku,
+      unitPrice,
+      by: r.by.source,
+      rule: r.by.name,
+      bookId: 'bookId' in r.by ? (r.by.bookId ?? null) : null,
+    });
     return { ...l, unitPrice };
   });
   return { lines, fxRate: fx, totals: computeTotals({ ...order, lines, fxRate: fx }), priced };

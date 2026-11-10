@@ -293,6 +293,14 @@ on, and its JSON body (or, for a `GET`, its query string) gives the rest of the 
 | `POST` | `/api/v1/flows/:flowId/test` | `{ draft }`: publishes that draft if it changed, then starts a test order |
 | `GET` | `/api/v1/fx-rates` | Each currency's exchange rate (units per one USD), when it was set and by whom: the daily ECB refresh or a person |
 | `POST` | `/api/v1/fx-rates/:currency` | `{ rate }`: sets a currency's rate (admin). The confirmation's check runs: not `USD`, a currency the workspace has a rate for or sells in, a positive rate within bounds |
+| `GET` | `/api/v1/price-books?status=&after=&limit=` | Price books by code, a page at a time with a `total` and `next` ([Price books](/guides/price-books/)) |
+| `GET` | `/api/v1/price-books/:bookId` | A book by id or code, who it is assigned to, and a page of its entries (`after`, `limit`) |
+| `POST` | `/api/v1/price-books` | `{ code, name, priority?, startsAt?, endsAt? }`: adds a draft book (operator) |
+| `POST` | `/api/v1/price-books/:bookId/status` | `{ status }`: `active`, `inactive` or `archived`, along the book's lifecycle (operator) |
+| `POST` | `/api/v1/price-books/:bookId/entries` | `{ entries: [{ sku, minQty?, price? or discountPct?, remove? }] }`: adds, replaces or removes up to 200 entries (operator) |
+| `POST` | `/api/v1/price-books/:bookId/assignments` | `{ customerId } or { tier }`, with `remove?`: assigns the book, or takes it away (operator) |
+| `POST` | `/api/v1/customers/:customerId/contract-prices` | `{ prices: [{ sku, price }] }`: sets contract prices, a `null` price removes one (operator) |
+| `POST` | `/api/v1/price-preview` | `{ customerId?, lines: [{ sku, qty? }] }`: what the customer would pay and which book, contract, tier or list price priced each line |
 | `POST` | `/api/v1/promotions` | Creates a promotion: a code, or an automatic one (no code, named), a percentage, amount, free shipping or a buy X, get Y rule ([Buy X, get Y](/guides/promotions/#buy-x-get-y)), with priority, stacking, a cap, and an optional JSON Logic `condition` and `conditionMessage` ([Conditions](/guides/promotions/#conditions)) |
 | `GET` | `/api/v1/companies?status=&search=&cursor=&limit=` | A page of [companies](/guides/companies/) by name: `{ companies, total, cursor }` (operator) |
 | `GET` | `/api/v1/companies/:companyId` | One company with its team tree: `{ company, teams }` (operator) |

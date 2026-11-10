@@ -67,6 +67,19 @@ INSERT OR IGNORE INTO price_rules (id, source_id, name, sku, customer_id, custom
   ('vol_gsk010_1000', 'volume', 'Gasket kit, 1,000+', 'GSK-010', NULL, NULL, 1000.0, 7.75, NULL, NULL, NULL, 0),
   ('vol_wid100_500', 'volume', 'Industrial widget, 500+', 'WID-100', NULL, NULL, 500.0, NULL, 8.0, NULL, NULL, 0);
 
+-- A price book in draft, so the demo shows one without changing what any order pays: its prices
+-- apply only once someone activates it.
+INSERT OR IGNORE INTO price_books (id, code, name, priority, status, created_by, created_at, updated_at) VALUES
+  ('pb_demo_wholesale', 'wholesale-2027', 'Wholesale 2027', 10, 'draft', NULL, 0, 0);
+
+INSERT OR IGNORE INTO price_book_assignments (book_id, customer_id, tier, created_at) VALUES
+  ('pb_demo_wholesale', NULL, 'gold', 0);
+
+INSERT OR IGNORE INTO price_rules (id, source_id, name, sku, min_qty, price, discount_pct, created_at, book_id) VALUES
+  ('pbe_pb_demo_wholesale~WID-100~1', 'price_book', 'Price book entry', 'WID-100', 1, 22.5, NULL, 0, 'pb_demo_wholesale'),
+  ('pbe_pb_demo_wholesale~WID-100~500', 'price_book', 'Price book entry', 'WID-100', 500, 20.0, NULL, 0, 'pb_demo_wholesale'),
+  ('pbe_pb_demo_wholesale~GSK-010~1', 'price_book', 'Price book entry', 'GSK-010', 1, NULL, 12.0, 0, 'pb_demo_wholesale');
+
 INSERT OR IGNORE INTO fx_rates (currency, rate, updated_at) VALUES
   ('CAD', 1.37, 0),
   ('EUR', 0.92, 0),

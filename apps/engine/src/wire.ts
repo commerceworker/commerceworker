@@ -25,6 +25,7 @@ import { d1OrderQueries } from '@commerceworker/db/order-queries';
 import { d1OrderRecords } from '@commerceworker/db/order-records';
 import { d1PaymentLedger } from '@commerceworker/db/payment-ledger';
 import { d1PluginInstallStore } from '@commerceworker/db/plugin-install-store';
+import { d1PriceBookStore } from '@commerceworker/db/price-book-store';
 import { d1PricingStore } from '@commerceworker/db/pricing-store';
 import { d1ProductIndexStore } from '@commerceworker/db/product-index-store';
 import { d1RetentionStore } from '@commerceworker/db/retention-store';
@@ -64,6 +65,7 @@ import type {
   PaymentEventLog,
   PaymentLedger,
   PluginInstallStore,
+  PriceBookStore,
   PricingStore,
   ProductIndexStore,
   RetentionStore,
@@ -325,6 +327,9 @@ export const pluginInstalls = (env: Pick<Env, 'DB'>): PluginInstallStore =>
 export const sealedSecrets = (env: Pick<Env, 'DB'>): SealedSecretStore => d1SealedSecrets(env.DB);
 
 /** Customers' tax exemption certificates. */
+/** Price books and the contract prices staff write: the books themselves, not the pricing chain. */
+export const priceBookStore = (env: Pick<Env, 'DB'>): PriceBookStore => d1PriceBookStore(env.DB);
+
 export const taxCertificateStore = (env: Pick<Env, 'DB'>): TaxCertificateStore =>
   d1TaxCertificateStore(env.DB);
 

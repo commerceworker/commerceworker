@@ -1,0 +1,95 @@
+---
+title: Price books
+description: Named price lists with a priority and dates, assigned to a customer or a customer tier, with volume tiers, contract prices per customer and SKU, and a preview of what a customer would pay; the highest-priority assigned book that prices a line wins, then the lowest price in it.
+---
+
+A price book is a named list of prices: a SKU at a price, or a percentage off list, with volume
+tiers for larger quantities. A book is assigned to one customer, or to every customer of a tier,
+and has a priority and optional dates. A flow's [Price lines](/reference/nodes/#commerce.price) step
+reads the books assigned to the order's customer in the same lookup as the rest of the
+[pricing chain](/reference/expressions/#pricing-chain), so carts, orders and agentic checkout price
+from them the same way. Prices in a book are in the base currency, `USD`; an order in another
+currency converts them at its rate.
+
+## Which book prices a line
+
+A book prices a line only when it is **in force**: active, and inside its dates (from its first
+moment up to, not including, its end). Of the books assigned to the customer, by id or through their
+tier, that are in force and have an entry for the line's SKU and quantity:
+
+1. The **highest priority** wins, however cheap another book is.
+2. Within it, the **lowest price** wins, so the deepest volume tier the quantity reaches is the one used.
+3. Books of equal priority and price are told apart by their code, so the same order always prices
+   the same way.
+
+A book with no entry for a SKU doesn't shadow a lower-priority book that has one, and a volume tier
+that the quantity doesn't reach doesn't count. The rest of the chain still applies: the price-book
+source stops processing by default, then contract prices, then volume tiers, then the list price. Price
+rules that belong to no book (older entries) still work and rank below every book. A priced line
+names the book (its **Price lines** output lists the line's source, the book's name as the rule, and
+the book's id).
+
+An agentic checkout buyer isn't one of your customers, so no assigned book applies to it: it pays
+list price, or the entries that name no customer.
+
+## Lifecycle
+
+| Status | Means |
+|---|---|
+| **Draft** | Being built. Prices nothing |
+| **Active** | In force while inside its dates |
+| **Inactive** | Switched off; can be switched back on |
+| **Archived** | Retired for good. Can't change or be assigned |
+
+A book starts as a draft and moves `draft → active ⇄ inactive → archived`; a draft that was never
+used can be archived directly. Two people changing the same book at once can't both succeed: the
+second is told it changed and to read it again.
+
+## Managing books
+
+Operators manage books on **Price books** (linked from the Pricing section of **Commerce**), and
+see the books assigned to a customer, and its contract prices, on the customer's page. Every change
+asks for a person's confirmation on the [assistant](/guides/assistant/#edits-from-a-page)'s card,
+which says what changes and for whom, because each changes what buyers pay:
+
+- **New price book**: a code (lower-case letters, digits, dashes and underscores, up to 32), a
+  name, a priority and optional first and last days.
+- On a book's page, **Activate**, **Deactivate** and **Archive**; **Add entries**, one a line: a
+  SKU, an optional quantity, then a price in USD or a percentage (`WID-100 12.50`,
+  `WID-100 500 11.25`, `GSK-010 10%`); and **Assign** to a customer or a tier.
+
+A book can be assigned only to a customer whose company is active (or that has none); taking an assignment away is always allowed, and the books already assigned to a suspended or closed company still price, since declining that company's orders is the order check's job, not pricing's.
+
+Entries are checked before the card: a SKU must be a product, a price is 0 or more, a percentage is
+above 0 and at most 100, and one call carries at most 200. Writing a SKU at a quantity already in the
+book replaces it.
+
+## Contract prices
+
+A contract price is what was agreed with one customer for one SKU, in USD. It applies even above
+list price, and a book that stops processing is reached first. Set, change or remove them (a price of
+`null` removes) with `put_contract_prices` or `POST /api/v1/customers/:customerId/contract-prices`.
+
+## Previewing a price
+
+`preview_price` (`POST /api/v1/price-preview`) answers what a customer would pay right now for some
+SKUs and quantities, and what priced each line: a book (named), a contract price, a volume tier or
+the list price. Leave the customer out for an anonymous buyer. It reads only; nothing is written.
+
+## Over REST and MCP
+
+Everything on the page is also a REST route and an MCP tool, the same operation under both:
+
+| Tool | Role | REST | Does |
+|---|---|---|---|
+| `list_price_books` | `viewer` | `GET /api/v1/price-books` | Books by code, a page at a time, optionally one status |
+| `get_price_book` | `viewer` | `GET /api/v1/price-books/:bookId` | One book (by id or code), its assignees and a page of entries |
+| `preview_price` | `viewer` | `POST /api/v1/price-preview` | What a customer would pay for SKUs |
+| `create_price_book` | `operator` | `POST /api/v1/price-books` | Adds a draft |
+| `set_price_book_status` | `operator` | `POST /api/v1/price-books/:bookId/status` | Activates, deactivates or archives |
+| `put_price_book_entries` | `operator` | `POST /api/v1/price-books/:bookId/entries` | Adds, replaces or removes entries |
+| `assign_price_book` | `operator` | `POST /api/v1/price-books/:bookId/assignments` | Assigns to a customer or tier, or takes it away |
+| `put_contract_prices` | `operator` | `POST /api/v1/customers/:customerId/contract-prices` | Sets or removes contract prices |
+
+The writes change what buyers pay, so only a person confirms them: an API token is refused over
+REST, and a typed A2A skill never runs them. Lists page by a cursor: pass `next` back as `after`.

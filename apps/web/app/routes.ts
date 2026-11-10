@@ -41,6 +41,10 @@ export default [
       // Revenue, endings, payments and step timings over 7, 30 or 90 days (lib/metrics.server.ts).
       route('performance', 'routes/performance.tsx'),
       route('promotions', 'routes/promotions.tsx'),
+      // Named price books, their entries, who they are assigned to and their lifecycle
+      // (lib/price-books.server.ts).
+      route('price-books', 'routes/price-books.tsx'),
+      route('price-books/:bookId', 'routes/price-book.tsx'),
       route('team', 'routes/team.tsx'),
       route('audit', 'routes/audit.tsx'),
       // Installed plugins (admin). Their own pages are under /plugins/<id>/, forwarded by workers/app.ts.

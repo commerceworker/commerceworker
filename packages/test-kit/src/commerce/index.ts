@@ -47,6 +47,8 @@ export * from './payment-ledger-contract';
 export * from './payment-processor';
 export * from './plugin-install-store';
 export * from './plugin-install-store-contract';
+export * from './price-book-store';
+export * from './price-book-store-contract';
 export * from './pricing-store';
 export * from './pricing-store-contract';
 export * from './product-index-store';

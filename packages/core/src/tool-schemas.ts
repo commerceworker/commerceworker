@@ -25,6 +25,11 @@ import { FX_SOURCES } from './fx';
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
 import { pluginCasesSchema } from './plugins';
+import {
+  MAX_CONTRACT_PRICES_PER_CALL,
+  MAX_PRICE_BOOK_ENTRIES_PER_CALL,
+  PRICE_BOOK_STATUSES,
+} from './price-books';
 import { BOARD_COLUMNS } from './product/api';
 import {
   fieldRefSchema,
@@ -96,6 +101,8 @@ const orderId = z.string().describe('The order id (ord_…) or its #reference, e
 const cartId = z.string().max(100).describe('The cart id (cart_…)');
 const productKey = z.string().min(1).max(128).describe('The product key');
 const catalogCode = z.string().min(1).max(128);
+const priceBookId = z.string().min(1).max(100).describe('The price book id (pb_…) or its code');
+const pageCursor = z.string().max(300).optional().describe('`next` from the previous page');
 
 /** Each tool's input. Built once per isolate. */
 
@@ -428,6 +435,115 @@ export const TOOL_INPUTS = {
     promotionId: z.string().max(60),
     status: z.enum(['active', 'paused']),
   }),
+  list_price_books: z.object({
+    status: z.enum(PRICE_BOOK_STATUSES).optional(),
+    after: pageCursor,
+    limit: z.number().int().min(1).max(100).optional().describe('Books a page, default 25'),
+  }),
+  get_price_book: z.object({
+    bookId: priceBookId,
+    after: pageCursor,
+    limit: z.number().int().min(1).max(200).optional().describe('Entries a page, default 50'),
+  }),
+  preview_price: z.object({
+    customerId: z
+      .string()
+      .max(100)
+      .optional()
+      .describe('The customer to price for; leave out for list and unassigned prices'),
+    lines: z
+      .array(
+        z.object({
+          sku: z.string().min(1).max(100),
+          qty: z.number().positive().optional().describe('Default 1'),
+        }),
+      )
+      .min(1)
+      .max(50),
+  }),
+  create_price_book: z.object({
+    code: z
+      .string()
+      .min(1)
+      .max(64)
+      .describe('Lower-case letters, digits, dashes and underscores, up to 32'),
+    name: z.string().trim().min(1).max(120),
+    priority: z
+      .number()
+      .int()
+      .min(-1000)
+      .max(1000)
+      .optional()
+      .describe('The higher wins when several assigned books price a line (default 0)'),
+    startsAt: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Date.UTC(9999, 0, 1))
+      .optional()
+      .describe('In force from, epoch ms'),
+    endsAt: z
+      .number()
+      .int()
+      .positive()
+      .max(Date.UTC(9999, 0, 1))
+      .optional()
+      .describe('In force until, epoch ms'),
+  }),
+  set_price_book_status: z.object({
+    bookId: priceBookId,
+    status: z.enum(['active', 'inactive', 'archived']),
+  }),
+  put_price_book_entries: z.object({
+    bookId: priceBookId,
+    entries: z
+      .array(
+        z.object({
+          sku: z.string().min(1).max(100),
+          minQty: z
+            .number()
+            .positive()
+            .optional()
+            .describe('Volume tier: from this quantity (default 1)'),
+          price: z
+            .number()
+            .nonnegative()
+            .optional()
+            .describe('Unit price in USD, the base currency'),
+          discountPct: z
+            .number()
+            .positive()
+            .max(100)
+            .optional()
+            .describe('Percent off list, instead of a price'),
+          remove: z.boolean().optional().describe('Remove this SKU and quantity from the book'),
+        }),
+      )
+      .min(1)
+      .max(MAX_PRICE_BOOK_ENTRIES_PER_CALL),
+  }),
+  assign_price_book: z.object({
+    bookId: priceBookId,
+    customerId: z.string().max(100).optional().describe('One customer; or a tier, not both'),
+    tier: z.string().max(60).optional().describe('Every customer of this tier'),
+    remove: z.boolean().optional().describe('Take the assignment away'),
+  }),
+  put_contract_prices: z.object({
+    customerId: z.string().min(1).max(100),
+    prices: z
+      .array(
+        z.object({
+          sku: z.string().min(1).max(100),
+          price: z
+            .number()
+            .nonnegative()
+            .nullable()
+            .describe('Unit price in USD; null removes the contract price'),
+        }),
+      )
+      .min(1)
+      .max(MAX_CONTRACT_PRICES_PER_CALL),
+  }),
   list_fx_rates: z.object({}),
   set_fx_rate: z.object({
     currency: z.string().length(3).describe('ISO 4217 code in capitals, like EUR; never USD'),
@@ -631,6 +747,20 @@ const cartOutput = row({
   priced: z.boolean().describe('Whether the total prices the cart as it is now'),
   total: money.describe('Formatted in the quote’s currency; empty until priced'),
   notReady: z.string().nullable().describe('Why it can’t be submitted yet; null when it can'),
+});
+
+/** A price book as the tools show it. */
+const priceBookOutput = row({
+  id: z.string(),
+  code: z.string(),
+  name: z.string(),
+  priority: z.number(),
+  status: z.enum(PRICE_BOOK_STATUSES),
+  startsAt: z.number().nullable(),
+  endsAt: z.number().nullable(),
+  createdBy: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
 });
 
 /** An action's result: a preview and code on the first call, what was done on the second. */
@@ -981,6 +1111,52 @@ export const TOOL_OUTPUTS = {
   put_company_members: actionOutput,
   remove_company_member: actionOutput,
   put_company_team: actionOutput,
+  list_price_books: row({
+    books: z.array(priceBookOutput),
+    total: z.number().describe('Books with this status, across every page'),
+    next: z.string().nullable().describe('Pass as after for the next page; null at the end'),
+  }),
+  get_price_book: row({
+    book: priceBookOutput,
+    assignments: z.array(
+      row({
+        customerId: z.string().nullable(),
+        tier: z.string().nullable(),
+        createdAt: z.number(),
+      }),
+    ),
+    entries: z.array(
+      row({
+        sku: z.string(),
+        minQty: z.number(),
+        price: z.number().nullable(),
+        discountPct: z.number().nullable(),
+      }),
+    ),
+    entryTotal: z.number(),
+    next: z.string().nullable(),
+  }),
+  preview_price: row({
+    customerId: z.string().nullable(),
+    tier: z.string().nullable(),
+    currency: z.string().describe('The base currency every price is in'),
+    lines: z.array(
+      row({
+        sku: z.string(),
+        qty: z.number(),
+        listPrice: z.number().nullable().describe('Null for a SKU with no product'),
+        unitPrice: z.number(),
+        source: z.string().describe('price_book, contract, volume or list'),
+        name: z.string().describe('The book’s name for a book price'),
+        bookId: z.string().nullable(),
+      }),
+    ),
+  }),
+  create_price_book: actionOutput.extend({ id: z.string().optional() }),
+  set_price_book_status: actionOutput,
+  put_price_book_entries: actionOutput,
+  assign_price_book: actionOutput,
+  put_contract_prices: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
@@ -1024,6 +1200,14 @@ export const REST_OPERATION_TOOLS = [
   'archive_flow',
   'create_promotion',
   'set_promotion_status',
+  'list_price_books',
+  'get_price_book',
+  'preview_price',
+  'create_price_book',
+  'set_price_book_status',
+  'put_price_book_entries',
+  'assign_price_book',
+  'put_contract_prices',
   'list_fx_rates',
   'set_fx_rate',
   'verify_tax_certificate',

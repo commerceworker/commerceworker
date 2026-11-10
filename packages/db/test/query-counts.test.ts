@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import {
+  getPriceBook,
   priceOrder,
   routeFulfillment,
   schedulePayouts,
@@ -33,6 +34,7 @@ import { d1OrderBoard } from '../src/order-board';
 import { d1OrderQueries } from '../src/order-queries';
 import { d1OrderRecords } from '../src/order-records';
 import { d1PaymentLedger } from '../src/payment-ledger';
+import { d1PriceBookStore } from '../src/price-book-store';
 import { d1PricingStore } from '../src/pricing-store';
 import { d1ShippingStore } from '../src/shipping-store';
 import committed from './query-counts.json';
@@ -68,6 +70,7 @@ let ports: ReturnType<typeof stores>;
 function stores(d1: D1Database) {
   return {
     pricing: d1PricingStore(d1, clock),
+    books: d1PriceBookStore(d1),
     inventory: d1InventoryStore(d1, clock),
     fulfillment: d1FulfillmentStore(d1, clock),
     marketplace: d1MarketplaceStore(d1, clock),
@@ -105,6 +108,15 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
       priceOrder(
         ports,
         { lines: priced, currency: 'USD', customerId: 'pc_northwind', model: 'b2b' },
+        chain,
+      ),
+  ],
+  [
+    'commerce.price: price 2 lines with an assigned price book',
+    () =>
+      priceOrder(
+        ports,
+        { lines: priced, currency: 'USD', customerId: 'pc_twin_a', model: 'b2b' },
         chain,
       ),
   ],
@@ -253,6 +265,19 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
   ],
   ['admin new order: every record for the pickers', () => ports.office.everything()],
   ['admin: currencies', () => ports.office.currencies()],
+  ['admin price books: a page', () => ports.books.list({ after: null, limit: 25 })],
+  [
+    'admin price book: its assignees and a page of entries',
+    () => getPriceBook(ports, { bookId: id('book'), limit: 50 }),
+  ],
+  [
+    'admin customer: its price books and contract prices',
+    () =>
+      Promise.all([
+        ports.books.forCustomer({ all: true }, 'pc_twin_a', 'standard'),
+        ports.books.contractPrices('pc_twin_a'),
+      ]),
+  ],
 ];
 
 describe('commerce D1 query counts', () => {
@@ -296,6 +321,18 @@ describe('commerce D1 query counts', () => {
       ],
       1,
     );
+    // An active book assigned to one of the pricing customers: pricing it reads the book too.
+    await DB.batch([
+      DB.prepare(
+        `INSERT INTO price_books (id, code, name, priority, status, created_at, updated_at) VALUES (?1, ?1, 'Query count book', 1, 'active', 0, 0)`,
+      ).bind(id('book')),
+      DB.prepare(
+        `INSERT INTO price_book_assignments (book_id, customer_id, created_at) VALUES (?1, 'pc_twin_a', 0)`,
+      ).bind(id('book')),
+      DB.prepare(
+        `INSERT INTO price_rules (id, source_id, name, sku, min_qty, price, created_at, book_id) VALUES (?1, 'price_book', 'x', 'PC-SKU-1', 1, 7, 0, ?2)`,
+      ).bind(id('entry'), id('book')),
+    ]);
     counter = countingD1(DB);
     ports = stores(counter.d1);
   }, 60_000);

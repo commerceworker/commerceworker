@@ -64,6 +64,8 @@ import {
 import { engine } from '~/lib/env.server';
 import { humanize, liveStatus, orderRef } from '~/lib/format';
 import { countOrders, listOrders } from '~/lib/orders.server';
+import { BOOK_STATES } from '~/lib/price-books';
+import { customerPricing } from '~/lib/price-books.server';
 import { CERTIFICATE_STATES, expiryDay, placesLabel } from '~/lib/tax-certificates';
 import { useCan } from '~/lib/use-me';
 import type { Route } from './+types/customer';
@@ -97,6 +99,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const { stripeCustomerId: _c, stripePaymentMethodId: _pm, ...shown } = customer;
   return {
     customer: shown,
+    pricing: await customerPricing(customer, Date.now()),
     certificates,
     // An open order with no run reads "recorded", never waiting (`liveStatus`).
     recent: recent.map((o) => ({ ...o, status: liveStatus(o) })),
@@ -140,6 +143,7 @@ export default function CustomerPage() {
     credit,
     after,
     nextId,
+    pricing,
   } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const busy = useNavigation().state === 'submitting';
@@ -200,6 +204,85 @@ export default function CustomerPage() {
         {company ? (
           <>
             <CompanySection data={company} canOperate={canOperate} />
+            <Section
+              title="Price books"
+              description="Books assigned to this customer, or to its tier, in the order they rank: the highest priority that prices a line wins."
+              flush
+            >
+              {pricing.books.length ? (
+                <Table stack="cards" caption="Price books assigned to this customer">
+                  <TableHead>
+                    <Tr>
+                      <Th>Book</Th>
+                      <Th>State</Th>
+                      <Th numeric>Priority</Th>
+                    </Tr>
+                  </TableHead>
+                  <TableBody>
+                    {pricing.books.map((b) => (
+                      <Tr
+                        key={b.id}
+                        className={cn(b.state !== 'active' && 'text-muted-foreground')}
+                      >
+                        <Td>
+                          <Link to={`/price-books/${b.id}`} className="text-link hover:underline">
+                            {b.name}
+                          </Link>
+                          <div className="font-mono text-muted-foreground text-xs">{b.code}</div>
+                        </Td>
+                        <Td label="State">
+                          <ToneBadge
+                            tone={BOOK_STATES[b.state].tone}
+                            label={BOOK_STATES[b.state].label}
+                          />
+                        </Td>
+                        <Td numeric label="Priority">
+                          {b.priority}
+                        </Td>
+                      </Tr>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <Empty>No price books are assigned to this customer or its tier.</Empty>
+              )}
+            </Section>
+            <Section
+              title="Contract prices"
+              description={
+                pricing.contractTotal > pricing.contracts.length
+                  ? `The first ${count(pricing.contracts.length)} of ${count(pricing.contractTotal)}. A contract price is what was agreed, even above list price.`
+                  : 'What was agreed per SKU, even above list price. Prices are in USD.'
+              }
+              flush
+            >
+              {pricing.contracts.length ? (
+                <Table stack="cards" caption="Contract prices">
+                  <TableHead>
+                    <Tr>
+                      <Th>SKU</Th>
+                      <Th numeric>Contract price</Th>
+                      <Th numeric>List price</Th>
+                    </Tr>
+                  </TableHead>
+                  <TableBody>
+                    {pricing.contracts.map((p) => (
+                      <Tr key={p.sku}>
+                        <Td className="font-mono">{p.sku}</Td>
+                        <Td numeric label="Contract price">
+                          {money(p.price)}
+                        </Td>
+                        <Td numeric label="List price" className="text-muted-foreground">
+                          {p.listPrice === null ? 'No product' : money(p.listPrice)}
+                        </Td>
+                      </Tr>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <Empty>No contract prices.</Empty>
+              )}
+            </Section>
             <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-6">
               <MembersSection data={company} canOperate={canOperate} />
               <TeamsSection data={company} canOperate={canOperate} />

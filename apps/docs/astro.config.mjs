@@ -93,6 +93,7 @@ export default defineConfig({
             { label: 'Marketplace', slug: 'guides/marketplace' },
             { label: 'Product catalog', slug: 'guides/product-catalog' },
             { label: 'Payments', slug: 'guides/payments' },
+            { label: 'Price books', slug: 'guides/price-books' },
             { label: 'Promotions', slug: 'guides/promotions' },
             { label: 'Companies', slug: 'guides/companies' },
             { label: 'Approvals and events', slug: 'guides/approvals-and-events' },

@@ -20,6 +20,7 @@ import { startOrder } from '../src/orders';
 import {
   auditLog,
   integrationStore,
+  priceBookStore,
   pricingStore,
   ucpStore,
   webhookOutbox,
@@ -195,7 +196,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        20,
+        23,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -270,6 +271,7 @@ describe('MCP', () => {
       'get_credit_account',
       'get_flow',
       'get_order',
+      'get_price_book',
       'get_product',
       'get_product_sheet',
       'list_carts',
@@ -277,8 +279,10 @@ describe('MCP', () => {
       'list_catalog_feeds',
       'list_categories',
       'list_flows',
+      'list_price_books',
       'list_product_types',
       'needs_attention',
+      'preview_price',
     ]);
     // The catalog's reads are a viewer's, as REST's are: nothing changes, and each says so.
     for (const name of CATALOG_READS)
@@ -294,7 +298,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(64);
+    expect(operator).toHaveLength(72);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -340,7 +344,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(87);
+    expect(admin).toHaveLength(95);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -1109,6 +1113,269 @@ describe('MCP', () => {
       });
       expect(swapped.isError).toBe(true);
       expect(swapped.content[0]!.text).toMatch(/different action or input/);
+    });
+  });
+
+  describe('price books', () => {
+    const operator = person('operator', 'ops@example.com');
+    const viewer = person('viewer', 'view@example.com');
+    const audited = async (action: string) =>
+      (
+        await createDb(env.DB)
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.action, action))
+          .all()
+      ).map((e) => ({ target: e.target, actor: e.actor, detail: JSON.parse(e.detail ?? '{}') }));
+
+    /** An action as MCP runs it: a preview and a code, then the same call with the code. */
+    async function confirm(tool: string, args: Record<string, unknown>) {
+      const first = await call(operator, tool, args);
+      expect(first.isError, first.content[0]?.text).toBeFalsy();
+      const code = first.structuredContent!.confirmation as string;
+      const done = await call(operator, tool, { ...args, confirmation: code });
+      expect(done.isError, done.content[0]?.text).toBeFalsy();
+      return {
+        preview: first.structuredContent!.preview as { title: string; consequences: string[] },
+        done: done.structuredContent!,
+      };
+    }
+
+    it('offers the reads to a viewer and the writes to an operator, with the hints a client needs', async () => {
+      const viewerTools = await tools(viewer);
+      for (const name of ['list_price_books', 'get_price_book', 'preview_price'])
+        expect(viewerTools.find((t) => t.name === name)?.annotations, name).toMatchObject({
+          readOnlyHint: true,
+        });
+      const writes = [
+        'create_price_book',
+        'set_price_book_status',
+        'put_price_book_entries',
+        'assign_price_book',
+        'put_contract_prices',
+      ];
+      for (const name of writes) expect(viewerTools.map((t) => t.name)).not.toContain(name);
+      const ops = await tools(operator);
+      const hint = (name: string) => ops.find((t) => t.name === name)?.annotations;
+      expect(hint('create_price_book')).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+      });
+      expect(hint('put_price_book_entries')).toMatchObject({
+        destructiveHint: true,
+        idempotentHint: true,
+      });
+      expect(hint('put_contract_prices')).toMatchObject({
+        destructiveHint: true,
+        idempotentHint: true,
+      });
+      expect(hint('set_price_book_status')).toMatchObject({
+        destructiveHint: true,
+        idempotentHint: true,
+      });
+      expect(hint('assign_price_book')).toMatchObject({
+        destructiveHint: false,
+        idempotentHint: true,
+      });
+      expect(
+        await rpc(viewer, 'tools/call', {
+          name: 'create_price_book',
+          arguments: { code: 'x', name: 'X' },
+        }),
+      ).toMatchObject({ body: { error: { message: 'Tool create_price_book not found' } } });
+    });
+
+    it('adds, fills, assigns and activates a book on a person’s confirm, then prices from it', async () => {
+      const made = await confirm('create_price_book', {
+        code: 'mcp-spring',
+        name: 'MCP spring',
+        priority: 4,
+      });
+      expect(made.preview.title).toBe('Add the price book mcp-spring');
+      expect(made.preview.consequences.join('\n')).toMatch(/draft: it prices nothing/);
+      const id = made.done.id as string;
+      expect(await audited('price_book.created')).toContainEqual({
+        target: id,
+        actor: 'ops@example.com',
+        detail: {
+          code: 'mcp-spring',
+          name: 'MCP spring',
+          priority: 4,
+          via: 'mcp',
+          tool: 'create_price_book',
+        },
+      });
+
+      const entries = await confirm('put_price_book_entries', {
+        bookId: 'mcp-spring',
+        entries: [
+          { sku: 'MON-27', price: 300 },
+          { sku: 'MON-27', minQty: 10, price: 280 },
+          { sku: 'WID-100', discountPct: 10 },
+        ],
+      });
+      expect(entries.preview.consequences.join('\n')).toMatch(
+        /not in force .* no price changes yet/,
+      );
+      expect(entries.preview.consequences).toContain('MON-27 from 10: $280.00');
+
+      await confirm('assign_price_book', { bookId: id, customerId: 'cus_contoso' });
+      const live = await confirm('set_price_book_status', { bookId: id, status: 'active' });
+      expect(live.preview.consequences.join('\n')).toMatch(/Its 3 entries price 1 assignee/);
+
+      const preview = (
+        await call(viewer, 'preview_price', {
+          customerId: 'cus_contoso',
+          lines: [{ sku: 'MON-27', qty: 12 }, { sku: 'WID-100' }, { sku: 'GSK-010' }],
+        })
+      ).structuredContent!;
+      expect(preview).toMatchObject({
+        customerId: 'cus_contoso',
+        tier: 'standard',
+        currency: 'USD',
+      });
+      expect(preview.lines).toEqual([
+        {
+          sku: 'MON-27',
+          qty: 12,
+          listPrice: 349,
+          unitPrice: 280,
+          source: 'price_book',
+          name: 'MCP spring',
+          bookId: id,
+        },
+        {
+          sku: 'WID-100',
+          qty: 1,
+          listPrice: 24,
+          unitPrice: 21.6,
+          source: 'price_book',
+          name: 'MCP spring',
+          bookId: id,
+        },
+        {
+          sku: 'GSK-010',
+          qty: 1,
+          listPrice: 8.5,
+          unitPrice: 8.5,
+          source: 'list',
+          name: 'List price',
+          bookId: null,
+        },
+      ]);
+      // Nobody else pays it.
+      const other = await call(viewer, 'preview_price', {
+        customerId: 'cus_fabrikam',
+        lines: [{ sku: 'MON-27' }],
+      });
+      expect(other.structuredContent!.lines).toMatchObject([{ unitPrice: 349, source: 'list' }]);
+
+      const read = (await call(viewer, 'get_price_book', { bookId: 'mcp-spring', limit: 2 }))
+        .structuredContent!;
+      expect(read).toMatchObject({ book: { id, status: 'active', priority: 4 }, entryTotal: 3 });
+      expect(read.assignments).toMatchObject([{ customerId: 'cus_contoso', tier: null }]);
+      expect(read.entries).toHaveLength(2);
+      const page2 = (
+        await call(viewer, 'get_price_book', { bookId: id, limit: 2, after: read.next })
+      ).structuredContent!;
+      expect(page2.entries).toHaveLength(1);
+      expect(page2.next).toBeNull();
+      const listed = (await call(viewer, 'list_price_books', { status: 'active' }))
+        .structuredContent!;
+      expect((listed.books as { code: string }[]).map((b) => b.code)).toContain('mcp-spring');
+
+      expect((await audited('price_book.status')).at(-1)).toMatchObject({
+        target: id,
+        detail: { from: 'draft', to: 'active', via: 'mcp' },
+      });
+    });
+
+    it('sets and removes contract prices on a confirm, and prices from them', async () => {
+      const price = async () =>
+        (
+          await call(viewer, 'preview_price', {
+            customerId: 'cus_fabrikam',
+            lines: [{ sku: 'MON-27' }],
+          })
+        ).structuredContent!.lines;
+      expect(await price()).toMatchObject([{ source: 'list', unitPrice: 349 }]);
+      const { preview, done } = await confirm('put_contract_prices', {
+        customerId: 'cus_fabrikam',
+        prices: [{ sku: 'MON-27', price: 330 }],
+      });
+      expect(preview.title).toBe('Set 1 contract price for Fabrikam Inc');
+      expect(done.done).toBe('Set 1 and removed 0 contract prices');
+      expect(await price()).toMatchObject([{ source: 'contract', unitPrice: 330 }]);
+      await confirm('put_contract_prices', {
+        customerId: 'cus_fabrikam',
+        prices: [{ sku: 'MON-27', price: null }],
+      });
+      expect(await price()).toMatchObject([{ source: 'list', unitPrice: 349 }]);
+      expect((await audited('contract_price.saved')).at(-1)).toMatchObject({
+        target: 'cus_fabrikam',
+        detail: { set: 0, removed: 1, via: 'mcp' },
+      });
+    });
+
+    it('blocks at the preview what the use-case refuses, issuing no code', async () => {
+      await confirm('create_price_book', { code: 'mcp-blocked', name: 'Blocked' });
+      for (const [tool, input, why] of [
+        ['create_price_book', { code: 'mcp-blocked', name: 'Again' }, /is taken/],
+        ['create_price_book', { code: 'has space', name: 'X' }, /A code is/],
+        [
+          'create_price_book',
+          { code: 'dated', name: 'X', startsAt: 5, endsAt: 5 },
+          /ends after it starts/,
+        ],
+        [
+          'set_price_book_status',
+          { bookId: 'mcp-blocked', status: 'inactive' },
+          /can't become inactive/,
+        ],
+        ['set_price_book_status', { bookId: 'nope', status: 'active' }, /No such price book/],
+        [
+          'put_price_book_entries',
+          { bookId: 'mcp-blocked', entries: [{ sku: 'NOPE-1', price: 1 }] },
+          /No such product: NOPE-1/,
+        ],
+        [
+          'put_price_book_entries',
+          { bookId: 'mcp-blocked', entries: [{ sku: 'MON-27' }] },
+          /price or a percentage/,
+        ],
+        [
+          'assign_price_book',
+          { bookId: 'mcp-blocked', customerId: 'cus_nobody' },
+          /No such customer/,
+        ],
+        [
+          'assign_price_book',
+          { bookId: 'mcp-blocked', customerId: 'cus_ada', tier: 'gold' },
+          /not both/,
+        ],
+        [
+          'put_contract_prices',
+          { customerId: 'cus_nobody', prices: [{ sku: 'MON-27', price: 1 }] },
+          /No such customer/,
+        ],
+      ] as const) {
+        const r = await call(operator, tool, input);
+        expect(r.isError, `${tool} ${JSON.stringify(input)}`).toBe(true);
+        expect(r.content[0]!.text).toMatch(why);
+        expect(r.structuredContent?.confirmation).toBeUndefined();
+      }
+      // A code is for the input it previewed.
+      const first = await call(operator, 'set_price_book_status', {
+        bookId: 'mcp-blocked',
+        status: 'active',
+      });
+      const swapped = await call(operator, 'set_price_book_status', {
+        bookId: 'mcp-blocked',
+        status: 'archived',
+        confirmation: first.structuredContent!.confirmation,
+      });
+      expect(swapped.isError).toBe(true);
+      expect((await priceBookStore(env).find('mcp-blocked'))?.status).toBe('draft');
     });
   });
 

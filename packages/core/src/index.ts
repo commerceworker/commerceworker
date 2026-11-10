@@ -45,6 +45,7 @@ export * from './plugin-host';
 export * from './plugin-ui';
 export * from './plugins';
 export * from './policy';
+export * from './price-books';
 export * from './pricing';
 export * from './promotion-bxgy';
 export * from './promotion-conditions';

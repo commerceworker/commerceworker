@@ -66,6 +66,7 @@ import {
 import { createFlow, duplicateFlow, saveFlowDraft, setFlowArchived } from './flows';
 import { readFxRates } from './fx';
 import { startScenario } from './orders';
+import { readPriceBook, readPriceBooks, readPricePreview } from './price-books';
 import { catalog } from './product-draft';
 
 /** The audit trail of a write that needs no confirm: the channel, the tool, a page's button. */
@@ -123,6 +124,11 @@ export const ACTION_TOOLS: ActionTool[] = [
   'set_fx_rate',
   'set_credit_limit',
   'adjust_credit',
+  'create_price_book',
+  'set_price_book_status',
+  'put_price_book_entries',
+  'assign_price_book',
+  'put_contract_prices',
   'verify_tax_certificate',
   'revoke_tax_certificate',
   'create_customer',
@@ -340,6 +346,12 @@ export async function runTool<T extends AssistantTool>(
       return readCompanyMembers(env, input as ToolInput<'list_company_members'>);
     case 'get_credit_account':
       return readCreditAccount(env, input as ToolInput<'get_credit_account'>);
+    case 'list_price_books':
+      return readPriceBooks(env, input as ToolInput<'list_price_books'>);
+    case 'get_price_book':
+      return readPriceBook(env, input as ToolInput<'get_price_book'>);
+    case 'preview_price':
+      return readPricePreview(env, input as ToolInput<'preview_price'>);
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

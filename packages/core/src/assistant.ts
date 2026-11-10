@@ -119,6 +119,14 @@ export type AssistantTool =
   | 'rebuild_catalog_gaps'
   | 'create_promotion'
   | 'set_promotion_status'
+  | 'list_price_books'
+  | 'get_price_book'
+  | 'preview_price'
+  | 'create_price_book'
+  | 'set_price_book_status'
+  | 'put_price_book_entries'
+  | 'assign_price_book'
+  | 'put_contract_prices'
   | 'list_fx_rates'
   | 'set_fx_rate'
   | 'verify_tax_certificate'
@@ -629,6 +637,70 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Pause or reactivate a promotion',
     description: 'Pause a promotion code so carts stop accepting it, or reactivate it.',
   },
+  list_price_books: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Listed price books',
+    title: 'List price books',
+    description:
+      'Price books by code, with their priority, status and dates, and how many books have each status. A book is in force only while it is active and inside its dates. Pass `next` back as `after` for the next page.',
+  },
+  get_price_book: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read the price book',
+    title: 'Get a price book',
+    description:
+      'One price book (by id or code): its status, dates and priority, who it is assigned to (customers and tiers), and its entries a page at a time, by SKU and quantity.',
+  },
+  preview_price: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Previewed prices',
+    title: 'Preview prices',
+    description:
+      'What a customer would pay for some SKUs and quantities right now, in the base currency (USD), and what priced each line: a price book (named), a contract price, a volume tier or the list price. Leave the customer out for an anonymous buyer. Nothing is written.',
+  },
+  create_price_book: {
+    role: 'operator',
+    confirm: true,
+    label: 'Add a price book',
+    title: 'Add a price book',
+    description:
+      'Add a price book in draft: a code, a name, a priority (the higher wins among assigned books) and optional dates. It prices nothing until it has entries, is assigned and is made active.',
+  },
+  set_price_book_status: {
+    role: 'operator',
+    confirm: true,
+    label: 'Change a price book’s status',
+    title: 'Activate, deactivate or archive a price book',
+    description:
+      'Move a price book along draft → active ⇄ inactive → archived (a draft can be archived too). Activating puts its prices in force for the customers and tiers it is assigned to, inside its dates; deactivating takes them out. Archiving is for good.',
+  },
+  put_price_book_entries: {
+    role: 'operator',
+    confirm: true,
+    label: 'Set price book entries',
+    title: 'Set a price book’s entries',
+    description:
+      'Add, replace or remove up to 200 entries in a price book: a SKU at a quantity and up (volume tiers), with a unit price in USD or a percent off list. An entry for the same SKU and quantity is replaced. Prices change at once for customers the book is in force for.',
+  },
+  assign_price_book: {
+    role: 'operator',
+    confirm: true,
+    label: 'Assign a price book',
+    title: 'Assign a price book',
+    description:
+      'Assign a price book to one customer, or to every customer of a tier, or take an assignment away. Customers pay its prices while it is in force; where several books price a line the highest priority wins, then the lowest price in it.',
+  },
+  put_contract_prices: {
+    role: 'operator',
+    confirm: true,
+    label: 'Set contract prices',
+    title: 'Set a customer’s contract prices',
+    description:
+      'Set, change or remove (price null) a customer’s contract prices, a unit price in USD per SKU. They price that customer’s orders from now on, ahead of price books at the chain’s own priority.',
+  },
   list_fx_rates: {
     role: 'operator',
     confirm: false,
@@ -980,6 +1052,11 @@ export const isPageOnly = (name: AssistantTool) => PAGE_ONLY_TOOLS.includes(name
 export const PERSON_CONFIRMS_TOOLS: readonly AssistantTool[] = [
   'create_promotion',
   'set_promotion_status',
+  'create_price_book',
+  'set_price_book_status',
+  'put_price_book_entries',
+  'assign_price_book',
+  'put_contract_prices',
   'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',

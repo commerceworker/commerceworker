@@ -144,7 +144,10 @@ contract prices (stops) and volume tiers (keeps going), with the product's list 
 fallback. The Commerce page shows the chain in order; your administrator maintains its entries.
 
 1. For each active source in order, the node finds its entries that match the line and takes the
-   lowest price among them, so the deepest volume tier wins.
+   lowest price among them, so the deepest volume tier wins. In the price-book source the entry's
+   [price book](/guides/price-books/) ranks first: the highest-priority book assigned to the
+   customer, in force and pricing the line, wins, and the lowest price is taken within it; an entry
+   in no book ranks below every book.
 2. It adds that price as a candidate. If the source stops processing, the chain ends there.
 3. It gives the line the lowest candidate, or the list price when no source matched.
 
@@ -158,7 +161,7 @@ The node's `useContracts` and `usePriceRules` fields drop the contract source or
 volume sources for that node. A line with its own `unitPrice` keeps it. The node's `basis` field picks the source: `auto` prices buy-side
 models (procurement, replenishment) at the product's cost without the chain and every other model through it,
 `chain` and `cost` force one or the other (see [Commerce models](/guides/commerce-models/#pricing)). The node's output lists each line's
-`unitPrice`, the source (`by`) and the entry (`rule`), and its summary counts lines per source.
+`unitPrice`, the source (`by`), the entry (`rule`, a price book's name for a book) and `bookId`, and its summary counts lines per source.
 
 ## Currency
 
