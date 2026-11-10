@@ -75,7 +75,7 @@ already published keep their old ancestors until a [reindex](#freshness).
 
 ## Product media
 
-A product's or variant's `media` image is an absolute `https` URL, kept exactly as you wrote it, so you can keep your own DAM or CDN. A deployment with the assets service also accepts `asset:<assetId>`, a reference to an asset in it. Anything else, a bare file key included, is refused with the image's position (`media.0.src`) when you write the product, import its feed row or save the edit, so no published document holds a URL a shopper's browser can't load. A deployment without the assets service renders, publishes and serves products with external URLs only.
+A product's or variant's `media` image is an absolute `https` URL, kept exactly as you wrote it, so you can keep your own DAM or CDN. Anything else, a bare file key included, is refused with the image's position (`media.0.src`) when you write the product, import its feed row or save the edit, so no published document holds a URL a shopper's browser can't load. A deployment without the assets service renders, publishes and serves products with external URLs only.
 
 Asset references are accepted but not yet turned into URLs: they publish as written until the assets service's public read URL is wired to the catalog, so use `https` URLs for images shoppers must see today.
 

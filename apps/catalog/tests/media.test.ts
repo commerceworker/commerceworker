@@ -83,19 +83,15 @@ describe('product media without the assets service', () => {
   });
 });
 
-describe('product media with the assets service', () => {
-  it('accepts an asset reference and publishes it as written (resolution is pending)', async () => {
+describe('product media on a deployment with the assets service', () => {
+  it('still takes only https URLs until an asset reference resolves to one shoppers can load', async () => {
     vars.MEDIA_ORIGIN = 'https://media.example.com';
-    const p = product({ media: [{ src: 'asset:ast_1' }, external[0] as never] });
-    const [r] = await api.putProducts([p], { by });
-    expect(r).toMatchObject({ status: 'created' });
-    await settle();
-    expect(await srcs(p.key)).toEqual(['asset:ast_1', external[0]?.src]);
-  });
-
-  it('still refuses a bare key', async () => {
-    vars.MEDIA_ORIGIN = 'https://media.example.com';
-    const [r] = await api.putProducts([product({ media: [{ src: 'media/tee.jpg' }] })], { by });
-    expect(r?.issues?.[0]?.message).toMatch(/asset:<assetId>/);
+    for (const src of ['asset:ast_1', 'media/tee.jpg']) {
+      const [r] = await api.putProducts([product({ media: [{ src }] })], { by });
+      expect(r?.status, src).not.toBe('created');
+      expect(r?.issues?.[0]?.message, src).toMatch(/absolute https URL/);
+    }
+    const p = product({ media: [external[0] as never] });
+    expect((await api.putProducts([p], { by }))[0]).toMatchObject({ status: 'created' });
   });
 });
