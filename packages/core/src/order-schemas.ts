@@ -108,7 +108,13 @@ export const orderInputSchema = z.object({
   documentText: z.string().max(50_000).optional(),
   /** R2 key of an uploaded document. */
   documentKey: z.string().optional(),
-  meta: z.record(z.string(), z.unknown()).default({}),
+  /** `buyerId` is the company member placing it, held to `companyOrderProblem` when it starts. */
+  meta: z
+    .record(z.string(), z.unknown())
+    .refine((m) => m.buyerId === undefined || (typeof m.buyerId === 'string' && m.buyerId !== ''), {
+      message: 'meta.buyerId must be a company member’s id',
+    })
+    .default({}),
 });
 export type OrderInput = z.infer<typeof orderInputSchema>;
 /** What callers send: `channel`, `currency`, `lines` and `meta` have defaults. */

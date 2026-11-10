@@ -17,6 +17,7 @@ import type { BatchItem } from 'drizzle-orm/batch';
 import { createDb } from './index';
 import { contains } from './match';
 import {
+  companies,
   contractPrices,
   customers,
   fxRates,
@@ -67,12 +68,16 @@ export function d1BackOffice(d1: D1Database): BackOffice {
   };
 
   return {
-    async page(rawQ, asked, sizes) {
+    async page(rawQ, asked, sizes, customerFilter) {
       // "#idz7qp" is how the app writes an order; a search for one shouldn't hide the rest.
       const q = rawQ.trim().replace(/^#/, '');
       const any = (...conds: SQL[]) => (q ? or(...conds) : undefined);
       const inventoryWhere = any(contains(products.name, q), contains(products.sku, q));
-      const customerWhere = any(contains(customers.name, q), contains(customers.id, q));
+      const customerWhere = and(
+        any(contains(customers.name, q), contains(customers.id, q)),
+        customerFilter?.kind ? eq(customers.kind, customerFilter.kind) : undefined,
+        customerFilter?.status ? eq(companies.status, customerFilter.status) : undefined,
+      );
       const sellerWhere = any(
         contains(sellers.name, q),
         contains(sellers.email, q),
@@ -95,7 +100,11 @@ export function d1BackOffice(d1: D1Database): BackOffice {
       const [inv, cust, sell, stores, sources, stockCounts, ruleCounts, contractCount] =
         await d.batch([
           d.select({ n }).from(products).where(inventoryWhere),
-          d.select({ n }).from(customers).where(customerWhere),
+          d
+            .select({ n })
+            .from(customers)
+            .leftJoin(companies, eq(companies.customerId, customers.id))
+            .where(customerWhere),
           d.select({ n }).from(sellers).where(sellerWhere),
           d.select().from(locations).orderBy(locations.name),
           d.select().from(priceSources).orderBy(priceSources.priority),
@@ -163,8 +172,9 @@ export function d1BackOffice(d1: D1Database): BackOffice {
         sizes.list,
         (limit, offset) =>
           d
-            .select()
+            .select({ ...getTableColumns(customers), companyStatus: companies.status })
             .from(customers)
+            .leftJoin(companies, eq(companies.customerId, customers.id))
             .where(customerWhere)
             .orderBy(customers.name, customers.id)
             .limit(limit)

@@ -32,11 +32,11 @@ const product = (sku: string, name = `Product ${sku}`): ProductRecord => ({
   heightCm: null,
 });
 
-const customer = (id: string, name: string): CustomerRecord => ({
+const customer = (id: string, name: string, kind = 'business'): CustomerRecord => ({
   id,
   name,
   email: `${id}@example.com`,
-  kind: 'business',
+  kind,
   tier: 'standard',
   creditLimit: 0,
   balance: 0,
@@ -137,6 +137,45 @@ export function describeBackOfficeContract(
       expect(one.customers.rows.map((c) => c.name)).toEqual(['Acme', 'Zephyr']);
       expect(one.stores.map((l) => l.name)).toEqual(['Downtown', 'Uptown']);
       expect(one.sources.map((x) => x.id)).toEqual(['contract', 'bo_volume']);
+    });
+
+    it('filters the customers by kind and company status, and shows each one’s status', async () => {
+      const f: BackOfficeFixture = {
+        customers: [
+          customer('bo_z', 'Zephyr'),
+          customer('bo_a', 'Acme'),
+          customer('bo_c', 'Cleo', 'consumer'),
+          customer('bo_n', 'Nova'),
+        ],
+        companies: [
+          { customerId: 'bo_z', status: 'suspended' },
+          { customerId: 'bo_a', status: 'active' },
+        ],
+      };
+      const s = await make(f);
+      const names = async (filter?: Parameters<BackOffice['page']>[3], q = '') => {
+        const page = await s.page(q, first, SIZES, filter);
+        return { names: page.customers.rows.map((c) => c.name), total: page.customers.total };
+      };
+      expect(await names()).toEqual({ names: ['Acme', 'Cleo', 'Nova'], total: 4 });
+      expect(
+        (await s.page('', first, { list: 10, group: 2 })).customers.rows.map((c) => [
+          c.name,
+          c.companyStatus,
+        ]),
+      ).toEqual([
+        ['Acme', 'active'],
+        ['Cleo', null],
+        ['Nova', null],
+        ['Zephyr', 'suspended'],
+      ]);
+      expect(await names({ kind: 'consumer' })).toEqual({ names: ['Cleo'], total: 1 });
+      expect((await names({ kind: 'business' })).total).toBe(3);
+      expect(await names({ status: 'suspended' })).toEqual({ names: ['Zephyr'], total: 1 });
+      // A status leaves out customers with no company, and the two narrow together and with a search.
+      expect(await names({ status: 'active', kind: 'consumer' })).toEqual({ names: [], total: 0 });
+      expect(await names({ kind: 'business' }, 'ze')).toEqual({ names: ['Zephyr'], total: 1 });
+      expect(await names({ status: 'closed' })).toEqual({ names: [], total: 0 });
     });
 
     it("counts what the stores hold of each product, less what's reserved", async () => {

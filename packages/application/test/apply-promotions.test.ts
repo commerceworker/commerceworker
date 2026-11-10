@@ -1,6 +1,10 @@
 import type { Order, Promotion } from '@commerceworker/core';
 import { FixedClock } from '@commerceworker/test-kit';
-import { InMemoryPricingStore, PRICING_FIXTURE } from '@commerceworker/test-kit/commerce';
+import {
+  InMemoryCompanyDirectory,
+  InMemoryPricingStore,
+  PRICING_FIXTURE,
+} from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
 import { applyPromotions } from '../src/commerce';
 
@@ -253,6 +257,61 @@ describe('applying promotion codes to an order', () => {
       expect((await applyPromotions({ pricing }, guest, opts)).refused).toEqual([
         { code: 'GOLD', reason: "This order doesn't qualify for GOLD." },
       ]);
+    });
+
+    it('asks about the buyer’s company and the member who ordered', async () => {
+      const companies = new InMemoryCompanyDirectory({
+        customers: [{ ...PRICING_FIXTURE.customers![0]!, id: 'pc_northwind', tier: 'gold' }],
+        companies: [
+          {
+            customerId: 'pc_northwind',
+            status: 'active',
+            legalName: 'Northwind',
+            taxId: null,
+            parentCompanyId: null,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+        members: [
+          {
+            id: 'mem_ann',
+            companyId: 'pc_northwind',
+            name: 'Ann',
+            email: 'ann@northwind.test',
+            role: 'approver',
+            teamId: 'team_ops',
+            status: 'active',
+            orderLimit: 1000,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+      });
+      const pricing = storeWith(
+        promo({
+          id: 'appr',
+          code: 'APPROVER',
+          condition: {
+            and: [
+              { '==': [{ var: 'company.status' }, 'active'] },
+              { '==': [{ var: 'company.tier' }, 'gold'] },
+              { '==': [{ var: 'buyer.role' }, 'approver'] },
+              { '==': [{ var: 'buyer.team' }, 'team_ops'] },
+              { '<=': [{ var: 'buyer.orderLimit' }, 1000] },
+            ],
+          },
+        }),
+      );
+      const ports = { pricing, companies };
+      const asAnn = order(['approver'], 'ord_ann', { buyerId: 'mem_ann' });
+      expect((await applyPromotions(ports, asAnn, opts)).applied.map((a) => a.code)).toEqual([
+        'APPROVER',
+      ]);
+      // No buyer named: `buyer.*` is null, and null is not 'approver'.
+      expect((await applyPromotions(ports, order(['approver']), opts)).refused).toHaveLength(1);
+      // Without the directory every `company.*` and `buyer.*` is null: fails closed.
+      expect((await applyPromotions({ pricing }, asAnn, opts)).refused).toHaveLength(1);
     });
 
     it('lets a condition choose among stackable promotions by what is in the order', async () => {

@@ -50,6 +50,7 @@ import {
   type NodeRegistry,
   ORDER_CHANNEL_LABELS,
   type Order,
+  orderBuyerId,
   PROVIDER_MAX_TAX_RATE,
   policyRulesSchema,
   type RunContext,
@@ -78,6 +79,7 @@ import { liveCarrierQuote } from './shipping-rates';
 import {
   balanceStore,
   commercePorts,
+  companyDirectory,
   documentStore,
   fulfillmentStore,
   inventoryStore,
@@ -177,11 +179,22 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.validate': async ({ env, ctx }) => {
-    const [products, customer] = await Promise.all([
+    const [products, customer, held] = await Promise.all([
       pricingStore(env).products(ctx.order.lines.map((l) => l.sku)),
       pricingStore(env).customer(ctx.order.customerId),
+      // The customer's company and the member named as the buyer, in one round trip.
+      ctx.order.customerId
+        ? companyDirectory(env).access(
+            { all: true },
+            ctx.order.customerId,
+            orderBuyerId(ctx.order.meta),
+          )
+        : ({} as { company?: undefined; buyer?: undefined }),
     ]);
-    const v = validateOrder(ctx.order, products, !!customer);
+    const v = validateOrder(ctx.order, products, !!customer, {
+      company: held.company,
+      buyer: held.buyer,
+    });
     if ('problem' in v) throw new NonRetryableError(v.problem);
     return {
       order: { lines: v.lines },
@@ -225,11 +238,15 @@ export const EXECUTORS: Record<string, Exec> = {
   },
 
   'commerce.discount': async ({ env, ctx, stepKey, dryRun }) => {
-    const r = await applyPromotions({ pricing: pricingStore(env) }, ctx.order, {
-      now: ctx.now,
-      stepKey,
-      dryRun: dryRun === true,
-    });
+    const r = await applyPromotions(
+      { pricing: pricingStore(env), companies: companyDirectory(env) },
+      ctx.order,
+      {
+        now: ctx.now,
+        stepKey,
+        dryRun: dryRun === true,
+      },
+    );
     if (!r.order) return { output: { applied: [], refused: [] }, summary: 'No promotions' };
     const off = r.applied.reduce((s, a) => s + a.amount, 0);
     return {

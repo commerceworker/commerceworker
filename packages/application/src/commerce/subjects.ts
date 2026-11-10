@@ -2,7 +2,8 @@
  * Data subject requests (`erasure.ts` in core): find everything held about one person by their
  * email address, then export it or erase it. A person is a customer account with that email, a
  * guest buyer who gave it, or a sender whose email started an order. Erasing works through their
- * orders a batch at a time; the customer accounts and the rest go once no order is left. Time comes
+ * orders a batch at a time; the customer accounts (with their companies' members) and the rest go
+ * once no order is left; company members with their email are blanked in every company. Time comes
  * in as `now`.
  */
 import {
@@ -107,6 +108,8 @@ export async function exportDataSubject(
       regions: JSON.parse(String(regions)) as unknown,
     })),
     addresses: held.addresses.map(({ key: _key, ...a }) => a),
+    companies: held.companies,
+    companyMembers: held.companyMembers,
     truncated: rows.length > EXPORT_MAX,
     teamMember: s.teamMember,
   };
@@ -147,6 +150,7 @@ export async function eraseDataSubject(
     carts: 0,
     taxCertificates: 0,
     addresses: 0,
+    companyMembers: 0,
     teamMember: s.teamMember,
   };
 
@@ -189,8 +193,11 @@ export async function eraseDataSubject(
     const gone = await ports.subjects.eraseAccount(c.id);
     result.taxCertificates += gone.taxCertificates;
     result.addresses += gone.addresses;
+    result.companyMembers += gone.companyMembers;
     result.customers++;
   }
+  // Wherever else they are a member of a company: blanked, the row kept for the orders they placed.
+  result.companyMembers += await ports.subjects.eraseMembers(s.email);
   return result;
 }
 

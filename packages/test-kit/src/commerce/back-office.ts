@@ -2,11 +2,13 @@
  * The back office port in memory, over seeded rows shaped like the D1 tables. The contract in
  * ./back-office-contract.ts holds it to the same behaviour as the D1 store.
  */
+import type { CompanyStatus } from '@commerceworker/core';
 import type {
   BackOffice,
   BackOfficePage,
   BookList,
   ContractPriceRow,
+  CustomerFilter,
   CustomerRecord,
   FxRateRow,
   LocationStockRow,
@@ -22,6 +24,8 @@ import type {
 export interface BackOfficeFixture {
   products?: ProductRecord[];
   customers?: CustomerRecord[];
+  /** The business customers' companies, by customer id. */
+  companies?: { customerId: string; status: CompanyStatus }[];
   sellers?: SellerRecord[];
   locations?: StoreLocation[];
   stock?: LocationStockRow[];
@@ -57,6 +61,7 @@ export class InMemoryBackOffice implements BackOffice {
     rawQ: string,
     asked: (list: BookList) => number,
     sizes: { list: number; group: number },
+    filter?: CustomerFilter,
   ): Promise<BackOfficePage> {
     const q = rawQ.trim().replace(/^#/, '');
     const matches = (...texts: (string | null | undefined)[]) => !q || texts.some((t) => has(t, q));
@@ -82,8 +87,13 @@ export class InMemoryBackOffice implements BackOffice {
           .filter((s) => s.sku === p.sku)
           .reduce((n, s) => n + s.stock - s.reserved, 0),
       }));
+    const statusOf = (id: string) =>
+      this.f.companies?.find((c) => c.customerId === id)?.status ?? null;
     const customers = (this.f.customers ?? [])
       .filter((c) => matches(c.name, c.id))
+      .filter((c) => !filter?.kind || c.kind === filter.kind)
+      .filter((c) => !filter?.status || statusOf(c.id) === filter.status)
+      .map((c) => ({ ...c, companyStatus: statusOf(c.id) }))
       .sort(
         by(
           (c) => c.name,

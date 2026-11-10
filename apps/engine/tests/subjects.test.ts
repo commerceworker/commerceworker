@@ -2,6 +2,8 @@ import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { type OrderInput, type OrderState, TERMINAL_ORDER_STATUSES } from '@commerceworker/core';
 import {
+  companies,
+  companyMembers,
   createDb,
   customerAddresses,
   customers,
@@ -16,7 +18,7 @@ import { createCart } from '../src/cart/carts';
 import { backfillAddresses, rememberAddress } from '../src/customer-addresses';
 import { ensureTemplates } from '../src/flows';
 import { startOrder } from '../src/orders';
-import { expireAddresses, expirePersonalData } from '../src/retention';
+import { expireAddresses, expireMembers, expirePersonalData } from '../src/retention';
 import { eraseDataSubject, exportDataSubject } from '../src/subjects';
 import { documentStore } from '../src/wire';
 
@@ -79,6 +81,39 @@ describe('data subject requests', () => {
       email: 'Erin@Example.com',
       stripeCustomerId: 'cus_stripe_erin',
     });
+    // Her account's company, with a colleague; and Erin herself a member of another company.
+    await db().insert(companies).values({
+      customerId: 'cus_erin',
+      status: 'active',
+      legalName: 'Erin Example Ltd',
+      taxId: 'GB999',
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    await db()
+      .insert(companyMembers)
+      .values([
+        {
+          id: 'mem_erin_colleague',
+          companyId: 'cus_erin',
+          name: 'Colleague',
+          email: 'colleague@erin.test',
+          role: 'buyer',
+          status: 'active',
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        {
+          id: 'mem_erin_elsewhere',
+          companyId: 'cus_elsewhere',
+          name: 'Erin E',
+          email: 'ERIN@example.com',
+          role: 'approver',
+          status: 'active',
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ]);
     const asCustomer = await finished(
       order({
         customerId: 'cus_erin',
@@ -139,6 +174,8 @@ describe('data subject requests', () => {
     expect(exported.inboundEmails.map((m) => m.id)).toEqual(['eml_erin']);
     expect(exported.documents.map((d) => d.kind)).toContain('packing');
     // The customer page's address, from the order it started with.
+    expect(exported.companies).toMatchObject([{ customerId: 'cus_erin', taxId: 'GB999' }]);
+    expect(exported.companyMembers).toMatchObject([{ id: 'mem_erin_elsewhere', role: 'approver' }]);
     expect(exported.addresses).toMatchObject([
       { customerId: 'cus_erin', line1: '4 Dock Rd', orders: 1, lastOrderId: asCustomer },
     ]);
@@ -151,7 +188,20 @@ describe('data subject requests', () => {
       customers: 1,
       messages: 1,
       addresses: 1,
+      // The colleague of her own company, and Erin in the other one.
+      companyMembers: 2,
     });
+    const people = await db()
+      .select()
+      .from(companyMembers)
+      .where(inArray(companyMembers.id, ['mem_erin_colleague', 'mem_erin_elsewhere']));
+    expect(people.map((m) => [m.name, m.email, m.status])).toEqual([
+      ['[erased]', '[erased]', 'removed'],
+      ['[erased]', '[erased]', 'removed'],
+    ]);
+    expect(
+      await db().select().from(companies).where(eq(companies.customerId, 'cus_erin')).get(),
+    ).toMatchObject({ legalName: '[erased]', taxId: null });
     expect(
       await db()
         .select()
@@ -362,6 +412,42 @@ describe('data subject requests', () => {
       .from(customerAddresses)
       .where(eq(customerAddresses.customerId, customerId));
     expect(left).toEqual([{ line1: '2 New Rd' }]);
+  });
+
+  it('blanks company members removed before the personal data retention, and no one else', async () => {
+    const company = `cus_mem_${crypto.randomUUID().slice(0, 6)}`;
+    const now = Date.now();
+    const member = (id: string, status: string, updatedAt: number) => ({
+      id: `${company}_${id}`,
+      companyId: company,
+      name: `Person ${id}`,
+      email: `${id}@${company}.test`,
+      role: 'buyer',
+      status,
+      createdAt: 0,
+      updatedAt,
+    });
+    await db()
+      .insert(companyMembers)
+      .values([
+        member('old', 'removed', now - 400 * 86_400_000),
+        member('recent', 'removed', now - 86_400_000),
+        member('active', 'active', now - 400 * 86_400_000),
+      ]);
+    expect(
+      await expireMembers({ ...env, PERSONAL_DATA_RETENTION_DAYS: '' } as unknown as Env, now),
+    ).toBe(0);
+    const swept = { ...env, PERSONAL_DATA_RETENTION_DAYS: '365' } as unknown as Env;
+    expect(await expireMembers(swept, now)).toBeGreaterThanOrEqual(1);
+    const rows = await db()
+      .select()
+      .from(companyMembers)
+      .where(eq(companyMembers.companyId, company));
+    expect(rows.map((r) => [r.id.split('_').at(-1), r.name]).sort()).toEqual([
+      ['active', 'Person active'],
+      ['old', '[erased]'],
+      ['recent', 'Person recent'],
+    ]);
   });
 
   it('refuses while one of their orders is still running', async () => {

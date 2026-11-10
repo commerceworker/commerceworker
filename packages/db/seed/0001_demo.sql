@@ -10,6 +10,21 @@ INSERT OR IGNORE INTO customers (id, name, email, tier, credit_limit, balance, t
   ('cus_fabrikam', 'Fabrikam Inc', 'orders@fabrikam.example', 'silver', 50000.0, 0.0, 'net_15', 'business'),
   ('cus_northwind', 'Northwind Traders', 'purchasing@northwind.example', 'gold', 100000.0, 12000.0, 'net_30', 'business');
 
+-- Each business customer's company, active, and a few people at Northwind in two teams.
+INSERT OR IGNORE INTO companies (customer_id, status, legal_name, tax_id, created_at, updated_at) VALUES
+  ('cus_contoso', 'active', 'Contoso Ltd', NULL, 1767225600000, 1767225600000),
+  ('cus_fabrikam', 'active', 'Fabrikam Inc', NULL, 1767225600000, 1767225600000),
+  ('cus_northwind', 'active', 'Northwind Traders Ltd', 'GB123456789', 1767225600000, 1767225600000);
+
+INSERT OR IGNORE INTO company_teams (id, company_id, parent_id, name, path) VALUES
+  ('team_nw_purchasing', 'cus_northwind', NULL, 'Purchasing', '/team_nw_purchasing/'),
+  ('team_nw_warehouse', 'cus_northwind', 'team_nw_purchasing', 'Warehouse', '/team_nw_purchasing/team_nw_warehouse/');
+
+INSERT OR IGNORE INTO company_members (id, company_id, name, email, role, team_id, status, order_limit, created_at, updated_at) VALUES
+  ('mem_nw_nora', 'cus_northwind', 'Nora Okafor', 'nora@northwind.example', 'company_admin', 'team_nw_purchasing', 'active', NULL, 1767225600000, 1767225600000),
+  ('mem_nw_ben', 'cus_northwind', 'Ben Ito', 'ben@northwind.example', 'buyer', 'team_nw_warehouse', 'active', 2500.0, 1767225600000, 1767225600000),
+  ('mem_nw_cy', 'cus_northwind', 'Cy Duarte', 'cy@northwind.example', 'approver', 'team_nw_purchasing', 'invited', NULL, 1767225600000, 1767225600000);
+
 INSERT OR IGNORE INTO sellers (id, name, email, commission_pct, auto_accept, active) VALUES
   ('sel_brightside', 'Brightside Audio', 'orders@brightside.example', 0.12, 1, 1),
   ('sel_kettle', 'Kettle & Co', 'shop@kettleandco.example', 0.15, 0, 1);

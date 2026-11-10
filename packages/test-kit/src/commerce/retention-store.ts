@@ -4,6 +4,7 @@
  * ./retention-store-contract.ts holds it to the same behaviour as the D1 store.
  */
 import {
+  ERASED,
   FINAL_CART_STATUSES,
   type RetentionPolicy,
   TERMINAL_ORDER_STATUSES,
@@ -38,6 +39,7 @@ export interface RetentionFixture {
     erasedAt?: number | null;
   }[];
   addresses?: { id: string; customerId: string; lastUsedAt: number }[];
+  members?: { id: string; name: string; email: string; status: string; updatedAt: number }[];
   audit?: { id: string; at: number; seq: number | null }[];
 }
 
@@ -52,6 +54,7 @@ export class InMemoryRetentionStore implements RetentionStore {
       carts: fixture.carts ?? [],
       orders: fixture.orders ?? [],
       addresses: fixture.addresses ?? [],
+      members: fixture.members ?? [],
       audit: fixture.audit ?? [],
     });
   }
@@ -141,6 +144,14 @@ export class InMemoryRetentionStore implements RetentionStore {
     const n = this.f.addresses.length;
     this.f.addresses = this.f.addresses.filter((a) => a.lastUsedAt >= before);
     return n - this.f.addresses.length;
+  }
+
+  async expireMembers(before: number) {
+    const due = this.f.members.filter(
+      (m) => m.status === 'removed' && m.updatedAt < before && m.name !== ERASED,
+    );
+    for (const m of due) Object.assign(m, { name: ERASED, email: ERASED });
+    return due.length;
   }
 
   async unchainedAudit(before: number, limit: number): Promise<AuditRow[]> {

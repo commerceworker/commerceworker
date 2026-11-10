@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { digitalLines, shippableLines, validateOrder } from '../src';
+import { digitalLines, orderInputSchema, shippableLines, validateOrder } from '../src';
 
 const products = [
   { sku: 'A', name: 'Apron', kind: 'physical', weightKg: 0.5 },
@@ -19,6 +19,35 @@ describe('accepting an order', () => {
     ).toEqual({
       problem: 'Unknown customer c1',
     });
+  });
+
+  it('declines an order from a company that isn’t active, and a buyer who isn’t an active member', () => {
+    const order = { lines: [{ sku: 'A', qty: 1 }], customerId: 'c1', meta: { buyerId: 'm1' } };
+    const ok = {
+      company: { status: 'active' as const },
+      buyer: { companyId: 'c1', status: 'active' as const },
+    };
+    expect('lines' in validateOrder(order, products, true, ok)).toBe(true);
+    expect(
+      validateOrder(order, products, true, { ...ok, company: { status: 'suspended' } }),
+    ).toEqual({
+      problem: "Company c1 isn't active (suspended)",
+    });
+    expect(
+      validateOrder(order, products, true, {
+        ...ok,
+        buyer: { companyId: 'c1', status: 'inactive' },
+      }),
+    ).toEqual({
+      problem: "Buyer m1 isn't an active member of c1",
+    });
+    expect(validateOrder(order, products, true, { company: ok.company, buyer: undefined })).toEqual(
+      {
+        problem: "Buyer m1 isn't an active member of c1",
+      },
+    );
+    // No account to hold it to (a consumer's order, or one placed before companies): accepted.
+    expect('lines' in validateOrder({ ...order, meta: {} }, products, true)).toBe(true);
   });
 
   it('keeps whole quantities of at least one, named from the product', () => {
@@ -70,5 +99,16 @@ describe('what is delivered as a code', () => {
         products,
       ),
     ).toEqual([{ index: 1, sku: 'E', qty: 3 }]);
+  });
+});
+
+describe('an order’s buyer', () => {
+  const base = { model: 'b2b' as const, lines: [{ sku: 'A', qty: 1 }] };
+
+  it('is a company member’s id in meta.buyerId, or nothing', () => {
+    expect(orderInputSchema.safeParse({ ...base, meta: { buyerId: 'mem_1' } }).success).toBe(true);
+    expect(orderInputSchema.safeParse({ ...base }).success).toBe(true);
+    for (const buyerId of ['', 7, null])
+      expect(orderInputSchema.safeParse({ ...base, meta: { buyerId } }).success).toBe(false);
   });
 });

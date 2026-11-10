@@ -24,6 +24,7 @@ import { d1BackOffice } from '../src/back-office';
 import { d1BalanceStore } from '../src/balance-store';
 import { d1CartRecords } from '../src/cart-records';
 import { d1CheckoutSessions } from '../src/checkout-sessions';
+import { d1CompanyDirectory } from '../src/company-directory';
 import { d1FulfillmentStore } from '../src/fulfillment-store';
 import { d1InventoryStore } from '../src/inventory-store';
 import { d1InvoiceStore } from '../src/invoice-store';
@@ -80,8 +81,11 @@ function stores(d1: D1Database) {
     office: d1BackOffice(d1),
     carts: d1CartRecords(d1, clock),
     checkouts: d1CheckoutSessions(d1),
+    companies: d1CompanyDirectory(d1),
   };
 }
+
+const ALL = { all: true } as const;
 
 const priced = [
   { sku: 'PC-SKU-1', qty: 2 },
@@ -184,6 +188,33 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     'admin commerce: a search',
     () => ports.office.page('contract', () => 1, { list: 25, group: 10 }),
   ],
+  [
+    'admin commerce: customers filtered by status',
+    () => ports.office.page('', () => 1, { list: 25, group: 10 }, { status: 'active' }),
+  ],
+  ['companies: a page', () => ports.companies.companies(ALL, { limit: 25 })],
+  [
+    'companies: a page by status and search',
+    () => ports.companies.companies(ALL, { limit: 25, status: 'active', search: 'qc' }),
+  ],
+  ['companies: one company', () => ports.companies.company(ALL, id('co'))],
+  ['companies: a company’s teams', () => ports.companies.teams(ALL, id('co'))],
+  [
+    'companies: a page of members',
+    () => ports.companies.members(ALL, { companyId: id('co'), limit: 25 }),
+  ],
+  ['companies: one member', () => ports.companies.member(ALL, id('co'), id('mem'))],
+  [
+    'companies: members by email',
+    () => ports.companies.membersByEmail(ALL, id('co'), ['qc@example.test']),
+  ],
+  ['companies: its parents', () => ports.companies.ancestry(ALL, id('co'))],
+  ['companies: a customer by email', () => ports.companies.customerByEmail(ALL, 'qc@example.test')],
+  ['commerce.validate: the company only', () => ports.companies.access(ALL, id('co'))],
+  [
+    'commerce.validate: the company and its buyer',
+    () => ports.companies.access(ALL, id('co'), id('mem')),
+  ],
   ['admin new order: every record for the pickers', () => ports.office.everything()],
   ['admin: currencies', () => ports.office.currencies()],
 ];
@@ -194,6 +225,41 @@ describe('commerce D1 query counts', () => {
     await seedInventory(INVENTORY_FIXTURE);
     await seedFulfillment(FULFILLMENT_FIXTURE);
     await seedMarketplace(MARKETPLACE_FIXTURE);
+    const companies = d1CompanyDirectory(DB);
+    await companies.createCustomer(
+      {
+        id: id('co'),
+        name: 'QC Co',
+        email: 'qc@example.test',
+        kind: 'business',
+        tier: 'standard',
+        terms: 'net_30',
+      },
+      {
+        customerId: id('co'),
+        status: 'active',
+        legalName: 'QC Co Ltd',
+        taxId: null,
+        parentCompanyId: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    );
+    await companies.upsertMembers(
+      id('co'),
+      [
+        {
+          id: id('mem'),
+          name: 'QC',
+          email: 'qc@example.test',
+          role: 'buyer',
+          teamId: null,
+          status: 'active',
+          orderLimit: null,
+        },
+      ],
+      1,
+    );
     counter = countingD1(DB);
     ports = stores(counter.d1);
   }, 60_000);

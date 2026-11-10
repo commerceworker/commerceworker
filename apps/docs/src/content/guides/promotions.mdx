@@ -136,6 +136,8 @@ A condition reads this data, with the names a flow's expressions use:
 | `order.meta.shipTo.country` | The ship-to country as a two-letter code (`"usa"` reads as `US`), or `null` |
 | `order.meta.shipTo.region` | The ship-to state or province code, or `null` |
 | `customer.id`, `customer.kind`, `customer.tier` | The buyer's id, kind (`business`, `consumer`, `internal`) and pricing tier; all `null` for a guest |
+| `company.status`, `company.tier` | The status (`pending`, `active`, `suspended`, `rejected`, `closed`) and pricing tier of the buyer's [company](/guides/companies/); `null` for a customer with none |
+| `buyer.role`, `buyer.team`, `buyer.orderLimit` | The role (`buyer`, `approver`, `company_admin`), team id and own order limit of the member named in `meta.buyerId`; `null` when the order names none |
 
 The subtotal is the order's lines as they stand when the step runs, before any promotion. The data
 is read-only: a condition can't change the order. Products' tags and categories aren't available

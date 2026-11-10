@@ -6,6 +6,7 @@ import {
   ARCHIVE_BATCH,
   archiveAudit,
   expireAddresses,
+  expireMembers,
   expirePersonalData,
   indexCartBuyers,
   pruneExpired,
@@ -140,5 +141,20 @@ describe('the retention sweep', () => {
     });
     expect(await expireAddresses({ retention }, now, 30)).toBe(1);
     expect(await expireAddresses({ retention }, now, 30)).toBe(0);
+  });
+
+  it('blanks members removed more than the given days ago, and no active one', async () => {
+    const m = (id: string, status: string, age: number) => ({
+      id,
+      name: id,
+      email: `${id}@x.test`,
+      status,
+      updatedAt: now - age * DAY,
+    });
+    const retention = new InMemoryRetentionStore({
+      members: [m('old', 'removed', 31), m('recent', 'removed', 1), m('live', 'active', 400)],
+    });
+    expect(await expireMembers({ retention }, now, 30)).toBe(1);
+    expect(await expireMembers({ retention }, now, 30)).toBe(0);
   });
 });

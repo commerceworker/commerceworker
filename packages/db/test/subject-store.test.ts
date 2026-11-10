@@ -9,6 +9,8 @@ import {
   auditEvents,
   carts,
   checkoutSessions,
+  companies,
+  companyMembers,
   customerAddresses,
   customers,
   documents,
@@ -34,6 +36,8 @@ async function seed(f: SubjectFixture) {
     [documents, documents.orderId],
     [taxCertificates, taxCertificates.id],
     [customerAddresses, customerAddresses.id],
+    [companies, companies.customerId],
+    [companyMembers, companyMembers.id],
     [checkoutSessions, checkoutSessions.id],
     [carts, carts.id],
   ] as const)
@@ -92,6 +96,10 @@ async function seed(f: SubjectFixture) {
       lastUsedAt: 0,
       lastOrderId: 'sc2_o_acct',
     });
+  for (const c of f.companies ?? [])
+    await db.insert(companies).values({ ...c, status: 'active', createdAt: 0, updatedAt: 0 });
+  for (const m of f.companyMembers ?? [])
+    await db.insert(companyMembers).values({ ...m, role: 'buyer', createdAt: 0, updatedAt: 0 });
   for (const c of f.checkouts ?? [])
     await db.insert(checkoutSessions).values({
       id: c.id,

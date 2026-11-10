@@ -9,6 +9,7 @@ import {
   auditEvents,
   carts,
   checkoutSessions,
+  companyMembers,
   customerAddresses,
   inboundEmails,
   nodeRuns,
@@ -38,6 +39,7 @@ async function seed(f: RetentionFixture) {
     carts,
     orders,
     customerAddresses,
+    companyMembers,
     auditEvents,
   ];
   for (const t of tables) await db.delete(t);
@@ -155,6 +157,13 @@ async function seed(f: RetentionFixture) {
       firstUsedAt: a.lastUsedAt,
       lastUsedAt: a.lastUsedAt,
       lastOrderId: 'rc_order',
+    });
+  for (const m of f.members ?? [])
+    await db.insert(companyMembers).values({
+      ...m,
+      companyId: 'rc_company',
+      role: 'buyer',
+      createdAt: 0,
     });
   for (const e of f.audit ?? [])
     await db.insert(auditEvents).values({ id: e.id, at: e.at, action: 'test', seq: e.seq });

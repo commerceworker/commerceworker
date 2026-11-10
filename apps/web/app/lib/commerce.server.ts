@@ -6,8 +6,17 @@
  */
 
 import { listFxRates } from '@commerceworker/application/commerce';
+import { COMPANY_STATUSES, CUSTOMER_KINDS } from '@commerceworker/core';
 import type { BookList } from '@commerceworker/ports/commerce';
-import { GROUP_SIZE, LIST_SIZE, pageOf, pricesKey, storeKey } from './commerce-pages';
+import {
+  CUSTOMER_KIND_KEY,
+  CUSTOMER_STATUS_KEY,
+  GROUP_SIZE,
+  LIST_SIZE,
+  pageOf,
+  pricesKey,
+  storeKey,
+} from './commerce-pages';
 import { currencies } from './orders.server';
 import { backOffice, pricingStore } from './wire.server';
 
@@ -18,12 +27,24 @@ const keyOf = (l: BookList) =>
 export async function commercePage(params: URLSearchParams) {
   // "#idz7qp" is how the app writes an order; a search for one shouldn't hide the rest.
   const q = params.get('q')?.trim().replace(/^#/, '') ?? '';
+  // The customers list narrows by kind and by a business customer's company status.
+  const kind = CUSTOMER_KINDS.find((k) => k === params.get(CUSTOMER_KIND_KEY));
+  const status = COMPANY_STATUSES.find((s) => s === params.get(CUSTOMER_STATUS_KEY));
   const [page, rates] = await Promise.all([
-    backOffice().page(q, (l) => pageOf(params, keyOf(l)), { list: LIST_SIZE, group: GROUP_SIZE }),
+    backOffice().page(
+      q,
+      (l) => pageOf(params, keyOf(l)),
+      { list: LIST_SIZE, group: GROUP_SIZE },
+      {
+        kind,
+        status,
+      },
+    ),
     currencies(),
   ]);
   return {
     q,
+    customerFilter: { kind: kind ?? null, status: status ?? null },
     inventory: page.inventory,
     customers: page.customers,
     sellers: page.sellers,

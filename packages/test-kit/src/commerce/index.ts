@@ -12,6 +12,8 @@ export * from './cart-records';
 export * from './cart-records-contract';
 export * from './checkout-sessions';
 export * from './checkout-sessions-contract';
+export * from './company-directory';
+export * from './company-directory-contract';
 export * from './confirmation-store';
 export * from './confirmation-store-contract';
 export * from './document-store';

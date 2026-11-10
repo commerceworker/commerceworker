@@ -63,8 +63,10 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'cancel_catalog_feed',
   'discard_product_edits',
   // A rate replaces the one buyers pay by; removing and revoking take access away for good, and the
-  // settings replace what was there.
+  // settings replace what was there. A removed member and a closed or rejected company are final.
   'set_fx_rate',
+  'set_company_status',
+  'remove_company_member',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -87,8 +89,12 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'stage_product_edits',
   'discard_product_edits',
   // Again, there is nothing left to remove or revoke (the preview is blocked), or the same settings
-  // or rate.
+  // or rate, status, members or customer fields.
   'set_fx_rate',
+  'set_company_status',
+  'put_company_members',
+  'remove_company_member',
+  'update_customer',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',

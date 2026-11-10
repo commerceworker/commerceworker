@@ -25,6 +25,7 @@ export function FormSheet({
   title,
   description,
   onCloseAutoFocus,
+  bare = false,
   children,
 }: {
   open: boolean;
@@ -36,16 +37,20 @@ export function FormSheet({
   description?: ReactNode;
   /** Where focus goes as it closes, when not back to its button: `preventDefault` and move it. */
   onCloseAutoFocus?: (e: Event) => void;
+  /** No button of its own: a row's own control opens it through `open`. `label` titles the sheet. */
+  bare?: boolean;
   children: ReactNode;
 }) {
   const phone = useMedia('(max-width: 639px)');
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetTrigger asChild>
-        <Button size="sm">
-          <Plus aria-hidden="true" /> {label}
-        </Button>
-      </SheetTrigger>
+      {bare ? null : (
+        <SheetTrigger asChild>
+          <Button size="sm">
+            <Plus aria-hidden="true" /> {label}
+          </Button>
+        </SheetTrigger>
+      )}
       <SheetContent
         side={phone ? 'bottom' : 'right'}
         className="gap-0 overflow-y-auto sm:max-w-md"

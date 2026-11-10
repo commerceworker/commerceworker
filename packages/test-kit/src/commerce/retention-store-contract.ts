@@ -61,6 +61,11 @@ export const RETENTION_FIXTURE: RetentionFixture = {
     { id: 'rc_addr_old', customerId: 'rc_cus', lastUsedAt: 0 },
     { id: 'rc_addr_new', customerId: 'rc_cus', lastUsedAt: now },
   ],
+  members: [
+    { id: 'rc_mem_old', name: 'Old', email: 'old@x.test', status: 'removed', updatedAt: 0 },
+    { id: 'rc_mem_new', name: 'New', email: 'new@x.test', status: 'removed', updatedAt: now },
+    { id: 'rc_mem_live', name: 'Live', email: 'live@x.test', status: 'active', updatedAt: 0 },
+  ],
   audit: [
     { id: 'rc_u_b', at: 1, seq: null },
     { id: 'rc_u_a', at: 1, seq: null },
@@ -109,6 +114,13 @@ export function describeRetentionStoreContract(
       ]);
       expect(await s.expireAddresses(now - DAY)).toBe(1);
       expect(await s.expireAddresses(now - DAY)).toBe(0);
+    });
+
+    it('blanks the members removed long ago, once, and nobody else', async () => {
+      const s = await fresh();
+      expect(await s.expireMembers(now - DAY)).toBe(1);
+      expect(await s.expireMembers(now - DAY)).toBe(0);
+      expect(await s.expireMembers(now + DAY)).toBe(1);
     });
 
     it('reads and deletes audit events before the chain by time, then the chain in order', async () => {

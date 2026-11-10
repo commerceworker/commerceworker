@@ -7,6 +7,7 @@
  */
 
 import {
+  atLeast,
   newId,
   ORDER_MODEL_LABELS,
   type OrderModel,
@@ -45,12 +46,13 @@ import {
   useNavigation,
   useRevalidator,
 } from 'react-router';
+import { CompanySection, EditCustomer, MembersSection, TeamsSection } from '~/components/company';
 import { FormSheet, useFormSheet } from '~/components/form-sheet';
 import { StatusBadge, ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { audit } from '~/lib/audit.server';
 import { requireUser } from '~/lib/auth.server';
-import { addCertificate, addressesOf, customerById } from '~/lib/customers.server';
+import { addCertificate, addressesOf, companyOf, customerById } from '~/lib/customers.server';
 import { engine } from '~/lib/env.server';
 import { humanize, liveStatus, orderRef } from '~/lib/format';
 import { countOrders, listOrders } from '~/lib/orders.server';
@@ -68,13 +70,15 @@ const RECENT_ORDERS = 6;
 const ADDRESSES = 4;
 
 export async function loader({ request, params }: Route.LoaderArgs) {
-  await requireUser(request);
-  const [customer, certificates, recent, ordered, addresses] = await Promise.all([
+  const me = await requireUser(request);
+  const [customer, certificates, recent, ordered, addresses, company] = await Promise.all([
     customerById(params.customerId),
     engine().taxCertificates(params.customerId),
     listOrders({ customer: params.customerId, sort: 'updated' }, RECENT_ORDERS),
     countOrders({ customer: params.customerId }),
     addressesOf(params.customerId, ADDRESSES),
+    // Members are personal data: the page shows them to the roles that may list them.
+    companyOf(params.customerId, new URL(request.url).searchParams, atLeast(me.role, 'operator')),
   ]);
   if (!customer || !certificates) throw data('Customer not found', { status: 404 });
   const { stripeCustomerId: _c, stripePaymentMethodId: _pm, ...shown } = customer;
@@ -85,6 +89,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     recent: recent.map((o) => ({ ...o, status: liveStatus(o) })),
     ordered,
     addresses,
+    company,
     // The next certificate's id, minted here so a form sent twice adds it once.
     nextId: newId('txc'),
   };
@@ -116,6 +121,7 @@ export default function CustomerPage() {
     recent,
     ordered,
     addresses,
+    company,
     nextId,
   } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
@@ -173,9 +179,12 @@ export default function CustomerPage() {
           .filter(Boolean)
           .join(' · ')}
         actions={
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/orders?q=${encodeURIComponent(c.name)}`}>Orders</Link>
-          </Button>
+          <div className="flex gap-2">
+            {canOperate ? <EditCustomer customer={c} /> : null}
+            <Button asChild variant="outline" size="sm">
+              <Link to={`/orders?q=${encodeURIComponent(c.name)}`}>Orders</Link>
+            </Button>
+          </div>
         }
       />
       <Body className="grid gap-4 lg:gap-6">
@@ -188,6 +197,15 @@ export default function CustomerPage() {
             <FigureCard key={f.label} f={f} />
           ))}
         </section>
+        {company ? (
+          <>
+            <CompanySection data={company} canOperate={canOperate} />
+            <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-6">
+              <MembersSection data={company} canOperate={canOperate} />
+              <TeamsSection data={company} canOperate={canOperate} />
+            </div>
+          </>
+        ) : null}
         <Section
           title="Tax exemption certificates"
           description="Only a verified, unexpired certificate covering an order’s ship-to exempts it from tax."

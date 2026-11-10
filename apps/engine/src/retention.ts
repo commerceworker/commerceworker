@@ -31,6 +31,7 @@ export async function sweep(env: Env, now = Date.now()) {
     cartBuyersIndexed: await indexCartBuyers(env),
     personalDataErased: await expirePersonalData(env, now),
     addressesExpired: await expireAddresses(env, now),
+    membersExpired: await expireMembers(env, now),
     addressesBackfilled: await backfillAddresses(env, now),
     confirmations: await pruneConfirmations(env, now),
     aiUsageDays: await pruneUsage(env, now),
@@ -81,4 +82,14 @@ export async function expireAddresses(env: Env, now = Date.now()) {
   const days = personalDataRetentionDays(env.PERSONAL_DATA_RETENTION_DAYS);
   if (days === null) return 0;
   return uc.expireAddresses({ retention: retentionStore(env) }, now, days);
+}
+
+/**
+ * Blanks the name and email of company members removed before the deployment's personal data
+ * retention (their rows stay, for the orders they placed). Returns how many.
+ */
+export async function expireMembers(env: Env, now = Date.now()) {
+  const days = personalDataRetentionDays(env.PERSONAL_DATA_RETENTION_DAYS);
+  if (days === null) return 0;
+  return uc.expireMembers({ retention: retentionStore(env) }, now, days);
 }

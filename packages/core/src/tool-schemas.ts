@@ -10,6 +10,15 @@ import { fingerprintOf } from './api';
 import { assessQuestionsSchema } from './assess';
 import type { AssistantTool } from './assistant';
 import { AUDIT_GROUPS, type AuditGroup } from './audit';
+import {
+  COMPANY_ROLES,
+  COMPANY_STATUSES,
+  companyMembersInput,
+  companyTeamInput,
+  createCustomerInput,
+  MEMBER_STATUSES,
+  updateCustomerInput,
+} from './b2b/companies';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
 import { FX_SOURCES } from './fx';
 import { flowGraphSchema } from './order-schemas';
@@ -56,6 +65,9 @@ const DRAFT_FIELD = z
   .regex(/^[0-9a-f]{64}$/)
   .optional()
   .describe("get_flow's draft: refused if the flow's draft has changed since");
+
+/** A page of companies or members. */
+export const COMPANY_PAGE = { default: 25, max: 100 } as const;
 
 /** The longest instruction a tool hands the model (a flow change, a plugin's rule). */
 export const MODEL_INSTRUCTION_MAX = 4000;
@@ -428,6 +440,48 @@ export const TOOL_INPUTS = {
     customerId: z.string().max(100),
     certificateId: z.string().max(100),
   }),
+  list_companies: z.object({
+    status: z.enum(COMPANY_STATUSES).optional(),
+    search: z.string().max(100).optional().describe('Part of the name, legal name or id'),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(COMPANY_PAGE.max)
+      .optional()
+      .describe(`Default ${COMPANY_PAGE.default}`),
+  }),
+  get_company: z.object({ companyId: z.string().max(100).describe('The business customer’s id') }),
+  list_company_members: z.object({
+    companyId: z.string().max(100),
+    status: z.enum(MEMBER_STATUSES).optional(),
+    role: z.enum(COMPANY_ROLES).optional(),
+    teamId: z.string().max(100).optional(),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(COMPANY_PAGE.max)
+      .optional()
+      .describe(`Default ${COMPANY_PAGE.default}`),
+  }),
+  create_customer: createCustomerInput,
+  update_customer: updateCustomerInput,
+  set_company_status: z.object({
+    companyId: z.string().max(100),
+    status: z.enum(COMPANY_STATUSES),
+  }),
+  put_company_members: z.object({
+    companyId: z.string().max(100),
+    members: companyMembersInput,
+  }),
+  remove_company_member: z.object({
+    companyId: z.string().max(100),
+    memberId: z.string().max(100),
+  }),
+  put_company_team: companyTeamInput,
   set_member_role: z.object({ userId: z.string().max(60), role: z.enum(ROLES) }),
   set_approval_separation: z.object({ on: z.boolean() }),
   set_assistant_routing: z.object({ on: z.boolean() }),
@@ -498,6 +552,28 @@ const orderRow = row({
   stoppedAt: z.string().nullable().describe('The steps it failed or stopped at'),
   total: money,
   href,
+});
+
+const companyOutput = row({
+  id: z.string().describe('The business customer’s id'),
+  name: z.string(),
+  status: z.enum(COMPANY_STATUSES),
+  legalName: z.string(),
+  taxId: z.string().nullable(),
+  parentCompanyId: z.string().nullable(),
+  tier: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+const memberOutput = row({
+  id: z.string(),
+  companyId: z.string(),
+  name: z.string(),
+  email: z.string(),
+  role: z.enum(COMPANY_ROLES),
+  teamId: z.string().nullable(),
+  status: z.enum(MEMBER_STATUSES),
+  orderLimit: z.number().nullable().describe('Base currency; null for no limit of their own'),
 });
 
 const feedOutput = row({
@@ -856,6 +932,28 @@ export const TOOL_OUTPUTS = {
     ),
   }),
   set_fx_rate: actionOutput,
+  list_companies: row({
+    companies: z.array(companyOutput),
+    total: z.number().describe('Every company the filters match'),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
+  }),
+  get_company: row({
+    company: companyOutput,
+    teams: z.array(
+      row({ id: z.string(), parentId: z.string().nullable(), name: z.string(), path: z.string() }),
+    ),
+  }),
+  list_company_members: row({
+    members: z.array(memberOutput),
+    total: z.number().describe('Every member the filters match'),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
+  }),
+  create_customer: actionOutput,
+  update_customer: actionOutput,
+  set_company_status: actionOutput,
+  put_company_members: actionOutput,
+  remove_company_member: actionOutput,
+  put_company_team: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
@@ -880,6 +978,15 @@ export const REST_OPERATION_TOOLS = [
   'set_fx_rate',
   'verify_tax_certificate',
   'revoke_tax_certificate',
+  'list_companies',
+  'get_company',
+  'list_company_members',
+  'create_customer',
+  'update_customer',
+  'set_company_status',
+  'put_company_members',
+  'remove_company_member',
+  'put_company_team',
   'run_stock_review',
   'find_products',
   'assess_order',

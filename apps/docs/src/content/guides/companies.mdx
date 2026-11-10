@@ -1,0 +1,95 @@
+---
+title: Companies
+description: A business customer's company, its status, members, roles and teams; how an order from a company is accepted or declined; and what flows and promotions can read of them.
+---
+
+A business customer is a company. It has a status, a legal name and tax id, and optionally a parent
+company, and it has members and teams. Consumers and internal accounts have no company. Everything
+else about a business customer (its balance, credit limit, terms, contract prices, tax
+certificates) stays on the customer.
+
+Operators work with companies on a customer's page (linked from **Customers** on **Commerce**), over
+the [REST API](/reference/rest-api/) and through the [assistant](/guides/assistant/) and
+[MCP](/reference/mcp/#companies). Every change asks first on a confirm card.
+
+## Adding and changing a customer
+
+**New customer** on **Commerce** opens a form: name, email, kind, pricing tier, payment terms and,
+for a business customer, an optional legal name and tax id. A business customer is added with its
+company, **active** at once. It starts with no credit limit, and the credit limit isn't edited
+here. Two customers can't share an email.
+
+**Edit** on the customer's page changes the name, email, kind, tier and terms. A new tier or kind
+applies to orders from then on; orders already priced keep their price. A consumer made a business
+customer gets a company; a business customer can change kind only once its company is closed or
+rejected (and a closed or rejected company can't become a business customer's again).
+
+## Status
+
+A company moves along this lifecycle, and only along it:
+
+| From | To |
+|---|---|
+| Pending | Active, Rejected |
+| Active | Suspended, Closed |
+| Suspended | Active, Closed |
+| Rejected, Closed | Final |
+
+**Approve**, **Reject**, **Suspend**, **Reinstate** and **Close** on the company's card are those
+moves. If two people move the same company at once, one move lands and the other is told the
+company changed. An order from a company that isn't **active** is declined at its Validate step
+("Company … isn't active (suspended)"); orders already running carry on.
+
+## Members and roles
+
+A member is a person who buys, approves or administers for a company. Members are added by email,
+unique within a company. Each has a role, an optional team, an optional **order limit** (the most
+one order of theirs may total, in the base currency), and a status:
+
+| Status | Meaning |
+|---|---|
+| Invited | Added, not yet active. The start for a person who hasn't been confirmed |
+| Active | Can be the buyer on an order |
+| Inactive | Paused; can be resumed |
+| Removed | Final. The record stays for the orders they placed, and the same email can be added again as a new member |
+
+Roles are fixed: **Buyer**, **Approver** and **Company admin**. Members don't sign in yet and
+have no tokens of their own: staff manage them, and an order names the member placing it.
+
+An order names its buyer with `meta.buyerId`, the member's id. The Validate step declines an order
+whose buyer isn't an **active** member of the order's own customer. An order with no
+`meta.buyerId` is accepted as before. The order limit and the role aren't enforced by Validate: they
+are data for the flow's own conditions (below).
+
+Members are personal data. A [data subject export and erasure](/reference/rest-api/#data-subject-requests)
+cover them, the retention setting that clears old buyers from orders also blanks the name and email
+of members removed that long ago, and the audit trail counts members and names no one.
+
+## Teams
+
+A company's teams form a tree up to six deep. Add one with **Add team**; **Edit** renames a team or
+moves it (and the teams under it) beneath another. A member belongs to at most one team.
+
+## What flows and promotions read
+
+A flow's expressions, and a [promotion's condition](/guides/promotions/#conditions), read the company and the
+buyer with the names below. Each is `null` for an order with no company or no buyer.
+
+| Variable | Holds |
+|---|---|
+| `company.status` | `pending`, `active`, `suspended`, `rejected` or `closed` |
+| `company.tier` | The customer's pricing tier |
+| `buyer.role` | `buyer`, `approver` or `company_admin` |
+| `buyer.team` | The id of the buyer's team |
+| `buyer.orderLimit` | The buyer's own order limit in the base currency |
+
+For example, a Condition step that sends an order above its buyer's limit to an approval:
+
+```json
+{ "and": [
+  { "!=": [{ "var": "buyer.orderLimit" }, null] },
+  { ">": [{ "var": "order.baseTotal" }, { "var": "buyer.orderLimit" }] }
+] }
+```
+
+A flow reads these as they stood when the order started its run.

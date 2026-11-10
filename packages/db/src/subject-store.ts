@@ -16,6 +16,7 @@ import {
   eq,
   inArray,
   isNull,
+  ne,
   notInArray,
   or,
   type SQL,
@@ -27,6 +28,8 @@ import {
   auditEvents,
   carts,
   checkoutSessions,
+  companies,
+  companyMembers,
   customerAddresses,
   customers,
   documents,
@@ -47,6 +50,15 @@ const chunks = <T>(xs: readonly T[]) =>
   );
 
 const lower = (column: SQLWrapper, email: string) => sql`lower(${column}) = ${email}`;
+
+/** A member erased: nobody's name or email, no longer able to buy, the row kept for their orders. */
+const blankedMember = {
+  name: ERASED,
+  email: ERASED,
+  status: 'removed',
+  orderLimit: null,
+  teamId: null,
+};
 
 const checkoutBuyer = (email: string) =>
   sql`lower(json_extract(${checkoutSessions.data}, '$.buyer.email')) = ${email.toLowerCase()}`;
@@ -112,18 +124,23 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
     async rows(s, orderIds) {
       const accountIds = s.accounts.map((c) => c.id);
       const where = (column: SQLWrapper) => (run: string[]) => inArray(column as never, run) as SQL;
-      const [msgs, sentTo, docs, inbound, certificates, addresses] = await Promise.all([
-        inRuns(orderIds, (r) => d.select().from(messages).where(where(messages.orderId)(r))),
-        d.select().from(messages).where(lower(messages.recipient, s.email)),
-        inRuns(orderIds, (r) => d.select().from(documents).where(where(documents.orderId)(r))),
-        d.select().from(inboundEmails).where(lower(inboundEmails.sender, s.email)),
-        inRuns(accountIds, (r) =>
-          d.select().from(taxCertificates).where(where(taxCertificates.customerId)(r)),
-        ),
-        inRuns(accountIds, (r) =>
-          d.select().from(customerAddresses).where(where(customerAddresses.customerId)(r)),
-        ),
-      ]);
+      const [msgs, sentTo, docs, inbound, certificates, addresses, accountCompanies, memberRows] =
+        await Promise.all([
+          inRuns(orderIds, (r) => d.select().from(messages).where(where(messages.orderId)(r))),
+          d.select().from(messages).where(lower(messages.recipient, s.email)),
+          inRuns(orderIds, (r) => d.select().from(documents).where(where(documents.orderId)(r))),
+          d.select().from(inboundEmails).where(lower(inboundEmails.sender, s.email)),
+          inRuns(accountIds, (r) =>
+            d.select().from(taxCertificates).where(where(taxCertificates.customerId)(r)),
+          ),
+          inRuns(accountIds, (r) =>
+            d.select().from(customerAddresses).where(where(customerAddresses.customerId)(r)),
+          ),
+          inRuns(accountIds, (r) =>
+            d.select().from(companies).where(where(companies.customerId)(r)),
+          ),
+          d.select().from(companyMembers).where(lower(companyMembers.email, s.email)),
+        ]);
       return {
         messages: [...new Map([...msgs, ...sentTo].map((m) => [m.id, m])).values()],
         documents: docs.map((x) => ({
@@ -135,6 +152,8 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         inboundEmails: inbound,
         taxCertificates: certificates,
         addresses,
+        companies: accountCompanies,
+        companyMembers: memberRows,
       };
     },
 
@@ -277,7 +296,30 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
           stripePaymentMethodId: null,
         })
         .where(eq(customers.id, customerId));
-      return { taxCertificates: certificates.length, addresses: addresses.length };
+      // The company's legal name and tax id, and its people: blanked, the rows kept.
+      await d
+        .update(companies)
+        .set({ legalName: ERASED, taxId: null })
+        .where(eq(companies.customerId, customerId));
+      const members = await d
+        .update(companyMembers)
+        .set(blankedMember)
+        .where(and(eq(companyMembers.companyId, customerId), ne(companyMembers.name, ERASED)))
+        .returning({ id: companyMembers.id });
+      return {
+        taxCertificates: certificates.length,
+        addresses: addresses.length,
+        companyMembers: members.length,
+      };
+    },
+
+    async eraseMembers(email) {
+      const gone = await d
+        .update(companyMembers)
+        .set(blankedMember)
+        .where(lower(companyMembers.email, email))
+        .returning({ id: companyMembers.id });
+      return gone.length;
     },
   };
 }

@@ -56,6 +56,11 @@ describe('data subject requests', () => {
       { id: 'sc2_cart_staff', shipTo: { city: 'London' } },
     ]);
     expect(x.checkouts).toHaveLength(2);
+    // Her account's company, and the member rows with her email.
+    expect(x.companies).toMatchObject([
+      { customerId: 'sc2_acct', legalName: 'Lovelace Engines Ltd' },
+    ]);
+    expect(x.companyMembers).toMatchObject([{ id: 'sc2_mem_ada' }]);
     expect(x.inboundEmails.every((r) => !('r2Key' in r))).toBe(true);
   });
 
@@ -85,6 +90,8 @@ describe('data subject requests', () => {
       carts: 2,
       taxCertificates: 1,
       addresses: 1,
+      // Charles, of her own company, and Ada herself in another one.
+      companyMembers: 2,
     });
     expect(deleted).toContain('orders/sc2_o_acct/');
     expect(deleted).toContain('inbound/sc2_in_2.eml');
