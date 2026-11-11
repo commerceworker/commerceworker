@@ -20,6 +20,8 @@
  *                                               (409 not ready or ended, 412 changed since that version)
  *   POST /api/v1/carts/:id/cancel               (409 ended)
  *
+ *   GET  /api/v1/me                             the calling credential: kind, role, resource, expiry, subject
+ *
  *   REST_OPERATIONS (./rest-operations.ts)      a workspace tool each, run as MCP runs it
  *
  *   GET    /api/v1/audit-events                 ?type=…&before=<ms>&limit=  newest first; ?after=<seq> oldest first (admin)
@@ -103,6 +105,7 @@ import {
   verificationSecrets,
   verifyShopifyHmac,
   verifyWebhook,
+  whoami,
   x12FunctionalAck,
   x12850ToInbound,
 } from '@commerceworker/core';
@@ -121,7 +124,7 @@ import {
 } from './api-schemas';
 import { isAuditGroup } from './audit';
 import { audit, listAudit, verifyAudit } from './audit.server';
-import { actor, actor as actorName, forbidden } from './auth.server';
+import { actor, actor as actorName, type Caller, forbidden } from './auth.server';
 import { BodyTooLarge, MAX_EDI_BYTES, readText, tooLarge } from './body';
 import { isCartStatus, listCarts } from './carts.server';
 import { handleCatalog } from './catalog-api.server';
@@ -163,7 +166,7 @@ const EDI_CONCURRENCY = 4;
 /** The most orders one page of GET /api/v1/orders returns. */
 const MAX_PAGE = 200;
 
-export async function handleApi(request: Request, caller: Principal): Promise<Response> {
+export async function handleApi(request: Request, caller: Caller): Promise<Response> {
   // Reads need viewer; approvals need approver; anything else that changes state needs operator.
   const need = (min: Role) =>
     atLeast(caller.role, min) ? null : json({ error: forbidden(min) }, 403);
@@ -182,6 +185,9 @@ export async function handleApi(request: Request, caller: Principal): Promise<Re
     }
   };
   try {
+    // Who the credential is: any valid caller's own, whatever its role. Never cached.
+    if (parts[0] === 'me' && parts.length === 1 && request.method === 'GET')
+      return Response.json(whoami(caller), { headers: { 'cache-control': 'no-store' } });
     if (parts[0] === 'flows' && parts.length === 1 && request.method === 'GET') {
       const list = (await listFlows()).sort((a, b) => b.updatedAt - a.updatedAt);
       return json({
@@ -1045,7 +1051,7 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
  */
 async function runRestOperation(
   request: Request,
-  caller: Principal,
+  caller: Caller,
   { op, fromPath }: NonNullable<ReturnType<typeof matchOperation>>,
   body: () => Promise<unknown>,
   need: (min: Role) => Response | null,
@@ -1062,7 +1068,11 @@ async function runRestOperation(
       id: caller.id,
       name: actorName(caller),
       role: caller.role,
-      ...(caller.kind === 'user' ? { person: true as const } : {}),
+      // An OAuth grant acts as the person who approved it but is not them: nobody is there to
+      // confirm a price or a tax change, as with an API token.
+      ...(caller.kind === 'user' && caller.grant === undefined ? { person: true as const } : {}),
+      ...(caller.grant ? { grant: caller.grant } : {}),
+      ...(caller.client ? { client: caller.client } : {}),
     },
     await operationCall(op.tool, input),
   );

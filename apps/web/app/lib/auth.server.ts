@@ -19,6 +19,7 @@
 import {
   atLeast,
   type Principal,
+  type ProxiedPrincipal,
   ROLE_LABELS,
   type Role,
   SESSION_IDLE_MS,
@@ -106,7 +107,10 @@ export async function sessionId(request: Request): Promise<string | undefined> {
  * hasn't set it up; `passwordChangeDue`, one still on a password an admin set. Until they put it
  * right, they may only use their Account page.
  */
-export type Caller = Principal & { twoFactorDue?: true; passwordChangeDue?: true };
+export type Caller = Principal & {
+  twoFactorDue?: true;
+  passwordChangeDue?: true;
+} & Pick<ProxiedPrincipal, 'grant' | 'client' | 'resource' | 'expiresAt'>;
 
 /**
  * Whether someone signs in with a password, which is what two-factor sign-in protects: not when
@@ -252,7 +256,13 @@ export async function apiPrincipal(request: Request): Promise<Caller | null> {
   }
   if (!row.lastUsedAt || now - row.lastUsedAt > TOKEN_TOUCH_MS)
     afterResponse(authStore().touchToken(row.id, now));
-  return { kind: 'token', id: row.id, name: `token:${row.name}`, role: row.role as Role };
+  return {
+    kind: 'token',
+    id: row.id,
+    name: `token:${row.name}`,
+    role: row.role as Role,
+    ...(row.expiresAt !== null ? { expiresAt: row.expiresAt } : {}),
+  };
 }
 
 /**

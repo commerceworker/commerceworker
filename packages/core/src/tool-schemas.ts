@@ -137,6 +137,7 @@ const pageCursor = z.string().max(300).optional().describe('`next` from the prev
 /** Each tool's input. Built once per isolate. */
 
 export const TOOL_INPUTS = {
+  whoami: z.object({}),
   needs_attention: z.object({}),
   find_orders: z.object({
     status: z.enum(ORDER_STATUSES).optional(),
@@ -1006,7 +1007,31 @@ const actionOutput = row({
   href: z.string().optional(),
 });
 
+/**
+ * Who the caller is, as `GET /api/v1/me` and the `whoami` tool answer it (`whoami` in roles.ts
+ * builds it). It names the credential's kind and reach, never a secret, and nothing about anyone
+ * else.
+ */
+export const whoamiOutput = row({
+  kind: z
+    .enum(['api_token', 'oauth', 'session'])
+    .describe('How the caller signed in: an API token, an OAuth grant, or a person’s session'),
+  role: z.enum(ROLES),
+  resource: z
+    .string()
+    .optional()
+    .describe('For an OAuth grant, the endpoint it was granted for (RFC 8707)'),
+  expiresAt: z.number().optional().describe('When the credential stops working, epoch ms'),
+  subject: row({
+    id: z.string(),
+    name: z.string().optional().describe('A person'),
+    email: z.string().optional().describe('A person'),
+    label: z.string().optional().describe('An API token’s name'),
+  }),
+});
+
 export const TOOL_OUTPUTS = {
+  whoami: whoamiOutput,
   needs_attention: row({
     approvals: z.array(row({ id: z.string(), orderId: z.string(), title: z.string() })),
     failed: z.array(row({ id: z.string(), title: z.string(), status: z.string() })),

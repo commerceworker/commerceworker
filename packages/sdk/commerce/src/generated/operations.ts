@@ -152,6 +152,7 @@ export const OPERATIONS = {
   upload_plugin: { method: 'POST', path: '/api/v1/plugins', pathParams: [], input: 'body' },
   verify_audit_chain: { method: 'GET', path: '/api/v1/audit-events/verify', pathParams: [], input: 'query' },
   verify_tax_certificate: { method: 'POST', path: '/api/v1/customers/{customerId}/tax-certificates/{certificateId}/verify', pathParams: ["customerId", "certificateId"], input: 'body' },
+  whoami: { method: 'GET', path: '/api/v1/me', pathParams: [], input: 'query' },
 } as const satisfies Record<string, OperationSpec>;
 
 /** The operations that page by cursor. */
@@ -2796,6 +2797,11 @@ export type VerifyTaxCertificateResult = {
   href?: string;
 } & { [key: string]: unknown };
 
+/** The calling credential (request) */
+export type WhoamiInput = { [key: string]: unknown };
+
+export type WhoamiResult = Whoami;
+
 export type Cart = {
   id: string;
   title: string;
@@ -2841,6 +2847,25 @@ export type StartOrderResult = {
   orderId: string;
   replayed?: boolean;
 };
+
+export type Whoami = {
+  /** How the caller signed in: an API token, an OAuth grant, or a person’s session */
+  kind: "api_token" | "oauth" | "session";
+  role: "viewer" | "approver" | "operator" | "admin";
+  /** For an OAuth grant, the endpoint it was granted for (RFC 8707) */
+  resource?: string;
+  /** When the credential stops working, epoch ms */
+  expiresAt?: number;
+  subject: {
+    id: string;
+    /** A person */
+    name?: string;
+    /** A person */
+    email?: string;
+    /** An API token’s name */
+    label?: string;
+  } & { [key: string]: unknown };
+} & { [key: string]: unknown };
 
 export type OperationId = keyof typeof OPERATIONS;
 
@@ -3092,4 +3117,6 @@ export interface OperationTypes {
   verify_audit_chain: { input: VerifyAuditChainInput; result: VerifyAuditChainResult };
   /** Verify a tax exemption certificate (Operator) */
   verify_tax_certificate: { input: VerifyTaxCertificateInput; result: VerifyTaxCertificateResult };
+  /** The calling credential */
+  whoami: { input: WhoamiInput; result: WhoamiResult };
 }

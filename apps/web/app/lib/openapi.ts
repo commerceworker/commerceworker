@@ -22,6 +22,7 @@ import {
   startOrderSchema,
   TOOL_OUTPUTS,
   ucpSettingsSchema,
+  whoamiOutput,
 } from '@commerceworker/core';
 import {
   BOARD_COLUMNS,
@@ -275,6 +276,7 @@ function operationPaths() {
  * breaking change; `withOperationIds` refuses a route without one and an entry with no route.
  */
 const OPERATION_IDS: Record<string, string> = {
+  'get /api/v1/me': 'whoami',
   'get /api/v1/flows': 'list_flows',
   'get /api/v1/orders': 'list_orders',
   'post /api/v1/orders': 'start_order',
@@ -373,6 +375,17 @@ export function openApiDocument(serverUrl: string) {
     security: [{ bearer: [] }],
     paths: withOperationIds({
       ...operationPaths(),
+      '/api/v1/me': {
+        get: {
+          summary: 'The calling credential',
+          description:
+            'Who is calling and with what: how it signed in (`api_token`, `oauth` or `session`), its role, for an OAuth token the resource it was granted for, when it expires (ms since the epoch) and its subject (a person’s `id`, `name` and `email`, or an API token’s `id` and `label`). Any valid caller may ask, whatever its role. Never returns a secret, and is never cached. An OAuth access token granted for the MCP or A2A endpoint is refused here with `401`, as at every route.',
+          responses: {
+            ...errors,
+            '200': ok('The calling credential', '#/components/schemas/Whoami'),
+          },
+        },
+      },
       '/api/v1/flows': {
         get: { summary: 'List flows', responses: { '200': ok('Flows'), ...errors } },
       },
@@ -1311,7 +1324,8 @@ export function openApiDocument(serverUrl: string) {
         bearer: {
           type: 'http',
           scheme: 'bearer',
-          description: 'An API token (`cmw_live_…`, created on the Team page)',
+          description:
+            'An API token (`cmw_live_…`, created on the Team page), or an OAuth access token granted for this API (resource `/api/v1`, discovered at `/.well-known/oauth-protected-resource/api/v1`)',
         },
       },
       schemas: {
@@ -1327,6 +1341,7 @@ export function openApiDocument(serverUrl: string) {
           },
           required: ['error'],
         },
+        Whoami: output(whoamiOutput),
         Order: orderSchema(),
         Cart: cartSchema(),
         StartOrderResult: {

@@ -43,18 +43,23 @@ export const MAX_CHAT_BODY = 4_000;
  * cart was opened for, admitted only to that cart.
  */
 export type CartActor =
-  | { kind: 'staff'; id: string; name: string; role: Role }
+  | { kind: 'staff'; id: string; name: string; role: Role; grant?: string; client?: string }
   | { kind: 'guest'; id: string; name: string };
 
 /** Staff acting on a cart: what the REST API, MCP and the assistant act as, never a guest. */
 export type StaffCartActor = Extract<CartActor, { kind: 'staff' }>;
 
 /** The principal as they act on a cart, built by the server that resolved them. */
-export const staffCartActor = (p: Pick<Principal, 'id' | 'name' | 'role'>): StaffCartActor => ({
+export const staffCartActor = (
+  p: Pick<Principal, 'id' | 'name' | 'role'> & { grant?: string; client?: string },
+): StaffCartActor => ({
   kind: 'staff',
   id: p.id,
   name: p.name,
   role: p.role,
+  // An OAuth app acting as this person, so the engine can tell it from them.
+  ...(p.grant ? { grant: p.grant } : {}),
+  ...(p.client ? { client: p.client } : {}),
 });
 
 /** Set when a plugin opened the cart for a buyer outside CommerceWorker. */

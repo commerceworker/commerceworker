@@ -71,7 +71,15 @@ export const PRINCIPAL_HEADER = 'x-commerceworker-principal';
  * or `/a2a`) also names the grant and the client it was issued to, so two apps one person
  * connected are told apart: in the audit trail, and as separate A2A callers.
  */
-export type ProxiedPrincipal = Principal & { session?: string; grant?: string; client?: string };
+export type ProxiedPrincipal = Principal & {
+  session?: string;
+  grant?: string;
+  client?: string;
+  /** For a grant, the endpoint it was granted for (RFC 8707), e.g. `https://app.example/api/v1`. */
+  resource?: string;
+  /** When the credential stops working (epoch ms): an API token's expiry, or an access token's. */
+  expiresAt?: number;
+};
 
 /** How long a signed header is good for. A socket is checked once, when it connects. */
 export const PRINCIPAL_TTL_MS = 60_000;
@@ -186,6 +194,37 @@ export async function verifyPrincipal(
     ...(typeof p.session === 'string' ? { session: p.session } : {}),
     ...(typeof p.grant === 'string' ? { grant: p.grant } : {}),
     ...(typeof p.client === 'string' ? { client: p.client } : {}),
+    ...(typeof p.resource === 'string' ? { resource: p.resource } : {}),
+    ...(typeof p.expiresAt === 'number' ? { expiresAt: p.expiresAt } : {}),
+  };
+}
+
+/** What `GET /api/v1/me` and the `whoami` tool answer (`whoamiOutput` in tool-schemas.ts). */
+export type Whoami = {
+  kind: 'api_token' | 'oauth' | 'session';
+  role: Role;
+  resource?: string;
+  expiresAt?: number;
+  subject: { id: string; name?: string; email?: string; label?: string };
+};
+
+/**
+ * The calling credential as its holder may see it. A principal that names a grant is an OAuth
+ * app acting as the person who approved it, not that person. Only what the principal already
+ * carries: no secret, hash or session id.
+ */
+export function whoami(p: ProxiedPrincipal): Whoami {
+  const kind = p.grant !== undefined ? 'oauth' : p.kind === 'token' ? 'api_token' : 'session';
+  const subject =
+    p.kind === 'token'
+      ? { id: p.id, label: p.name.replace(/^token:/, '') }
+      : { id: p.id, name: p.name, ...(p.email ? { email: p.email } : {}) };
+  return {
+    kind,
+    role: p.role,
+    ...(kind === 'oauth' && p.resource ? { resource: p.resource } : {}),
+    ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
+    subject,
   };
 }
 
@@ -372,6 +411,9 @@ export type StaffActor = {
   role: Role;
   /** `person`: a person signed in as themselves, not an API token (some actions need one). */
   person?: true;
+  /** An OAuth app acting as this person (its grant and client), so the audit trail names it. */
+  grant?: string;
+  client?: string;
 };
 
 /** An external cart's buyer acting on that cart over `StorefrontRpc`, signed by the storefront. */
@@ -412,7 +454,15 @@ export async function verifyRpcActor(
   if (typeof signed !== 'string') return null;
   const body = await unseal(secrets, ACTOR_VERSION, signed, call, now);
   const a = body?.a as
-    | Partial<{ kind: string; id: string; name: string; role: Role; person: unknown }>
+    | Partial<{
+        kind: string;
+        id: string;
+        name: string;
+        role: Role;
+        person: unknown;
+        grant: unknown;
+        client: unknown;
+      }>
     | undefined;
   if (a?.kind !== 'staff' || typeof a.id !== 'string' || typeof a.name !== 'string') return null;
   if (!isRole(a.role)) return null;
@@ -422,6 +472,8 @@ export async function verifyRpcActor(
     name: a.name,
     role: a.role,
     ...(a.person === true ? { person: true as const } : {}),
+    ...(typeof a.grant === 'string' ? { grant: a.grant } : {}),
+    ...(typeof a.client === 'string' ? { client: a.client } : {}),
   };
 }
 

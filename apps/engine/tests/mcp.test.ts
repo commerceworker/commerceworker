@@ -178,6 +178,38 @@ const call = async (
 };
 
 describe('MCP', () => {
+  it('says who is calling: an app by its grant and endpoint, a token by its label, never a secret', async () => {
+    const viewer = person('viewer', 'vic@example.com');
+    const app = await call(
+      {
+        ...viewer,
+        grant: 'g1',
+        client: 'c1',
+        resource: 'https://app.test/mcp',
+        expiresAt: 1_900_000_000_000,
+      } as Principal,
+      'whoami',
+      {},
+    );
+    expect(app.structuredContent).toEqual({
+      kind: 'oauth',
+      role: 'viewer',
+      resource: 'https://app.test/mcp',
+      expiresAt: 1_900_000_000_000,
+      subject: { id: viewer.id, name: viewer.name, email: 'vic@example.com' },
+    });
+    const token = await call(
+      { kind: 'token', id: 'tok_1', name: 'token:ci', role: 'viewer' },
+      'whoami',
+      {},
+    );
+    expect(token.structuredContent).toEqual({
+      kind: 'api_token',
+      role: 'viewer',
+      subject: { id: 'tok_1', label: 'ci' },
+    });
+  });
+
   it('refuses a request the web Worker did not forward', async () => {
     expect((await rpc(null, 'tools/list')).status).toBe(401);
   });
@@ -196,7 +228,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        29,
+        30,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -289,6 +321,7 @@ describe('MCP', () => {
       'list_quotes',
       'needs_attention',
       'preview_price',
+      'whoami',
     ]);
     // The catalog's reads are a viewer's, as REST's are: nothing changes, and each says so.
     for (const name of CATALOG_READS)
@@ -304,7 +337,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(92);
+    expect(operator).toHaveLength(93);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -419,7 +452,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(115);
+    expect(admin).toHaveLength(116);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [

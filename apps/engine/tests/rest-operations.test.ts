@@ -5,12 +5,14 @@
  * offers and no others, and a person for what a person always confirms.
  */
 import { env } from 'cloudflare:workers';
+import { listAuditEvents } from '@commerceworker/application/commerce';
 import { operationCall, PERSON_CONFIRMS, type Role, type RpcActor } from '@commerceworker/core';
 import { createDb, customers } from '@commerceworker/db';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { EngineApi } from '../src/api';
 import { DRAFT_CHANGED } from '../src/assistant/flows';
 import { ensureTemplates } from '../src/flows';
+import { auditLog } from '../src/wire';
 import { signedActor } from './principal';
 
 const api = () => new EngineApi({ waitUntil() {}, passThroughOnException() {} } as never, env);
@@ -54,6 +56,30 @@ describe('running a workspace tool for the REST API', () => {
       status: 403,
     });
     expect(await run('no_such_tool', {}, staff('admin'))).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it('names an OAuth app in the trail of what it does, and no one else', async () => {
+    const reviews = async () =>
+      (await listAuditEvents({ audit: auditLog(env) }, { limit: 500 })).filter(
+        (e) => e.action === 'stock.review_run',
+      );
+    const before = (await reviews()).length;
+    await run(
+      'run_stock_review',
+      {},
+      staff('operator', {
+        name: 'app@example.com',
+        grant: 'grant_1',
+        client: 'client_1',
+      } as Partial<RpcActor>),
+    );
+    await run('run_stock_review', {}, staff('operator', { name: 'tok@example.com' }));
+    const mine = await reviews();
+    expect(mine.length).toBe(before + 2);
+    const app = mine.find((e) => e.actor === 'app@example.com');
+    const token = mine.find((e) => e.actor === 'tok@example.com');
+    expect(app?.detail).toMatchObject({ via: 'api', grant: 'grant_1', client: 'client_1' });
+    expect(token?.detail).not.toHaveProperty('grant');
   });
 
   it("holds the caller to the tool's role and input", async () => {

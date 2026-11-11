@@ -60,6 +60,7 @@ export type Attention = {
 };
 
 export type AssistantTool =
+  | 'whoami'
   | 'needs_attention'
   | 'find_orders'
   | 'get_order'
@@ -197,6 +198,14 @@ export const ASSISTANT_TOOLS: Record<
   AssistantTool,
   { role: Role; confirm: boolean; label: string; title: string; description: string }
 > = {
+  whoami: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Checked who is connected',
+    title: 'Who am I',
+    description:
+      'The credential this call uses: how it signed in (an API token, an OAuth grant or a session), its role, the resource it was granted for and when it expires, and who it acts as. Never a secret.',
+  },
   needs_attention: {
     role: 'viewer',
     confirm: false,

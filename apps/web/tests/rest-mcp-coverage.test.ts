@@ -15,6 +15,7 @@ type Why = { design: string } | { gap: string };
 
 /** REST routes and the tool each twins, besides REST_OPERATIONS (which name theirs). */
 const TWINS: Record<string, AssistantTool> = {
+  'GET /api/v1/me': 'whoami',
   'GET /api/v1/flows': 'list_flows',
   'GET /api/v1/orders': 'find_orders',
   'POST /api/v1/orders': 'start_order',

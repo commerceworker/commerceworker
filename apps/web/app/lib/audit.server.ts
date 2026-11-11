@@ -29,7 +29,15 @@ export async function audit(
   action: AuditAction,
   e: { actor?: AuditActor | null; target?: string | null; detail?: Record<string, unknown> } = {},
 ) {
-  const row = auditRow(newId('aud'), action, { ...e, ip: clientIp(request) });
+  // An OAuth app's request is named by its grant and client, as MCP's actions are.
+  const detail = e.actor?.grant
+    ? {
+        ...e.detail,
+        grant: e.actor.grant,
+        ...(e.actor.client ? { client: e.actor.client } : {}),
+      }
+    : e.detail;
+  const row = auditRow(newId('aud'), action, { ...e, detail, ip: clientIp(request) });
   try {
     const sealed = await auditLog().append((head) => sealAuditRow(row, head));
     console.log(JSON.stringify({ type: 'audit_event', ...sealed }));

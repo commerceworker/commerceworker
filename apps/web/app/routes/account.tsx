@@ -60,6 +60,13 @@ import {
 } from '~/lib/two-factor.server';
 import type { Route } from './+types/account';
 
+/** How a connected app's channel reads on this page. */
+const APP_CHANNELS: Record<string, string> = {
+  A2A: 'Agent (A2A)',
+  API: 'REST API client',
+  MCP: 'AI client (MCP)',
+};
+
 export const meta = () => [{ title: 'Account · CommerceWorker' }];
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -413,9 +420,7 @@ export default function Account() {
                         <ItemContent className="min-w-0">
                           <ItemTitle className="block truncate">{a.name}</ItemTitle>
                           <ItemDescription className="text-xs">
-                            {a.channel
-                              ? `${a.channel === 'A2A' ? 'Agent (A2A)' : 'AI client (MCP)'} · `
-                              : ''}
+                            {a.channel ? `${APP_CHANNELS[a.channel] ?? 'AI client (MCP)'} · ` : ''}
                             {a.host ? <span className="font-mono">{a.host}</span> : null}
                             {a.host ? ' · ' : ''}
                             acts as {ROLE_LABELS[a.role]} · connected {formatTime(a.createdAt)}

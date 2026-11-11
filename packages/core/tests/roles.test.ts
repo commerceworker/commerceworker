@@ -28,6 +28,7 @@ import {
   verifyRpcActor,
   verifySsoFlow,
   verifySsoLink,
+  whoami,
 } from '../src/roles';
 
 describe('roles', () => {
@@ -69,6 +70,11 @@ describe('signed principal header', () => {
       grant: 'g1',
       client: 'c1',
     });
+    // And the endpoint it was granted for and when it ends.
+    const dated = { ...p, grant: 'g1', resource: 'https://app.test/api/v1', expiresAt: now + 1 };
+    expect(
+      await verifyPrincipal([key], await signPrincipal(key, dated, '/mcp', now), '/mcp', now),
+    ).toEqual(dated);
   });
 
   it('refuses another key, another path, an expired header and a tampered one', async () => {
@@ -442,5 +448,54 @@ describe('the deploy smoke test write check', () => {
       expect(await verifyCartGuest([k], h, path, now)).toBeNull();
       expect(await verifyPlatform([k], h, path, now)).toBeNull();
     }
+  });
+});
+
+describe('whoami', () => {
+  const person = { kind: 'user', id: 'usr_1', name: 'Ann', email: 'ann@example.com' } as const;
+
+  it('names a token by its label and a person by name and email, never a secret or a grant', () => {
+    expect(whoami({ kind: 'token', id: 'tok_1', name: 'token:ci', role: 'viewer' })).toEqual({
+      kind: 'api_token',
+      role: 'viewer',
+      subject: { id: 'tok_1', label: 'ci' },
+    });
+    expect(whoami({ ...person, role: 'admin', session: 'abc123' })).toEqual({
+      kind: 'session',
+      role: 'admin',
+      subject: { id: 'usr_1', name: 'Ann', email: 'ann@example.com' },
+    });
+    const app = whoami({
+      ...person,
+      role: 'operator',
+      grant: 'g1',
+      client: 'c1',
+      resource: 'https://app.test/mcp',
+      expiresAt: 5,
+    });
+    expect(app).toEqual({
+      kind: 'oauth',
+      role: 'operator',
+      resource: 'https://app.test/mcp',
+      expiresAt: 5,
+      subject: { id: 'usr_1', name: 'Ann', email: 'ann@example.com' },
+    });
+  });
+
+  it('gives a resource only to a grant', () => {
+    expect(
+      whoami({ kind: 'token', id: 'tok_1', name: 'token:ci', role: 'viewer', resource: 'x' }),
+    ).not.toHaveProperty('resource');
+  });
+});
+
+describe('a staff actor for an OAuth app', () => {
+  it('carries its grant and client, and a plain actor none', async () => {
+    const actor = { kind: 'staff', id: 'usr_1', name: 'Ann', role: 'operator' } as const;
+    const call = 'op:x';
+    const key = 'test-key';
+    const app = { ...actor, grant: 'g1', client: 'c1' };
+    expect(await verifyRpcActor([key], await signRpcActor(key, app, call), call)).toEqual(app);
+    expect(await verifyRpcActor([key], await signRpcActor(key, actor, call), call)).toEqual(actor);
   });
 });
