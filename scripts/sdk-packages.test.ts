@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
-import { sdkManifests } from './sdk-packages.ts';
+import { publishArgs, sdkManifests } from './sdk-packages.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 
@@ -81,4 +81,26 @@ test('every workspace SDK module and the CLI is reachable from @commerceworker/s
   }
   assert.equal(sdk.devDependencies['@commerceworker/cli'], 'workspace:*', 'the CLI is bundled');
   assert.deepEqual(Object.keys(sdk.bin), ['commerceworker'], 'the commerceworker binary');
+});
+
+test('publish runs `npm publish <tarball> --access public`, with --provenance in the release workflow', () => {
+  assert.deepEqual(publishArgs('/x/a.tgz', true), [
+    'publish',
+    '/x/a.tgz',
+    '--provenance',
+    '--access',
+    'public',
+  ]);
+  assert.deepEqual(publishArgs('/x/a.tgz', false), ['publish', '/x/a.tgz', '--access', 'public']);
+});
+
+test('the release workflow publishes from an sdk-v tag with trusted publishing and no stored token', () => {
+  const wf = readFileSync(join(root, '.github/workflows/sdk-release.yml'), 'utf8');
+  assert.match(wf, /tags: \['sdk-v\*'\]/);
+  assert.match(wf, /environment: npm\n/);
+  assert.match(wf, /id-token: write/);
+  assert.match(wf, /github\.repository == 'commerceworker\/commerceworker'/);
+  assert.match(wf, /cancel-in-progress: false/);
+  assert.match(wf, /scripts\/sdk-packages\.ts publish --provenance/);
+  assert.doesNotMatch(wf, /NODE_AUTH_TOKEN|secrets\./, 'no stored token');
 });

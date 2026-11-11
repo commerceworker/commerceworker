@@ -195,7 +195,7 @@ split across three `test (…)` jobs, on every push, pull request and merge-queu
 and the queue replay unchanged packages from turbo's cache; a push to `main` runs everything:
 [Testing](testing.md)); the `verify` job passes only
 when all of them did, and it is what `plan` (so every deploy) needs. The `workflows` job lints the
-workflows with actionlint and zizmor. Beside them run the web app's and the storefront's
+workflows with actionlint and zizmor. A fourth workflow, `.github/workflows/sdk-release.yml`, is not part of a deploy: it publishes the SDK to npm from an `sdk-v<version>` tag ([Releasing the SDK](content/deployment.md#releasing-the-sdk)). Beside them run the web app's and the storefront's
 [device tests](testing.md#devices-the-web-app-on-iphone-and-ipad), in five `devices (…)` jobs summed
 up by one named `devices`, which doesn't gate a deploy; they run on pull requests, nightly and by
 hand, not on the push a merge makes ([Testing](testing.md#devices-the-web-app-on-iphone-and-ipad)).

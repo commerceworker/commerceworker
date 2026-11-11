@@ -7,10 +7,12 @@
  *                                          subpath (ESM and CJS), type-check every subpath and
  *                                          run the `commerceworker` binary
  *   node scripts/sdk-packages.ts publish  publish the tarball if npm doesn't have its version yet
+ *                                          (--provenance: with an attestation, in the release workflow)
  *
  * In the workspace the package resolves to src/*.ts; `pnpm pack` applies each package's
  * `publishConfig` (exports and bin pointing at dist/) and rewrites `catalog:` versions, so `check` tests exactly what a user installs. `publish` runs in
- * a release workflow with npm trusted publishing and provenance (a later slice); never by hand.
+ * the release workflow (.github/workflows/sdk-release.yml) with npm trusted publishing and
+ * `--provenance`; never by hand.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -172,7 +174,16 @@ function check(): void {
   }
 }
 
-function publish(): void {
+/**
+ * The arguments to `npm publish` for a tarball. A scoped package is private on npm unless it says
+ * `--access public`; `--provenance` (the release workflow's) signs the attestation with the job's
+ * OIDC identity.
+ */
+export function publishArgs(file: string, provenance: boolean): string[] {
+  return ['publish', file, ...(provenance ? ['--provenance'] : []), '--access', 'public'];
+}
+
+function publish(provenance: boolean): void {
   for (const { manifest } of sdkManifests()) {
     let published = false;
     try {
@@ -190,7 +201,7 @@ function publish(): void {
       t.endsWith(`/${manifest.name.replace('@', '').replace('/', '-')}-${manifest.version}.tgz`),
     );
     if (!file) throw new Error(`no tarball for ${manifest.name}; run pack first`);
-    run('npm', ['publish', file, '--provenance', '--access', 'public']);
+    run('npm', publishArgs(file, provenance));
     console.log(`published ${manifest.name}@${manifest.version}`);
   }
 }
@@ -199,9 +210,9 @@ const command = process.argv[2];
 if (import.meta.url === `file://${process.argv[1]}`) {
   if (command === 'pack') pack();
   else if (command === 'check') check();
-  else if (command === 'publish') publish();
+  else if (command === 'publish') publish(process.argv.includes('--provenance'));
   else {
-    console.error('Usage: node scripts/sdk-packages.ts pack | check | publish');
+    console.error('Usage: node scripts/sdk-packages.ts pack | check | publish [--provenance]');
     process.exitCode = 1;
   }
 }

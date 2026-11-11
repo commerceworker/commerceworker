@@ -16,7 +16,7 @@ workflows; the `devices (…)` jobs, summed up by `devices`, on PRs, nightly and
 docs-only PR by `changes`; on `main`, when the repository
 variable `DEPLOY_ENABLED` is `true`, `plan` then the rings `staging` → `internal` → `canary` →
 `general`; a skipped `plan` with no deploy means the variable is off, not a failure), `deploy.yml` (one deployment, called per ring),
-`demo-reset.yml` (nightly, behind the same variable). `docs/deploy.md` "CI" describes them.
+`demo-reset.yml` (nightly, behind the same variable), `sdk-release.yml` (an `sdk-v*` tag or a manual dry run: tag vs version, SDK checks, pack and check, publish; a failed publish is re-run with `gh run rerun --failed` after the user agrees). `docs/deploy.md` "CI" describes them.
 
 ## 1. Find the run
 
