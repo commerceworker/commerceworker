@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // test/generated.test.ts regenerates src/generated/operations.ts from the web app's OpenAPI
+    // document (apps/web/app/lib/openapi.ts and the REST operations it reads), which this package
+    // doesn't depend on.
+    "test": {
+      "dependsOn": ["$TURBO_EXTENDS$", "@commerceworker/web#transit"]
+    }
+  }
+}

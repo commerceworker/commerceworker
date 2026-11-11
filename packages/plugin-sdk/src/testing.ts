@@ -76,7 +76,7 @@ export async function readManifest(manifestModule: string): Promise<PluginManife
     bundle: true,
     format: 'esm',
     platform: 'node',
-    target: 'node22',
+    target: 'node24',
     write: false,
   });
   const url = `data:text/javascript;base64,${Buffer.from(out.outputFiles[0]!.text).toString('base64')}`;
