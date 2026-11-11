@@ -39,6 +39,7 @@ suffixed steps around their main one:
 | `${key}` (waitForEvent) | approval, wait for event | `step.waitForEvent` with the node's timeout |
 | `${key}:close` | approval, wait for event | Clears the wait (`closeWait`) with the outcome |
 | `${key}:until` | `control.wait` with `until` | Evaluates the timestamp once |
+| `${key}:period` | `control.wait` with `every` | Reads the clock and computes the next period boundary once |
 | `${key}` (sleep) | `control.wait` | `step.sleep` or `step.sleepUntil` |
 | `${key}:emit` | nodes that emit, End, a thrown node | Outbound webhook delivery |
 | `run:failed`, `run:failed:emit` | none: only a run that fails | Reports the order failed durably, then `order.failed` unless an End node sent it ([Failure paths](#failure-paths)) |
@@ -103,7 +104,16 @@ Waiting and control nodes are handled in `runNode` itself:
   takes `escalated`. An event wait takes `received` or `timeout`, and stores the payload in
   `vars[eventVar(event)]`, so `payment.received` lands in `vars.payment_received`.
 - **`control.wait`.** `until` is evaluated in its own step; a positive result sleeps until that
-  epoch-ms, otherwise it sleeps for the scaled `duration` (default `'1 day'`).
+  epoch-ms. Else, with `every` (`week`, `month` or `year`, `count` of them), a `${key}:period` step
+  reads the clock once and computes `nextPeriodBoundary` (`packages/core/src/subscriptions.ts`) from
+  the `from` anchor (an expression over the context giving epoch ms or an ISO date; the step's own
+  clock when unset), counting from the anchor so month-end days clamp without drifting; an anchor
+  still ahead is itself the first boundary. Under `TIME_SCALE` time since the anchor runs faster
+  (`calendarWait`), so renewals report advancing dates. An anchor that isn't a finite date, or a
+  count over a hundred years of the unit, comes back from the step as a refusal (not a throw) and the
+  node fails the order through the End path with that reason. The node `sleepUntil`s the deadline. Otherwise it sleeps for the scaled `duration` (default
+  `'1 day'`). Only flows that set `every` have a `:period` step, so published flows' step names
+  are unchanged.
 - **`control.loop`.** One step decides `next = runs <= maxIterations && truthy(while)`; the
   outcome goes to `completeLoop`.
 - **`control.end`.** Reports, emits `order.${outcome}`, and ends the run with that outcome and the

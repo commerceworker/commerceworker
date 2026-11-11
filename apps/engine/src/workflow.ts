@@ -24,12 +24,14 @@ import {
 import {
   type AccountContext,
   beginNode,
+  calendarWait,
   completeLoop,
   completeNode,
   durationField,
   evaluate,
   type FlowNode,
   type FlowVersion,
+  inDateRange,
   initPlan,
   interpolate,
   NODE_EVENTS,
@@ -45,6 +47,7 @@ import {
   type RunContext,
   readApprovalSpec,
   readyNodes,
+  type SubscriptionInterval,
   staticRegistry,
   truthy,
   withPlugins,
@@ -700,12 +703,68 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         const until = config.until
           ? await step.do(`${key}:until`, async () => Number(evaluate(config.until, ctx)) || 0)
           : 0;
+        // A calendar wait reads the clock, so its deadline is decided once in a step of its own
+        // (only flows that set `every` have one) and a replay sleeps to the same instant.
+        const period =
+          !until && config.every
+            ? await step.do(`${key}:period`, async () => {
+                const now = Date.now();
+                const raw = config.from ? evaluate(config.from, ctx) : now;
+                // Only a finite epoch-ms or a parseable date string is an anchor; null (a missing
+                // var), booleans and arrays would otherwise coerce to 0 or 1 and renew from 1970.
+                const anchor =
+                  typeof raw === 'number'
+                    ? raw
+                    : typeof raw === 'string'
+                      ? Date.parse(raw)
+                      : Number.NaN;
+                if (!inDateRange(anchor))
+                  return { refused: 'the anchor (from) is not a date or epoch-ms' };
+                try {
+                  // TIME_SCALE compresses the wait for demos; the reported date stays a real one.
+                  return calendarWait(
+                    anchor,
+                    str(config.every) as SubscriptionInterval,
+                    Number(config.count ?? 1),
+                    now,
+                    Number(env.TIME_SCALE) || 1,
+                  );
+                } catch (err) {
+                  return { refused: err instanceof Error ? err.message : String(err) };
+                }
+              })
+            : null;
+        // A deadline that can't be computed fails the order for good; it is returned, not thrown, so
+        // the run ends through the same path as a failed End node and says why on the timeline.
+        if (period && 'refused' in period) {
+          const reason = capReason(`${node.label}: ${period.refused}`);
+          await report(
+            {
+              node: { id: node.id, status: 'failed', error: reason, endedAt: Date.now() },
+              log: {
+                at: Date.now(),
+                nodeId: node.id,
+                kind: 'node',
+                message: `${node.label} failed: ${period.refused}`,
+                key: `${fx}:failed`,
+              },
+            },
+            true,
+          );
+          await emitStep(step, env, key, fx, p.orderId, 'order.failed', {
+            order: orderSummary(ctx.order),
+            outcome: 'failed',
+            reason,
+            node: { id: node.id, type: node.type, error: period.refused },
+          });
+          return { kind: 'end', outcome: 'failed', reason, nodeId: node.id, key };
+        }
         if (until > 0) await step.sleepUntil(key, until);
+        else if (period) await step.sleepUntil(key, period.wake);
         else await step.sleep(key, scaled(env, durationField(spec, config, 'duration')));
+        const at = until || (period && 'at' in period ? period.at : 0);
         const result: NodeResult = {
-          summary: until
-            ? `Until ${new Date(until).toISOString()}`
-            : `Waited ${str(config.duration)}`,
+          summary: at ? `Until ${new Date(at).toISOString()}` : `Waited ${str(config.duration)}`,
         };
         await report({ node: { id: node.id, summary: result.summary, endedAt: Date.now() } }, true);
         return { kind: 'complete', result };

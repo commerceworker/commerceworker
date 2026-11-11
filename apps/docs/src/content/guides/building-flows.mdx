@@ -118,6 +118,14 @@ outgoing edge ("the run ends there").
   same flow version, with the order and variables carried over. The order keeps its id; its
   `generation` goes up by one. Use it for long-lived loops such as subscriptions, so the run's
   history stays bounded.
+- **Waits.** A Wait node sleeps for a `duration`, until the next boundary of a calendar period
+  (`every` a `week`, `month` or `year`, `count` of them, counted from the `from` date, which is the
+  moment the wait starts when left empty; a date still ahead is the first renewal itself, so a trial's
+  end renews then, not a period later), or until the epoch-ms an `until` expression returns.
+  `until` wins over `every`, and `every` over `duration`. A calendar wait keeps the anchor's day of the
+  month: counted from 31 January, a monthly wait ends on 28 or 29 February and then on 31 March, where
+  `30 days` would drift. `count` is a whole number up to a hundred years of the unit. An anchor that
+  isn't a date or epoch-ms (an unset variable, say) fails the order with that reason. The subscription template waits `every: month` from the order's `createdAt`.
 
 ## Ending a run
 
