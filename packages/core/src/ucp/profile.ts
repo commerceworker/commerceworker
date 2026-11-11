@@ -15,12 +15,45 @@ export const UCP_PATH = '/ucp';
 export const UCP_REST_PATH = '/ucp/v1';
 export const UCP_MCP_PATH = '/ucp/mcp';
 
+/**
+ * The catalog's read operations. Over REST each is `POST` under `UCP_REST_PATH`; over MCP it is the
+ * tool of the same name. The storefront gives them their own request budget, so it recognises them
+ * in a path and in an MCP call, as the engine does to route them.
+ */
+export const UCP_CATALOG_ROUTES = {
+  '/catalog/search': 'search_catalog',
+  '/catalog/lookup': 'lookup_catalog',
+  '/catalog/product': 'get_product',
+} as const;
+export type UcpCatalogOp = (typeof UCP_CATALOG_ROUTES)[keyof typeof UCP_CATALOG_ROUTES];
+export const UCP_CATALOG_TOOLS: readonly string[] = Object.values(UCP_CATALOG_ROUTES);
+
+/**
+ * The catalog operation a request path names, or null. Empty segments are ignored, as the engine's
+ * router ignores them, so a doubled or trailing slash names the same operation in both.
+ */
+export function ucpCatalogOp(pathname: string): UcpCatalogOp | null {
+  if (!pathname.startsWith(`${UCP_REST_PATH}/`)) return null;
+  const rest = `/${pathname.slice(UCP_REST_PATH.length).split('/').filter(Boolean).join('/')}`;
+  return Object.hasOwn(UCP_CATALOG_ROUTES, rest)
+    ? UCP_CATALOG_ROUTES[rest as keyof typeof UCP_CATALOG_ROUTES]
+    : null;
+}
+
 /** Platform API keys look like `cmw_ucp_<43 base64url chars>`. */
 export const UCP_PLATFORM_KEY_PREFIX = 'cmw_ucp_';
 
 const isUrl = (u: string) => {
   try {
     return ['https:', 'http:'].includes(new URL(u).protocol);
+  } catch {
+    return false;
+  }
+};
+
+const isHttpsUrl = (u: string) => {
+  try {
+    return new URL(u).protocol === 'https:';
   } catch {
     return false;
   }
@@ -52,6 +85,21 @@ export const ucpSettingsSchema = z.object({
     .string()
     .max(500)
     .refine((u) => u.includes('{id}') && isUrl(u.replace('{id}', 'x')), 'A URL with {id}')
+    .nullable()
+    .default(null),
+  /**
+   * Where a buyer sees a product, for catalog search and lookup: an https URL with `{slug}` and/or
+   * `{key}`, e.g. `https://shop.example/p/{slug}`. Null: results carry no product URL.
+   */
+  productUrl: z
+    .string()
+    .max(500)
+    .refine(
+      (u) =>
+        /\{(slug|key)\}/.test(u) &&
+        isHttpsUrl(u.replaceAll('{slug}', 'x').replaceAll('{key}', 'x')),
+      'An https URL with {slug} or {key}',
+    )
     .nullable()
     .default(null),
 });
@@ -132,7 +180,12 @@ export function readStorefrontSettings(raw: string | null | undefined): Storefro
   }
 }
 
-export const UCP_OFF: UcpSettings = { checkoutFlowId: null, links: [], orderUrl: null };
+export const UCP_OFF: UcpSettings = {
+  checkoutFlowId: null,
+  links: [],
+  orderUrl: null,
+  productUrl: null,
+};
 
 /** Settings as stored, or off when there are none or they don't parse. */
 export function readUcpSettings(raw: string | null | undefined): UcpSettings {
@@ -155,7 +208,12 @@ export const CHECKOUT_CAPABILITY = 'dev.ucp.shopping.checkout';
 export const FULFILLMENT_CAPABILITY = 'dev.ucp.shopping.fulfillment';
 export const DISCOUNT_CAPABILITY = 'dev.ucp.shopping.discount';
 export const ORDER_CAPABILITY = 'dev.ucp.shopping.order';
+/** `search_catalog`. */
+export const CATALOG_SEARCH_CAPABILITY = 'dev.ucp.shopping.catalog.search';
+/** `lookup_catalog` and `get_product`. */
+export const CATALOG_LOOKUP_CAPABILITY = 'dev.ucp.shopping.catalog.lookup';
 
+// Spec pages checked against upstream's docs at cd78fb3 (`specification/shopping/catalog/{search,lookup}.md`).
 const SPEC = `https://ucp.dev/${UCP_VERSION}`;
 
 /** CommerceWorker's capabilities, each `{ version, spec, schema, extends? }` as the profile lists it. */
@@ -177,6 +235,14 @@ export const UCP_CAPABILITIES = {
   [ORDER_CAPABILITY]: {
     spec: `${SPEC}/specification/shopping/order`,
     schema: `${SPEC}/schemas/shopping/order.json`,
+  },
+  [CATALOG_SEARCH_CAPABILITY]: {
+    spec: `${SPEC}/specification/shopping/catalog/search`,
+    schema: `${SPEC}/schemas/shopping/catalog_search.json`,
+  },
+  [CATALOG_LOOKUP_CAPABILITY]: {
+    spec: `${SPEC}/specification/shopping/catalog/lookup`,
+    schema: `${SPEC}/schemas/shopping/catalog_lookup.json`,
   },
 } as const;
 export type UcpCapability = keyof typeof UCP_CAPABILITIES;

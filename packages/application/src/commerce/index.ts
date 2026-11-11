@@ -27,4 +27,5 @@ export * from './subjects';
 export * from './tax-certificates';
 export * from './tax-order';
 export * from './ucp';
+export * from './ucp-catalog';
 export * from './webhook-subscriptions';

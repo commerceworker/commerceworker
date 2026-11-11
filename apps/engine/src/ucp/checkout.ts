@@ -9,6 +9,7 @@
  */
 
 import {
+  CHECKOUT_CAPABILITY,
   type CheckoutPatch,
   type CheckoutSession,
   checkoutFlowProblem,
@@ -55,6 +56,17 @@ const protocol = (status: number, code: string, content: string): UcpResult => (
   status,
   body: ucpError(code, content),
 });
+
+/**
+ * The refusal for a platform that didn't negotiate checkout, or null. Every checkout operation
+ * asks first, before it reads or claims anything: negotiating only the catalog or only orders
+ * doesn't let a platform start a checkout.
+ */
+export function checkoutRefusal(ctx: UcpContext): UcpResult | null {
+  return ctx.capabilities.has(CHECKOUT_CAPABILITY)
+    ? null
+    : protocol(403, 'forbidden', `The platform profile does not support ${CHECKOUT_CAPABILITY}.`);
+}
 
 const gone = (content: string): UcpResult => ({
   status: 200,

@@ -811,6 +811,7 @@ describe('MCP', () => {
         checkoutFlowId: 'tpl-storefront-order',
         links,
         orderUrl: 'https://shop.example/orders/{id}',
+        productUrl: null,
       });
       expect((await audited('ucp.settings')).at(-1)).toMatchObject({
         actor: 'ann@example.com',
@@ -828,6 +829,7 @@ describe('MCP', () => {
         checkoutFlowId: null,
         links: [],
         orderUrl: null,
+        productUrl: null,
       });
 
       // Nothing a secret in any preview or result.

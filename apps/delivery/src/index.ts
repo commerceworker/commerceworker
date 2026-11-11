@@ -20,6 +20,7 @@ import { catalogFetch, catalogQueue } from './catalog/gateway';
 import { content } from './content';
 
 export { CatalogDelivery } from './catalog/delivery';
+export { CatalogRead } from './catalog/read';
 export { Delivery } from './delivery';
 
 type Env = EdgeEnv & Partial<CatalogEnv>;

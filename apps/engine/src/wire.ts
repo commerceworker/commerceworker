@@ -4,7 +4,9 @@
  * else asks for a port, never a table.
  */
 
+import { createCatalogEdgeReader } from '@commerceworker/adapters/catalog-edge';
 import type { ApprovalPorts } from '@commerceworker/application/commerce';
+import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { createDb, probeDb } from '@commerceworker/db';
 import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
@@ -49,6 +51,7 @@ import type {
   BudgetStore,
   CartRecords,
   CartRuntime,
+  CatalogReader,
   CheckoutSessionStore,
   CompanyDirectory,
   ConfirmationStore,
@@ -91,6 +94,29 @@ import { provide } from './providers';
 
 /** Wall-clock time. Workflow code reads it only inside a step, as every effect does. */
 export const systemClock: Clock = { now: () => new Date() };
+
+/** What a read of the catalog edge throws when the edge answers with a failure. */
+export { CatalogEdgeError } from '@commerceworker/adapters/catalog-edge';
+
+const catalogReaders = new WeakMap<object, CatalogReader>();
+
+/**
+ * The published catalog as UCP reads it: documents through the read edge (`CATALOG_EDGE`, the
+ * delivery Worker's `CatalogRead`, which has only `fetch` and forwards to the cached `CatalogDelivery`,
+ * so a platform sees what the public edge serves, and the engine cannot purge it or read its index blobs), and
+ * the channel and type names through the catalog's RPC (`CATALOG`).
+ */
+export function catalogReader(env: Pick<Env, 'CATALOG' | 'CATALOG_EDGE'>): CatalogReader {
+  let reader = catalogReaders.get(env.CATALOG_EDGE);
+  if (!reader) {
+    reader = createCatalogEdgeReader({
+      edge: env.CATALOG_EDGE,
+      rpc: env.CATALOG as unknown as ProductCatalogRpc,
+    });
+    catalogReaders.set(env.CATALOG_EDGE, reader);
+  }
+  return reader;
+}
 
 const pricingStores = new WeakMap<D1Database, PricingStore>();
 

@@ -14,11 +14,13 @@ import {
   type PlatformCaller,
   PRINCIPAL_HEADER,
   signPlatform,
+  UCP_CATALOG_TOOLS,
   UCP_MCP_PATH,
   UCP_PATH,
   UCP_PLATFORM_KEY_PREFIX,
   type UcpPlatformRef,
   ucpAgentProfile,
+  ucpCatalogOp,
   ucpError,
 } from '@commerceworker/core';
 import { sha256Hex } from '@commerceworker/security/credentials';
@@ -54,6 +56,71 @@ async function platformFor(request: Request): Promise<UcpPlatformRef | null> {
   return engine().ucpPlatform(await sha256Hex(key));
 }
 
+/** The most of a body read to price it: the engine's own limit on one. */
+const PEEK_MAX = 256 * 1024;
+/** The most ids a lookup takes (`LOOKUP_IDS_MAX` in core's catalog mapping), and so its cost. */
+const LOOKUP_UNITS_MAX = 50;
+
+const isJson = (request: Request) =>
+  /^application\/json\s*(;|$)/i.test(request.headers.get('content-type') ?? '');
+
+/**
+ * A request's body as JSON, read from a copy so the engine still gets the request whole, or null
+ * when it is not declared JSON, is too large or doesn't parse. The engine refuses all three, so a
+ * body this can't read is never a catalog call it would serve.
+ */
+async function peekJson(request: Request): Promise<unknown> {
+  if (!isJson(request) || request.method !== 'POST' || !request.body) return null;
+  if (Number(request.headers.get('content-length') ?? 0) > PEEK_MAX) return null;
+  const reader = request.clone().body?.getReader();
+  if (!reader) return null;
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > PEEK_MAX) {
+      // Not awaited: a cancelled branch of a tee settles only when the other one is done too.
+      reader.cancel().catch(() => undefined);
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  try {
+    return JSON.parse(text + decoder.decode());
+  } catch {
+    return null;
+  }
+}
+
+/** A lookup costs one unit an id (at least one, at most the most it takes). */
+const lookupUnits = (request: unknown) => {
+  const ids = (request as { ids?: unknown } | null | undefined)?.ids;
+  return Array.isArray(ids) ? Math.min(Math.max(ids.length, 1), LOOKUP_UNITS_MAX) : 1;
+};
+
+/**
+ * What a request costs of a platform's catalog budget: 0 when it is not a catalog read (it spends
+ * `AGENT_LIMIT`), else one unit, or one an id for a lookup, since a lookup reads each id. A catalog
+ * read is a REST path of the catalog or an MCP `tools/call` of one of its tools; a lookup's ids are
+ * counted from its body (`peekJson`), and a body that can't be read costs the one unit it is
+ * refused for.
+ */
+async function catalogUnits(request: Request, pathname: string): Promise<number> {
+  const op = ucpCatalogOp(pathname);
+  if (op) return op === 'lookup_catalog' ? lookupUnits(await peekJson(request)) : 1;
+  if (pathname !== UCP_MCP_PATH) return 0;
+  const rpc = (await peekJson(request)) as {
+    method?: unknown;
+    params?: { name?: unknown; arguments?: { catalog?: unknown } };
+  } | null;
+  const name = String(rpc?.params?.name);
+  if (rpc?.method !== 'tools/call' || !UCP_CATALOG_TOOLS.includes(name)) return 0;
+  return name === 'lookup_catalog' ? lookupUnits(rpc.params?.arguments?.catalog) : 1;
+}
+
 const refuse = (status: number, code: string, content: string, headers?: HeadersInit) =>
   Response.json(ucpError(code, content), { status, headers });
 
@@ -83,8 +150,14 @@ export async function ucpFetch(request: Request): Promise<Response> {
     return refuse(403, 'forbidden', 'UCP-Agent names a different profile than this key is for.');
   if (!(await checkoutOn()))
     return refuse(404, 'not_found', 'Agentic checkout is not turned on for this workspace.');
-  // Each platform has its own budget, like an MCP or A2A client.
-  const limited = await overBudget('AGENT_LIMIT', `${UCP_PATH}:${row.id}`);
+  // Each platform has its own budget, like an MCP or A2A client; its catalog reads another, so a
+  // platform browsing can't use up what its checkouts need, and the reverse.
+  const units = await catalogUnits(request, url.pathname);
+  let limited: Response | null = null;
+  // The rate limiter counts one a call, so a lookup of n ids makes n calls and stops at the first refusal.
+  for (let i = 0; i < units && !limited; i++)
+    limited = await overBudget('CATALOG_LIMIT', `${UCP_PATH}/catalog:${row.id}`);
+  if (!units) limited = await overBudget('AGENT_LIMIT', `${UCP_PATH}:${row.id}`);
   if (limited) return limited;
 
   const caller: PlatformCaller = {

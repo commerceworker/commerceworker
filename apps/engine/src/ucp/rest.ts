@@ -10,6 +10,9 @@
  *   POST /ucp/v1/checkout-sessions/:id/complete    Idempotency-Key required
  *   POST /ucp/v1/checkout-sessions/:id/cancel      Idempotency-Key required
  *   GET  /ucp/v1/orders/:id
+ *   POST /ucp/v1/catalog/search                    search_catalog (read-only)
+ *   POST /ucp/v1/catalog/lookup                    lookup_catalog
+ *   POST /ucp/v1/catalog/product                   get_product
  */
 
 import {
@@ -17,6 +20,7 @@ import {
   PRINCIPAL_HEADER,
   UCP_MCP_PATH,
   UCP_REST_PATH,
+  ucpCatalogOp,
   ucpCheckoutInput,
   ucpError,
   ucpErrorResponse,
@@ -24,8 +28,10 @@ import {
 } from '@commerceworker/core';
 import { idempotencyKeyProblem, readCappedText } from '../body';
 import { storefrontKeysOf } from '../principal';
+import { acceptedLanguages, catalogCall, isJson } from './catalog';
 import {
   cancelCheckout,
+  checkoutRefusal,
   completeCheckout,
   createCheckout,
   getCheckout,
@@ -127,7 +133,33 @@ export async function handleUcp(request: Request, env: Env): Promise<Response> {
     return once(env, caller.id, key, `${method} ${url.pathname}`, body, op);
   };
 
+  // Catalog reads: POST with a JSON body, as the service spec has them. They store nothing, so
+  // there is no idempotency key to take.
+  const catalogOp = ucpCatalogOp(url.pathname);
+  if (catalogOp) {
+    if (method !== 'POST')
+      return Response.json(ucpError('method_not_allowed', 'Use POST.'), {
+        status: 405,
+        headers: { allow: 'POST', 'cache-control': 'no-store' },
+      });
+    if (!isJson(request))
+      return reply(refuse(415, 'unsupported_media_type', 'Send application/json.'));
+    const raw = parse();
+    if (!raw) return reply(refuse(400, 'invalid_request', 'The body is not JSON.'));
+    return reply(
+      await catalogCall(
+        env,
+        ctx,
+        catalogOp,
+        raw.value,
+        acceptedLanguages(request.headers.get('accept-language')),
+      ),
+    );
+  }
+
   if (parts[0] === 'checkout-sessions') {
+    const refused = checkoutRefusal(ctx);
+    if (refused) return reply(refused);
     const id = parts[1];
     if (!id && parts.length === 1 && method === 'POST') {
       const input = ucpCheckoutInput.safeParse(parse()?.value);

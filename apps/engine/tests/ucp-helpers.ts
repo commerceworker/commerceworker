@@ -144,6 +144,7 @@ export async function enableUcp() {
         checkoutFlowId: 'tpl-storefront-order',
         links: [{ type: 'terms_of_service', url: 'https://shop.example/terms' }],
         orderUrl: 'https://shop.example/orders/{id}',
+        productUrl: 'https://shop.example/p/{slug}',
       }),
       updatedAt: Date.now(),
       updatedBy: 'test',

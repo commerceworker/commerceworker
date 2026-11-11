@@ -30,7 +30,9 @@
     // The gateway normalizes every request; caching in front of it would skip that.
     "default": { "type": "worker", "cache": { "enabled": false } },
     // What the gateway forwards to: cached by URL.
-    "CatalogDelivery": { "type": "worker", "cache": { "enabled": true } }
+    "CatalogDelivery": { "type": "worker", "cache": { "enabled": true } },
+    // What the engine binds (CATALOG_EDGE): fetch only, forwarding to the cached entry above.
+    "CatalogRead": { "type": "worker", "cache": { "enabled": false } }
   },
   // What the catalog Worker publishes: documents, alias pointers and category trees.
   "r2_buckets": [{ "binding": "PUBLISHED", "bucket_name": "commerceworker-catalog" }],

@@ -140,6 +140,8 @@ export default defineConfig(async () => {
             // The catalog isn't run here: a stub stands in for the binding, which workerd needs
             // defined to start.
             CATALOG: () => new Response('no catalog in the engine tests', { status: 503 }),
+            CATALOG_EDGE: () =>
+              new Response('no catalog edge in the engine tests', { status: 503 }),
             ...(plugins.length
               ? {
                   PLUGIN_EXAMPLE: 'commerceworker-plugin-example',

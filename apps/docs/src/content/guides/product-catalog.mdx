@@ -393,3 +393,24 @@ stock and zero cost, which stay managed in CommerceWorker.
 A change applies only if it is newer than the last one the catalog wrote for that SKU. A product that
 is archived, hidden in the channel or deleted keeps its rows, since orders may still name its SKUs.
 Variants without a price in that channel are not written.
+
+## AI shopping platforms
+
+A platform you have let in to [agentic checkout](/reference/ucp/) can search and look up the catalog
+over UCP. It is shown the same published documents as the public read API, in the channel chosen for orders
+(`web` by default) and that channel's currency, and only these fields:
+
+| Shown | From |
+|---|---|
+| `id`, `title`, a plain-text `description`, `handle` | The product's key, title, description and slug, in the locale asked for |
+| `url` | The workspace's `productUrl` setting with `{slug}` or `{key}` filled in; omitted without one |
+| `categories` | The product's category codes |
+| `price_range`, `list_price_range` | The variants' prices in the channel, and the product's `compareAt` |
+| `media` | Images with an `https` URL, with their alt text and size. `asset:` images are left out |
+| `options` | Each variant axis, named as in the product type, with its values' labels |
+| `variants` | Each variant's SKU (its `id`), title (its option labels), price, GTIN and images |
+
+Nothing else leaves: not attributes, `extra`, cost, stock or supplier data, whatever the document holds.
+A product with no price in the channel's currency is not shown, and variants priced in another currency are
+left out. Only products that are published in the channel can be found, so hiding a product there, or
+archiving it, takes it out of what platforms see (after the usual minute for the cache).

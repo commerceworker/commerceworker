@@ -44,6 +44,47 @@ test('the composition root does bind the D1 adapters', () => {
   assert.match(readFileSync(COMPOSITION_ROOT, 'utf8'), D1_ADAPTERS);
 });
 
+// The catalog's read edge is bound there too: UCP reads published documents through the
+// `CATALOG_EDGE` service binding, wrapped by the `catalog-edge` adapter in wire.ts. Nothing else in
+// the engine fetches the edge itself or imports the adapter, so every read is the adapter's
+// canonical, encoded URL, and the capability and channel checks sit in front of it.
+const EDGE_ADAPTER = /from '@commerceworker\/adapters\/catalog-edge'/;
+const EDGE_BINDING = /\benv\.CATALOG_EDGE\b/;
+
+test('only the composition root binds the catalog edge in the engine', () => {
+  const reaching = files(ROOT)
+    .filter((f) => f !== COMPOSITION_ROOT)
+    .filter((f) => {
+      const src = readFileSync(f, 'utf8');
+      return EDGE_BINDING.test(src) || EDGE_ADAPTER.test(src);
+    })
+    .map((f) => relative('.', f));
+  assert.deepEqual(reaching, [], `Read the edge through catalogReader() in ${COMPOSITION_ROOT}`);
+});
+
+// What the engine binds is `CatalogRead` (apps/delivery/src/catalog/read.ts): fetch only, public
+// routes only. The engine must not depend on more than that, and the binding must not be widened.
+test('the engine binds the catalog edge through the fetch-only entrypoint and never its index blobs or purge', () => {
+  const wrangler = readFileSync('apps/engine/wrangler.jsonc', 'utf8').replace(/\/\/.*$/gm, '');
+  assert.match(
+    wrangler,
+    /"binding": "CATALOG_EDGE",\s*"service": "[^"]+",\s*"entrypoint": "CatalogRead"/,
+  );
+  const reaching = files(ROOT).filter((f) =>
+    /\/_idx\/|CATALOG_EDGE[^;]{0,80}\.purge/.test(readFileSync(f, 'utf8')),
+  );
+  assert.deepEqual(
+    reaching.map((f) => relative('.', f)),
+    [],
+  );
+});
+
+test('the composition root does bind the catalog edge', () => {
+  const src = readFileSync(COMPOSITION_ROOT, 'utf8');
+  assert.match(src, EDGE_ADAPTER);
+  assert.match(src, EDGE_BINDING);
+});
+
 // The web app follows the same rule: its composition root is apps/web/app/lib/wire.server.ts, the
 // one web file that imports the D1 adapters (`@commerceworker/db` or a subpath), calls `createDb` or
 // touches the `DB` binding. Everything else asks the root for a port.

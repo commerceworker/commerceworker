@@ -238,6 +238,10 @@ export class CatalogApi extends WorkerEntrypoint<Env> implements ProductCatalogR
     return meta(this.env).channels();
   }
 
+  async ordersChannel(): Promise<string> {
+    return this.env.ORDERS_CHANNEL;
+  }
+
   async putCategories(categories: CategoryInput[], _by: string): Promise<CategoriesResult> {
     return meta(this.env).putCategories(categories);
   }

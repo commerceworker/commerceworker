@@ -58,7 +58,7 @@ describe('agentic checkout’s settings', () => {
 
   it('saves them once the flow takes cards, and names the flow they switch in the audit event', async () => {
     const ports = await setup();
-    const next = { checkoutFlowId: 'tpl-checkout', links: [], orderUrl: null };
+    const next = { checkoutFlowId: 'tpl-checkout', links: [], orderUrl: null, productUrl: null };
     const r = await changeUcpSettings(ports, next, 'ann@example.com');
     expect(r).toEqual({
       ok: true,
@@ -82,7 +82,7 @@ describe('agentic checkout’s settings', () => {
       ['tpl-draft', 'No published flow tpl-draft'],
       ['tpl-no-card', 'The checkout flow must authorize the payment (commerce.authorize_payment).'],
     ] as const) {
-      const next = { checkoutFlowId: flowId, links: [], orderUrl: null };
+      const next = { checkoutFlowId: flowId, links: [], orderUrl: null, productUrl: null };
       expect(await checkoutFlowRefusal(ports, flowId)).toBe(why);
       expect(await planUcpSettings(ports, next)).toMatchObject({ refusal: why });
       expect(await changeUcpSettings(ports, next, 'ann')).toEqual({ ok: false, error: why });

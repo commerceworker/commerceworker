@@ -570,7 +570,7 @@ react-router `headers` export returns the private headers whichever of loader, a
 and orders. The storefront Worker (`ucpFetch`, `apps/storefront/app/lib/ucp.server.ts`; platforms are registered on the admin) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_`; only the key's SHA-256 leaves the Worker, to `StorefrontApi.ucpPlatform`, which looks it up in `ucp_platforms.key_hash`, revoked rows excluded, and records its use), requires `UCP-Agent` to equal the
 registered `profile_url` (MCP may omit the header; the engine checks `meta["ucp-agent"]` against the
 same profile), answers `404` while `checkoutFlowId` is unset (`StorefrontApi.ucpCheckoutOn`, kept 30 seconds per isolate, so a change an admin saves reaches the storefront within that time; a revoked key is refused at once, as the engine reads keys on every call), spends the `AGENT_LIMIT` budget per
-platform (`/ucp:<platform id>`), deletes `authorization`, `x-api-key` and `cookie`, and signs a
+platform (`/ucp:<platform id>`; a catalog read, `ucpCatalogOp` on the path or a catalog tool in a JSON MCP `tools/call` body, spends `CATALOG_LIMIT` instead, `/ucp/catalog:<platform id>`, 120 a minute, a lookup one an id), deletes `authorization`, `x-api-key` and `cookie`, and signs a
 `PlatformCaller` onto `x-commerceworker-principal` with `signPlatform`. That is a separate envelope
 (`u1`, not `v1`) over the storefront key, the path and a 60-second expiry, so `verifyPrincipal` never accepts it
 and `verifyPlatform` never accepts a principal: a platform's header is refused at `/mcp`, `/a2a` and
@@ -639,8 +639,52 @@ The same `ucpSync` releases a hold no step took once the order ends `cancelled`,
 
 **MCP.** `/ucp/mcp` (`mcp.ts`) answers JSON-RPC itself instead of through the MCP SDK because UCP fixes
 the error shape: a protocol error is a JSON-RPC error (`-32001` for `422` and `424`, `-32000` otherwise,
-with the HTTP status) and a business outcome is a result with `structuredContent`. The six tools call
-the same operations as REST.
+with the HTTP status) and a business outcome is a result with `structuredContent`. The nine tools call
+the same operations as REST: the six checkout and order ones, and the read-only catalog tools
+`search_catalog`, `lookup_catalog` and `get_product`, whose argument is `{ meta, catalog }`.
+
+### Catalog search and lookup
+
+`POST /ucp/v1/catalog/{search,lookup,product}` and the three MCP tools (`UCP_CATALOG_ROUTES` in core;
+the vendored service specs define the paths and names, and a test holds them equal) let a platform look at
+the catalog. The capabilities, `dev.ucp.shopping.catalog.search` (search) and `.lookup` (lookup and
+`get_product`), are in `UCP_CAPABILITIES` and so in the profile whenever checkout is on; a platform that
+didn't negotiate one is `403 forbidden` (`catalogCall`, `apps/engine/src/ucp/catalog.ts`, which also
+refuses with `404` while `checkoutFlowId` is unset and `503 catalog_unavailable` when the edge fails,
+logging only the edge's status). The routes store nothing and take no idempotency key.
+
+The pure mapping is `ucp/catalog.ts` in core (`toUcpProduct`, `lookupProducts`, `toUcpDetailProduct`, which
+name every field that leaves); the use-cases are `searchCatalog`, `lookupCatalog` and `getCatalogProduct`
+(`packages/application/src/commerce/ucp-catalog.ts`), which take a `CatalogReader`
+(`packages/ports/src/commerce/catalog-reader.ts`: `channel`, `search`, `listing`, `doc`, `bySku`,
+`axisNames`). `createCatalogEdgeReader` (`@commerceworker/adapters/catalog-edge`), bound in
+`apps/engine/src/wire.ts` (`catalogReader`, the only engine file that imports it or reads `CATALOG_EDGE`,
+held by `scripts/composition-root.test.ts`), implements it, and `InMemoryCatalogReader`
+(`packages/test-kit`) fakes it.
+
+The reader reads published documents through the `CATALOG_EDGE` service binding to the delivery Worker's
+`CatalogRead` entrypoint (fetch only; it forwards each public route by its canonical URL to the cached `CatalogDelivery` and refuses `/_idx/`, writes and anything unparsed), with the edge's canonical URLs (`https://catalog.internal/v1/<channel>/<locale>/…`,
+a query's words normalized, a default page and offset left out), so a read is the same cache entry as the
+public API's; it never goes through the public gateway, and a platform's own words only ever reach it as an
+encoded path segment or the `q` parameter. Its channel is the catalog's `ORDERS_CHANNEL`
+(`ProductCatalogRpc.ordersChannel()`), and only that one: there is no way to name another. Its currency,
+default locale and locales come from `listChannels`, the names of a type's option axes from `listTypes` (both
+kept 30 seconds).
+
+- **Search.** A query goes to the edge's keyword search. With no category or price filter the edge pages (the
+  cursor is its offset); with one, the 50 best matches' documents are fetched in parallel and filtered here,
+  and core's `paginate` pages the result. With no query and exactly one category it is the edge's listing for
+  that category, with `r.price` for a price range, and the cursor is the edge's own, checked with
+  `decodeListingCursor` before it is sent. Anything else is an empty page and a `query_required` message.
+  Page size is 10 by default and 25 at most.
+- **Lookup.** Each id (a `CODE`, or it is not looked up at all) is tried as `/skus/<id>` and, only on a miss, as `/products/<id>`, and the documents are merged by key before `lookupProducts` correlates ids to variants.
+- **Get product.** An id is a key (preferred) or a SKU, which anchors the selection on that variant.
+- **Context.** Locale: `context.language`, then `Accept-Language`, then the channel's default
+  (`catalogLocale`); the channel's currency only, with an info message when `context.currency` differs and
+  a price filter ignored with a warning. `context` and `signals` are read for those and never logged.
+  Prices are the catalog's list prices (checkout totals stay authoritative); there is no availability.
+
+`productUrl` (`UcpSettings`, a template with `{slug}` or `{key}`) gives each product its `url`.
 
 The retention sweep prunes `ucp_idempotency` after 48 hours and abandoned `checkout_sessions` 30 days after
 they expire (see [Retention](data-model.md#retention)). Audit actions `ucp.settings`,

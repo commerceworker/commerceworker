@@ -118,6 +118,16 @@ test('the engine config carries the deployment everywhere a name is account-wide
     service: 'commerceworker-catalog-acme',
     entrypoint: 'CatalogApi',
   });
+  // UCP catalog search reads the catalog's cached edge entrypoint of this deployment's delivery
+  // Worker, so a platform sees what the public edge serves.
+  assert.deepEqual(
+    c.services.find((s: { binding: string }) => s.binding === 'CATALOG_EDGE'),
+    {
+      binding: 'CATALOG_EDGE',
+      service: 'commerceworker-delivery-acme',
+      entrypoint: 'CatalogRead',
+    },
+  );
   assert.equal(c.workers_dev, false);
 });
 
@@ -189,6 +199,10 @@ test("delivery serves catalog.<domain> from the deployment's bucket, cards and p
   for (const k of ['d1_databases', 'vectorize', 'ai', 'durable_objects', 'ratelimits', 'vars'])
     assert.equal(c[k], undefined, k);
   assert.equal(c.exports.CatalogDelivery.cache.enabled, true);
+  // The engine's CATALOG_EDGE binding names this entrypoint, so the catalog-only delivery exports it
+  // (the dispatcher with content does too: see the content deployment's exports below).
+  assert.equal(c.exports.CatalogDelivery.type, 'worker');
+  assert.equal(c.exports.CatalogRead.cache.enabled, false);
   // Search goes to this deployment's own catalog.
   assert.deepEqual(c.services, [
     { binding: 'CATALOG', service: 'commerceworker-catalog-acme', entrypoint: 'SearchApi' },
@@ -267,13 +281,14 @@ test('the storefront config binds the engine’s narrow entrypoint and its own h
       'ai',
     ])
       assert.equal(config[binding], undefined, `the storefront binds ${binding}`);
-  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006, <slot>007 and <slot>008.
+  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 to <slot>009.
   assert.deepEqual(
     c.ratelimits.map((r: { name: string; namespace_id: string }) => [r.name, r.namespace_id]),
     [
       ['API_LIMIT', '2006'],
       ['AGENT_LIMIT', '2007'],
       ['PROMO_LIMIT', '2008'],
+      ['CATALOG_LIMIT', '2009'],
     ],
   );
   // No two Workers of the fleet share a rate-limit namespace.
@@ -339,6 +354,12 @@ test("a customer's limits replace the base budgets they name", () => {
   const s = limit(renderStorefront(base('storefront'), agents));
   assert.deepEqual(s.AGENT_LIMIT, { limit: 900, period: 60 });
   assert.deepEqual(s.API_LIMIT, limit(base('storefront')).API_LIMIT);
+  // A platform's catalog budget is its own: raising agents leaves it, and `catalog` sets only it.
+  assert.deepEqual(s.CATALOG_LIMIT, { limit: 120, period: 60 });
+  const catalog = toDeployment({ ...acme, limits: { catalog: 500 } });
+  const c2 = limit(renderStorefront(base('storefront'), catalog));
+  assert.deepEqual(c2.CATALOG_LIMIT, { limit: 500, period: 60 });
+  assert.deepEqual(c2.AGENT_LIMIT, limit(base('storefront')).AGENT_LIMIT);
   assert.throws(() => toDeployment({ ...acme, limits: { mcp: 10 } }), /limits.mcp/);
   assert.throws(() => toDeployment({ ...acme, limits: { api: 0 } }), /positive/);
 });
@@ -1704,7 +1725,12 @@ test('delivery with content is the dispatcher at both hosts, with the catalog an
     { pattern: 'catalog.acme.commerceworker.com', custom_domain: true },
     { pattern: 'cdn.acme.commerceworker.com', custom_domain: true },
   ]);
-  assert.deepEqual(Object.keys(d.exports).sort(), ['CatalogDelivery', 'Delivery', 'default']);
+  assert.deepEqual(Object.keys(d.exports).sort(), [
+    'CatalogDelivery',
+    'CatalogRead',
+    'Delivery',
+    'default',
+  ]);
   assert.deepEqual(d.r2_buckets.map((b: { binding: string }) => b.binding).sort(), [
     'MEDIA_BUCKET',
     'PUBLISHED',
