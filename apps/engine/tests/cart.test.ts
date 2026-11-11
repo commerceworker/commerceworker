@@ -568,14 +568,14 @@ describe('the cart socket', () => {
     });
     expect((await viewer.call('cancel')).result).toMatchObject({ ok: false });
     viewer.send({ type: 'cf_agent_state', state: { cart: null, members: [], chat: [] } });
-    await new Promise((r) => setTimeout(r, 100));
+    // A call on the same socket is answered after the frame before it was handled.
+    await viewer.call('whoami');
     expect((await state(id)).cart?.id).toBe(id);
 
     // Signed out while the page listens without calling anything: the next check closes it.
     await db().delete(sessions).where(eq(sessions.tokenHash, vee.session!));
     await cart(id).recheckConnections();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(viewer.closed()).toBe(4401);
+    await vi.waitFor(() => expect(viewer.closed()).toBe(4401));
     expect((await state(id)).members.map((m) => m.name)).not.toContain('vee2');
   });
 
@@ -799,12 +799,18 @@ describe('typing on a cart', () => {
     const id = await open();
     const ann = await socket(id, await who('operator', 'ann'));
     const ben = await socket(id, await who('viewer', 'ben'));
-    // Hold the typing call's check of who is calling (a D1 read for staff) while the message goes.
+    // Hold the typing call's check of who is calling (a D1 read for staff) until the message has
+    // gone. The gate opens on the message's reply, not on a timer, so a slow runner can't reorder
+    // them; and only the typing call is held (it is the one that asks with `keepOpen: false`).
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
     await runInDurableObject(cart(id), (agent) => {
-      const a = agent as unknown as { caller: (o?: object) => Promise<unknown> };
+      const a = agent as unknown as { caller: (o?: { keepOpen?: boolean }) => Promise<unknown> };
       const caller = a.caller.bind(agent);
-      vi.spyOn(a, 'caller').mockImplementationOnce(async (o) => {
-        await new Promise((r) => setTimeout(r, 300));
+      vi.spyOn(a, 'caller').mockImplementation(async (o) => {
+        if (o?.keepOpen === false) await gate;
         return caller(o);
       });
     });
@@ -812,6 +818,7 @@ describe('typing on a cart', () => {
     expect((await ann.call('say', ['Sent before the check finished'])).result).toMatchObject({
       ok: true,
     });
+    release();
     expect((await typing).result).toBe(false);
     await ben.call('whoami');
     expect(ben.typings()).toEqual([]);

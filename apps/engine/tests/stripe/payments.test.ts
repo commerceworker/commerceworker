@@ -305,7 +305,12 @@ describe('refund', () => {
   it('spreads a refund over the payments newest first, once per step', async () => {
     const o = order('ord_s_refund', { total: 30, subtotal: 30 });
     const first = await charge(env, o, 'charge#1');
-    await new Promise((r) => setTimeout(r, 5));
+    // The ledger orders by created time, then id: make the first clearly older instead of
+    // trusting the clock to tick between two charges (the tie would break on a random id).
+    await db()
+      .update(payments)
+      .set({ createdAt: Date.now() - 60_000 })
+      .where(eq(payments.orderId, o.id));
     const second = await charge(env, { ...o, total: 20 }, 'charge#2');
 
     const part = await refund(env, o, 'refund#1', 15);

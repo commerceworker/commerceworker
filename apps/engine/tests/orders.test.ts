@@ -84,6 +84,17 @@ const waitingOn = (id: string, pred: (s: OrderState) => boolean, what: string, m
     ms,
   );
 
+/**
+ * The order's D1 index row once `ok` holds. The agent reports a status first and writes the row
+ * after (`report` awaits `syncIndex`), so a read right after a snapshot shows the wait or the end
+ * can still see the row from before it.
+ */
+const indexRow = (orderId: string, ok: (r: typeof orders.$inferSelect) => boolean) =>
+  until(async () => {
+    const r = await db().select().from(orders).where(eq(orders.id, orderId)).get();
+    return r && ok(r) ? r : false;
+  }, 'the order’s index row');
+
 const settled = (id: string) =>
   waitingOn(
     id,
@@ -203,8 +214,8 @@ describe('B2B order', () => {
     expect(ship).toHaveLength(1);
     const res = await db().select().from(reservations).where(eq(reservations.orderId, orderId));
     expect(res.every((r) => r.status === 'consumed')).toBe(true);
-    const row = await db().select().from(orders).where(eq(orders.id, orderId)).get();
-    expect(row!.status).toBe('completed');
+    const row = await indexRow(orderId, (r) => r.status === 'completed');
+    expect(row.status).toBe('completed');
   });
 
   it('asks for approval when over the credit limit, and declines on rejection', async () => {
@@ -226,10 +237,10 @@ describe('B2B order', () => {
     const pending = await db().select().from(approvals).where(eq(approvals.orderId, orderId));
     expect(pending).toMatchObject([{ status: 'pending', assignee: 'sales_ops' }]);
     // The orders list says who the wait is on, and when it times out (so it can say it's overdue).
-    const listed = await db().select().from(orders).where(eq(orders.id, orderId)).get();
+    const listed = await indexRow(orderId, (r) => r.waitingFor === 'person:sales_ops');
     expect(listed).toMatchObject({ waitingFor: 'person:sales_ops', stoppedAt: null, reason: null });
-    expect(listed!.waitingDue).toBe(s.waits.find((w) => w.kind === 'approval')!.deadline);
-    expect(listed!.waitingDue).toBeGreaterThan(listed!.waitingSince!);
+    expect(listed.waitingDue).toBe(s.waits.find((w) => w.kind === 'approval')!.deadline);
+    expect(listed.waitingDue).toBeGreaterThan(listed.waitingSince!);
 
     await agent(orderId).decide('approval', 'rejected', 'dana', 'Over limit');
     const done = await settled(orderId);
@@ -251,7 +262,7 @@ describe('B2B order', () => {
     });
     const done = await settled(orderId);
     expect([done.status, done.reason]).toEqual(['declined', 'No approval decision in time']);
-    const listed = await db().select().from(orders).where(eq(orders.id, orderId)).get();
+    const listed = await indexRow(orderId, (r) => r.reason === 'No approval decision in time');
     expect(listed).toMatchObject({
       waitingFor: null,
       waitingDue: null,
@@ -318,10 +329,10 @@ describe('B2B order', () => {
     expect(failed.reason).toContain('Insufficient stock');
     expect(failed.rollback).toEqual({ outcome: 'complete', error: null });
     expect(failed.nodes.reserve!.status).toBe('rolled_back');
-    const listed = await db().select().from(orders).where(eq(orders.id, orderId)).get();
+    const listed = await indexRow(orderId, (r) => r.stoppedAt != null && r.reason != null);
     // It took the "short" branch to the end that fails and rolls back.
-    expect(listed!.stoppedAt).toBe(failed.flow!.nodes.find((n) => n.id === 'backorder')!.label);
-    expect(listed!.reason).toContain('Insufficient stock');
+    expect(listed.stoppedAt).toBe(failed.flow!.nodes.find((n) => n.id === 'backorder')!.label);
+    expect(listed.reason).toContain('Insufficient stock');
   });
 
   it('drops meta.simulate where the deployment does not allow simulated failures', async () => {
