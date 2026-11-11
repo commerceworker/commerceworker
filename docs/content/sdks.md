@@ -30,6 +30,7 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 | Programmatic authoring/publishing (writes)                          | `@commerceworker/sdk/management`   |
 | Storefront reads: products, categories, faceted listings, search     | `@commerceworker/sdk/catalog`      |
 | Commerce: orders, carts, catalog, pricing, B2B, webhook subscriptions | `@commerceworker/sdk/commerce`   |
+| The `commerceworker` command for commerce (orders, flows, approvals, `run <operationId>`) | the `commerceworker` bin; built on `@commerceworker/sdk/commerce` (see `developer-tooling.md`) |
 | Verifying a commerce webhook delivery                               | `@commerceworker/sdk/commerce/webhooks` |
 | Types for entry fields                                              | `@commerceworker/sdk/codegen`      |
 | Rendering rich text to HTML, Markdown or plain text (any framework) | `@commerceworker/sdk/rich-text`    |

@@ -30,12 +30,35 @@ export class CliError extends Error {
   }
 }
 
+/** A commerce API refusal, as the SDK reported it: what an agent branches on, and a person reads. */
+export class ApiFailure extends CliError {
+  constructor(
+    message: string,
+    exitCode: number,
+    /** The SDK error's `kind`: `not_found`, `forbidden`, `conflict`, `connection`… */
+    readonly kind: string,
+    readonly info: {
+      status?: number;
+      requestId?: string;
+      operationId?: string;
+      issues?: readonly unknown[];
+      /** Where a person can do what the API refused to do for a token. */
+      adminLink?: string;
+    },
+  ) {
+    super(message, exitCode, kind);
+    this.name = 'ApiFailure';
+  }
+}
+
 export const usageError = (message: string) => new CliError(message, EXIT.usage, 'usage');
 
 /** A command's outcome: `json` is printed with `--json`, `human` without it. */
 export interface Result {
   readonly json: unknown;
   readonly human: string;
+  /** Print `json` even without `--json`: commerce commands answer agents first. */
+  readonly jsonDefault?: boolean;
   /** Non-zero to report a failure that still produced a result (a failed `doctor` check). */
   readonly exitCode?: number;
 }

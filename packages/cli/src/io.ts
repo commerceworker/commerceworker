@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -21,6 +22,10 @@ export interface Io {
   /** Asks one question; called only when `interactive`. */
   readonly ask: (question: string) => Promise<string>;
   readonly platform: NodeJS.Platform;
+  /** Opens a page in the person's browser; called only for `login --open`, with a vetted href. */
+  readonly openUrl: (url: string) => Promise<void>;
+  /** All of stdin, for `login --token -`. */
+  readonly readStdin: () => Promise<string>;
 }
 
 /**
@@ -58,5 +63,23 @@ export function processIo(): Io {
       }
     },
     platform: process.platform,
+    openUrl: async (url) => {
+      // `url` is a vetted href. Nothing goes through a shell, and Windows gets the URL handler
+      // rather than `start`, which would read `&` and `"` as command syntax.
+      const [command, args] =
+        process.platform === 'darwin'
+          ? ['open', [url]]
+          : process.platform === 'win32'
+            ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+            : ['xdg-open', [url]];
+      spawn(command as string, args as string[], { stdio: 'ignore', detached: true })
+        .on('error', () => undefined)
+        .unref();
+    },
+    readStdin: async () => {
+      let text = '';
+      for await (const chunk of process.stdin) text += chunk;
+      return text;
+    },
   };
 }

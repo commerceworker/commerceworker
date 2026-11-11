@@ -115,6 +115,7 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'REST API', slug: 'reference/rest-api' },
+            { label: 'Command-line tool', slug: 'reference/cli' },
             { label: 'Node catalog', slug: 'reference/nodes' },
             { label: 'Expressions and policy rules', slug: 'reference/expressions' },
             { label: 'Status lifecycles', slug: 'reference/lifecycles' },

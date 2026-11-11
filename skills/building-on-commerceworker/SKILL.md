@@ -1,6 +1,6 @@
 ---
 name: building-on-commerceworker
-description: Build a website, app or service that reads and writes content in CommerceWorker, a headless CMS. Use when choosing a CommerceWorker SDK, reading published content (Delivery) or drafts (Preview), writing through the Management API, keeping reads consistent after a write, generating TypeScript types from the content model, rendering rich text (including embeds), or deciding how to cache.
+description: Build a website, app or service that reads and writes content in CommerceWorker, a headless CMS, or drive its commerce side from a terminal. Use when choosing a CommerceWorker SDK, reading published content (Delivery) or drafts (Preview), writing through the Management API, keeping reads consistent after a write, generating TypeScript types from the content model, rendering rich text (including embeds), deciding how to cache, or running orders, flows and approvals with the commerceworker command.
 ---
 
 # Building on CommerceWorker
@@ -123,3 +123,30 @@ commerceworker whoami --json
 `doctor` checks sign-in, reachability, the API version and access to the space. In CI set
 `COMMERCEWORKER_TOKEN` and `COMMERCEWORKER_URL` instead of logging in.
 CLI reference: https://docs.commerceworker.com/content/guides/cli/
+
+## Run commerce from the terminal
+
+The same `commerceworker` command works a commerce workspace. Sign in against its admin address;
+every commerce command prints JSON and exits 0 ok, 1 API error, 2 usage, 3 not signed in.
+
+```sh
+commerceworker login --url https://app.your-workspace.commerceworker.com --role operator
+commerceworker whoami
+commerceworker orders list --status waiting
+commerceworker orders get ord_123
+commerceworker approvals decide ord_123 mgr --decision approved
+commerceworker flows get checkout
+commerceworker flows publish checkout --draft DRAFT
+commerceworker carts list --status open
+commerceworker catalog products get tee
+commerceworker run start_order --input @order.json --idempotency-key order-42
+```
+
+- A profile belongs to one product: a content command with a commerce profile is refused, and the
+  reverse. In CI set `COMMERCEWORKER_TOKEN` (an API token) and `COMMERCEWORKER_URL`.
+- `commerceworker run --list` names every REST operation; `run <operationId> --input <json|@file>`
+  calls one, including those with no command of their own.
+- An API error is a JSON line on stderr with `code`, `status`, `requestId` and `issues`. A price,
+  rate or tax change is done by a person, never a token: the error's `adminLink` says where.
+
+Docs: https://docs.commerceworker.com/reference/cli/

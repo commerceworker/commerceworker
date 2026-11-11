@@ -1241,6 +1241,9 @@ importers:
       '@commerceworker/sdk-codegen':
         specifier: workspace:*
         version: link:../sdk/codegen
+      '@commerceworker/sdk-commerce':
+        specifier: workspace:*
+        version: link:../sdk/commerce
       '@commerceworker/sdk-core':
         specifier: workspace:*
         version: link:../sdk/core

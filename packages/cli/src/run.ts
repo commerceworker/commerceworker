@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { ManagementError } from '@commerceworker/sdk-management';
+import type { CommerceContext } from './args.js';
 import {
   COMMANDS,
   type Command,
@@ -7,8 +8,11 @@ import {
   GLOBAL_OPTIONS,
   type OptionSpec,
 } from './commands.js';
+import { commerceContext } from './commerce.js';
+import { configDirWarning } from './credentials.js';
 import type { Io } from './io.js';
-import { CliError, EXIT, usageError } from './output.js';
+import { cleanDeep, stripControl, stripControlKeepLayout } from './origin.js';
+import { ApiFailure, CliError, EXIT, usageError } from './output.js';
 import { clientFor, resolveSession, type Session } from './session.js';
 
 export const VERSION = '0.1.0';
@@ -19,6 +23,8 @@ export const VERSION = '0.1.0';
  */
 export async function run(argv: readonly string[], io: Io): Promise<number> {
   const json = argv.includes('--json');
+  // Commerce commands answer in JSON, errors included, whether or not `--json` was passed.
+  let machine = false;
   try {
     if (argv.length === 0 || argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
       io.stdout(usage(argv[0] === 'help' ? argv.slice(1) : []));
@@ -53,35 +59,55 @@ export async function run(argv: readonly string[], io: Io): Promise<number> {
       environment: values.environment as string | undefined,
       profile: values.profile as string | undefined,
     };
+    machine = command.product === 'commerce';
     let session: Promise<Session> | undefined;
+    let commerce: Promise<CommerceContext> | undefined;
     const ctx: CommandContext = {
       args: parsed.positionals,
       values,
       io,
       target,
       json,
+      pretty: values.pretty === true,
+      commerce: () => {
+        machine = true;
+        commerce ??= commerceContext(target, io);
+        return commerce;
+      },
       session: () => {
         session ??= resolveSession(target, io);
         return session;
       },
       client: async () => clientFor(await ctx.session(), io),
     };
+    const warning = await configDirWarning(io);
+    if (warning) io.stderr(`commerceworker: warning: ${warning}`);
     const result = await command.run(ctx);
-    io.stdout(json ? JSON.stringify(result.json, null, 2) : result.human);
+    if (result.jsonDefault) {
+      io.stdout(JSON.stringify(result.json, null, values.pretty ? 2 : undefined));
+    } else {
+      // JSON escapes control characters; a table or a line does not, so strip them there.
+      io.stdout(json ? JSON.stringify(result.json, null, 2) : stripControlKeepLayout(result.human));
+    }
     return result.exitCode ?? EXIT.ok;
   } catch (err) {
     const failure = describe(err);
     io.stderr(
       json
         ? JSON.stringify({ error: failure.error }, null, 2)
-        : `commerceworker: ${failure.error.message}`,
+        : machine
+          ? JSON.stringify({ error: failure.error })
+          : `commerceworker: ${failure.error.message}`,
     );
     return failure.exitCode;
   }
 }
 
-/** Command names are the leading words: two (`entries list`) before one (`spaces`). */
+/** Command names are the leading words: three (`catalog products get`), two (`entries list`), one (`spaces`). */
 function findCommand(argv: readonly string[]): { command: Command; rest: readonly string[] } {
+  const three = `${argv[0]} ${argv[1]} ${argv[2]}`;
+  const byThree = COMMANDS.find((c) => c.name === three);
+  if (byThree) return { command: byThree, rest: argv.slice(3) };
   const two = `${argv[0]} ${argv[1]}`;
   const byTwo = COMMANDS.find((c) => c.name === two);
   if (byTwo) return { command: byTwo, rest: argv.slice(2) };
@@ -113,10 +139,22 @@ function toParseOptions(options: Readonly<Record<string, OptionSpec>>) {
 
 interface Failure {
   readonly exitCode: number;
-  readonly error: { code: string; message: string; status?: number; details?: unknown };
+  readonly error: {
+    code: string;
+    message: string;
+    status?: number;
+    details?: unknown;
+    requestId?: string;
+    operationId?: string;
+    issues?: readonly unknown[];
+    adminLink?: string;
+  };
 }
 
 function describe(err: unknown): Failure {
+  if (err instanceof ApiFailure) {
+    return { exitCode: err.exitCode, error: { code: err.kind, message: err.message, ...err.info } };
+  }
   if (err instanceof CliError) {
     return {
       exitCode: err.exitCode,
@@ -133,21 +171,26 @@ function describe(err: unknown): Failure {
     return {
       exitCode: status === 401 ? EXIT.auth : EXIT.failure,
       error: {
-        code: apiError.code ?? `http_${status}`,
-        message:
+        code: stripControl(String(apiError.code ?? `http_${status}`)),
+        // What the server said is its text, not ours: no control characters reach the terminal.
+        message: stripControl(
           status === 401
             ? 'The token was refused (401). Run `commerceworker login` again.'
             : status === 403
               ? `Forbidden (403): the token lacks the scope this needs. ${apiError.message ?? ''}`.trim()
               : (apiError.message ?? err.message),
+        ),
         status,
-        ...(err.body === undefined ? {} : { details: err.body }),
+        ...(err.body === undefined ? {} : { details: cleanDeep(err.body) }),
       },
     };
   }
   return {
     exitCode: EXIT.failure,
-    error: { code: 'error', message: err instanceof Error ? err.message : String(err) },
+    error: {
+      code: 'error',
+      message: stripControlKeepLayout(err instanceof Error ? err.message : String(err)),
+    },
   };
 }
 
@@ -194,6 +237,11 @@ function usage(topic: readonly string[]): string {
     'Environment: COMMERCEWORKER_TOKEN (a key or token; skips the stored profile), COMMERCEWORKER_URL,',
     'COMMERCEWORKER_SPACE, COMMERCEWORKER_ENVIRONMENT, COMMERCEWORKER_PROFILE, COMMERCEWORKER_CONFIG_DIR.',
     '',
-    'Exit codes: 0 ok, 1 failed, 2 usage or confirmation needed, 3 not signed in, 4 destructive change refused.',
+    'Commerce commands (orders, flows, approvals, carts, catalog, run) print JSON; --pretty indents it.',
+    'Content commands (login --url <api url>, spaces, model, entries, assets, import, types, doctor) print',
+    'a table unless --json. A command works only with its own product’s profile.',
+    '',
+    'Exit codes: 0 ok, 1 failed (an API error prints its kind, status and request id to stderr), 2 usage or',
+    'confirmation needed, 3 not signed in, 4 destructive change refused.',
   ].join('\n');
 }
