@@ -139,6 +139,8 @@ describe('turbo cache inputs', () => {
     assertMoves('apps/docs/src/content/index.mdx', ['design#test', 'cli#test']);
     assertMoves('packages/sdk/vue/src/index.ts', ['cli#test']);
     assertMoves('apps/delivery/src/catalog/routes.ts', ['sdk-catalog#test']);
+    assertMoves('apps/web/app/lib/openapi.ts', ['sdk-commerce#test']);
+    assertMoves('apps/web/app/lib/rest-operations.ts', ['sdk-commerce#test']);
     assertMoves('apps/docs/src/data/runs/b2b-order.json', ['engine#test']);
   });
 
