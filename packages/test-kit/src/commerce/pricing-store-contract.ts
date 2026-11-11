@@ -130,6 +130,7 @@ export const PRICING_FIXTURE: PricingFixture = {
   ],
   fxRates: [{ currency: 'EUR', rate: 0.92 }],
   priceSources: [
+    { id: 'quote', label: 'Quote', priority: 0, stopProcessing: true, active: true },
     { id: 'price_book', label: 'Price book', priority: 1, stopProcessing: true, active: true },
     { id: 'contract', label: 'Contract', priority: 2, stopProcessing: true, active: true },
     { id: 'volume', label: 'Volume', priority: 3, stopProcessing: false, active: false },
@@ -504,7 +505,7 @@ export function describePricingStoreContract(
     it("builds a customer's price chain: active sources, rules, their contract prices, their tier", async () => {
       const s = await store();
       const chain = await s.pricingFor('pc_northwind', 0);
-      expect(chain.sources.map((x) => x.id).sort()).toEqual(['contract', 'price_book']);
+      expect(chain.sources.map((x) => x.id).sort()).toEqual(['contract', 'price_book', 'quote']);
       expect(chain.tier).toBe('gold');
       const mine = chain.rules.filter(
         (r) => r.id.startsWith('pc_') || r.id.startsWith('contract_pc_'),

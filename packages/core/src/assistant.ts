@@ -152,6 +152,16 @@ export type AssistantTool =
   | 'update_po_draft'
   | 'submit_po'
   | 'cancel_po'
+  | 'list_quotes'
+  | 'get_quote'
+  | 'create_quote'
+  | 'update_quote'
+  | 'send_quote'
+  | 'accept_quote'
+  | 'decline_quote'
+  | 'revise_quote'
+  | 'expire_quote'
+  | 'convert_quote'
   | 'set_member_role'
   | 'set_approval_separation'
   | 'set_plugin_enabled'
@@ -910,6 +920,86 @@ export const ASSISTANT_TOOLS: Record<
     description:
       'Cancel a purchase order that hasn’t ended. If its order is running it is cancelled too, giving back its credit hold, budget spend and stock.',
   },
+  list_quotes: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Listed quotes',
+    title: 'List quotes',
+    description:
+      'Negotiated quotes, newest first and a page at a time: name, company, version, status, expiry and total. Superseded versions are left out unless you ask for a status or one negotiation’s versions (rootId). Narrow by company, status or a name search; pass the cursor a page returned for the next.',
+  },
+  get_quote: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a quote',
+    title: 'Get a quote',
+    description:
+      'One quote with its lines (SKU, the most it covers, list and quoted price), its expiry, the other versions of the negotiation and what it was converted into.',
+  },
+  create_quote: {
+    role: 'operator',
+    confirm: false,
+    label: 'Drafted a quote',
+    title: 'Create a quote draft',
+    description:
+      'Save a draft quote for a company: a name, lines (SKU, the most the buyer may order at the price, the negotiated unit price in the base currency), the member it is for and an expiry day. A draft prices nothing; send_quote sends it.',
+  },
+  update_quote: {
+    role: 'operator',
+    confirm: false,
+    label: 'Changed a quote draft',
+    title: 'Change a quote draft',
+    description:
+      'Change a draft quote: any of its name, buyer, expiry day, notes or its whole list of lines. Only a draft can be changed; a sent quote is revised into a new version.',
+  },
+  send_quote: {
+    role: 'operator',
+    confirm: true,
+    label: 'Send a quote',
+    title: 'Send a quote',
+    description:
+      'Send a draft quote to its company. It needs an expiry day ahead and at least one line; once sent it can’t be edited, only accepted, declined, let lapse or revised.',
+  },
+  accept_quote: {
+    role: 'operator',
+    confirm: true,
+    label: 'Accept a quote',
+    title: 'Accept a quote',
+    description:
+      'Record that the company accepted a sent quote. From then until it expires, orders from that company are priced at the quoted prices, ahead of every other price source, up to each line’s quantity.',
+  },
+  decline_quote: {
+    role: 'operator',
+    confirm: true,
+    label: 'Decline a quote',
+    title: 'Decline a quote',
+    description:
+      'Record that the company declined a sent quote, or withdraw a draft. A declined quote can be revised into a new version.',
+  },
+  revise_quote: {
+    role: 'operator',
+    confirm: false,
+    label: 'Revised a quote',
+    title: 'Revise a quote',
+    description:
+      'Start the next version of a sent, declined or expired quote: a new draft with the same lines, and the old version becomes superseded and read-only. An accepted quote can’t be revised; expire it first.',
+  },
+  expire_quote: {
+    role: 'operator',
+    confirm: true,
+    label: 'End a quote',
+    title: 'Expire a quote',
+    description:
+      'End a sent or accepted quote now: an accepted quote stops pricing orders at once.',
+  },
+  convert_quote: {
+    role: 'operator',
+    confirm: true,
+    label: 'Convert a quote',
+    title: 'Convert a quote',
+    description:
+      'Turn an accepted quote into a purchase order draft when the company uses purchase orders (it has any), or straight into an order otherwise (to overrides). Converting again returns the first result and makes nothing new.',
+  },
   // The Team and Plugins pages' changes, for admins. Those the pages ask a step-up for need one on
   // the card too (`ActionPreview.stepUp`).
   set_member_role: {
@@ -1101,6 +1191,9 @@ export const WRITES_WITHOUT_CONFIRM: readonly AssistantTool[] = [
   'change_cart',
   'create_po_draft',
   'update_po_draft',
+  'create_quote',
+  'update_quote',
+  'revise_quote',
   'start_scenario',
   'create_flow',
   'duplicate_flow',

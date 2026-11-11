@@ -112,6 +112,34 @@ export const SUBJECT_FIXTURE: SubjectFixture = {
       notes: 'Grace’s note',
     },
   ],
+  quotes: [
+    // One for her company, for Charles; one for Ada at another company; one not hers.
+    {
+      id: 'sc2_qt_acct',
+      companyId: 'sc2_acct',
+      buyerId: 'sc2_mem_charles',
+      name: 'Spring deal',
+      status: 'accepted',
+      notes: 'Charles wants net 60',
+      createdBy: 'usr_staff',
+    },
+    {
+      id: 'sc2_qt_ada',
+      companyId: 'sc2_other',
+      buyerId: 'sc2_mem_ada',
+      name: 'Autumn deal',
+      status: 'sent',
+      notes: 'Ada’s terms',
+    },
+    {
+      id: 'sc2_qt_grace',
+      companyId: 'sc2_other',
+      buyerId: null,
+      name: 'Winter deal',
+      status: 'draft',
+      notes: 'Grace’s note',
+    },
+  ],
   checkouts: [
     { id: 'sc2_chk_placed', email: ADA, orderId: 'sc2_o_guest' },
     { id: 'sc2_chk_open', email: ADA, orderId: null },
@@ -176,6 +204,8 @@ export function describeSubjectStoreContract(
       expect(rows.companyMembers.map((m) => m.id)).toEqual(['sc2_mem_ada']);
       // Her company's POs, and the one she placed; not Grace's.
       expect(rows.purchaseOrders.map((p) => p.id).sort()).toEqual(['sc2_po_acct', 'sc2_po_ada']);
+      // Her company's quotes, and the one for her; not Grace's.
+      expect(rows.quotes.map((q) => q.id).sort()).toEqual(['sc2_qt_acct', 'sc2_qt_ada']);
       expect((await s.checkouts(ADA, 10)).map((c) => c.id).sort()).toEqual([
         'sc2_chk_open',
         'sc2_chk_placed',
@@ -232,6 +262,32 @@ export function describeSubjectStoreContract(
       });
       // Again: her company's is still hers and is blanked (as it already is); hers is not.
       expect(await s.erasePurchaseOrders(ada)).toBe(1);
+    });
+
+    it('blanks the people in their quotes, keeping name, status and the rest', async () => {
+      const s = await fresh();
+      const ada = await s.subject(ADA);
+      const grace = await s.subject('grace@example.com');
+      expect(await s.eraseQuotes(ada)).toBe(2);
+      const mine = (await s.rows(ada, [])).quotes;
+      // The one for her no longer names her, so only her company's is found by her.
+      expect(mine.map((q) => q.id)).toEqual(['sc2_qt_acct']);
+      expect(mine[0]).toMatchObject({
+        name: 'Spring deal',
+        status: 'accepted',
+        buyerId: null,
+        notes: null,
+      });
+      const byId = new Map((await s.rows(grace, [])).quotes.map((q) => [q.id, q]));
+      expect(byId.get('sc2_qt_ada')).toMatchObject({
+        name: 'Autumn deal',
+        status: 'sent',
+        buyerId: null,
+        notes: null,
+      });
+      // Not hers: untouched.
+      expect(byId.get('sc2_qt_grace')).toMatchObject({ notes: 'Grace’s note' });
+      expect(await s.eraseQuotes(ada)).toBe(1);
     });
 
     it('blanks the company members with their email, keeping the rows, once', async () => {

@@ -2,16 +2,17 @@
  * The pricing chain for `commerce.price`. Pure: the engine loads the sources and their entries from
  * D1 and passes them in with the list price.
  *
- * Sources run in `priority` order (lowest first). Within a source, the lowest price among its
- * matching entries counts, so the deepest volume tier wins. The price-book source ranks first by
- * the entry's book: the highest-priority book that prices the line wins, then the lowest price in
+ * Sources run in `priority` order (lowest first): the `quote` source (an accepted, unexpired quote
+ * of the customer's company) comes first and stops the chain, so a negotiated price is the price.
+ * Within a source, the lowest price among its matching entries counts, so the deepest volume tier
+ * wins. The price-book source ranks first by the entry's book: the highest-priority book that prices the line wins, then the lowest price in
  * it (an entry in no book ranks below every book). Equal ranks break by book id, then entry id,
  * so the same inputs always price the same way. Each source that matches adds that price as a
  * candidate, and a matching source with `stopProcessing` ends the chain. The line takes the lowest
  * candidate; with none, the list price.
  */
 
-export const PRICE_SOURCES = ['price_book', 'contract', 'volume'] as const;
+export const PRICE_SOURCES = ['quote', 'price_book', 'contract', 'volume'] as const;
 export type PriceSourceKind = (typeof PRICE_SOURCES)[number];
 
 export type PriceSource = {
@@ -31,6 +32,8 @@ export type PriceRule = {
   customerTier?: string | null;
   /** The line's quantity must be at least this. */
   minQty?: number | null;
+  /** The line's quantity must be at most this (a quote's line: the quantity it was agreed for). */
+  maxQty?: number | null;
   /** A fixed unit price, or else `discountPct` off the list price. */
   price?: number | null;
   discountPct?: number | null;
@@ -67,6 +70,7 @@ export function matchesRule(
   if (r.customerId && r.customerId !== ctx.customerId) return false;
   if (r.customerTier && r.customerTier !== ctx.customerTier) return false;
   if (r.minQty && line.qty < r.minQty) return false;
+  if (r.maxQty && line.qty > r.maxQty) return false;
   if (r.startsAt && ctx.now < r.startsAt) return false;
   if (r.endsAt && ctx.now >= r.endsAt) return false;
   return r.price != null || r.discountPct != null;

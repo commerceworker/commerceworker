@@ -24,6 +24,7 @@ import { d1PluginInstallStore } from '@commerceworker/db/plugin-install-store';
 import { d1PriceBookStore } from '@commerceworker/db/price-book-store';
 import { d1PricingStore } from '@commerceworker/db/pricing-store';
 import { d1PurchaseOrderStore } from '@commerceworker/db/purchase-order-store';
+import { d1QuoteStore } from '@commerceworker/db/quote-store';
 import { d1ScimDirectory } from '@commerceworker/db/scim-directory';
 import { d1UcpStore } from '@commerceworker/db/ucp-store';
 import { d1WebhookOutbox } from '@commerceworker/db/webhook-outbox';
@@ -47,6 +48,7 @@ import type {
   PriceBookStore,
   PricingStore,
   PurchaseOrderStore,
+  QuoteStore,
   ScimDirectory,
   UcpStore,
   WebhookOutbox,
@@ -76,6 +78,9 @@ export const addressBook = (): AddressBook => d1AddressBook(env.DB);
 
 /** Companies' purchase orders. */
 export const purchaseOrderStore = (): PurchaseOrderStore => d1PurchaseOrderStore(env.DB);
+
+/** Companies' negotiated quotes. */
+export const quoteStore = (): QuoteStore => d1QuoteStore(env.DB);
 
 /** Companies' budgets and their spend ledger. */
 export const budgetStore = (): BudgetStore => d1BudgetStore(env.DB);

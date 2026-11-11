@@ -139,7 +139,8 @@ problem in its summary and output, including a missing or free-text ship-to.
 ## Pricing chain
 
 [Price lines](/reference/nodes/#commerce.price) prices each line through the workspace's chain of
-price sources, in priority order. The default chain is price books (stops when one matches),
+price sources, in priority order. The default chain is an accepted [quote](/guides/quotes/) of
+the customer's company (stops when one matches, ahead of every other source), price books (stops),
 contract prices (stops) and volume tiers (keeps going), with the product's list price as the
 fallback. The Commerce page shows the chain in order; your administrator maintains its entries.
 
@@ -157,7 +158,7 @@ match when every scope they set fits: SKU, customer, customer tier, minimum quan
 quantity) and a start/end window. Each sets either a fixed price or a percentage off the list
 price. Contract prices are the customer's agreed prices per SKU.
 
-The node's `useContracts` and `usePriceRules` fields drop the contract source or the price-book and
+The node's `useContracts` and `usePriceRules` fields drop the quote and contract sources or the price-book and
 volume sources for that node. A line with its own `unitPrice` keeps it. The node's `basis` field picks the source: `auto` prices buy-side
 models (procurement, replenishment) at the product's cost without the chain and every other model through it,
 `chain` and `cost` force one or the other (see [Commerce models](/guides/commerce-models/#pricing)). The node's output lists each line's

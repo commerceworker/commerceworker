@@ -137,6 +137,8 @@ describe('starting orders over REST', () => {
       'a2a:1',
       // A submitted purchase order's own start.
       'po:x',
+      // A quote's own start.
+      'quote:x',
     ]) {
       const res = await handleApi(
         new Request('https://app.test/api/v1/orders', {
@@ -1532,6 +1534,97 @@ describe('operations REST runs as MCP does', () => {
       error: 'PO-1 is submitted: only a draft can be changed.',
     });
     expect((await post('purchase-orders/po_1/update', { notes: 'x' })).status).toBe(409);
+    run.mockReset();
+  });
+
+  it('runs the quote tools: reads are a viewer’s, every move an operator’s, the path naming the quote', async () => {
+    run.mockResolvedValueOnce({ ok: true, value: { quotes: [], total: 0, cursor: null } });
+    const listed = await handleApi(
+      new Request(
+        'https://app.test/api/v1/quotes?companyId=cus_1&status=sent&rootId=qt_1&search=Spring&limit=5&nope=1',
+      ),
+      viewer,
+    );
+    expect(listed.status).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'list_quotes',
+      { companyId: 'cus_1', status: 'sent', rootId: 'qt_1', search: 'Spring', limit: 5 },
+    ]);
+    run.mockResolvedValueOnce({ ok: true, value: { quote: { id: 'qt_1' } } });
+    expect(
+      (await handleApi(new Request('https://app.test/api/v1/quotes/qt_1'), viewer)).status,
+    ).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual(['get_quote', { quoteId: 'qt_1' }]);
+
+    // Drafting, editing, and every move after are an operator's.
+    const before = run.mock.calls.length;
+    for (const [path, body] of [
+      [
+        'quotes',
+        {
+          companyId: 'cus_1',
+          name: 'Spring',
+          lines: [{ sku: 'A', qty: 1, unitPrice: 2 }],
+        },
+      ],
+      ['quotes/qt_1/update', { notes: 'x' }],
+      ['quotes/qt_1/send', {}],
+      ['quotes/qt_1/accept', {}],
+      ['quotes/qt_1/decline', {}],
+      ['quotes/qt_1/revise', {}],
+      ['quotes/qt_1/expire', {}],
+      ['quotes/qt_1/convert', {}],
+    ] as const)
+      expect((await post(path, body, viewer)).status, path).toBe(403);
+    expect(run).toHaveBeenCalledTimes(before);
+
+    run.mockResolvedValue({ ok: true, value: { done: 'ok' } });
+    await post('quotes', {
+      companyId: 'cus_1',
+      name: 'Spring',
+      expiresOn: '2026-12-01',
+      lines: [{ sku: 'A', qty: 1, unitPrice: 2 }],
+    });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'create_quote',
+      {
+        companyId: 'cus_1',
+        name: 'Spring',
+        expiresOn: '2026-12-01',
+        lines: [{ sku: 'A', qty: 1, unitPrice: 2 }],
+      },
+    ]);
+    // The path names the quote: a body can't name another.
+    await post('quotes/qt_1/update', { notes: 'Net 30', quoteId: 'qt_2' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'update_quote',
+      { quoteId: 'qt_1', notes: 'Net 30' },
+    ]);
+    for (const [move, tool] of [
+      ['send', 'send_quote'],
+      ['decline', 'decline_quote'],
+      ['revise', 'revise_quote'],
+      ['expire', 'expire_quote'],
+    ] as const) {
+      await post(`quotes/qt_1/${move}`, { quoteId: 'qt_2' });
+      expect(run.mock.calls.at(-1)!.slice(0, 2), tool).toEqual([tool, { quoteId: 'qt_1' }]);
+    }
+    await post('quotes/qt_1/accept', { note: 'By phone' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'accept_quote',
+      { quoteId: 'qt_1', note: 'By phone' },
+    ]);
+    await post('quotes/qt_1/convert', { to: 'po', poNumber: 'PO-9' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'convert_quote',
+      { quoteId: 'qt_1', to: 'po', poNumber: 'PO-9' },
+    ]);
+    // A quote the engine refuses (not a draft any more) is a 409, as the other refusals are.
+    run.mockResolvedValueOnce({
+      ok: false,
+      error: 'Spring is sent: only a draft can be changed; revise it for a new version.',
+    });
+    expect((await post('quotes/qt_1/update', { notes: 'x' })).status).toBe(409);
     run.mockReset();
   });
 

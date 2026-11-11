@@ -131,7 +131,9 @@ export interface PricingStore {
     by?: string,
   ): Promise<number>;
   /**
-   * The price chain for a customer: contract prices become the contract source's entries, and the
+   * The price chain for a customer: the lines of the company's accepted quotes that haven't expired
+   * at `at` become the quote source's entries (each for its SKU up to its quantity), contract
+   * prices become the contract source's entries, and the
    * price books assigned to the customer (by id, or by their tier) that are in force at `at` supply
    * the price-book source's entries, each tagged with its book (`bookId`, `bookPriority`, the
    * book's name). Book entries for SKUs other than `skus` are left out when it is given; entries

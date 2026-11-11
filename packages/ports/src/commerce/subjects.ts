@@ -50,6 +50,8 @@ export interface SubjectRows {
   readonly companyMembers: Record<string, unknown>[];
   /** Purchase orders of their accounts' companies and those their member rows placed (headers). */
   readonly purchaseOrders: Record<string, unknown>[];
+  /** Quotes of their accounts' companies and those for their member rows (headers). */
+  readonly quotes: Record<string, unknown>[];
 }
 
 export interface SubjectStore {
@@ -106,6 +108,14 @@ export interface SubjectStore {
    * they started do. Run before the members are blanked. Returns how many.
    */
   erasePurchaseOrders(subject: Subject): Promise<number>;
+  /**
+   * Blanks what the quotes of the subject's accounts' companies, and those for a member with their
+   * email, say of people: the notes and the buyer. The name (a staff-written label that could name
+   * a person, kept so the quote still reads in lists and on invoiced orders' records), status, version, expiry and lines
+   * (prices and quantities) stay, as the orders priced from them do. Run before the members are
+   * blanked. Returns how many.
+   */
+  eraseQuotes(subject: Subject): Promise<number>;
 }
 
 /** The file store the subject's documents are in. */

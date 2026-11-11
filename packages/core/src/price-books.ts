@@ -135,7 +135,7 @@ export type PricePreviewLine = {
   /** Null for a SKU with no product. */
   listPrice: number | null;
   unitPrice: number;
-  /** `price_book`, `contract`, `volume` or `list`. */
+  /** `quote`, `price_book`, `contract`, `volume` or `list`. */
   source: string;
   /** What priced it: the book's name for a book, the rule's name for another source. */
   name: string;

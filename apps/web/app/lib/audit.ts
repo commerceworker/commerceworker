@@ -96,6 +96,7 @@ const TARGET_PAGES: [RegExp, (id: string) => string][] = [
   [/^cart_[\w-]+$/, (id) => `/carts/${id}`],
   [/^cus_[\w-]+$/, (id) => `/customers/${id}`],
   [/^po_[\w-]+$/, (id) => `/purchase-orders/${id}`],
+  [/^qt_[\w-]+$/, (id) => `/quotes/${id}`],
 ];
 
 /** The page for what an event acted on, when there is one: an order, a cart, a customer, a flow. */

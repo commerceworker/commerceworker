@@ -77,6 +77,13 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'set_budget_status',
   'submit_po',
   'cancel_po',
+  // A quote sent can't be edited; accepting one sets what a company pays; ending one stops that;
+  // converting one makes a PO draft or an order.
+  'send_quote',
+  'accept_quote',
+  'decline_quote',
+  'expire_quote',
+  'convert_quote',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -116,6 +123,12 @@ const IDEMPOTENT = new Set<AssistantTool>([
   // The same PO again starts no second order and finds the cancel done.
   'submit_po',
   'cancel_po',
+  // The same quote move again finds it made; converting twice makes one PO draft or order.
+  'send_quote',
+  'accept_quote',
+  'decline_quote',
+  'expire_quote',
+  'convert_quote',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -131,6 +144,8 @@ const OPEN_WORLD = new Set<AssistantTool>([
   'submit_cart',
   'submit_po',
   'cancel_po',
+  // Converting a quote makes a PO draft or starts an order.
+  'convert_quote',
   'run_stock_review',
   'start_order',
   'restart_order',

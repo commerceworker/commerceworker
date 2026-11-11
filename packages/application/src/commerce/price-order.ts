@@ -26,7 +26,7 @@ export class MissingExchangeRateError extends Error {
 export interface PriceOrderOptions {
   /** `cost` prices at cost; `chain` runs the price chain; `auto` picks by the order's model. */
   readonly basis: 'auto' | 'cost' | 'chain' | (string & {});
-  /** Whether contract prices count. */
+  /** Whether contract prices and quotes count. */
   readonly useContracts: boolean;
   /** Whether price-book and volume rules count. */
   readonly usePriceRules: boolean;
@@ -77,7 +77,8 @@ export async function priceOrder(
   const products = new Map(rows.map((p) => [p.sku, p]));
   const sources =
     chain?.sources.filter((s) =>
-      s.id === 'contract' ? options.useContracts : options.usePriceRules,
+      // A quote is a negotiated price for the customer, as a contract price is.
+      s.id === 'contract' || s.id === 'quote' ? options.useContracts : options.usePriceRules,
     ) ?? [];
   const priced: PricedLine[] = [];
   const lines = order.lines.map((l): OrderLine => {

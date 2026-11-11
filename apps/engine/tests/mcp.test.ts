@@ -196,7 +196,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        26,
+        28,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -275,6 +275,7 @@ describe('MCP', () => {
       'get_product',
       'get_product_sheet',
       'get_purchase_order',
+      'get_quote',
       'list_budgets',
       'list_carts',
       'list_catalog_channels',
@@ -284,6 +285,7 @@ describe('MCP', () => {
       'list_price_books',
       'list_product_types',
       'list_purchase_orders',
+      'list_quotes',
       'needs_attention',
       'preview_price',
     ]);
@@ -301,7 +303,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(81);
+    expect(operator).toHaveLength(91);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -366,6 +368,41 @@ describe('MCP', () => {
           openWorldHint: true,
         },
       });
+    // Quotes: a viewer reads them; an operator drafts, edits and revises without a confirm (nothing
+    // is priced from a draft), and sending, accepting, declining, ending and converting stop for
+    // one, each the same again as once. Only converting reaches an order or a PO.
+    for (const name of ['list_quotes', 'get_quote'])
+      expect(viewer.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        outputSchema: { type: 'object' },
+      });
+    const quoteWrites = [
+      'create_quote',
+      'update_quote',
+      'revise_quote',
+      'send_quote',
+      'accept_quote',
+      'decline_quote',
+      'expire_quote',
+      'convert_quote',
+    ];
+    for (const name of quoteWrites) expect(viewer.map((t) => t.name)).not.toContain(name);
+    for (const name of ['create_quote', 'update_quote', 'revise_quote'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      });
+    for (const name of ['send_quote', 'accept_quote', 'decline_quote', 'expire_quote'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      });
+    expect(operator.find((t) => t.name === 'convert_quote')).toMatchObject({
+      annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    });
     // An admin also drafts plugins: no confirm, but it saves a draft, so it isn't read-only.
     // A cart is saved without a confirm (nothing is ordered); submitting it is an action.
     expect(operator.find((t) => t.name === 'change_cart')).toMatchObject({
@@ -381,7 +418,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(104);
+    expect(admin).toHaveLength(114);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [

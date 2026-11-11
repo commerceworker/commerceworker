@@ -91,6 +91,7 @@ import {
   readPurchaseOrder,
   readPurchaseOrders,
 } from './purchase-orders';
+import { changeQuote, nextQuoteVersion, openQuote, readQuote, readQuotes } from './quotes';
 
 const auditVia = (via: Channel): AuditVia => AUDIT_CHANNEL[via];
 
@@ -148,6 +149,11 @@ export const ACTION_TOOLS: ActionTool[] = [
   'set_budget_status',
   'submit_po',
   'cancel_po',
+  'send_quote',
+  'accept_quote',
+  'decline_quote',
+  'expire_quote',
+  'convert_quote',
   'set_member_role',
   'set_approval_separation',
   'set_assistant_routing',
@@ -373,6 +379,16 @@ export async function runTool<T extends AssistantTool>(
       return openPoDraft(env, p, input as ToolInput<'create_po_draft'>, trailOf(p, name, opts));
     case 'update_po_draft':
       return changePoDraft(env, p, input as ToolInput<'update_po_draft'>, trailOf(p, name, opts));
+    case 'list_quotes':
+      return readQuotes(env, input as ToolInput<'list_quotes'>);
+    case 'get_quote':
+      return readQuote(env, input as ToolInput<'get_quote'>);
+    case 'create_quote':
+      return openQuote(env, p, input as ToolInput<'create_quote'>, trailOf(p, name, opts));
+    case 'update_quote':
+      return changeQuote(env, p, input as ToolInput<'update_quote'>, trailOf(p, name, opts));
+    case 'revise_quote':
+      return nextQuoteVersion(env, p, input as ToolInput<'revise_quote'>, trailOf(p, name, opts));
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

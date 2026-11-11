@@ -42,6 +42,15 @@ export interface SubjectFixture {
     shipTo: Record<string, string> | null;
     notes: string | null;
   }[];
+  quotes?: {
+    id: string;
+    companyId: string;
+    buyerId: string | null;
+    name: string;
+    status: string;
+    notes: string | null;
+    createdBy?: string | null;
+  }[];
   checkouts?: { id: string; email: string; orderId: string | null }[];
   carts?: {
     id: string;
@@ -77,6 +86,7 @@ export class InMemorySubjectStore implements SubjectStore {
       companies: c.companies ?? [],
       companyMembers: c.companyMembers ?? [],
       purchaseOrders: c.purchaseOrders ?? [],
+      quotes: c.quotes ?? [],
       checkouts: c.checkouts ?? [],
       carts: c.carts ?? [],
       audit: c.audit ?? [],
@@ -156,6 +166,7 @@ export class InMemorySubjectStore implements SubjectStore {
       companies: this.f.companies.filter((c) => accounts.has(c.customerId)),
       companyMembers: this.f.companyMembers.filter((m) => lower(m.email) === s.email),
       purchaseOrders: this.theirPos(s).map((p) => structuredClone(p)),
+      quotes: this.theirQuotes(s).map((q) => structuredClone(q)),
     };
   }
 
@@ -281,6 +292,26 @@ export class InMemorySubjectStore implements SubjectStore {
         const { name: _n, line2: _l, ...rest } = p.shipTo;
         p.shipTo = { ...rest, line1: '' };
       }
+    }
+    return mine.length;
+  }
+
+  /** Quotes of the subject's accounts' companies and those for a member with their email. */
+  private theirQuotes(s: Subject) {
+    const accounts = new Set(s.accounts.map((c) => c.id));
+    const members = new Set(
+      this.f.companyMembers.filter((m) => lower(m.email) === s.email).map((m) => m.id),
+    );
+    return this.f.quotes.filter(
+      (q) => accounts.has(q.companyId) || (q.buyerId !== null && members.has(q.buyerId)),
+    );
+  }
+
+  async eraseQuotes(s: Subject) {
+    const mine = this.theirQuotes(s);
+    for (const q of mine) {
+      q.notes = null;
+      q.buyerId = null;
     }
     return mine.length;
   }

@@ -35,6 +35,9 @@ export default [
       // Buyers' purchase orders: the list, and a draft's editor (lib/purchase-orders.server.ts).
       route('purchase-orders', 'routes/purchase-orders.tsx'),
       route('purchase-orders/:poId', 'routes/purchase-order.tsx'),
+      // Negotiated quotes: the list, and a quote's editor (lib/quotes.server.ts).
+      route('quotes', 'routes/quotes.tsx'),
+      route('quotes/:quoteId', 'routes/quote.tsx'),
       route('commerce', 'routes/commerce.tsx'),
       // The product editor: what the last feed left, the assistant's drafts, staged edits, and
       // publishing them (lib/catalog-board.server.ts, docs/product-editor.md).

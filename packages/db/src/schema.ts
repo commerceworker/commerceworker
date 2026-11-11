@@ -368,6 +368,59 @@ export const purchaseOrderLines = sqliteTable(
 );
 
 /**
+ * A company's negotiated quote (`Quote` in core). A revision is a new row of the same `rootId`
+ * and the next `version`; the old one is `superseded`. `status` is the quote lifecycle; only a
+ * draft is edited. `expiresAt` is null only on a draft. An accepted quote prices orders until
+ * then, and `convertedTo` and `convertedId` say what it was turned into, once.
+ */
+export const quotes = sqliteTable(
+  'quotes',
+  {
+    id: text('id').primaryKey(),
+    rootId: text('root_id').notNull(),
+    version: integer('version').notNull().default(1),
+    companyId: text('company_id').notNull(),
+    buyerId: text('buyer_id'),
+    name: text('name').notNull(),
+    /** draft | sent | accepted | declined | expired | superseded. */
+    status: text('status').notNull().default('draft'),
+    expiresAt: integer('expires_at'),
+    notes: text('notes'),
+    /** po | order. */
+    convertedTo: text('converted_to'),
+    convertedId: text('converted_id'),
+    convertedAt: integer('converted_at'),
+    sentAt: integer('sent_at'),
+    decidedAt: integer('decided_at'),
+    createdBy: text('created_by'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('quotes_version').on(t.rootId, t.version),
+    index('quotes_company').on(t.companyId, sql`${t.createdAt} desc`, sql`${t.id} desc`),
+    index('quotes_status').on(t.status, sql`${t.createdAt} desc`, sql`${t.id} desc`),
+    index('quotes_priced').on(t.companyId, t.expiresAt).where(sql`${t.status} = 'accepted'`),
+  ],
+);
+
+/** A quote's lines, one per SKU, in the order they were written. */
+export const quoteLines = sqliteTable(
+  'quote_lines',
+  {
+    quoteId: text('quote_id').notNull(),
+    position: integer('position').notNull(),
+    sku: text('sku').notNull(),
+    name: text('name'),
+    /** The most a buyer may order at this price. */
+    qty: real('qty').notNull(),
+    listPrice: real('list_price'),
+    unitPrice: real('unit_price').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.quoteId, t.position] })],
+);
+
+/**
  * A customer's tax exemption certificates (`TaxCertificate` in core). `regions` is JSON
  * (`TaxPlace[]`); revoked rows stay for the record; erasing the customer deletes them.
  */

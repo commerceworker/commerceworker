@@ -23,7 +23,8 @@ tier, that are in force and have an entry for the line's SKU and quantity:
    the same way.
 
 A book with no entry for a SKU doesn't shadow a lower-priority book that has one, and a volume tier
-that the quantity doesn't reach doesn't count. The rest of the chain still applies: the price-book
+that the quantity doesn't reach doesn't count. The rest of the chain still applies: an accepted
+[quote](/guides/quotes/) of the customer's company comes first and stops it, then the price-book
 source stops processing by default, then contract prices, then volume tiers, then the list price. Price
 rules that belong to no book (older entries) still work and rank below every book. A priced line
 names the book (its **Price lines** output lists the line's source, the book's name as the rule, and

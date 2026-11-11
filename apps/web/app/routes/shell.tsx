@@ -38,6 +38,7 @@ import {
   Ellipsis,
   FileText,
   Gauge,
+  Handshake,
   LayoutDashboard,
   MessageSquareText,
   Monitor,
@@ -176,6 +177,7 @@ const NAV: NavItem[] = [
   { to: '/flows', label: 'Flows', icon: Workflow, section: 'Build' },
   { to: '/commerce', label: 'Commerce', icon: Store, section: 'Reference' },
   { to: '/purchase-orders', label: 'Purchase orders', icon: FileText, section: 'Reference' },
+  { to: '/quotes', label: 'Quotes', icon: Handshake, section: 'Reference' },
   { to: '/catalog', label: 'Catalog', icon: Package, section: 'Reference' },
   { to: '/performance', label: 'Performance', icon: Gauge, section: 'Reference' },
 ];

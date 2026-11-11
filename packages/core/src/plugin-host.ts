@@ -212,6 +212,8 @@ export const RESERVED_ORDER_KEY_PREFIXES = [
   'replenish:',
   // A submitted purchase order's own order start (`poOrderKey`).
   'po:',
+  // A quote's own order start (`quoteOrderKey`).
+  'quote:',
 ] as const;
 
 export const reservedOrderKey = (key: string) =>
