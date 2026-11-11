@@ -9,10 +9,12 @@ The REST API is served at `https://app.commerceworker.com/api/v1`. Its OpenAPI 3
 `GET /api/v1/openapi.json` (cacheable for five minutes), and the [OpenAPI explorer](/api/) renders
 it. Its request bodies are generated from the schemas the routes validate with, so they match what
 the server accepts. Every operation has a unique `operationId` (snake_case), the name a generated client
-gives its method; the routes that run a workspace tool take the tool's name. The `200` response of those
-routes is typed as the tool's result, the same shape MCP returns as structured content, and the
-refusals (`400`, `401`, `403`, `404`, `429`, and `409` or `422` where a route has one) are `{ error }`.
-Where the explorer shows only a description for a response, its shape is described here.
+gives its method; the routes that run a workspace tool take the tool's name. Every success response is
+typed: the routes that run a workspace tool return the tool's result, the same shape MCP returns as
+structured content, and the others return a schema of their own, named in the document's
+`components`. The refusals (`400`, `401`, `403`, `404`, `429`, and `409` or `422` where a route has
+one) are `{ error }`. The two exceptions answer with their result instead: a signed event the order
+won't wait for (`409 { delivered: false }`) and a Stripe event to send again (`409 { outcome: "retry" }`).
 
 ## Authentication
 
@@ -112,8 +114,7 @@ than `instanceof`, which fails if your app loads both the ES module and CommonJS
 The client resends a request that failed with a `429`, a `5xx` or a connection error, up to
 `maxRetries` times (default 2; `0` turns it off), with exponential backoff and jitter or the
 `Retry-After` the server sent. It resends only reads, deletes and writes sent with an
-`idempotencyKey`. `call('start_order', input)` takes any operation by its `operationId`. A route
-whose response the explorer shows only as a description returns its result as `unknown`.
+`idempotencyKey`. `call('start_order', input)` takes any operation by its `operationId`.
 
 To check a signed delivery from a [webhook subscription](#webhook-subscriptions), pass the raw body
 and the `X-CommerceWorker-Signature` header to `verifyCommerceWebhook` from
@@ -138,8 +139,8 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 | `GET` | `/api/v1/flows` | | `{ flows }` |
 | `POST` | `/api/v1/orders` | `{ flowId, version?, input, vars? }` | `201 { orderId }`, or `200 { orderId, replayed: true }` |
 | `GET` | `/api/v1/orders?model=&channel=&status=&q=&limit=&cursor=` | | `{ orders, nextCursor }` |
-| `GET` | `/api/v1/orders/:id` | | The order's live state |
-| `POST` | `/api/v1/orders/:id/events` | `{ event, payload? }` | `{ delivered, nodeId? }` |
+| `GET` | `/api/v1/orders/:id` | | The order's live state ([below](#read-an-order)) |
+| `POST` | `/api/v1/orders/:id/events` | `{ event, payload? }` | `{ delivered, held?, duplicate?, nodeId? }` |
 | `POST` | `/api/v1/orders/:id/approvals/:nodeId` | `{ decision, note?, onBehalfOf? }` | `{ ok: true, outcome, tally }`, `403 { error }` if the caller started the order and the workspace separates [approvals](/guides/team-and-roles/#approvals), `409 { error }` for a vote that can't be taken |
 | `POST` | `/api/v1/orders/:id/cancel` | `{ reason? }` | `{ ok: true }` |
 | `GET` | `/api/v1/carts?status=&limit=` | | `{ carts }` |
@@ -161,7 +162,7 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 | `POST` | `/api/v1/ucp/platforms` | `{ name, profileUrl }` | `201 { platform, key }`; the key is shown once (admin) |
 | `DELETE` | `/api/v1/ucp/platforms/:id` | | `{ ok: true }`, or `404` (admin) |
 | `GET` | `/api/v1/plugins` | | `{ plugins }`: for each plugin, `id`, `runtime` (`worker`, running on its own, or `sandboxed`, run inside CommerceWorker with only the outside hosts its manifest lists), `source` (`deployment`, set up with the workspace, or `installed`, uploaded by an admin), `name`, `version`, `nodes` (node types), `events`, `provides` (the built-in node surfaces it can do the work of: `shipping.rates`, `shipping.labels`, `tax`, `address`), `healthy` (whether it answered just now) and, when it didn't, `error`. A plugin whose manifest was refused has `name` and `version` `null` and no `nodes`; one that is not answering keeps the last manifest it gave (admin) |
-| `POST` | `/api/v1/plugins` | the `.cwplugin` file, as its publisher signed it (at most 5 MiB) | `201` with `{ id, sha, version, publisher, status: "pending", manifest, secrets: [{ name, set }] }`: what it asks for, to review. It doesn't run until an admin approves it on the Plugins page, which asks them to confirm who they are; there is no approve call. `400` with the reason when the publisher isn't trusted, the signature or contents don't check out, or runtime installs are off; `413` when too large (admin) |
+| `POST` | `/api/v1/plugins` | the `.cwplugin` file, as its publisher signed it (at most 5 MiB) | `201` with the upload, `status: "pending"`: its `id`, `sha`, `version`, `publisher`, who uploaded it and when (`uploadedBy`, `uploadedAt`), the `manifest` it was signed with and its `secrets` (`[{ name, set }]`): what it asks for, to review. It doesn't run until an admin approves it on the Plugins page, which asks them to confirm who they are; there is no approve call. `400` with the reason when the publisher isn't trusted, the signature or contents don't check out, or runtime installs are off; `413` when too large (admin) |
 | `POST` | `/api/v1/plugins/:id/disable` | | `{ id, status: "disabled" }`: turns off a plugin installed from a file; its steps stop at once and flows that use it can't be published (admin) |
 | `GET` | `/api/v1/plugins/:id/usage` | | `{ flows, orders, labels }`: the published flows that use the plugin's nodes or name it as a provider, the running orders on them, and the shipping labels it could not void yet (retried daily); all are empty when it can be removed (admin) |
 | `GET` | `/api/v1/webhook-subscriptions` | | `{ subscriptions }` |
@@ -169,9 +170,9 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 | `POST` | `/api/v1/webhook-subscriptions/:id/rotate` | | `{ subscription, secret }` (admin) |
 | `DELETE` | `/api/v1/webhook-subscriptions/:id` | | `{ ok: true }` |
 | `GET` | `/api/v1/webhook-subscriptions/:id/deliveries` | | `{ deliveries }` |
-| `POST` | `/api/v1/webhooks/events` | `{ orderId, event, payload? }` | `200 { delivered: true, nodeId }`, `404` or `409` |
-| `POST` | `/api/v1/webhooks/orders` | `{ model, channel, externalId, lines, … }` | `201 { orderId, flowId }`, or `200` on a replay |
-| `POST` | `/api/v1/webhooks/stripe` | A Stripe event | `200 { outcome }`, `409` when the order isn't waiting yet |
+| `POST` | `/api/v1/webhooks/events` | `{ orderId, event, payload? }` | `200 { delivered: true, nodeId }`, `202 { delivered: false, held: true }`, `404` or `409 { delivered: false }` |
+| `POST` | `/api/v1/webhooks/orders` | `{ model, channel, externalId, lines, … }` | `201 { orderId, flowId }`, or `200 { orderId, replayed: true }` on a replay |
+| `POST` | `/api/v1/webhooks/stripe` | A Stripe event | `200 { outcome }`, `409 { outcome: "retry" }` when the order isn't waiting yet |
 | `POST` | `/api/v1/channels/shopify/orders` | A Shopify `orders/create` payload | `201 { orderId, flowId }`, `200` on a replay or `{ ignored: true, topic }` |
 | `POST` | `/api/v1/channels/edi/850` | Raw X12 (`application/edi-x12` or `text/plain`) | `200 { sender, results }` (operator) |
 
@@ -244,7 +245,7 @@ or external id. Each row has `id`, `model`, `channel`, `externalId`, `contactEma
 wait times out, its step's deadline; `null` for a timer, which has none), `waitingFor` (what each wait is on:
 `person:<role>`, `event:<name>` or `timer`, joined with ` · `), `stoppedAt` and `reason` (for an order
 that failed, rolled back, was declined or cancelled: where it stopped and why), `createdAt` and
-`updatedAt` (epoch milliseconds).
+`updatedAt` (epoch milliseconds), `fxRate`, `startedBy`, `erasedAt` and `idempotencyKey` (the one that started it, if the caller sent one). The index's own bookkeeping is not returned.
 
 ## Read an order
 
@@ -257,12 +258,13 @@ that failed, rolled back, was declined or cancelled: where it stopped and why), 
 | `flow` | The pinned flow version, including its graph |
 | `nodes` | Per node: `status`, `runs`, `summary`, `output`, `error`, `branches`, `startedAt`, `endedAt` |
 | `edges` | Per edge: `pending`, `active` or `inactive` |
-| `waits` | Open waits: `nodeId`, `kind` (`approval` or `event`), `title`, `event`, `assignee`, `amount`, `deadline`, `since` |
+| `waits` | Open waits: `nodeId`, `eventType`, `kind` (`approval` or `event`), `title`, `event`, `assignee`, `amount`, `approval` (who may vote and how many votes decide it), `deadline`, `since` |
 | `vars` | Run variables |
 | `timeline` | Entries with `at`, `kind`, `message`, `nodeId`, `data` |
 | `instanceId`, `generation` | The id of the run driving the order, and its generation (it goes up by one on each [continue as new](/guides/building-flows/#how-a-run-moves-through-the-graph)) |
 | `rollback` | `{ outcome, error }` once a rollback has run |
 | `updatedAt` | When the state last changed (epoch milliseconds) |
+| `seq` | The sequence of the last Workflow report the agent applied. It rises with each, within a `generation` (a new one restarts it), so of two states of an order the higher `seq` of the same `generation` is the newer |
 
 Node statuses are <Values of="node-statuses" />.
 
@@ -276,8 +278,9 @@ POST /api/v1/orders/ord_…/events
 
 The event goes to the node waiting for it, and its payload lands in `vars` under the event name
 with every run of non-alphanumerics replaced by `_` (`payment.received` → `vars.payment_received`).
-The response is `{ delivered: true, nodeId }`, or `{ delivered: false }` when no node is waiting for
-that event yet. An unknown order is `404`. See [Approvals and events](/guides/approvals-and-events/).
+The response is `{ delivered: true, nodeId }`, `{ delivered: false, held: true }` when no node is waiting for
+that event yet but the order holds it until one does, or `{ delivered: false }` when its flow has no such step.
+An unknown order is `404`. See [Approvals and events](/guides/approvals-and-events/).
 
 The delivery records who sent it: the payload gains `source: "api"` and `by` (the token's name), so
 a payload that sets any of `by`, `event`, `at`, `outcome`, `source`, `provider`, `invoiceId`,
@@ -510,7 +513,9 @@ The order page enforces the same bounds.
 | Status | Meaning |
 |---|---|
 | `200` | Delivered: `{ delivered: true, nodeId }` |
+| `202` | Held on the order until a step of its flow waits for it: `{ delivered: false, held: true }`. No need to resend |
 | `404` | No such order |
+| `422` | The payload sets a field the delivery records itself, or is a return or claim: `{ error }` |
 | `409` | No node is waiting for that event yet: `{ delivered: false }`. Retry later |
 | `200` | A replay: `{ delivered: true, duplicate: true }`, delivering nothing |
 | `400` | Body is not `{ orderId, event, payload? }` (`event` is 1 to 100 characters, `payload` at most 32 KiB of JSON) |

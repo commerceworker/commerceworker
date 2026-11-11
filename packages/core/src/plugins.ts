@@ -865,6 +865,32 @@ export const pluginSummary = ({
   ...(error ? { error } : {}),
 });
 
+/** A plugin as the admin API lists it (`pluginSummary`). */
+export const pluginSummarySchema = z.object({
+  id: z.string(),
+  runtime: z
+    .enum(PLUGIN_RUNTIMES)
+    .describe('`worker` (its own Worker) or `sandboxed` (loaded by the engine)'),
+  source: z
+    .enum(['deployment', 'installed'])
+    .describe(
+      '`deployment` (installed with the workspace) or `installed` (from a file, by an admin)',
+    ),
+  name: z.string().nullable().describe('Null for a plugin whose manifest was refused'),
+  version: z.string().nullable().describe('Null for a plugin whose manifest was refused'),
+  nodes: z.array(z.string()).describe('The node types it adds'),
+  events: z.array(z.string()).describe('The outbound events it receives'),
+  provides: z
+    .array(z.enum(PROVIDER_SURFACES))
+    .describe(
+      'What it can do behind built-in nodes (shipping.rates, shipping.labels, tax, address)',
+    ),
+  healthy: z.boolean().describe('Whether it answered just now'),
+  error: z.string().optional().describe('Why it did not'),
+});
+
+export const pluginListSchema = z.object({ plugins: z.array(pluginSummarySchema) });
+
 /** What still uses a plugin; it can be removed only once every list is empty. */
 export type PluginUsage = {
   /** Flows whose published version uses the plugin's nodes, or names it as a Provider. */
@@ -874,6 +900,18 @@ export type PluginUsage = {
   /** Labels it made that it couldn't void yet (`void_failed`), retried daily. */
   labels: { id: string; orderId: string }[];
 };
+
+export const pluginUsageSchema = z.object({
+  flows: z
+    .array(z.object({ id: z.string(), version: z.number().int() }))
+    .describe('Published flows that use its nodes or name it as a provider'),
+  orders: z
+    .array(z.object({ id: z.string(), flowId: z.string(), version: z.number().int() }))
+    .describe('Running orders on a flow version that does'),
+  labels: z
+    .array(z.object({ id: z.string(), orderId: z.string() }))
+    .describe('Shipping labels it could not void yet, retried daily'),
+});
 
 // ── Node registry ────────────────────────────────────────────────────────────
 
@@ -1084,6 +1122,39 @@ export type PluginCaseResult = PluginCase & {
   /** The branch taken, or null when the rule failed. */
   got: { branch: string | null; vars?: Record<string, unknown>; error?: string };
 };
+
+export const pluginCaseResultSchema = pluginCaseSchema.extend({
+  pass: z.boolean(),
+  got: z.object({
+    branch: z.string().nullable().describe('The branch taken, or null when the rule failed'),
+    vars: z.record(z.string(), z.unknown()).optional(),
+    error: z.string().optional(),
+  }),
+});
+
+/** A runtime install: what an admin reviews, never a secret's value. */
+export const pluginInstallViewSchema = z.object({
+  id: z.string(),
+  sha: z.string().describe('The bundle’s SHA-256'),
+  version: z.string(),
+  publisher: z.string(),
+  status: z.enum(PLUGIN_INSTALL_STATUSES),
+  personalDataGranted: z.boolean(),
+  uploadedBy: z.string(),
+  uploadedAt: z.number().int(),
+  approvedBy: z.string().nullable(),
+  approvedAt: z.number().int().nullable(),
+  manifest: pluginManifestSchema.describe('The manifest it was signed with'),
+  secrets: z
+    .array(z.object({ name: z.string(), set: z.boolean() }))
+    .describe('Never a value: whether each declared secret is set'),
+  request: z.string().nullable().describe('An assistant draft’s: what the admin asked for'),
+  cases: z.array(pluginCaseResultSchema).nullable().describe('An assistant draft’s test cases'),
+  code: z.string().nullable().describe('An assistant draft’s rule code, to review'),
+});
+
+/** A plugin turned off (`POST /api/v1/plugins/{id}/disable`). */
+export const pluginDisabledSchema = z.object({ id: z.string(), status: z.literal('disabled') });
 
 /**
  * A plausible redacted order for a rule's test case: one line, USD, web channel, shipping to the

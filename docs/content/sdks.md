@@ -713,13 +713,18 @@ for await (const quote of commerce.paginate('list_quotes', { status: 'sent' })) 
 - **Paging.** `pages(op, input)` and `paginate(op, input)` follow `cursor` for the operations whose
   input takes a `cursor` and whose result returns one (`PAGINATION`). A cursor field named
   otherwise is not detected, so `list_price_books` (`after`/`next`) and the audit events (`before`
-  and `after`) are plain calls; an untyped result (`list_orders`, `get_catalog_board_column`) is
-  named in `UNTYPED_PAGES` in `emit.ts`, and the generator throws if a result has more than one array
-  and no entry. The operations in `UNTYPED` in `apps/web/tests/openapi.test.ts` (most hand-written routes
-  and every file or signed receiver) have no response schema in the document yet, so their result
-  is `unknown` until they are typed. That test fails if an operation outside the list is untyped or
-  an entry is stale, so the list only shrinks: type the route in `openapi.ts`, delete its entry,
-  regenerate.
+  and `after`) are plain calls. A result's cursor is named `cursor` or `nextCursor`, and the generator
+  throws if a result has more than one array.
+- **Every result is typed.** `apps/web/tests/openapi.test.ts` fails if an operation's `200`, `201` or
+  `202` has no JSON schema, so no result is `unknown`. The schemas are core's zod schemas, in a
+  `*-schemas.ts` beside the types they describe (`api-schemas.ts`, `product/api-schemas.ts`,
+  `webhook-schemas.ts`…), registered by name in `COMPONENTS` in `openapi.ts` so each is one `$ref`,
+  one type in the generated file. Three tests keep them true: `packages/core/tests/response-schemas.test.ts`
+  holds each to the TypeScript type it describes (`branded.toEqualTypeOf`, so a field added to one side
+  fails), `apps/web/tests/rest-responses.test.ts` runs each route's handler and validates what it
+  answers, and the engine's and the catalog's own `rest-responses.test.ts` validate what real orders
+  and real shards answer. A new route's response goes in core next to its type, in `COMPONENTS`
+  and in those tests, then `pnpm sdk:generate`.
 - **Webhooks.** `@commerceworker/sdk/commerce/webhooks` is `verifyCommerceWebhook(rawBody, header,
   secrets, { toleranceSec })` for `X-CommerceWorker-Signature: t=…,k=…,v1=…` (`packages/core/src/webhooks.ts`),
   on Web Crypto. It returns `{ ok, timestamp, keyId? }` or `{ ok: false, reason }`; `secrets` may be

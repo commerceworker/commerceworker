@@ -57,6 +57,30 @@ export const ucpSettingsSchema = z.object({
 });
 export type UcpSettings = z.infer<typeof ucpSettingsSchema>;
 
+/** A platform an admin let in, as the admin API shows it: never its key. */
+export const ucpPlatformSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  profileUrl: z.string().describe('The UCP profile the platform must name in `UCP-Agent`'),
+  keyPrefix: z.string().describe('The key’s first characters, to tell keys apart'),
+  createdAt: z.number().int(),
+  createdBy: z.string().nullable(),
+  lastUsedAt: z.number().int().nullable(),
+  revokedAt: z.number().int().nullable(),
+});
+
+/** Agentic checkout's settings and the platforms let in (`GET /api/v1/ucp`). */
+export const ucpAdminSchema = z.object({
+  settings: ucpSettingsSchema,
+  platforms: z.array(ucpPlatformSchema),
+});
+
+/** A platform just let in, with its API key, shown only once. */
+export const ucpPlatformKeySchema = z.object({
+  platform: ucpPlatformSchema,
+  key: z.string().describe('The platform’s API key. It is shown only once'),
+});
+
 /** A registered platform as the storefront needs it: who it is and the profile it must name. */
 export type UcpPlatformRef = { id: string; name: string; profileUrl: string };
 

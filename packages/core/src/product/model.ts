@@ -256,19 +256,20 @@ export const productInputSchema = z.object({
 });
 export type ProductInput = z.input<typeof productInputSchema>;
 /** A product after defaults are applied and its type version is pinned. */
-export type ProductData = Omit<z.infer<typeof productInputSchema>, 'type'> & {
-  type: string;
-  typeVersion: number;
-};
+export const productDataSchema = productInputSchema
+  .omit({ type: true })
+  .extend({ type: z.string(), typeVersion: z.number().int() });
+export type ProductData = z.infer<typeof productDataSchema>;
 
 /** A stored product: its data, plus what the store maintains. */
-export type Product = ProductData & {
+export const productSchema = productDataSchema.extend({
   /** Increments on every change that alters the content hash. */
-  version: number;
+  version: z.number().int(),
   /** Content hash of the data (see `contentHash`); equal hashes mean nothing changed. */
-  hash: string;
-  updatedAt: number;
-};
+  hash: z.string(),
+  updatedAt: z.number().int(),
+});
+export type Product = z.infer<typeof productSchema>;
 
 export const categorySchema = z.object({
   code: codeSchema,

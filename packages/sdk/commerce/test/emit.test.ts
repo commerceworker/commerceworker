@@ -120,6 +120,11 @@ describe('emit', () => {
     expect(
       emit(list({ type: 'object', properties: { rows, cursor: { type: ['string', 'null'] } } })),
     ).toContain("list_rows: { param: 'cursor', items: 'rows', next: 'cursor' }");
+    expect(
+      emit(
+        list({ type: 'object', properties: { rows, nextCursor: { type: ['string', 'null'] } } }),
+      ),
+    ).toContain("list_rows: { param: 'cursor', items: 'rows', next: 'nextCursor' }");
     expect(() =>
       emit(list({ type: 'object', properties: { rows, more: rows, cursor: { type: 'string' } } })),
     ).toThrow('list_rows pages, but its result has 2 arrays');
