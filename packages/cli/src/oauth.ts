@@ -16,6 +16,8 @@ export interface ServerMetadata {
   readonly registration_endpoint: string;
   readonly device_authorization_endpoint: string;
   readonly revocation_endpoint?: string;
+  /** The commerce authorization server's built-in client for this CLI: no registration needed. */
+  readonly commerceworker_cli_client_id?: string;
 }
 
 export interface DeviceAuthorization {

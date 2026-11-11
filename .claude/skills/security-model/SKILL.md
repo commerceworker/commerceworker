@@ -60,7 +60,10 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
 3. **`/mcp`, `/a2a` and `/api/v1` are separate OAuth resources** (RFC 8707, `apps/web/app/lib/oauth.server.ts`):
    a token works only at the endpoint it was granted for. An OAuth grant at `/api/v1` carries its `grant`
    and is never a `person` (no step-up, no confirmation of what a person confirms), as over MCP. A consent grants a role no higher than
-   the approver's own.
+   the approver's own. The device grant (`/oauth/device_authorization`, `oauth-device.server.ts`) is
+   the same grant minted on approval: only clients registered for it, never a URL client id (no borrowed
+   publisher name), the person types the code even from a link, and its return address
+   (`DEVICE_REDIRECT`) is refused by the consent page.
 4. **Roles are checked on live data.** `atLeast(role, min)`; viewer < approver < operator < admin.
    Separation of duties (`ownOrderRefusal`) applies when the workspace setting is on. MCP and
    assistant actions preview first and run only with a single-use `cfm_` confirmation code bound

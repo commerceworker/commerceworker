@@ -299,3 +299,20 @@ describe('the config directory', () => {
     expect(configDirFor({}, 'darwin', '/h')).toBe(join('/h', '.config', 'commerceworker'));
   });
 });
+
+describe('a server with a built-in client for this CLI', () => {
+  it('signs in as it without registering', async () => {
+    const h = await harness({
+      ...deviceRoutes([TOKENS]),
+      'GET /.well-known/oauth-authorization-server': () => ({
+        ...metadata,
+        commerceworker_cli_client_id: 'commerceworker-cli',
+      }),
+    });
+    const out = await h.run('login', '--url', `${URL_}/`, '--json');
+    expect(out.code).toBe(EXIT.ok);
+    expect(h.calls.some((c) => c.url === `${ISSUER}/oauth/register`)).toBe(false);
+    const start = h.calls.find((c) => c.url === `${ISSUER}/oauth/device_authorization`);
+    expect(start?.body).toContain('client_id=commerceworker-cli');
+  });
+});
