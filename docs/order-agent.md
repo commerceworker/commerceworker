@@ -28,6 +28,17 @@ holds the flow (an order begun before this split) moves it and its timeline into
 it runs. The move is one-way: an engine rolled back past it would serve those orders with no flow,
 so recover from a bad engine deploy by rolling forward.
 
+Every report persists at once, but the sockets don't hear each one. The agent overrides the SDK's
+`broadcast` and keeps only the newest state frame of a burst (each frame is the whole synced
+state), sending it once `BROADCAST_COALESCE_MS` (100) has passed. A node's reports (its plan
+snapshot, start, end and timeline lines) arrive a few milliseconds apart, so they go out as about
+one frame. A frame goes out at once, never after the window, when the status changes or is
+terminal, when the waits change (an approval opened, voted on or closed), or when 25 timeline lines
+(half the tail) have been written since the last frame, so a page's merged timeline never has a
+gap. The default storefront order went from 87 frames and 580 KB to about 10 frames and 80 KB
+(`tests/order-live-updates.test.ts` holds it to a quarter of the old numbers). A frame held when
+the object is evicted is lost, but a socket reconnects to the current state.
+
 | Field | Meaning |
 |---|---|
 | `orderId`, `order`, `flow` | The order and the pinned `FlowVersion` (`null` in the synced state). Once the inbound document is stored in R2, `order` carries only its `documentKey`, not `documentText` |
