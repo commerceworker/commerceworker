@@ -17,7 +17,7 @@ import { after, before, describe, it } from 'node:test';
 
 const root = join(import.meta.dirname, '..');
 const turbo = join(root, 'node_modules/.bin/turbo');
-const TASKS = ['lint', 'check-types', 'build', 'test'];
+const TASKS = ['lint', 'check-types', 'check-types:scripts', 'build', 'test'];
 
 let copy = '';
 
@@ -142,6 +142,25 @@ describe('turbo cache inputs', () => {
     assertMoves('apps/web/app/lib/openapi.ts', ['sdk-commerce#test']);
     assertMoves('apps/web/app/lib/rest-operations.ts', ['sdk-commerce#test']);
     assertMoves('apps/docs/src/data/runs/b2b-order.json', ['engine#test']);
+  });
+
+  it('the root scripts are type-checked again when a script or what it imports changes', () => {
+    // The scripts import the plugin SDK, core and security by path, so the root task names them.
+    for (const file of [
+      'scripts/fleet.ts',
+      'scripts/tsconfig.json',
+      'packages/plugin-sdk/src/testing.ts',
+      'packages/core/src/lifecycle.ts',
+      'packages/security/src/index.ts',
+    ]) {
+      const moved = changed(file, file.endsWith('.json') ? ' ' : '\n');
+      assert.ok(
+        moved.has('//#check-types:scripts'),
+        `${file} must change the hash of the root scripts' check-types`,
+      );
+    }
+    // A script is not part of any package's own type check.
+    assert.ok(!changed('scripts/fleet.ts').has('@commerceworker/web#check-types'));
   });
 
   it('a plugin the engine suite loads moves the engine suite', () => {

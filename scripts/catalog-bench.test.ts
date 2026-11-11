@@ -16,11 +16,11 @@ test('the benchmark feed is two variant rows a product, seeded, with values its 
     const first = (rows[i] as string).match(
       /^([^,]+),([^,]+),"[^"]+",([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),S$/,
     );
-    assert.ok(first, rows[i]);
+    assert.ok(first, rows[i] as string);
     const [, k, type, , category, price, sku, material, color] = first;
     assert.equal(k, key(i / 2));
     assert.equal(type, TYPE);
-    assert.ok(LEAVES.includes(category as string), category);
+    assert.ok(LEAVES.includes(category as string), category as string);
     assert.match(price as string, /^\d+\.\d{2}$/);
     assert.equal(sku, `${(k as string).toUpperCase()}-S`);
     assert.ok(MATERIALS.includes(material as string) && COLORS.includes(color as string));

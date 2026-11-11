@@ -50,7 +50,7 @@ let count = 0;
 async function api(
   method: string,
   path: string,
-  body?: BodyInit,
+  body?: RequestInit['body'],
   type = 'application/json',
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   for (;;) {

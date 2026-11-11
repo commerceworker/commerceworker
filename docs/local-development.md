@@ -234,7 +234,7 @@ Then read its live state with `GET /api/v1/orders/:id`.
 ```bash
 pnpm test            # core planner tests (node), engine Workflow e2e and catalog and delivery (workerd), web tests
 pnpm lint            # Biome
-pnpm check-types     # tsc --noEmit (web runs react-router typegen first)
+pnpm check-types     # tsc --noEmit per package (web runs react-router typegen first), plus the root scripts/ (scripts/tsconfig.json)
 pnpm test:fleet      # the deployment registry and the configs rendered from it
 pnpm test:toolkit    # the .claude/ toolkit: skill and agent lint, hook tests
 pnpm commitlint --from origin/main  # this branch's commit messages (Conventional Commits)
