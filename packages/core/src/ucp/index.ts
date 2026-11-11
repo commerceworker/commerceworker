@@ -5,6 +5,7 @@
  * the storefront Worker fronts it (apps/storefront/app/lib/ucp.server.ts).
  */
 
+export * from './catalog';
 export * from './checkout';
 export * from './discount';
 export * from './errors';
