@@ -700,6 +700,25 @@ deploy's smoke test requests only `/health`, which the gateway answers without t
 
 CI runs it in the verify job.
 
+## Packing and checking the SDK
+
+`@commerceworker/sdk` (`packages/sdk/sdk`) is the one package that ships to npm: it bundles the private
+workspace SDKs (`packages/sdk/*`) and the CLI, so what a user installs is not what the workspace
+resolves (`src/*.ts`). `pnpm sdk:pack` builds it through turbo and runs `pnpm pack`, which applies
+`publishConfig` (exports and the `commerceworker` bin pointing at `dist/`) and rewrites `catalog:`
+versions, into `.sdk-packages/`. `pnpm sdk:check` then installs that tarball, with the React and
+Vue peers, into an empty temp project, loads every subpath as ESM and as CJS, type-checks every
+subpath with `module: nodenext` against the shipped `.d.ts` files, and runs `commerceworker help`.
+It needs the network for the npm install.
+
+`scripts/sdk-packages.test.ts` (in `pnpm test:fleet`, offline) holds the manifest: one published
+package, a `publishConfig.exports` map that mirrors the workspace one, and every bundled package and
+the CLI private. CI's `sdk` job runs pack and check when `packages/sdk/`, `packages/cli/`,
+`scripts/sdk-packages*`, `apps/web/app/lib/openapi.ts`, `apps/web/app/lib/rest-operations.ts` or
+`packages/core/src/tool-schemas.ts` change; otherwise it skips its steps and passes.
+`node scripts/sdk-packages.ts publish` (skips a version npm already has) is for the release
+workflow, never run by hand.
+
 ## Catalog benchmark
 
 `scripts/catalog-bench.ts` (`pnpm catalog:bench <deployment> [products]`) measures a deployed catalog

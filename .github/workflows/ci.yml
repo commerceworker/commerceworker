@@ -95,6 +95,47 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
+  # The SDK as npm serves it: packed, installed into an empty project, every subpath loaded as ESM
+  # and CJS and type-checked, and the `commerceworker` binary run (scripts/sdk-packages.ts). It needs
+  # the network for the React and Vue peers. The job always runs and always reports, so it can be a
+  # required check without holding up a pull request that doesn't touch the SDK: it decides inside
+  # whether the paths below changed and skips its steps if not, which GitHub counts as a success (a
+  # workflow-level `paths:` filter would leave a required check pending forever).
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Did the SDK's inputs change?
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = 0000000000000000000000000000000000000000 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(packages/sdk/|packages/cli/|scripts/sdk-packages|apps/web/app/lib/openapi\.ts$|apps/web/app/lib/rest-operations\.ts$|packages/core/src/tool-schemas\.ts$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: steps.changed.outputs.run == 'true'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: steps.changed.outputs.run == 'true'
+      - name: Pack
+        if: steps.changed.outputs.run == 'true'
+        run: pnpm sdk:pack
+      - name: Check
+        if: steps.changed.outputs.run == 'true'
+        run: pnpm sdk:check
+
   # The web app and the storefront in WebKit as an iPhone and an iPad, both ways up, and a desktop:
   # layout, safe areas, touch targets and the on-screen keyboard (apps/web/e2e, apps/storefront/e2e).
   # The dev servers run offline (mock AI, no remote bindings, their own databases), so no Cloudflare

@@ -301,21 +301,16 @@ One package ships to npm, apart from the deploys: `@commerceworker/sdk` (`packag
 bundles the private workspace SDKs (`packages/sdk/*`) and the CLI (`packages/cli`, its
 `commerceworker` binary). Nothing else is published (`scripts/sdk-packages.test.ts`).
 
-- `.github/workflows/sdk-packages.yml` (pull requests that touch `packages/sdk/` or
-  `packages/cli/`): `node scripts/sdk-packages.ts pack` builds it through turbo and packs it, then
-  `check` installs the tarball into an empty project, loads every subpath (ESM and CJS),
-  type-checks every subpath against the shipped `.d.ts` files and runs `commerceworker help`. That
-  is what a user installs: `pnpm pack` applies `publishConfig` (exports and bin pointing at
-  `dist/`) and rewrites `catalog:` versions.
-- `.github/workflows/sdk-release.yml` (a pushed tag `sdk-v<version>`): checks that the tag
-  matches `packages/sdk/sdk/package.json`'s version, runs lint, type-check and tests for it and
-  everything it bundles, packs and checks it, then publishes it if npm doesn't already have that
-  version, with npm trusted publishing (OIDC, no stored token) and a provenance attestation. It
-  runs in the `npm` environment; add required reviewers there to approve each release.
-
-To release: bump `version` in `packages/sdk/sdk/package.json`, merge, then push `sdk-v<version>`.
-The package's npm settings name this repo and `sdk-release.yml` as its trusted publisher; its very
-first publish is done by an owner of the npm org, before that can be set.
+- CI's `sdk` job (`.github/workflows/ci.yml`, when a change touches `packages/sdk/`,
+  `packages/cli/`, `scripts/sdk-packages*`, the REST operations or the tool schemas): `pnpm sdk:pack`
+  builds it through turbo and packs it, then `pnpm sdk:check` installs the tarball into an empty
+  project, loads every subpath (ESM and CJS), type-checks every subpath against the shipped `.d.ts`
+  files and runs `commerceworker help`. That is what a user installs: `pnpm pack` applies
+  `publishConfig` (exports and bin pointing at `dist/`) and rewrites `catalog:` versions.
+- Releasing is not wired yet: a tag-triggered release workflow with npm trusted publishing (OIDC,
+  no stored token) and a provenance attestation is a later P7 slice. `node scripts/sdk-packages.ts
+  publish` already skips a version npm has. Before the first release an owner of the npm org
+  publishes once by hand, since npm can name a trusted publisher only for a package that exists.
 
 ## Migrations
 
