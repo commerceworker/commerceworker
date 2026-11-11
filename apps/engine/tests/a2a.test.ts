@@ -808,8 +808,13 @@ describe('A2A 0.3 clients', () => {
   });
 
   it('pushes 0.3-shaped notifications to a URL registered over 0.3', async () => {
+    // fetch is global to the isolate: another test's push outbox can retry through this mock
+    // from its Durable Object alarm. Only this test's URL is recorded; anything else fails
+    // (as it did for its own test) and is left for its own retries.
+    const pushUrl = 'https://hooks.example/old-0-3-push';
     const received: Json[] = [];
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url) !== pushUrl) return new Response('not this test', { status: 500 });
       received.push(JSON.parse(String(init?.body)) as Json);
       return new Response('ok');
     });
@@ -833,7 +838,7 @@ describe('A2A 0.3 clients', () => {
     const set = (await (
       await legacy(op, 'tasks/pushNotificationConfig/set', {
         taskId: placed.id,
-        pushNotificationConfig: { url: 'https://hooks.example/old', token: 'old-tok' },
+        pushNotificationConfig: { url: pushUrl, token: 'old-tok' },
       })
     ).json()) as Json;
     expect(set.error).toBeUndefined();
@@ -842,7 +847,8 @@ describe('A2A 0.3 clients', () => {
     // whole task (`kind: "task"`, 0.3 state names), with no StreamResponse wrapper.
     const wait = (await state(orderId)).waits.find((w) => w.kind === 'approval')!;
     await env.ORDER_AGENT.getByName(orderId).decide(wait.nodeId, 'approved', 'someone@example.com');
-    await until(async () => received.length > 0, 'the 0.3 push');
+    await until(async () => received.some((r) => r.id === placed.id), 'the 0.3 push');
+    expect(received.every((r) => r.id === placed.id)).toBe(true);
     expect(received[0]).toMatchObject({ kind: 'task', id: placed.id });
     expect(received[0]!.status.state).not.toMatch(/^TASK_STATE_/);
     expect(received[0]).not.toHaveProperty('statusUpdate');
