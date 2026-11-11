@@ -22,6 +22,8 @@ const LOCKED_WRITES = ['/team', '/account'];
 /** Not even readable: credentials and outbound endpoints live here. */
 const LOCKED = [
   '/oauth/authorize',
+  '/oauth/device',
+  '/oauth/device_authorization',
   '/api/v1/integrations',
   '/api/v1/webhook-subscriptions',
   '/api/v1/ucp',

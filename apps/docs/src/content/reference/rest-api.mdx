@@ -49,6 +49,19 @@ granted for the API is refused there. `cmw_live_` tokens work as before.
 
 The API sends no CORS headers, with any credential, so a browser page can't call it directly: call it from your backend and keep tokens there.
 
+### Signing in from a terminal
+
+A command-line tool, including one on a machine you reach over SSH, signs in with the OAuth device authorization grant (RFC 8628): it shows a code, and you approve it on any device with a browser. `commerceworker login` does this for you. To build it into a tool:
+
+1. `commerceworker login` signs in as CommerceWorker's own client, `commerceworker-cli`, which needs no registration (the metadata names it as `commerceworker_cli_client_id`). A tool of your own registers once at `/oauth/register` with `"grant_types": ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"]` and `"token_endpoint_auth_method": "none"`. Only a client registered this way can start a device sign-in (the answer lists `authorization_code`, and a return address you never use). A client identified by a URL can't, and a client name that imitates the CLI's is refused.
+2. `POST /oauth/device_authorization` with `client_id`, `scope` (one role: `viewer`, `approver` or `operator`; `viewer` when omitted) and `resource` (`https://app.commerceworker.com/api/v1` when omitted; `/mcp` and `/a2a` work too). The answer has `device_code`, `user_code` (`XXXX-XXXX`), `verification_uri`, `verification_uri_complete`, `expires_in` (600 seconds) and `interval` (5).
+3. Show the person `verification_uri` and `user_code`. They open it signed in, type the code (a link that carries the code only opens the page: they still type it), check the app's name, the address, where and when the request came from, and choose a role no higher than their own or the one asked for. They confirm it's them again for every approval, however low the role. They can deny.
+4. Poll `POST /oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `client_id` and `device_code`, no faster than `interval`. `authorization_pending` means keep waiting, `slow_down` that you were too quick (add 5 seconds to the interval), `access_denied` that the person refused, and `expired_token` that the code lapsed: start again. Approved, you get an access token (one hour) and a refresh token (30 days) for the resource you asked for; a code is redeemed once. Use the refresh token as you would any other: it rotates, and presenting an old one revokes the grant.
+
+Only the person who approved a code can give it a role, only the terminal holding the `device_code` can collect the token, and nothing about the approval travels in a URL as a credential. Codes last ten minutes; ten wrong codes in ten minutes lock that person's code entry for a while. The grant appears on the person's Account page, where they can disconnect it.
+
+The authorization server's metadata (`/.well-known/oauth-authorization-server`) names `device_authorization_endpoint` and lists `urn:ietf:params:oauth:grant-type:device_code` in `grant_types_supported`.
+
 ### Who am I
 
 `GET /api/v1/me` describes the credential the request used, for any valid caller whatever its role:
@@ -597,7 +610,7 @@ These aren't part of `/api/v1`.
 - `GET /health/deep` also checks the database, document storage and the engine (and through it each installed plugin), with no
   authentication. It answers `{ ok, service, checks }`, where each check is `"ok"` or `"fail"`, and
   `503` when any check fails.
-- `/mcp`, `/a2a`, `/oauth/*` (except the `/oauth/authorize` consent page) and `/.well-known/oauth-*`
+- `/mcp`, `/a2a`, `/oauth/*` (except the `/oauth/authorize` consent page and the `/oauth/device` approval page) and `/.well-known/oauth-*`
   are the [MCP server](/reference/mcp/), the [A2A endpoint](/reference/a2a/) and their OAuth
   endpoints.
 - `GET /.well-known/agent-card.json` is the A2A Agent Card, public and cached for five minutes.

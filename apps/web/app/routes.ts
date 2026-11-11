@@ -13,6 +13,8 @@ export default [
   route('setup', 'routes/setup.tsx'),
   // The consent page MCP clients send people to (lib/oauth.server.ts).
   route('oauth/authorize', 'routes/oauth-authorize.tsx'),
+  // Where a person approves a sign-in from a terminal (the device grant, lib/oauth-device.server.ts).
+  route('oauth/device', 'routes/oauth-device.tsx'),
   // A cart's files and its product search, for staff (lib/cart-files.server.ts). A cart's buyer
   // reaches theirs, and the cart page itself, on the storefront (apps/storefront).
   route('carts/:cartId/attachments', 'routes/cart-attachments.ts'),

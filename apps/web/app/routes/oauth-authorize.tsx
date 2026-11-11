@@ -10,25 +10,16 @@ import {
   CimdFetchError,
   type ConsentDescription,
 } from '@cloudflare/workers-oauth-provider';
-import { atLeast, isRole, ROLE_LABELS, ROLES, type Role } from '@commerceworker/core';
+import { atLeast, isRole, ROLES, type Role } from '@commerceworker/core';
 import { Alert, AlertDescription, AlertTitle } from '@commerceworker/ui/alert';
 import { Button } from '@commerceworker/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@commerceworker/ui/card';
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-  FieldTitle,
-} from '@commerceworker/ui/field';
+import { FieldError, FieldGroup } from '@commerceworker/ui/field';
 import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { data, Form, Link, useActionData, useLoaderData, useLocation } from 'react-router';
 import { Mark } from '~/components/mark';
+import { grantable, RoleChoices } from '~/components/role-choices';
 import { StepUpField } from '~/components/step-up-field';
 import { audit } from '~/lib/audit.server';
 import {
@@ -38,7 +29,8 @@ import {
   stepUp,
   stepUpMethod,
 } from '~/lib/auth.server';
-import { channelOf, type GRANTABLE_ROLES, oauthApi } from '~/lib/oauth.server';
+import { channelOf, oauthApi } from '~/lib/oauth.server';
+import { DEVICE_REDIRECT } from '~/lib/oauth-device.server';
 import type { Route } from './+types/oauth-authorize';
 
 export const meta = ({ loaderData: d }: Route.MetaArgs) => [
@@ -58,14 +50,6 @@ export const headers: Route.HeadersFunction = ({ loaderHeaders, actionHeaders })
   });
   return h;
 };
-
-/** What an app may be granted (`GRANTABLE_ROLES`). Admin isn't offered. */
-const ROLE_SCOPE: Partial<Record<Role, string>> = {
-  viewer: 'Read orders, flows, approvals and stock',
-  approver: 'Also approve or reject approvals',
-  operator: 'Also deliver events, cancel orders, publish flows and run the stock review',
-} satisfies Record<(typeof GRANTABLE_ROLES)[number], string>;
-const grantable = (r: Role) => r in ROLE_SCOPE;
 
 /**
  * A refused request in words a person can act on. Only the error's code is shown beside it, for
@@ -113,6 +97,16 @@ export async function loader({ request }: Route.LoaderArgs) {
       return data(
         {
           error: 'This app didn’t send a PKCE challenge, so CommerceWorker won’t send it access.',
+          detail: 'invalid_request',
+        },
+        { status: 400 },
+      );
+    // A device client's return address (lib/oauth-device.server.ts) is for the terminal's code, which
+    // is never delivered by a redirect; a browser flow must not mint one for it.
+    if (authRequest.redirectUri === DEVICE_REDIRECT)
+      return data(
+        {
+          error: 'This app signs in with a code from a terminal, not a browser link.',
           detail: 'invalid_request',
         },
         { status: 400 },
@@ -321,37 +315,7 @@ function Consent({
                 </AlertDescription>
               </Alert>
             ) : null}
-            <FieldSet className="gap-2">
-              <FieldLegend variant="label" className="mb-1 font-normal">
-                It will act as <span className="font-medium">{who}</span>, with the role
-              </FieldLegend>
-              {roles.map((r, i) => (
-                <FieldLabel
-                  key={r}
-                  className="cursor-pointer has-[:checked]:border-primary has-[:checked]:bg-secondary"
-                >
-                  <Field orientation="horizontal" className="items-start gap-2.5 p-3!">
-                    <input
-                      type="radio"
-                      name="role"
-                      value={r}
-                      defaultChecked={i === 0}
-                      onChange={() => setChosen(r)}
-                      className="mt-0.5"
-                    />
-                    <FieldContent>
-                      <FieldTitle>{ROLE_LABELS[r]}</FieldTitle>
-                      <FieldDescription className="text-xs">{ROLE_SCOPE[r]}</FieldDescription>
-                    </FieldContent>
-                  </Field>
-                </FieldLabel>
-              ))}
-              <FieldDescription className="mt-1 text-xs">
-                Orders show what it does as “{who} via {channel}”. It keeps access until you
-                disconnect it on your Account page, and never more than your own role: lower your
-                role, and the app’s drops with it.
-              </FieldDescription>
-            </FieldSet>
+            <RoleChoices roles={roles} who={who} channel={channel} onChoose={setChosen} />
             {chosen && chosen !== 'viewer' ? <StepUpField method={stepUp} next={here} /> : null}
             {refused && 'error' in refused ? <FieldError>{refused.error}</FieldError> : null}
             <div className="flex gap-2">

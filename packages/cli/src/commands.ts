@@ -165,7 +165,7 @@ const login: Command = {
     } else {
       const meta = await discover(io, url);
       let clientId = existing?.url === url ? existing.clientId : undefined;
-      clientId ??= await registerClient(io, meta);
+      clientId ??= meta.commerceworker_cli_client_id ?? (await registerClient(io, meta));
       const device = await startDevice(io, meta, clientId, str(ctx, 'scope')).catch(async (err) => {
         // A client from an earlier login may have been deleted: register again, once.
         if (err instanceof CliError && err.code === 'invalid_client' && existing?.clientId) {

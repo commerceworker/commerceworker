@@ -43,7 +43,7 @@ catalogs:
       specifier: ^1.4.0
       version: 1.4.0
     '@cloudflare/workers-oauth-provider':
-      specifier: ^1.2.4
+      specifier: 1.2.4
       version: 1.2.4
     '@cloudflare/workers-types':
       specifier: ^5.20261009.1

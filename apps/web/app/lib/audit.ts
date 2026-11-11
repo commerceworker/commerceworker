@@ -51,6 +51,8 @@ export const AUDIT_ACTIONS = {
   'scim.token_revoked': 'Revoked the SCIM token',
   'api.token_expired': 'API refused: expired token',
   'oauth.app_connected': 'Connected an app over MCP',
+  'oauth.device.approve': 'Approved a sign-in from a terminal',
+  'oauth.device.deny': 'Denied a sign-in from a terminal',
   'oauth.app_disconnected': 'Disconnected an app',
   'oauth.refresh_reused': 'Revoked an app: its old refresh token was used again',
   'integration.created': 'Created an integration key',

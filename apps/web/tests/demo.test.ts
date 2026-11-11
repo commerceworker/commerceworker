@@ -30,11 +30,15 @@ describe('demo mode', () => {
     env.DEMO_MODE = 'true';
     for (const path of [
       '/oauth/authorize',
+      '/oauth/device',
+      '/oauth/device.data',
       '/api/v1/integrations',
       '/api/v1/integrations/int_1/rotate',
       '/api/v1/webhook-subscriptions',
     ])
       expect(demoRefusal(req('GET', path))?.status).toBe(403);
+    // Nor may a terminal start a sign-in on a demo.
+    expect(demoRefusal(req('POST', '/oauth/device_authorization'))?.status).toBe(403);
   });
 
   it('leaves orders, flows, approvals and sign-out alone', () => {
