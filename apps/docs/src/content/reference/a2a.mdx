@@ -43,7 +43,7 @@ Both are the credentials the [REST API](/reference/rest-api/) takes, with the sa
 (`401` with the reason). Each caller has 300 requests a
 minute on `/a2a`, separate from its budget on `/mcp`; over it the answer is `429` with
 `Retry-After: 60`. A token is bound to one endpoint:
-an OAuth grant for `/mcp` is refused at `/a2a` and the reverse, so connecting the same app to both
+an OAuth grant for `/mcp` is refused at `/a2a` and the reverse (and one for the REST API at both), so connecting the same app to both
 is two grants, each listed (and disconnected) on **Account**. API tokens work on both.
 
 Send `A2A-Version: 1.0`. A request with 1.0 method names and no header is treated as `1.0`; any

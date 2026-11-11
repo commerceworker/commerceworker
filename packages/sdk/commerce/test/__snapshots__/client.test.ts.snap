@@ -125,5 +125,6 @@ exports[`method names > are the flat camelCase of every operationId 1`] = `
   "uploadPlugin",
   "verifyAuditChain",
   "verifyTaxCertificate",
+  "whoami",
 ]
 `;

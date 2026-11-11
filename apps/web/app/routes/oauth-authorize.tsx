@@ -1,5 +1,5 @@
 /**
- * The consent page for MCP and A2A clients (see lib/oauth.server.ts). The person signs in as usual
+ * The consent page for MCP, A2A and REST API clients (see lib/oauth.server.ts). The person signs in as usual
  * (two-factor included), sees which app is asking and where its access will be sent, and grants
  * it a role no higher than their own. The provider's consent helpers bind the form to this
  * browser, make it single-use and forbid framing.
@@ -256,7 +256,12 @@ function Consent({
   const [sending, setSending] = useState<string | null>(null);
   const [chosen, setChosen] = useState<Role | undefined>(roles[0]);
   const refused = useActionData<typeof action>();
-  const kind = channel === 'A2A' ? 'an agent (A2A)' : 'an AI client (MCP)';
+  const kind =
+    channel === 'A2A'
+      ? 'an agent (A2A)'
+      : channel === 'API'
+        ? 'a client of the REST API'
+        : 'an AI client (MCP)';
   return (
     <>
       <CardHeader>

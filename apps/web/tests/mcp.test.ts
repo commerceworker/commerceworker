@@ -168,7 +168,7 @@ describe('MCP and A2A on the web Worker', () => {
     expect(engineFetch).not.toHaveBeenCalled();
   });
 
-  it('advertises both resources from one authorization server', async () => {
+  it('advertises its resources from one authorization server', async () => {
     const res = await oauthFetch(
       new Request('https://app.test/.well-known/oauth-authorization-server'),
       env as never,
@@ -176,7 +176,11 @@ describe('MCP and A2A on the web Worker', () => {
     );
     const meta = (await res.json()) as Record<string, unknown>;
     expect(meta.issuer).toBe('https://app.test');
-    expect(meta.protected_resources).toEqual(['https://app.test/mcp', 'https://app.test/a2a']);
+    expect(meta.protected_resources).toEqual([
+      'https://app.test/mcp',
+      'https://app.test/a2a',
+      'https://app.test/api/v1',
+    ]);
   });
 
   it('challenges /a2a with its own resource and forwards a token caller there', async () => {

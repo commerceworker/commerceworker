@@ -1658,3 +1658,205 @@ describe('operations REST runs as MCP does', () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('an OAuth grant at the REST API', () => {
+  const run = engine.runOperation;
+  // What `apiOAuthFetch` hands the router: the person who approved it, named by the grant.
+  const app = {
+    kind: 'user' as const,
+    id: 'usr_1',
+    name: 'Ann',
+    email: 'ann@example.com',
+    role: 'operator' as const,
+    grant: 'grant_1',
+    client: 'client_1',
+    resource: 'https://app.test/api/v1',
+    expiresAt: 1_900_000_000_000,
+  };
+  const verify = (c: Parameters<typeof handleApi>[1]) =>
+    handleApi(
+      new Request('https://app.test/api/v1/customers/cus_1/tax-certificates/txc_1/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      c,
+    );
+
+  beforeEach(() => run.mockReset());
+
+  it('is not a person: the engine is told it is not, as for an API token, so what a person confirms is refused', async () => {
+    run.mockResolvedValue({ ok: false, status: 403, error: 'A person confirms this' });
+    const { grant: _grant, ...session } = app;
+    // The same person in the browser is one; through an app they approved, they are not.
+    await verify(session);
+    const [, , signedSession] = run.mock.calls.at(-1)!;
+    const call = await operationCall('verify_tax_certificate', {
+      customerId: 'cus_1',
+      certificateId: 'txc_1',
+    });
+    expect(await actorOf(signedSession, call)).toMatchObject({ id: 'usr_1', person: true });
+
+    const res = await verify(app);
+    expect(res.status).toBe(403);
+    const [, , signedApp] = run.mock.calls.at(-1)!;
+    const actor = await actorOf(signedApp, call);
+    expect(actor).toMatchObject({ id: 'usr_1', role: 'operator' });
+    expect(actor).not.toHaveProperty('person');
+    // The engine's trail names the app: its grant and client ride on the signed actor.
+    expect(actor).toMatchObject({ grant: 'grant_1', client: 'client_1' });
+    expect(await actorOf(signedSession, call)).not.toHaveProperty('grant');
+  });
+
+  it('is named on the actor the engine records a vote and a cart change under, a session is not', async () => {
+    const { grant: _g, client: _c, ...session } = app;
+    const vote = (c: Parameters<typeof handleApi>[1]) =>
+      handleApi(
+        new Request('https://app.test/api/v1/orders/ord_1/approvals/mgr', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ decision: 'approved' }),
+        }),
+        c,
+      );
+    const edit = (c: Parameters<typeof handleApi>[1]) =>
+      handleApi(
+        new Request('https://app.test/api/v1/carts/cart_1/ops', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ op: 'add', sku: 'SKU-1', qty: 1 }),
+        }),
+        c,
+      );
+    engine.decide.mockResolvedValue({ ok: true, outcome: 'recorded', tally: '1 of 2' });
+    engine.changeCart.mockResolvedValue({ ok: true, cart: { id: 'cart_1', version: 2 } });
+
+    await vote(app);
+    expect(await actorOf(engine.decide.mock.calls.at(-1)![3], 'decide:ord_1')).toMatchObject({
+      id: 'usr_1',
+      grant: 'grant_1',
+      client: 'client_1',
+    });
+    await vote(session);
+    expect(await actorOf(engine.decide.mock.calls.at(-1)![3], 'decide:ord_1')).not.toHaveProperty(
+      'grant',
+    );
+
+    await edit(app);
+    expect(await actorOf(engine.changeCart.mock.calls.at(-1)![2], 'cart:cart_1')).toMatchObject({
+      id: 'usr_1',
+      grant: 'grant_1',
+      client: 'client_1',
+    });
+    await edit(session);
+    expect(
+      await actorOf(engine.changeCart.mock.calls.at(-1)![2], 'cart:cart_1'),
+    ).not.toHaveProperty('grant');
+  });
+
+  it('is named in the web audit rows of what it does, a session is not', async () => {
+    engine.cancel.mockResolvedValue({ ok: true });
+    audit.mockClear();
+    const cancel = (c: Parameters<typeof handleApi>[1]) =>
+      handleApi(
+        new Request('https://app.test/api/v1/orders/ord_1/cancel', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        }),
+        c,
+      );
+    await cancel(app);
+    expect(audit.mock.calls.at(-1)![2].actor).toMatchObject({
+      grant: 'grant_1',
+      client: 'client_1',
+    });
+    const { grant: _g, client: _c, ...session } = app;
+    await cancel(session);
+    expect(audit.mock.calls.at(-1)![2].actor).not.toHaveProperty('grant');
+  });
+});
+
+describe('GET /api/v1/me', () => {
+  const me = (caller: Parameters<typeof handleApi>[1]) =>
+    handleApi(new Request('https://app.test/api/v1/me'), caller);
+
+  it('describes an API token without its secret, to a viewer, uncached', async () => {
+    const res = await me({
+      kind: 'token',
+      id: 'tok_1',
+      name: 'token:ci',
+      role: 'viewer',
+      expiresAt: 1_900_000_000_000,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      kind: 'api_token',
+      role: 'viewer',
+      expiresAt: 1_900_000_000_000,
+      subject: { id: 'tok_1', label: 'ci' },
+    });
+    expect(Object.keys(body).sort()).toEqual(['expiresAt', 'kind', 'role', 'subject']);
+  });
+
+  it('describes an OAuth grant by its resource and the person it acts as', async () => {
+    const res = await me({
+      kind: 'user',
+      id: 'usr_1',
+      name: 'Ann',
+      email: 'ann@example.com',
+      role: 'approver',
+      grant: 'grant_1',
+      client: 'client_1',
+      resource: 'https://app.test/api/v1',
+      expiresAt: 1_900_000_000_000,
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      kind: 'oauth',
+      role: 'approver',
+      resource: 'https://app.test/api/v1',
+      expiresAt: 1_900_000_000_000,
+      subject: { id: 'usr_1', name: 'Ann', email: 'ann@example.com' },
+    });
+    // The grant's and client's ids are not the caller's to read back.
+    expect(JSON.stringify(body)).not.toContain('grant_1');
+    expect(JSON.stringify(body)).not.toContain('client_1');
+  });
+
+  it('describes a signed-in person, with no expiry or resource', async () => {
+    const res = await me({
+      kind: 'user',
+      id: 'usr_2',
+      name: 'Bo',
+      email: 'bo@example.com',
+      role: 'admin',
+      twoFactorDue: undefined,
+    });
+    expect(await res.json()).toEqual({
+      kind: 'session',
+      role: 'admin',
+      subject: { id: 'usr_2', name: 'Bo', email: 'bo@example.com' },
+    });
+  });
+
+  it('is described in the OpenAPI document with a typed response', async () => {
+    const { openApiDocument } = await import('~/lib/openapi');
+    const doc = openApiDocument('https://app.test') as unknown as {
+      paths: Record<string, { get: { responses: Record<string, unknown> } }>;
+      components: { schemas: { Whoami: { properties: Record<string, unknown> } } };
+    };
+    expect(doc.paths['/api/v1/me']?.get.responses['200']).toMatchObject({
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/Whoami' } } },
+    });
+    expect(Object.keys(doc.components.schemas.Whoami.properties).sort()).toEqual([
+      'expiresAt',
+      'kind',
+      'resource',
+      'role',
+      'subject',
+    ]);
+  });
+});

@@ -50,11 +50,17 @@ export function signedActor(actor: StaffActor, call: string): Promise<SignedActo
 }
 
 /** A person or token as the staff actor on an approval: the record names them as `by`. */
-export const decider = (p: Pick<Principal, 'id' | 'role'>, by: string): StaffActor => ({
+export const decider = (
+  p: Pick<Principal, 'id' | 'role'> & { grant?: string; client?: string },
+  by: string,
+): StaffActor => ({
   kind: 'staff',
   id: p.id,
   name: by,
   role: p.role,
+  // An OAuth app acting as this person, so the engine can tell it from them.
+  ...(p.grant ? { grant: p.grant } : {}),
+  ...(p.client ? { client: p.client } : {}),
 });
 
 export function principalKey() {

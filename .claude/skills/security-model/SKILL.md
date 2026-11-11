@@ -57,8 +57,9 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    its `fetch` serves only `/agents/cart-agent/*` and `/ucp/*`. A new method on it must take a
    buyer signed for the cart and admit them only to that cart (`buyerOf`); a new envelope the
    storefront signs goes under the storefront key.
-3. **`/mcp` and `/a2a` are separate OAuth resources** (RFC 8707, `apps/web/app/lib/oauth.server.ts`):
-   a token works only at the endpoint it was granted for. A consent grants a role no higher than
+3. **`/mcp`, `/a2a` and `/api/v1` are separate OAuth resources** (RFC 8707, `apps/web/app/lib/oauth.server.ts`):
+   a token works only at the endpoint it was granted for. An OAuth grant at `/api/v1` carries its `grant`
+   and is never a `person` (no step-up, no confirmation of what a person confirms), as over MCP. A consent grants a role no higher than
    the approver's own.
 4. **Roles are checked on live data.** `atLeast(role, min)`; viewer < approver < operator < admin.
    Separation of duties (`ownOrderRefusal`) applies when the workspace setting is on. MCP and

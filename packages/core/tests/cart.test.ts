@@ -738,6 +738,10 @@ describe('carts outside their page', () => {
       name: 'ci',
       role: 'viewer',
     });
+    // An OAuth app acting as a person is named, so the engine can tell it from them.
+    expect(
+      staffCartActor({ id: 'usr_1', name: 'Ann', role: 'viewer', grant: 'g1', client: 'c1' }),
+    ).toMatchObject({ grant: 'g1', client: 'c1' });
     const v = cartView(cart({ external, quote, quotedVersion: 1 }));
     expect(v).not.toHaveProperty('external');
     expect(v).not.toHaveProperty('quotedVersion');

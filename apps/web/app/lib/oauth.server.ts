@@ -1,9 +1,11 @@
 /**
- * MCP (`/mcp`) and A2A (`/a2a`) on the public origin. @cloudflare/workers-oauth-provider is the
- * authorization server for both: discovery (`/.well-known/oauth-authorization-server`), client
+ * MCP (`/mcp`), A2A (`/a2a`) and the REST API (`/api/v1`) on the public origin.
+ * @cloudflare/workers-oauth-provider is the authorization server for all three: discovery (`/.well-known/oauth-authorization-server`), client
  * registration (`/oauth/register`, or a Client ID Metadata Document), tokens (`/oauth/token`) and
  * grants in `OAUTH_KV`. Each endpoint is its own protected resource, so a token is issued for one
  * of them (RFC 8707) and publishes its metadata at `/.well-known/oauth-protected-resource/<path>`.
+ * The REST API's own router is the app's (workers/app.ts): it sends an OAuth access token here to be
+ * checked (`apiOAuthFetch`) and keeps serving `cmw_live_` tokens and sessions itself.
  * The consent page is ours (routes/oauth-authorize.tsx): a signed-in person approves a client with
  * a role no higher than their own, and can disconnect it from their Account page.
  *
@@ -41,6 +43,8 @@ import { overBudget } from './rate-limit';
 
 export const MCP_PATH = '/mcp';
 export const AUTHORIZE_PATH = '/oauth/authorize';
+/** The REST API's resource: the prefix of every route (`/api/v1/…`), not a route itself. */
+export const API_PATH = '/api/v1';
 
 /**
  * The roles an app can be granted: a grant's scope is one of them. Admin is never offered (the
@@ -49,7 +53,11 @@ export const AUTHORIZE_PATH = '/oauth/authorize';
 export const GRANTABLE_ROLES = ROLES.filter((r) => r !== 'admin') as Exclude<Role, 'admin'>[];
 
 /** The protected endpoints, each its own OAuth resource. */
-const ENDPOINTS = { [MCP_PATH]: 'CommerceWorker MCP', [A2A_PATH]: 'CommerceWorker A2A' } as const;
+const ENDPOINTS = {
+  [MCP_PATH]: 'CommerceWorker MCP',
+  [A2A_PATH]: 'CommerceWorker A2A',
+  [API_PATH]: 'CommerceWorker API',
+} as const;
 type Endpoint = keyof typeof ENDPOINTS;
 const isEndpoint = (pathname: string): pathname is Endpoint => pathname in ENDPOINTS;
 
@@ -58,15 +66,20 @@ type Props = { principal: Caller } | GrantProps;
 
 const resource = (origin: string, path: Endpoint) => `${origin}${path}`;
 
-/** Paths the OAuth roles answer; everything else goes straight to the app. */
+/**
+ * Paths the OAuth roles answer; everything else goes straight to the app. The REST API is not
+ * one: its routes are the app's, and only a token's check comes here (`apiOAuthFetch`).
+ */
 export const isOAuthPath = (pathname: string) =>
-  isEndpoint(pathname) ||
+  (isEndpoint(pathname) && pathname !== API_PATH) ||
   pathname.startsWith('/.well-known/oauth-') ||
   (pathname.startsWith('/oauth/') && pathname !== AUTHORIZE_PATH);
 
 /** The channel an authorization request is for, as the audit trail names it. */
-export const channelOf = (resourceUrl: string | undefined) =>
-  resourceUrl && new URL(resourceUrl).pathname === A2A_PATH ? 'A2A' : 'MCP';
+export const channelOf = (resourceUrl: string | undefined) => {
+  const path = resourceUrl ? new URL(resourceUrl).pathname : MCP_PATH;
+  return path === A2A_PATH ? 'A2A' : path === API_PATH ? 'API' : 'MCP';
+};
 
 function authorizationServer(origin: string) {
   return new OAuthAuthorizationServer<Env>({
@@ -143,7 +156,22 @@ async function refreshReuse(request: Request): Promise<Response | null> {
 /** Tokens this authorization server issued look like `<user>:<grant>:<secret>`. */
 const issuedToken = (token: string) => token.split(':').length === 3;
 
-function resourceServer(origin: string, as: OAuthAuthorizationServer<Env>, path: Endpoint) {
+/** Whether a request carries an access token this server issued, rather than an API token. */
+export const hasIssuedToken = (request: Request) => {
+  const token = /^Bearer[\t ]+([^\s,]+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+  return token !== undefined && issuedToken(token);
+};
+
+type ResourceHandler = ConstructorParameters<typeof OAuthResourceServer<Env, Props>>[0]['handler'];
+
+function resourceServer(
+  origin: string,
+  as: OAuthAuthorizationServer<Env>,
+  path: Endpoint,
+  handler: ResourceHandler = {
+    fetch: (request, _env, ctx) => forward(request, path, ctx.props, ctx.auth),
+  },
+) {
   return new OAuthResourceServer<Env, Props>({
     resourceMetadata: {
       resource: resource(origin, path),
@@ -154,6 +182,8 @@ function resourceServer(origin: string, as: OAuthAuthorizationServer<Env>, path:
     },
     validateToken: (env, request) => async (res, token) => {
       if (issuedToken(token)) return as.validateToken<Props>(res, token, env);
+      // The REST API takes `cmw_live_` tokens in its own router, never through here.
+      if (path === API_PATH) return null;
       let caller: Caller | null;
       try {
         caller = await apiPrincipal(request);
@@ -169,7 +199,7 @@ function resourceServer(origin: string, as: OAuthAuthorizationServer<Env>, path:
       }
       return caller ? { props: { principal: caller }, audience: res } : null;
     },
-    handler: { fetch: (request, _env, ctx) => forward(request, path, ctx.props, ctx.auth) },
+    handler,
   });
 }
 
@@ -190,6 +220,10 @@ function rolesFor(origin: string): Roles {
       endpoints: {
         [MCP_PATH]: resourceServer(origin, as, MCP_PATH),
         [A2A_PATH]: resourceServer(origin, as, A2A_PATH),
+        // Only its metadata is served from here: a request to the API is `apiOAuthFetch`'s.
+        [API_PATH]: resourceServer(origin, as, API_PATH, {
+          fetch: () => new Response(null, { status: 404 }),
+        }),
       },
     };
     roles.set(origin, r);
@@ -233,6 +267,71 @@ export async function oauthFetch(
   return as.fetch(request, env, ctx);
 }
 
+/** What the REST router does with a caller once an access token has named one. */
+export type ApiRun = (caller: Caller) => Promise<Response>;
+
+/**
+ * Checks an OAuth access token presented at `/api/v1/…` and, for one granted for the REST API
+ * (and no other resource: an MCP or A2A token is refused here as an API one is at `/mcp`), runs
+ * the request as the person who approved it. The caller is resolved as MCP resolves its grants
+ * (`grantPrincipal`): the role is the lower of the token's scope and the person's own now, and a
+ * disabled or deleted person is refused. It is marked with its grant, so it is never taken for a
+ * person at a step-up or a confirmation (`runRestOperation`).
+ */
+export async function apiOAuthFetch(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  run: ApiRun,
+): Promise<Response> {
+  const { origin } = new URL(request.url);
+  // Made per request: its handler is this request's `run`.
+  const server = resourceServer(origin, rolesFor(origin).as, API_PATH, {
+    fetch: async (_request, _env, c) => {
+      const { props, auth } = c;
+      if ('principal' in props) return unauthorized(origin);
+      const grant = scopedGrant(props, auth.scope);
+      if (!grant) return insufficientScope(auth, [props.role], 'This token names no role.');
+      const caller = await grantPrincipal(grant);
+      if (!caller) return unauthorized(origin, 'This connection has ended. Connect the app again.');
+      const grantId = auth.token.split(':')[1];
+      return run({
+        ...caller,
+        ...(grantId ? { grant: grantId } : {}),
+        ...(auth.clientId ? { client: auth.clientId } : {}),
+        resource: auth.audience,
+        ...(auth.expiresAt !== undefined ? { expiresAt: auth.expiresAt * 1000 } : {}),
+      });
+    },
+  });
+  return withoutCors(await server.fetch(request, env, ctx));
+}
+
+/**
+ * The REST API offers no CORS, whichever credential a call carries: browser apps call it from a
+ * backend. The resource server adds `Access-Control-*` (reflecting any Origin) to every answer,
+ * which suits `/mcp`'s browser-based clients but not here, so they are dropped.
+ */
+function withoutCors(res: Response): Response {
+  const out = new Response(res.body, res);
+  for (const name of [...out.headers.keys()])
+    if (name.startsWith('access-control-')) out.headers.delete(name);
+  return out;
+}
+
+/** The `WWW-Authenticate` of a 401 at `/api/v1`: where its resource metadata is, as `/mcp`'s is. */
+export function apiChallenge(origin: string, invalidToken = false) {
+  return `Bearer realm="OAuth", resource_metadata="${origin}${PROTECTED_RESOURCE}${API_PATH}"${
+    invalidToken ? ', error="invalid_token"' : ''
+  }, scope="${GRANTABLE_ROLES.join(' ')}"`;
+}
+
+const unauthorized = (origin: string, error = 'Unauthorized') =>
+  Response.json(
+    { error },
+    { status: 401, headers: { 'www-authenticate': apiChallenge(origin, true) } },
+  );
+
 /** The authorization server's helpers, for the consent page and the Account page. */
 export function oauthApi(request: Request): OAuthHelpers {
   return rolesFor(new URL(request.url).origin).as.getOAuthApi(env);
@@ -274,14 +373,20 @@ async function forward(
   if (badOrigin(request)) return Response.json({ error: 'Origin refused' }, { status: 403 });
   let caller: Caller | null;
   // A connected app is named by its grant (an issued token is `<user>:<grant>:<secret>`) and client.
-  let app: { grant: string; client?: string } | null = null;
+  let app: { grant: string; client?: string; resource: string; expiresAt?: number } | null = null;
   if ('principal' in props) caller = props.principal;
   else {
     const grant = scopedGrant(props, auth.scope);
     if (!grant) return insufficientScope(auth, [props.role], 'This token names no role.');
     caller = await grantPrincipal(grant);
     const grantId = auth.token.split(':')[1];
-    if (grantId) app = { grant: grantId, ...(auth.clientId ? { client: auth.clientId } : {}) };
+    if (grantId)
+      app = {
+        grant: grantId,
+        ...(auth.clientId ? { client: auth.clientId } : {}),
+        resource: auth.audience,
+        ...(auth.expiresAt !== undefined ? { expiresAt: auth.expiresAt * 1000 } : {}),
+      };
   }
   if (!caller)
     return Response.json(

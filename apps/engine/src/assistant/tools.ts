@@ -21,8 +21,10 @@ import {
   isPageOnly,
   isPanelOnly,
   type Principal,
+  type ProxiedPrincipal,
   pluginSummary,
   type ToolInput,
+  whoami,
 } from '@commerceworker/core';
 import {
   readBoard,
@@ -207,6 +209,15 @@ export async function runTool<T extends AssistantTool>(
   // Only from the page's own button: the model, MCP and A2A never see it, and can't call it.
   if (isPageOnly(name) && !opts.direct) throw new Refused('This runs only from its page.');
   switch (name) {
+    // The principal is the one the web app signed, so over MCP and A2A it names its grant.
+    case 'whoami': {
+      const me = whoami(p as ProxiedPrincipal);
+      // The assistant's model reads the answer, so it never gets the person's email address: it
+      // has their name for the conversation. An MCP or A2A client is the person's own.
+      if (opts.via !== 'assistant') return me;
+      const { email: _email, ...subject } = me.subject;
+      return { ...me, subject };
+    }
     case 'needs_attention':
       return attention(env);
     case 'find_orders':

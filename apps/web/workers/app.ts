@@ -12,21 +12,9 @@ import {
 import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
 import { createRequestHandler, RouterContextProvider } from 'react-router';
-import {
-  handleApi,
-  handleShopifyOrder,
-  handleSignedEvent,
-  handleSignedOrder,
-} from '../app/lib/api.server';
-import {
-  apiPrincipal,
-  awaitingSetup,
-  principal,
-  sessionId,
-  setupDue,
-  Throttled,
-  TokenExpired,
-} from '../app/lib/auth.server';
+import { handleShopifyOrder, handleSignedEvent, handleSignedOrder } from '../app/lib/api.server';
+import { apiRoute } from '../app/lib/api-route.server';
+import { awaitingSetup, principal, sessionId, setupDue } from '../app/lib/auth.server';
 import { demoRefusal } from '../app/lib/demo.server';
 import { docs, engine } from '../app/lib/env.server';
 import { writeHealth } from '../app/lib/health.server';
@@ -37,7 +25,6 @@ import { bearerApiCall } from '../app/lib/origin';
 import { pluginPageContext } from '../app/lib/plugin-view';
 import { isPluginPublicPath, pluginFetch, pluginPathId, unalias } from '../app/lib/plugins.server';
 import { setPrincipalHeader } from '../app/lib/principal.server';
-import { overBudget } from '../app/lib/rate-limit';
 import { SCIM_PATH } from '../app/lib/scim';
 import { scimFetch } from '../app/lib/scim.server';
 import { handleStripeWebhook } from '../app/lib/stripe.server';
@@ -256,26 +243,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     });
   }
 
-  if (url.pathname.startsWith('/api/v1/')) {
-    let caller: Awaited<ReturnType<typeof apiPrincipal>>;
-    try {
-      caller = await apiPrincipal(request);
-    } catch (err) {
-      if (err instanceof TokenExpired)
-        return Response.json({ error: err.message }, { status: 401 });
-      if (!(err instanceof Throttled)) throw err;
-      return Response.json(
-        { error: err.message },
-        { status: 429, headers: { 'retry-after': String(Math.ceil(err.retryAfterMs / 1000)) } },
-      );
-    }
-    if (!caller) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    const due = setupDue(caller);
-    if (due) return Response.json({ error: due }, { status: 403 });
-    const limited = await overBudget('API_LIMIT', caller.id);
-    if (limited) return limited;
-    return handleApi(request, caller);
-  }
+  if (url.pathname.startsWith('/api/v1/')) return apiRoute(request, env, ctx);
 
   // The order page's live connection to its OrderAgent, a staff cart page's to its CartAgent, and
   // the assistant panel's to the person's own AssistantAgent (Agents SDK WebSocket + RPC, and the

@@ -217,12 +217,15 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
           .join('; '),
       };
     // A person signed in, or an API token: some actions (verifying a certificate) take only a person.
-    const p: Principal = {
+    // An OAuth app's grant and client ride along, so the audit trail names it as MCP's does.
+    const p = {
       kind: actor.person ? 'user' : 'token',
       id: actor.id,
       name: actor.name,
       role: actor.role,
-    };
+      ...(actor.grant ? { grant: actor.grant } : {}),
+      ...(actor.client ? { client: actor.client } : {}),
+    } as Principal;
     // A publish or test is held to the draft its caller read, as MCP's confirm holds the previewed one.
     const draft = (parsed.data as { draft?: string }).draft;
     if (DRAFT_BOUND_TOOLS.includes(name) && !draft)

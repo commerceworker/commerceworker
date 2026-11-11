@@ -114,6 +114,9 @@ export type AuditActor = Pick<Principal, 'id' | 'name'> & {
   kind: string;
   email?: string;
   role?: string;
+  /** An OAuth app acting as this person: its grant and client, named in the event's detail. */
+  grant?: string;
+  client?: string;
 };
 
 /** How long audit events are kept, unless the deployment sets `AUDIT_RETENTION_DAYS`. */

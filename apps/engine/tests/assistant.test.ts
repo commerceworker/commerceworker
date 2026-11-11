@@ -230,6 +230,28 @@ describe('assistant heuristics (no model)', () => {
   });
 });
 
+describe('whoami', () => {
+  const me: Principal = {
+    kind: 'user',
+    id: 'usr_w',
+    name: 'Wes',
+    email: 'wes@example.com',
+    role: 'viewer',
+  };
+
+  it("doesn't hand the person's email to the assistant's model, but does to their own MCP client", async () => {
+    const forModel = (await runTool(env, me, 'whoami', {}, { via: 'assistant' })) as {
+      subject: Record<string, unknown>;
+    };
+    expect(forModel.subject).toEqual({ id: 'usr_w', name: 'Wes' });
+    expect(JSON.stringify(forModel)).not.toContain('wes@example.com');
+    const forClient = (await runTool(env, me, 'whoami', {}, { via: 'MCP' })) as {
+      subject: Record<string, unknown>;
+    };
+    expect(forClient.subject).toEqual({ id: 'usr_w', name: 'Wes', email: 'wes@example.com' });
+  });
+});
+
 describe('assistant actions', () => {
   it('submits a cart only once it is ready, as the person, through the assistant', async () => {
     introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
