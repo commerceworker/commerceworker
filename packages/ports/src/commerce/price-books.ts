@@ -79,10 +79,21 @@ export interface PriceBookStore {
    * chain itself is not access control and reads books for the order's customer).
    */
   forCustomer(scope: CompanyScope, customerId: string, tier: string | null): Promise<PriceBook[]>;
-  /** A customer's contract prices, by SKU. */
-  contractPrices(customerId: string): Promise<ContractPrice[]>;
-  /** Sets contract prices (a SKU's again replaces it), in statements under D1's limit. */
-  putContractPrices(customerId: string, prices: readonly ContractPrice[]): Promise<void>;
-  /** Removes a customer's contract prices at these SKUs. */
-  removeContractPrices(customerId: string, skus: readonly string[]): Promise<void>;
+  /** A customer's contract prices, by SKU; none for a customer outside the scope. */
+  contractPrices(scope: CompanyScope, customerId: string): Promise<ContractPrice[]>;
+  /**
+   * Sets contract prices (a SKU's again replaces it), in statements under D1's limit. False, with
+   * nothing written, for a customer outside the scope.
+   */
+  putContractPrices(
+    scope: CompanyScope,
+    customerId: string,
+    prices: readonly ContractPrice[],
+  ): Promise<boolean>;
+  /** Removes a customer's contract prices at these SKUs; false for one outside the scope. */
+  removeContractPrices(
+    scope: CompanyScope,
+    customerId: string,
+    skus: readonly string[],
+  ): Promise<boolean>;
 }

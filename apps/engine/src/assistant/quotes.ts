@@ -13,6 +13,7 @@ import {
   type Principal,
   type QuoteDetail,
   quoteTotal,
+  rankQuoteLines,
   type ToolInput,
 } from '@commerceworker/core';
 import { recordAudit } from '../audit';
@@ -51,21 +52,17 @@ const CARD_LINES = 25;
  * many lines are below list price and the deepest discount, so nothing is hidden.
  */
 function quoteDetails(q: QuoteDetail): string[] {
-  const off = (l: QuoteDetail['lines'][number]) =>
-    l.listPrice ? Math.round((1 - l.unitPrice / l.listPrice) * 100) : 0;
-  const ranked = [...q.lines].sort((a, b) => off(b) - off(a) || a.sku.localeCompare(b.sku));
-  const shown = ranked.slice(0, CARD_LINES).map((l) => {
-    const d = off(l);
-    return `${l.sku} up to ${l.qty} at ${money(l.unitPrice)}${d > 0 ? ` (${d}% off list)` : ''}`;
+  const { ranked, below } = rankQuoteLines(q.lines);
+  const shown = ranked.slice(0, CARD_LINES).map(({ line: l, off }) => {
+    return `${l.sku} up to ${l.qty} at ${money(l.unitPrice)}${off > 0 ? ` (${off}% off list)` : ''}`;
   });
-  const below = ranked.filter((l) => off(l) > 0);
   const deepest = ranked[0];
   return [
     `Company ${q.companyId}, version ${q.version}`,
     `Lines: ${shown.join('; ')}${q.lines.length > CARD_LINES ? `; and ${q.lines.length - CARD_LINES} more` : ''}`,
-    ...(below.length && deepest
+    ...(below && deepest
       ? [
-          `${below.length} of ${q.lines.length} lines are below list price; deepest ${off(deepest)}% off on ${deepest.sku}`,
+          `${below} of ${q.lines.length} lines are below list price; deepest ${deepest.off}% off on ${deepest.line.sku}`,
         ]
       : []),
     `Total at the quoted quantities: ${money(quoteTotal(q.lines))} (base currency)`,

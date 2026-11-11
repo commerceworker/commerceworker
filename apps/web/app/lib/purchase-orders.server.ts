@@ -35,12 +35,12 @@ export async function purchaseOrderPage(
   });
   if (!r.ok) return { purchaseOrders: [], total: 0, cursor: null, companies: {}, error: r.error };
   const ids = [...new Set(r.purchaseOrders.map((p) => p.companyId))];
-  const names = await Promise.all(ids.map((id) => companyDirectory().company(ALL, id)));
+  const names = await companyDirectory().companiesById(ALL, ids);
   return {
     purchaseOrders: r.purchaseOrders,
     total: r.total,
     cursor: r.cursor,
-    companies: Object.fromEntries(names.flatMap((c) => (c ? [[c.customerId, c.name]] : []))),
+    companies: Object.fromEntries(names.map((c) => [c.customerId, c.name])),
     error: null,
   };
 }

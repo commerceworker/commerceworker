@@ -96,7 +96,7 @@ The [credit check](/reference/nodes/#commerce.credit_check) is also the hold. Wh
 total is claimed from the limit in the same step that checks it, so two orders checked at the same
 time can't both pass and together exceed the limit: exactly one takes `ok` and the other takes
 `over_limit`. Set the node's `hold` to `false` to only compare, as the check did before holds. A hold
-ends one of three ways:
+ends one of three ways (see [Credit hold](/reference/lifecycles/#credit-hold) for its states):
 
 - **Charged.** The [invoice](/reference/nodes/#commerce.invoice) converts the order's hold into its charge
   on the balance, so the same credit is never counted twice.

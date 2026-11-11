@@ -303,15 +303,15 @@ export function describePriceBookStoreContract(
     it('sets, replaces and removes contract prices, more than one statement can bind', async () => {
       const { books, pricing } = await make();
       // pc_twin_b has none to begin with.
-      expect(await books.contractPrices('pc_twin_b')).toEqual([]);
+      expect(await books.contractPrices(ALL, 'pc_twin_b')).toEqual([]);
       const many = Array.from({ length: 75 }, (_, i) => ({
         sku: `PCB-CON-${String(i).padStart(2, '0')}`,
         price: i + 1,
       }));
-      await books.putContractPrices('pc_twin_b', many);
-      expect(await books.contractPrices('pc_twin_b')).toEqual(many);
-      await books.putContractPrices('pc_twin_b', [{ sku: 'PCB-CON-00', price: 0.5 }]);
-      expect((await books.contractPrices('pc_twin_b'))[0]).toEqual({
+      await books.putContractPrices(ALL, 'pc_twin_b', many);
+      expect(await books.contractPrices(ALL, 'pc_twin_b')).toEqual(many);
+      await books.putContractPrices(ALL, 'pc_twin_b', [{ sku: 'PCB-CON-00', price: 0.5 }]);
+      expect((await books.contractPrices(ALL, 'pc_twin_b'))[0]).toEqual({
         sku: 'PCB-CON-00',
         price: 0.5,
       });
@@ -325,12 +325,40 @@ export function describePriceBookStoreContract(
         price: 0.5,
       });
       await books.removeContractPrices(
+        ALL,
         'pc_twin_b',
         many.map((m) => m.sku),
       );
-      expect(await books.contractPrices('pc_twin_b')).toEqual([]);
+      expect(await books.contractPrices(ALL, 'pc_twin_b')).toEqual([]);
       // Another customer's contract prices are untouched.
-      expect((await books.contractPrices('pc_northwind')).map((c) => c.sku)).toContain('PC-SKU-2');
+      expect((await books.contractPrices(ALL, 'pc_northwind')).map((c) => c.sku)).toContain(
+        'PC-SKU-2',
+      );
+    });
+
+    it('holds contract prices to the company scope: another company reads and writes none of them', async () => {
+      const { books } = await make();
+      const mine = { companyId: 'pc_twin_b' };
+      const theirs = { companyId: 'pc_twin_a' };
+      expect(
+        await books.putContractPrices(mine, 'pc_twin_b', [{ sku: 'PCB-SCOPE', price: 3 }]),
+      ).toBe(true);
+      expect(await books.contractPrices(mine, 'pc_twin_b')).toEqual([
+        { sku: 'PCB-SCOPE', price: 3 },
+      ]);
+      // Company A's scope sees none of B's and can neither replace nor remove them; B's sees none of A's.
+      expect(await books.contractPrices(theirs, 'pc_twin_b')).toEqual([]);
+      expect((await books.contractPrices(ALL, 'pc_twin_a')).length).toBeGreaterThan(0);
+      expect(await books.contractPrices(mine, 'pc_twin_a')).toEqual([]);
+      expect(
+        await books.putContractPrices(theirs, 'pc_twin_b', [{ sku: 'PCB-SCOPE', price: 1 }]),
+      ).toBe(false);
+      expect(await books.removeContractPrices(theirs, 'pc_twin_b', ['PCB-SCOPE'])).toBe(false);
+      expect(await books.contractPrices(ALL, 'pc_twin_b')).toEqual([
+        { sku: 'PCB-SCOPE', price: 3 },
+      ]);
+      expect(await books.removeContractPrices(mine, 'pc_twin_b', ['PCB-SCOPE'])).toBe(true);
+      expect(await books.contractPrices(ALL, 'pc_twin_b')).toEqual([]);
     });
   });
 }

@@ -14,13 +14,9 @@ cost now; a negotiated quote is a record of its own that outlives any order.
 
 ## Lifecycle
 
-| From | Can become |
-|---|---|
-| `draft` | `sent`, `declined` (withdrawn) |
-| `sent` | `accepted`, `declined`, `expired`, `superseded` (by a revision) |
-| `accepted` | `expired` (ended early) |
-| `declined`, `expired` | `superseded` (by a revision) |
-| `superseded` | nothing: it is final |
+A quote moves only along the moves listed under [Quote](/reference/lifecycles/#quote) in the status
+lifecycles: a draft is sent or withdrawn (`declined`), a sent quote is accepted, declined, ended
+(`expired`) or superseded by a revision, and an accepted quote can only end early.
 
 **Only a draft can be edited.** A sent quote is read-only; to change it, **revise** it. A revision
 starts the next version as a new draft with the same lines, and the version it came from becomes

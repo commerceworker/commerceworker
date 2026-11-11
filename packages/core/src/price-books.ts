@@ -94,19 +94,26 @@ export function priceBookDatesProblem(startsAt: number | null, endsAt: number | 
   return null;
 }
 
+/** A book's priority is a whole number within this far of zero. */
+export const PRICE_BOOK_PRIORITY_LIMIT = 1000;
+
 /**
- * A new book's code as stored (normalized) and what is wrong with the code or the dates, if
- * anything; the code is null when it isn't one.
+ * A new book's code as stored (normalized) and what is wrong with the code, the priority or the
+ * dates, if anything; the code is null when it isn't one.
  */
 export function priceBookHeadProblem(input: {
   code: string;
+  priority?: number;
   startsAt?: number | null;
   endsAt?: number | null;
 }) {
   const code = normalizeBookCode(input.code);
+  const priority = input.priority ?? 0;
   const problem = !code
     ? 'A code is lower-case letters, digits, dashes and underscores, up to 32.'
-    : priceBookDatesProblem(input.startsAt ?? null, input.endsAt ?? null);
+    : !Number.isInteger(priority) || Math.abs(priority) > PRICE_BOOK_PRIORITY_LIMIT
+      ? `A priority is a whole number from -${PRICE_BOOK_PRIORITY_LIMIT} to ${PRICE_BOOK_PRIORITY_LIMIT}.`
+      : priceBookDatesProblem(input.startsAt ?? null, input.endsAt ?? null);
   return { code, problem };
 }
 

@@ -4,6 +4,7 @@
  * else asks for a port, never a table.
  */
 
+import type { ApprovalPorts } from '@commerceworker/application/commerce';
 import { createDb, probeDb } from '@commerceworker/db';
 import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
@@ -352,6 +353,13 @@ export const budgetStore = (env: Pick<Env, 'DB'>): BudgetStore => d1BudgetStore(
 /** Companies, their teams and members, and the customer accounts they hang off. */
 export const companyDirectory = (env: Pick<Env, 'DB'>): CompanyDirectory =>
   d1CompanyDirectory(env.DB);
+
+/** What taking a vote on an Approval step reads and writes: the votes, the company, the team. */
+export const approvalPorts = (env: Pick<Env, 'DB'>): ApprovalPorts => ({
+  records: orderRecords(env),
+  companies: companyDirectory(env),
+  workspace: workspaceStore(env),
+});
 
 /** The places customers' orders ship to. */
 export const addressBook = (env: Pick<Env, 'DB'>): AddressBook => d1AddressBook(env.DB);

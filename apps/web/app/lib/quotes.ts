@@ -7,7 +7,6 @@
 import {
   QUOTE_LIFECYCLE,
   QUOTE_STATUSES,
-  type QuoteLine,
   type QuoteStatus,
   quoteEditable,
   quoteRevisable,
@@ -71,12 +70,6 @@ export function linesFrom(f: FormData) {
     lines.push({ sku, ...(name ? { name } : {}), qty, unitPrice });
   }
   return lines;
-}
-
-/** What a quote line takes off its list price, as a whole percentage; null with no list price. */
-export function lineDiscount(l: Pick<QuoteLine, 'listPrice' | 'unitPrice'>): number | null {
-  if (!l.listPrice) return null;
-  return Math.round((1 - l.unitPrice / l.listPrice) * 100);
 }
 
 /** The moves a quote may make next, from core's lifecycle, as the buttons the page offers. */

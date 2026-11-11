@@ -155,6 +155,27 @@ export function describeCompanyDirectoryContract(
       expect((await s.members(ALL, { companyId: 'cd_sb', limit: 10 })).total).toBe(1);
     });
 
+    it('reads several companies by id at once, leaving out unknown ids and other companies’', async () => {
+      const s = await make();
+      await seed(s, 'cd_ba', 'Batch B');
+      await seed(s, 'cd_bb', 'Batch A');
+      await seed(s, 'cd_bc', 'Batch C');
+      const ids = ['cd_ba', 'cd_bb', 'cd_nobody'];
+      expect((await s.companiesById(ALL, ids)).map((c) => c.customerId)).toEqual([
+        'cd_bb',
+        'cd_ba',
+      ]);
+      expect(await s.companiesById(ALL, [])).toEqual([]);
+      expect(
+        (await s.companiesById({ companyId: 'cd_ba' }, [...ids, 'cd_bc'])).map((c) => c.name),
+      ).toEqual(['Batch B']);
+      // More ids than one statement binds.
+      const many = Array.from({ length: 150 }, (_, i) => `cd_none_${i}`);
+      expect((await s.companiesById(ALL, [...many, 'cd_bc'])).map((c) => c.customerId)).toEqual([
+        'cd_bc',
+      ]);
+    });
+
     it('moves a company only from the status it read, and one of two racing moves wins', async () => {
       const s = await make();
       await seed(s, 'cd_r');

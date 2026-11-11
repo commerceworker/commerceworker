@@ -14,14 +14,9 @@ that come in through [punchout](/guides/punchout/) are not recorded yet.
 
 ## Lifecycle
 
-| From | Can become |
-|---|---|
-| `draft` | `submitted`, `cancelled` |
-| `submitted` | `pending_approval`, `approved`, `rejected`, `cancelled` |
-| `pending_approval` | `approved`, `rejected`, `cancelled` |
-| `approved` | `ordered` |
-| `ordered` | `fulfilled`, `cancelled` (when its order is cancelled) |
-| `rejected`, `fulfilled`, `cancelled` | nothing: they are final |
+A PO moves only along the moves listed under
+[Purchase order](/reference/lifecycles/#purchase-order) in the status lifecycles. An ordered PO is
+cancelled only when its order is, and `rejected`, `fulfilled` and `cancelled` are final.
 
 **Only a draft can be edited.** Once a PO is submitted it has started an order, so a change is
 refused; cancel it and draft another. Each move is made only from the status it was read in, so a

@@ -31,6 +31,7 @@ import {
   MAX_COMPANY_BUDGETS,
   money,
   SPEND_PAGE,
+  spendKey,
 } from '@commerceworker/core';
 import type {
   BudgetScope,
@@ -38,7 +39,6 @@ import type {
   CompanyDirectory,
   SpendEntry,
 } from '@commerceworker/ports/commerce';
-import { spendKey } from '@commerceworker/ports/commerce';
 import type { AuditDraft } from './audit-trail';
 
 export type BudgetPorts = {

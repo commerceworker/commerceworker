@@ -57,6 +57,23 @@ Not taken, and why:
 - The marketing pricing page and plan matrix: v1's plans don't apply to a per-customer deployment.
 - The example storefront, merchant, control and admin UIs, and the v1 docs pages: they speak v1's Postgres API and multi-tenant control plane.
 
+## Done: P5 B2B core
+
+From Commerce Worker v1's B2B domain, re-implemented on D1 as pure core logic, a port, a D1 adapter and use-cases (the pricing slice's layering), with every one of v1's gaps closed. The plan and its slices are `docs/b2b.md`.
+
+| Part | v1 source | Where it went | What v1 got wrong, and the fix |
+|---|---|---|---|
+| Companies, members, teams, roles | `schema-b2b.ts` | `packages/core/src/b2b/companies.ts`, `CompanyDirectory`, `d1CompanyDirectory`, `packages/application/src/commerce/companies.ts` | Statuses unguarded and lists unscoped: a `defineLifecycle` per status, every move one compare-and-set, every read bound by a `CompanyScope` |
+| Price books and contract prices | `price-book-resolver.ts` | `packages/core/src/price-books.ts` (`resolvePrice`), `PriceBookStore`, `d1PriceBookStore`, read in the pricing chain's one batch | Ignored tiers and currency, ranked inconsistently, one query per product: priority then price, tier assignments, dates at the order's `now`, one statement for a whole order; contract prices gained a write path and a company scope |
+| Credit | `credit-enforcement.ts` | `packages/core/src/credit.ts`, `BalanceStore`, `d1BalanceStore`, `holdCredit` | Checked and charged separately, never used its idempotency key: the check and the hold are one guarded batch, keyed by order and step, charged once at invoicing, released on rollback, cancel and end |
+| Budgets | `budget-enforcement.ts` | `packages/core/src/b2b/budgets.ts`, `BudgetStore`, `d1BudgetStore`, `packages/application/src/commerce/budgets.ts` | A mutable counter that never reset and had no reversal: an append-only spend ledger keyed by order and step, summed per UTC calendar window, reversed by a row of its own |
+| Approvals | `approval-evaluation.ts` | `packages/core/src/b2b/approvals.ts`, `packages/application/src/commerce/approvals.ts`, the Approval node | Identity and majority bugs, and a direct-approve route that bypassed the rules: a pure `evaluateApprovalStatus` (by identity, strict majority), votes recorded once per voter, and no route that approves outside the flow |
+| Purchase orders | `schema-b2b.ts` | `packages/core/src/b2b/purchase-orders.ts`, `PurchaseOrderStore`, `d1PurchaseOrderStore`, `packages/application/src/commerce/purchase-orders.ts`, `tpl-b2b-purchase-order` | Unguarded status changes, no paging or company filter, no editable drafts: only a draft is edited, a PO's status follows its order, every read takes a scope and a keyset cursor |
+| Quotes | `schema-b2b.ts` | `packages/core/src/b2b/quotes.ts`, `QuoteStore`, `d1QuoteStore`, `packages/application/src/commerce/quotes.ts`, the `quote` price source | Unguarded status changes, no versions, no link to pricing: a negotiated, versioned quote whose accepted prices rank first in the chain, converted idempotently to a PO draft or an order |
+| Lifecycle state machines | `subscriptions/state-machine.ts`, `order-state-machine.ts` | `packages/core/src/lifecycle.ts` (`defineLifecycle`), `LIFECYCLES` in `lifecycles.ts`, `apps/docs` `reference/lifecycles` | v1 wrote each machine by hand: one helper, a test that every lifecycle is listed, and a docs page rendered from the list |
+
+What v1 had that P5 did not take: projects and jobs, requisition lists and approval groups (D10); its Postgres schema, multi-tenant company scoping and control plane (a deployment is one customer, on D1).
+
 ## Planned
 
 | Target | From | Mode | Phase |
@@ -67,9 +84,8 @@ Not taken, and why:
 | `apps/storefront`, `apps/delivery` | `apps/engine/src/ucp`, `cart/`, `apps/delivery` | Split and rename | P3 |
 | Optional assets service: `apps/media` at `media.<host>`, asset ingest, R2 / Images / Stream / KV-gate adapters | Platform `apps/media`, `packages/adapters/src/{blob-r2,images-cf,video-stream,asset-gate-kv}`, `platform/src/asset-ingest.ts` | Copy; a registry field turns it on per deployment. Without it, product media is external `https` URLs (the merchant's DAM or CDN, or Platform-hosted assets) | P3 |
 | ACP | `packages/core/src/checkout.ts` | New adapter on the existing CheckoutSession | P4 |
-| B2B: companies, price books, quotes, POs, approvals, credit, budgets | v1 `packages/db/src/customer/schema-b2b.ts`, `price-book-resolver.ts`, `credit-enforcement.ts`, `budget-enforcement.ts`, `approval-evaluation.ts` | Re-implement on D1 as pure core logic plus engine adapters; approvals become Order Flow approval nodes | P5 |
 | Promotions redesign | v1 `docs/promotions/capability-matrix.md`, `cart-coupon-discount.ts`; `packages/core/src/promotions.ts` | Extend the core, using JSON Logic conditions | P6 |
-| Value objects (Address, PersonName), typed payment metadata, lifecycle state machines | v1 `packages/types`, `subscriptions/state-machine.ts`, `order-state-machine.ts` | Port where the core lacks one; the core's `money.ts` stays | P5–P6 |
+| Value objects (Address, PersonName), typed payment metadata | v1 `packages/types` | Port where the core lacks one; the core's `money.ts` stays | P6 |
 | `@commerceworker/sdk`, `commerceworker` CLI, SDK packaging and release | Platform `packages/sdk/*`, `packages/cli`, `scripts/sdk-packages.ts`, `.github/workflows/sdk-release.yml` | Copy the framework (device-flow login, profiles, command model, packaging); replace the CMS endpoints | P7 |
 | Strict dependency catalog, secrets escrow | Platform `scripts/catalog.test.ts`, `scripts/escrow-secrets*`, `escrow-secrets.yml` | Copy | P8 |
 | Ledger brand accent, `DESIGN.md` | Platform `DESIGN.md`, `packages/design` | Copy the format; set the cobalt accent | P9 |

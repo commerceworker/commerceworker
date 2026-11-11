@@ -1,4 +1,4 @@
-import { recordInboundPo } from '@commerceworker/application/commerce';
+import { planPoStart, tieOrderToPo } from '@commerceworker/application/commerce';
 import {
   type FlowVersion,
   newId,
@@ -56,41 +56,33 @@ async function tiePurchaseOrder(
 ): Promise<{ id: string; poNumber: string | null } | undefined> {
   const want = req.purchaseOrder;
   if (!want) return undefined;
-  const store = purchaseOrderStore(env);
-  if ('link' in want) {
-    // The order exists but isn't this PO's: its progress must never reach another's, so it stops here.
-    if (!(await store.linkOrder({ all: true }, want.link, orderId, now)))
-      throw new Error(`Purchase order ${want.link} can't be tied to order ${orderId}`);
-  } else {
-    const input = orderInputSchema.parse(req.input);
-    const r = await recordInboundPo(
-      { purchaseOrders: store, companies: companyDirectory(env) },
-      {
-        orderId,
-        companyId: input.customerId,
-        poNumber: want.record.poNumber,
-        source: want.record.source,
-        currency: input.currency,
-        lines: input.lines,
-        shipTo: input.meta.shipTo,
-        buyerId: orderBuyerId(input.meta),
-      },
-      now,
+  const input = orderInputSchema.parse(req.input);
+  const r = await tieOrderToPo(
+    { purchaseOrders: purchaseOrderStore(env), companies: companyDirectory(env) },
+    want,
+    {
+      orderId,
+      companyId: input.customerId,
+      currency: input.currency,
+      lines: input.lines,
+      shipTo: input.meta.shipTo,
+      buyerId: orderBuyerId(input.meta),
+    },
+    now,
+  );
+  // The order exists but isn't this PO's, so it stops here.
+  if (!r.ok) throw new Error(r.error);
+  if (r.warning)
+    console.warn(
+      JSON.stringify({ type: 'purchase_order_not_recorded', orderId, error: r.warning }),
     );
-    if (!r.ok)
-      console.warn(
-        JSON.stringify({ type: 'purchase_order_not_recorded', orderId, error: r.error }),
-      );
-    else if (r.audit)
-      await recordAudit(env, r.audit.action, {
-        actor: { kind: 'channel', id: `${want.record.source}`, name: want.record.source },
-        target: r.audit.target ?? null,
-        detail: r.audit.detail,
-      });
-  }
-  const po = await store.byOrder(orderId);
-  // An emailed PO's number is provisional, so it stays off the invoice; the others' is the buyer's own.
-  return po && { id: po.id, poNumber: po.source === 'email' ? null : po.poNumber };
+  if (r.audit && 'record' in want)
+    await recordAudit(env, r.audit.action, {
+      actor: { kind: 'channel', id: `${want.record.source}`, name: want.record.source },
+      target: r.audit.target ?? null,
+      detail: r.audit.detail,
+    });
+  return r.tied;
 }
 
 /** What a caller's `meta` may carry into an order: nothing that names a PO. */
@@ -157,15 +149,18 @@ async function start(
   const input = orderInputSchema.parse(req.input);
   if (req.purchaseOrder && 'link' in req.purchaseOrder) {
     // Refused before the order exists, so a PO that can't be this order's leaves nothing behind.
-    const po = await purchaseOrderStore(env).get({ all: true }, req.purchaseOrder.link);
-    if (po?.orderId && key) {
+    const plan = await planPoStart(
+      { purchaseOrders: purchaseOrderStore(env) },
+      req.purchaseOrder.link,
+      input.customerId,
+    );
+    if (!plan.ok) {
       // It has an order. If that is this request's (a submit whose first try got that far, or a
       // retry that raced it), this is a replay of it, not a refusal.
-      const started = await existing();
+      const started = plan.ordered && key ? await existing() : undefined;
       if (started) return replay(started);
+      throw new Error(plan.error);
     }
-    if (!po || po.companyId !== input.customerId || po.orderId)
-      throw new Error(`Purchase order ${req.purchaseOrder.link} can't start this order`);
   }
   const orderId = newId('ord');
   const now = Date.now();

@@ -49,3 +49,10 @@ export function creditLimitProblem(limit: number): string | null {
 }
 
 export const MAX_CREDIT_ADJUSTMENT = 1_000_000_000;
+
+/** The id a hold gets: `hld_<orderId>_<stepKey>`, sanitized as a charge's is. */
+export const creditHoldId = (orderId: string, stepKey: string) =>
+  `hld_${orderId}_${stepKey}`.replace(/[^\w-]/g, '_');
+
+/** The id an adjustment gets. */
+export const creditAdjustmentId = (key: string) => `adj_${key}`.replace(/[^\w-]/g, '_');

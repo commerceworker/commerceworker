@@ -4,7 +4,7 @@
  * declining, ending and converting stop for a confirm card; revising starts the next version as a
  * draft. The page names every version of the negotiation and what an accepted quote became.
  */
-import { dayOfExpiry, QUOTE_STATUS_LABELS } from '@commerceworker/core';
+import { dayOfExpiry, QUOTE_STATUS_LABELS, quoteLineDiscount } from '@commerceworker/core';
 import { Button } from '@commerceworker/ui/button';
 import {
   Field,
@@ -22,7 +22,7 @@ import { type FormEvent, useState } from 'react';
 import { data, Link, useLoaderData, useNavigate } from 'react-router';
 import { QuoteLinesEditor, QuoteStatusBadge } from '~/components/quotes';
 import { requireUser } from '~/lib/auth.server';
-import { lineDiscount, linesFrom, quoteMoves } from '~/lib/quotes';
+import { linesFrom, quoteMoves } from '~/lib/quotes';
 import { quoteDetail } from '~/lib/quotes.server';
 import { useChange } from '~/lib/use-change';
 import { useCan } from '~/lib/use-me';
@@ -276,7 +276,7 @@ export default function Quote() {
                   </TableHead>
                   <TableBody>
                     {quote.lines.map((l) => {
-                      const off = lineDiscount(l);
+                      const off = quoteLineDiscount(l);
                       return (
                         <Tr key={l.sku}>
                           <Td>{l.sku}</Td>

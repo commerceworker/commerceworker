@@ -5,7 +5,13 @@
  * about an order go to the workspace assistant (./assistant), which reads and acts on it here.
  */
 
-import { syncPoFromOrder } from '@commerceworker/application/commerce';
+import {
+  castApprovalVote,
+  plainPlan,
+  planRequired,
+  syncPoFromOrder,
+  voterOf,
+} from '@commerceworker/application/commerce';
 import type { ReturnRequest } from '@commerceworker/core';
 import {
   type ApprovalPlan,
@@ -16,7 +22,6 @@ import {
   describePlan,
   EMPTY_ORDER_STATE,
   eraseOrderState,
-  evaluateApprovalStatus,
   eventDigest,
   eventProblem,
   eventWait,
@@ -38,7 +43,6 @@ import {
   type PendingWait,
   type Principal,
   type ProxiedPrincipal,
-  planSpec,
   poProgressOf,
   ROLE_LABELS,
   type Role,
@@ -49,7 +53,6 @@ import {
 } from '@commerceworker/core';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
 import { sendAiFeedback } from './ai';
-import { plainPlan, planRequired, voteRefusal, voterOf } from './approvals';
 import { recordAudit } from './audit';
 import { compensateOrder } from './connectors';
 import { a2aAgent } from './namespaces';
@@ -58,7 +61,7 @@ import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
 import { releaseHold } from './ucp/payments';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
-import { companyDirectory, orderRecords, purchaseOrderStore } from './wire';
+import { approvalPorts, orderRecords, purchaseOrderStore } from './wire';
 import { plural } from './words';
 
 /** What recording a vote answered: where the vote stands, or why it couldn't be taken. */
@@ -436,7 +439,7 @@ export class OrderAgent extends Agent<Env, State> {
               companyId: plan.companyId ?? null,
               approvers: plan.approvers,
               mode: plan.mode,
-              required: planRequired(plan, planSpec(plan)),
+              required: planRequired(plan),
               eligible: plan.eligible,
             }
           : {}),
@@ -698,37 +701,25 @@ export class OrderAgent extends Agent<Env, State> {
     if (!w || !this.state.instanceId || !orderId)
       throw new Error('That node is not waiting for an approval');
     const plan: ApprovalPlan = w.approval ?? plainPlan();
-    const spec = planSpec(plan);
     const voter = voterOf({ id: deciderId, by, role: v.role, onBehalfOf });
-    const records = this.records();
-    const before = await records.votes(orderId, w.eventType);
-    // A vote sent again (a retry after a lost answer) is the one already recorded: it only
-    // evaluates and sends, as a decision sent twice always did.
-    const problem = await voteRefusal(
-      this.env,
-      plan,
-      before,
-      voter,
-      this.state.order,
-      onBehalfOf,
-      decision,
+    const cast = await castApprovalVote(
+      approvalPorts(this.env),
+      {
+        orderId,
+        eventType: w.eventType,
+        plan,
+        order: this.state.order,
+        voter,
+        decision,
+        note,
+        onBehalfOf,
+        by,
+        deciderId,
+      },
+      Date.now(),
     );
-    if (problem) return refused(problem);
-    await records.recordVote(orderId, w.eventType, {
-      voterId: voter.id,
-      voterKind: voter.kind,
-      onBehalfBy: onBehalfOf ? (deciderId ?? by) : null,
-      decision,
-      note: note ?? null,
-      at: Date.now(),
-    });
-    // Read back after writing: of two votes racing, the later read sees both.
-    const tally = evaluateApprovalStatus(
-      spec,
-      plan.eligible,
-      await records.votes(orderId, w.eventType),
-    );
-    const voted = onBehalfOf ? await this.memberName(plan, onBehalfOf) : by;
+    if (!cast.ok) return refused(cast.error);
+    const { tally, voted } = cast;
     if (tally.status === 'pending') {
       this.patch({
         timeline: this.log({
@@ -757,16 +748,8 @@ export class OrderAgent extends Agent<Env, State> {
       outcome: tally.status === 'pending' ? 'recorded' : tally.status,
       tally: tally.label,
       // A single staff decision is what every approval was: its audit row says no more.
-      audited: plan.mode !== 'any' || !!onBehalfOf,
+      audited: cast.audited,
     };
-  }
-
-  /** A company member's name, for the timeline; their id when they can't be read. */
-  private async memberName(plan: ApprovalPlan, memberId: string) {
-    const m = plan.companyId
-      ? await companyDirectory(this.env).member({ all: true }, plan.companyId, memberId)
-      : undefined;
-    return m?.name ?? memberId;
   }
 
   /**

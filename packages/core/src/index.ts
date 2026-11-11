@@ -35,6 +35,7 @@ export * from './json-schema';
 export * from './labels';
 export * from './layout';
 export * from './lifecycle';
+export * from './lifecycles';
 export * from './lines';
 export * from './logic';
 export * from './marketplace';

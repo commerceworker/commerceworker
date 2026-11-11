@@ -1,0 +1,19 @@
+---
+title: Status lifecycles
+description: Every status a company, price book, credit hold, budget, purchase order or quote moves through, and the moves allowed between them.
+---
+
+import Lifecycles from '../../components/Lifecycles.astro';
+
+A status changes only along the moves below. A move is applied as one compare-and-set on the
+status the caller read, so of two requests that race from the same state exactly one wins and the
+other is told the state had changed. A state with no move out of it is final: nothing reopens it,
+and what a company or a flow needs next is a new record (a revised quote, a new budget).
+
+Each [REST](/reference/rest-api/) route and [MCP](/reference/mcp/) tool that changes a status
+follows these moves, and refuses any other with the state the record is in. The
+[companies](/guides/companies/), [price books](/guides/price-books/),
+[purchase orders](/guides/purchase-orders/) and [quotes](/guides/quotes/) guides say what each move
+does to orders.
+
+<Lifecycles />

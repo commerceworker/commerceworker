@@ -16,7 +16,11 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import { releaseCredit, reverseBudgetSpend } from '@commerceworker/application/commerce';
+import {
+  planApproval,
+  releaseCredit,
+  reverseBudgetSpend,
+} from '@commerceworker/application/commerce';
 import {
   type AccountContext,
   beginNode,
@@ -46,7 +50,6 @@ import {
 } from '@commerceworker/core';
 import { loadAccount } from './accounts';
 import type { Report } from './agent';
-import { approvalPlan } from './approvals';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
 import { EXECUTORS, type NodeResult, ROLLBACKS, scaled } from './nodes';
@@ -54,7 +57,7 @@ import { instanceExists } from './orders';
 import { emit, orderSummary } from './outbox';
 import { voidAuthorizations } from './payments';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
-import { balanceStore, budgetStore } from './wire';
+import { approvalPorts, balanceStore, budgetStore } from './wire';
 import { capReason, failureReason, plural } from './words';
 
 export type OrderWorkflowParams = {
@@ -399,10 +402,10 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         await step.do(`${key}:open`, async () => {
           // Who may vote, resolved here so a replay keeps what the wait opened with. The wait is
           // still one event: the agent sends it once the votes decide the step.
-          let votePlan: Awaited<ReturnType<typeof approvalPlan>> | undefined;
+          let votePlan: Awaited<ReturnType<typeof planApproval>> | undefined;
           if (approval) {
             try {
-              votePlan = await approvalPlan(env, config, ctx.order);
+              votePlan = await planApproval(approvalPorts(env), config, ctx.order);
             } catch (err) {
               throw new NonRetryableError(err instanceof Error ? err.message : String(err));
             }

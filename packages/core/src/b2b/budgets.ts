@@ -177,6 +177,9 @@ export function budgetsFor(
 export const budgetSpendId = (orderId: string, stepKey: string, budgetId: string) =>
   `bsp_${orderId}_${stepKey}_${budgetId}`.replace(/[^\w-]/g, '_');
 
+/** The key `spentIn` answers by: one budget in one window. */
+export const spendKey = (budgetId: string, windowStart: number) => `${budgetId}@${windowStart}`;
+
 /** The id a commit's reversal gets. */
 export const budgetReversalId = (commitId: string) => `rev_${commitId}`;
 

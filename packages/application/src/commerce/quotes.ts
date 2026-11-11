@@ -716,6 +716,22 @@ export type QuoteConvertPlan = {
   flowId: string;
 };
 
+/**
+ * Whether what a quote was converted to is complete: its order is recorded, or its PO draft made.
+ * A claim that stopped halfway (the order never started, the draft never made) isn't, so
+ * converting again finishes it.
+ */
+export async function quoteConversionSettled(
+  ports: Pick<QuoteConvertPorts, 'purchaseOrders'>,
+  scope: QuoteScope,
+  quote: Pick<Quote, 'id' | 'convertedTo' | 'convertedId'>,
+): Promise<boolean> {
+  if (!quote.convertedTo || !quote.convertedId) return false;
+  return quote.convertedTo === 'order'
+    ? !quoteOrderUnstarted(quote)
+    : !!(await ports.purchaseOrders.get(scope, quotePoId(quote.id)));
+}
+
 /** What converting a quote would do, or why not. */
 export async function planConvertQuote(
   ports: Pick<QuoteConvertPorts, 'quotes' | 'purchaseOrders'>,
@@ -730,10 +746,7 @@ export async function planConvertQuote(
   const poNumber = input.poNumber ?? quotePoNumber(quote);
   const flowId = input.flowId ?? DEFAULT_TEMPLATE.b2b;
   if (quote.convertedTo && quote.convertedId) {
-    const resume =
-      quote.convertedTo === 'order'
-        ? quoteOrderUnstarted(quote)
-        : !(await ports.purchaseOrders.get(scope, quotePoId(quote.id)));
+    const resume = !(await quoteConversionSettled(ports, scope, quote));
     return { ok: true, quote, to: quote.convertedTo, repeat: true, resume, poNumber, flowId };
   }
   // D7: a company that uses POs (has any) gets a PO draft; one that doesn't, an order.

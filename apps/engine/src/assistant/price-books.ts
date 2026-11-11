@@ -35,6 +35,7 @@ import { money, Refused } from './data';
 
 type Trail = Record<string, unknown>;
 
+const ALL = { all: true } as const;
 const ports = (env: Env) => ({
   books: priceBookStore(env),
   pricing: pricingStore(env),
@@ -259,7 +260,7 @@ export async function previewContractPrices(
   i: ToolInput<'put_contract_prices'>,
   roleBlock?: string,
 ): Promise<ActionPreview> {
-  const plan = await planContractPrices(ports(env), i);
+  const plan = await planContractPrices(ports(env), ALL, i);
   const who = plan.customer?.name ?? i.customerId;
   const sample = i.prices
     .slice(0, 5)
@@ -283,7 +284,7 @@ export async function runContractPrices(
   i: ToolInput<'put_contract_prices'>,
   trail: Trail,
 ) {
-  const r = await putContractPrices(ports(env), i);
+  const r = await putContractPrices(ports(env), ALL, i);
   if (!r.ok) throw new Refused(r.error);
   await recordAudit(env, r.audit.action, {
     actor: p,

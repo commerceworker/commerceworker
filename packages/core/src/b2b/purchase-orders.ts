@@ -364,6 +364,20 @@ export type PurchaseOrderStart =
   | { link: string }
   | { record: { source: PoInboundSource; poNumber: string } };
 
+/**
+ * The number an emailed PO is recorded under until the extract node reads the document's own: made
+ * from the message's fingerprint, so a redelivery of the same message gets the same one.
+ */
+export const provisionalPoNumber = (fingerprint: string) =>
+  `EML-${fingerprint.slice(0, 10).toUpperCase()}`;
+
+/**
+ * The number an order's invoice carries as the buyer's reference: the PO's own, except an emailed
+ * PO's provisional one, which isn't the buyer's.
+ */
+export const invoicePoNumber = (po: Pick<PurchaseOrder, 'source' | 'poNumber'>) =>
+  po.source === 'email' ? null : po.poNumber;
+
 /** The id of the PO recorded for an order that arrived as one. */
 export const poIdForOrder = (orderId: string) => `po_${orderId.replace(/^ord_/, '')}`;
 

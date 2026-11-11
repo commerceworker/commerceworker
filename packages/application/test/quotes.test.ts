@@ -22,6 +22,7 @@ import {
   previewPrice,
   priceOrder,
   type QuoteOrderDeps,
+  quoteConversionSettled,
   quoteFingerprint,
   reviseQuote,
   sendQuote,
@@ -1109,5 +1110,52 @@ describe('reading quotes', () => {
       ok: false,
     });
     expect((await p.quotes.get(ALL, mine.id))?.status).toBe('draft');
+  });
+});
+
+describe('whether a quote’s conversion is complete', () => {
+  const p = { purchaseOrders: new InMemoryPurchaseOrderStore() };
+  it('is not before a claim, and for an order only once its id replaces the start key', async () => {
+    expect(
+      await quoteConversionSettled(p, ALL, { id: 'qt_1', convertedTo: null, convertedId: null }),
+    ).toBe(false);
+    expect(
+      await quoteConversionSettled(p, ALL, {
+        id: 'qt_1',
+        convertedTo: 'order',
+        convertedId: 'quote:qt_1',
+      }),
+    ).toBe(false);
+    expect(
+      await quoteConversionSettled(p, ALL, {
+        id: 'qt_1',
+        convertedTo: 'order',
+        convertedId: 'ord_9',
+      }),
+    ).toBe(true);
+  });
+
+  it('is for a PO draft only once the draft exists', async () => {
+    const quote = { id: 'qt_2', convertedTo: 'po' as const, convertedId: 'po_qt_2' };
+    expect(await quoteConversionSettled(p, ALL, quote)).toBe(false);
+    await p.purchaseOrders.create(
+      {
+        id: 'po_qt_2',
+        companyId: 'acme',
+        buyerId: null,
+        poNumber: 'Q-2',
+        status: 'draft',
+        currency: 'USD',
+        shipTo: null,
+        notes: null,
+        quoteId: 'qt_2',
+        orderId: null,
+        source: 'app',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      [],
+    );
+    expect(await quoteConversionSettled(p, ALL, quote)).toBe(true);
   });
 });

@@ -73,6 +73,11 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'POST', path: '/customers/{customerId}/credit/limit', tool: 'set_credit_limit' },
   { method: 'POST', path: '/customers/{customerId}/credit/adjustments', tool: 'adjust_credit' },
   { method: 'GET', path: '/companies/{companyId}/budgets', tool: 'list_budgets' },
+  {
+    method: 'GET',
+    path: '/companies/{companyId}/budgets/{budgetId}/spend',
+    tool: 'list_budget_spend',
+  },
   { method: 'POST', path: '/companies/{companyId}/budgets', tool: 'put_budget' },
   {
     method: 'POST',
