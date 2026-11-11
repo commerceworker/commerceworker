@@ -20,6 +20,7 @@ import {
   pluginBundleFileSchema,
   ROLE_LABELS,
   startOrderSchema,
+  TOOL_OUTPUTS,
   ucpSettingsSchema,
 } from '@commerceworker/core';
 import {
@@ -35,7 +36,10 @@ import {
   catalogProductsInput,
   catalogPublishInput,
   catalogTypeInput,
+  categorySchema,
+  channelSchema,
   GAP_KINDS,
+  productTypeSchema,
 } from '@commerceworker/core/product';
 import { z } from 'zod';
 import {
@@ -62,14 +66,30 @@ const ok = (description: string, ref?: string) => ({
   description,
   ...(ref ? { content: { 'application/json': { schema: { $ref: ref } } } } : {}),
 });
+/** What a handler sends back, so `io: 'output'`: defaults applied, not optional. */
+const output = (s: z.ZodType) => z.toJSONSchema(s, { io: 'output', unrepresentable: 'any' });
+const okJson = (description: string, s: z.ZodType | Record<string, unknown>) => ({
+  description,
+  content: {
+    'application/json': { schema: s instanceof z.ZodType ? output(s) : s },
+  },
+});
+const errorRef = '#/components/schemas/Error';
+// Every route that takes a bearer token can refuse these; a route lists a status of its own
+// (409, 422…) beside them, after the spread, to say more.
 const errors = {
-  '400': ok('Invalid request', '#/components/schemas/Error'),
-  '401': ok('Missing or wrong bearer token', '#/components/schemas/Error'),
-  '404': ok('Not found', '#/components/schemas/Error'),
-  '429': ok(
-    "Over the caller's requests a minute; wait Retry-After seconds",
-    '#/components/schemas/Error',
-  ),
+  '400': ok('Invalid request', errorRef),
+  '401': ok('Missing or wrong bearer token', errorRef),
+  '403': ok('The caller’s role is too low, or only a person may do it', errorRef),
+  '404': ok('Not found', errorRef),
+  '429': ok("Over the caller's requests a minute; wait Retry-After seconds", errorRef),
+};
+// A signed route has no bearer token: its caller proves itself by the signature instead.
+const signedErrors = {
+  '400': ok('Invalid request', errorRef),
+  '401': ok('Missing, wrong or expired signature', errorRef),
+  '404': ok('Not found', errorRef),
+  '429': ok("Over the caller's requests a minute; wait Retry-After seconds", errorRef),
 };
 const orderId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
 const cartId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
@@ -236,20 +256,107 @@ function operationPaths() {
           }
         : {}),
       ...(op.method === 'POST' ? { requestBody: body(operationBody(op)) } : {}),
+      // The engine answers with the tool's value as it stands (`runRestOperation`), the same one
+      // MCP sends as structured content, so TOOL_OUTPUTS describes the body.
       responses: {
-        '200': ok('What the operation did or found'),
-        '403': ok(
-          'The caller’s role is too low, or only a person may do it',
-          '#/components/schemas/Error',
-        ),
-        '409': ok(
-          'Refused: the order, flow or record can’t do that now',
-          '#/components/schemas/Error',
-        ),
+        '200': okJson('What the operation did or found', TOOL_OUTPUTS[op.tool]),
+        '409': ok('Refused: the order, flow or record can’t do that now', errorRef),
         ...errors,
       },
+      operationId: op.tool,
     };
   }
+  return paths;
+}
+
+/**
+ * Every hand-written route's `operationId` (snake_case, as the tool names REST_OPERATIONS rows
+ * take), keyed by method and path. A generated SDK names its methods from these, so a rename is a
+ * breaking change; `withOperationIds` refuses a route without one and an entry with no route.
+ */
+const OPERATION_IDS: Record<string, string> = {
+  'get /api/v1/flows': 'list_flows',
+  'get /api/v1/orders': 'list_orders',
+  'post /api/v1/orders': 'start_order',
+  'get /api/v1/orders/{id}': 'get_order_state',
+  'post /api/v1/orders/{id}/events': 'deliver_order_event',
+  'post /api/v1/orders/{id}/approvals/{nodeId}': 'decide_approval',
+  'post /api/v1/orders/{id}/cancel': 'cancel_order',
+  'get /api/v1/carts': 'list_carts',
+  'post /api/v1/carts': 'create_cart',
+  'get /api/v1/carts/{id}': 'get_cart',
+  'post /api/v1/carts/{id}/ops': 'change_cart',
+  'post /api/v1/carts/{id}/submit': 'submit_cart',
+  'post /api/v1/carts/{id}/cancel': 'cancel_cart',
+  'post /api/v1/webhooks/events': 'receive_order_event',
+  'post /api/v1/webhooks/stripe': 'receive_stripe_webhook',
+  'post /api/v1/channels/shopify/orders': 'receive_shopify_order',
+  'post /api/v1/channels/edi/850': 'receive_edi_850',
+  'post /api/v1/webhooks/orders': 'receive_inbound_order',
+  'get /api/v1/audit-events': 'list_audit_events',
+  'get /api/v1/audit-events/verify': 'verify_audit_chain',
+  'post /api/v1/catalog/products': 'put_catalog_products',
+  'get /api/v1/catalog/products/{key}': 'get_catalog_product',
+  'post /api/v1/catalog/products/delete': 'delete_catalog_products',
+  'get /api/v1/catalog/aliases/{alias}': 'resolve_catalog_alias',
+  'get /api/v1/catalog/types': 'list_catalog_types',
+  'post /api/v1/catalog/types': 'put_catalog_type',
+  'delete /api/v1/catalog/types/{code}': 'delete_catalog_type',
+  'delete /api/v1/catalog/channels/{code}': 'delete_catalog_channel',
+  'post /api/v1/catalog/categories/delete': 'delete_catalog_categories',
+  'get /api/v1/catalog/channels': 'list_catalog_channels',
+  'post /api/v1/catalog/channels': 'put_catalog_channel',
+  'get /api/v1/catalog/categories': 'list_catalog_categories',
+  'post /api/v1/catalog/categories': 'put_catalog_categories',
+  'get /api/v1/catalog/feeds': 'list_catalog_feeds',
+  'post /api/v1/catalog/feeds': 'import_catalog_feed',
+  'get /api/v1/catalog/feeds/{id}': 'get_catalog_feed',
+  'post /api/v1/catalog/feeds/{id}/cancel': 'cancel_catalog_feed',
+  'get /api/v1/catalog/board': 'get_catalog_board',
+  'get /api/v1/catalog/board/{column}': 'get_catalog_board_column',
+  'get /api/v1/catalog/products/{key}/sheet': 'get_catalog_product_sheet',
+  'post /api/v1/catalog/products/{key}/draft': 'draft_catalog_product',
+  'post /api/v1/catalog/edits': 'stage_catalog_edits',
+  'post /api/v1/catalog/edits/discard': 'discard_catalog_edits',
+  'post /api/v1/catalog/edits/publish': 'publish_catalog_edits',
+  'post /api/v1/catalog/drafts': 'save_catalog_drafts',
+  'post /api/v1/catalog/drafts/discard': 'discard_catalog_drafts',
+  'post /api/v1/catalog/gaps/rebuild': 'rebuild_catalog_gaps',
+  'post /api/v1/catalog/reindex': 'reindex_catalog',
+  'post /api/v1/data-subjects/export': 'export_data_subject',
+  'post /api/v1/data-subjects/erase': 'erase_data_subject',
+  'get /api/v1/webhook-subscriptions': 'list_webhook_subscriptions',
+  'post /api/v1/webhook-subscriptions': 'create_webhook_subscription',
+  'delete /api/v1/webhook-subscriptions/{id}': 'delete_webhook_subscription',
+  'post /api/v1/webhook-subscriptions/{id}/rotate': 'rotate_webhook_subscription_secret',
+  'get /api/v1/webhook-subscriptions/{id}/deliveries': 'list_webhook_deliveries',
+  'get /api/v1/integrations': 'list_integrations',
+  'post /api/v1/integrations': 'create_integration',
+  'post /api/v1/integrations/{id}/rotate': 'rotate_integration_secret',
+  'delete /api/v1/integrations/{id}': 'revoke_integration',
+  'get /api/v1/plugins': 'list_plugins',
+  'post /api/v1/plugins': 'upload_plugin',
+  'post /api/v1/plugins/{id}/disable': 'disable_plugin',
+  'get /api/v1/plugins/{id}/usage': 'get_plugin_usage',
+  'get /api/v1/ucp': 'get_ucp',
+  'post /api/v1/ucp/settings': 'set_ucp_settings',
+  'post /api/v1/ucp/platforms': 'add_ucp_platform',
+  'delete /api/v1/ucp/platforms/{id}': 'revoke_ucp_platform',
+};
+
+/** Names each hand-written operation (REST_OPERATIONS rows are named by their tool already). */
+function withOperationIds<T extends Record<string, unknown>>(paths: T): T {
+  const unused = new Set(Object.keys(OPERATION_IDS));
+  for (const [route, item] of Object.entries(paths) as [string, Record<string, unknown>][])
+    for (const [method, op] of Object.entries(item) as [string, { operationId?: string }][]) {
+      if (op.operationId) continue;
+      const key = `${method} ${route}`;
+      const id = OPERATION_IDS[key];
+      if (!id) throw new Error(`${key} has no operationId: add it to OPERATION_IDS`);
+      unused.delete(key);
+      op.operationId = id;
+    }
+  if (unused.size) throw new Error(`OPERATION_IDS names no route: ${[...unused].join(', ')}`);
   return paths;
 }
 
@@ -264,7 +371,7 @@ export function openApiDocument(serverUrl: string) {
     },
     servers: [{ url: serverUrl }],
     security: [{ bearer: [] }],
-    paths: {
+    paths: withOperationIds({
       ...operationPaths(),
       '/api/v1/flows': {
         get: { summary: 'List flows', responses: { '200': ok('Flows'), ...errors } },
@@ -352,6 +459,7 @@ export function openApiDocument(serverUrl: string) {
           ],
           requestBody: body(decisionInput),
           responses: {
+            ...errors,
             '200': ok(
               '{ ok, outcome, tally }: outcome is `recorded` when more votes are needed and the order still waits, else `approved` or `rejected`; tally is the approvals so far of those needed, like "1 of 2"',
             ),
@@ -363,7 +471,6 @@ export function openApiDocument(serverUrl: string) {
               'That node is not waiting for an approval, or the vote can’t be taken: not one of its approvers, already voted, already decided, a buyer on their own order, or a company that isn’t active',
               '#/components/schemas/Error',
             ),
-            ...errors,
           },
         },
       },
@@ -512,10 +619,12 @@ export function openApiDocument(serverUrl: string) {
           responses: {
             '200': ok('Delivered'),
             '202': ok('Held on the order until a step of its flow waits for it; no need to resend'),
+            '403': ok('The integration’s scope doesn’t allow the request', errorRef),
             '409': ok(
               'The order won’t wait for this event (its flow has no such step, or it already holds as many as it can); retry later',
+              errorRef,
             ),
-            ...errors,
+            ...signedErrors,
           },
         },
       },
@@ -533,11 +642,12 @@ export function openApiDocument(serverUrl: string) {
             content: { 'application/json': { schema: { type: 'object' } } },
           },
           responses: {
-            ...errors,
+            ...signedErrors,
             '200': ok('Handled, already handled, or ignored (`{ outcome }`)'),
             '400': ok('Bad signature, or not a Stripe event', '#/components/schemas/Error'),
             '409': ok(
               'The order is not waiting for this payment yet; Stripe delivers it again later',
+              errorRef,
             ),
             '503': ok('Stripe webhooks are not configured', '#/components/schemas/Error'),
           },
@@ -563,7 +673,7 @@ export function openApiDocument(serverUrl: string) {
             content: { 'application/json': { schema: { type: 'object' } } },
           },
           responses: {
-            ...errors,
+            ...signedErrors,
             '200': ok(
               'Already received, or a topic other than orders/create (`{ ignored: true }`)',
             ),
@@ -621,9 +731,12 @@ export function openApiDocument(serverUrl: string) {
           responses: {
             '200': ok('Already received; the existing order'),
             '201': ok('Order started'),
-            '409': ok('The routed flow is not published'),
-            '422': ok('This channel and externalId were already received with different contents'),
-            ...errors,
+            '409': ok('The routed flow is not published', errorRef),
+            '422': ok(
+              'This channel and externalId were already received with different contents',
+              errorRef,
+            ),
+            ...signedErrors,
           },
         },
       },
@@ -706,7 +819,10 @@ export function openApiDocument(serverUrl: string) {
       '/api/v1/catalog/types': {
         get: {
           summary: 'Product types, latest version of each',
-          responses: { '200': ok('{ types }'), ...errors },
+          responses: {
+            '200': okJson('Product types', z.object({ types: z.array(productTypeSchema) })),
+            ...errors,
+          },
         },
         post: {
           summary: 'Add a product type, or its next version (operator)',
@@ -714,7 +830,7 @@ export function openApiDocument(serverUrl: string) {
             'A new type starts at version 1. A new version may only add: attributes, enum values, or relax `required` and deprecate. Anything else is refused with 409 and the reasons.',
           requestBody: body(catalogTypeInput),
           responses: {
-            '201': ok('{ type }'),
+            '201': okJson('The type as stored', z.object({ type: productTypeSchema })),
             '409': ok('The change would break stored products', '#/components/schemas/Error'),
             ...errors,
           },
@@ -756,24 +872,39 @@ export function openApiDocument(serverUrl: string) {
         },
       },
       '/api/v1/catalog/channels': {
-        get: { summary: 'Catalog channels', responses: { '200': ok('{ channels }'), ...errors } },
+        get: {
+          summary: 'Catalog channels',
+          responses: {
+            '200': okJson('Channels', z.object({ channels: z.array(channelSchema) })),
+            ...errors,
+          },
+        },
         post: {
           summary: 'Add or change a channel (operator)',
           description:
             'A changed currency or locale list reaches published documents on the next reindex.',
           requestBody: body(catalogChannelInput),
-          responses: { '200': ok('{ channel }'), ...errors },
+          responses: {
+            '200': okJson('The channel as stored', z.object({ channel: channelSchema })),
+            ...errors,
+          },
         },
       },
       '/api/v1/catalog/categories': {
         get: {
           summary: 'Catalog categories',
-          responses: { '200': ok('{ categories }'), ...errors },
+          responses: {
+            '200': okJson('The categories', z.object({ categories: z.array(categorySchema) })),
+            ...errors,
+          },
         },
         post: {
           summary: 'Add or change categories (operator)',
           requestBody: body(catalogCategoriesInput),
-          responses: { '200': ok('{ categories }'), ...errors },
+          responses: {
+            '200': okJson('The categories', z.object({ categories: z.array(categorySchema) })),
+            ...errors,
+          },
         },
       },
       '/api/v1/catalog/feeds': {
@@ -985,7 +1116,22 @@ export function openApiDocument(serverUrl: string) {
             '200': ok(
               '{ ok, done, orders, customers, documents, messages, inboundEmails, carts, taxCertificates, addresses, teamMember }',
             ),
-            '409': ok('{ reason: "active_orders", orders }'),
+            '409': {
+              description: 'Refused while the person has orders still running',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { const: false },
+                      reason: { const: 'active_orders' },
+                      orders: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['ok', 'reason', 'orders'],
+                  },
+                },
+              },
+            },
             ...errors,
           },
         },
@@ -1114,7 +1260,7 @@ export function openApiDocument(serverUrl: string) {
             'The checkout flow is the published flow a completed checkout starts; it must authorize a card payment. `links` are the legal links every checkout shows, and `orderUrl` (with `{id}`) is where a buyer sees their order. A null `checkoutFlowId` turns agentic checkout off.',
           requestBody: body(ucpSettingsSchema),
           responses: {
-            '200': ok('{ settings }'),
+            '200': okJson('The settings as saved', z.object({ settings: ucpSettingsSchema })),
             '422': ok('The flow cannot take checkouts', '#/components/schemas/Error'),
             ...errors,
           },
@@ -1137,7 +1283,7 @@ export function openApiDocument(serverUrl: string) {
           responses: { '200': ok('Revoked'), ...errors },
         },
       },
-    },
+    }),
     webhooks: Object.fromEntries(
       OUTBOUND_EVENTS.map((event) => [
         event,
@@ -1169,7 +1315,18 @@ export function openApiDocument(serverUrl: string) {
         },
       },
       schemas: {
-        Error: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] },
+        Error: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            issues: {
+              type: 'array',
+              items: {},
+              description: 'What was wrong, when the refusal has several things to say',
+            },
+          },
+          required: ['error'],
+        },
         Order: orderSchema(),
         Cart: cartSchema(),
         StartOrderResult: {
