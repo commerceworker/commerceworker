@@ -87,5 +87,5 @@ What v1 had that P5 did not take: projects and jobs, requisition lists and appro
 | Promotions redesign | v1 `docs/promotions/capability-matrix.md`, `cart-coupon-discount.ts`; `packages/core/src/promotions.ts` | Extend the core, using JSON Logic conditions | P6 |
 | Value objects (Address, PersonName), typed payment metadata | v1 `packages/types` | Port where the core lacks one; the core's `money.ts` stays | P6 |
 | `@commerceworker/sdk`, `commerceworker` CLI, SDK packaging and release | Platform `packages/sdk/*`, `packages/cli`, `scripts/sdk-packages.ts`, `.github/workflows/sdk-release.yml` | Copy the framework (device-flow login, profiles, command model, packaging); replace the CMS endpoints | P7 |
-| Strict dependency catalog, secrets escrow | Platform `scripts/catalog.test.ts`, `scripts/escrow-secrets*`, `escrow-secrets.yml` | Copy | P8 |
+| Strict dependency catalog, secrets escrow | Platform `scripts/catalog.test.ts`, `scripts/escrow-secrets*`, `escrow-secrets.yml` | Copy | P8 (catalog in; escrow merged, refusing until the owner pins the age key) |
 | Ledger brand accent, `DESIGN.md` | Platform `DESIGN.md`, `packages/design` | Copy the format; set the cobalt accent | P9 |

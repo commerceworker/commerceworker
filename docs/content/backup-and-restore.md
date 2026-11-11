@@ -111,22 +111,47 @@ pipeline.
 
 ## Escrowing secrets
 
-Escrow is planned (ROADMAP P8) and not yet built: there is no `Escrow secrets` workflow and no
-`scripts/escrow-secrets.test.ts` yet. Until they land, `DATA_KEY`, `TOKEN_PEPPER` and
-`PASSWORD_PEPPER` have to be kept somewhere outside GitHub and Cloudflare by whoever sets them. The
-rest of this section is the intended design.
+The `Escrow secrets` workflow (`.github/workflows/escrow-secrets.yml`, held by
+`scripts/escrow-secrets.test.ts`) encrypts a deployment's secrets to a key only the escrow holder
+has. It refuses to run until the owner pins that key (see "Once, make the key" below): until then
+`DATA_KEY`, `TOKEN_PEPPER` and `PASSWORD_PEPPER` have to be kept somewhere outside GitHub and
+Cloudflare by whoever sets them.
 
 GitHub and Cloudflare both hold secrets write-only, so nobody needs to have seen a value to escrow
-it: an `Escrow secrets` workflow would read them inside the deployment's GitHub environment and
-encrypt them to a key only the escrow holder has. Nothing from the repository would run beside the
-secrets, and the job would fail if a required secret or `PASSWORD_PEPPER` is missing. It reaches
-only what the environment holds: a secret set by hand on a Worker is not escrowed.
+it: the workflow reads them inside the deployment's GitHub environment and encrypts them with `age`,
+a release pinned by its SHA-256. Nothing from the repository runs beside the secrets (no checkout),
+only one step receives them, and the job fails if `PRINCIPAL_KEY`, `DATA_KEY` or `PASSWORD_PEPPER`
+is missing, or if a value holds a newline. It reaches only what the environment holds: a secret set
+by hand on a Worker is not escrowed.
+
+**What it escrows.** The secrets `deploy.yml` reads from the environment, apart from
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (the owner can reissue those) and the ones
+derived from another (`ASSISTANT_PRINCIPAL_KEY` and its previous, which `fleet.ts` derives from
+`PRINCIPAL_KEY`): `PRINCIPAL_KEY`, `PRINCIPAL_KEY_PREVIOUS`, `DATA_KEY`, `DATA_KEY_PREVIOUS`,
+`PASSWORD_PEPPER`, `SETUP_TOKEN`, `OIDC_CLIENT_SECRET`, `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_SHOPS`,
+`STRIPE_WEBHOOK_SECRET`, `STRIPE_SECRET_KEY`, `TURNSTILE_SECRET_KEY`, `INTAKE_ALLOWLIST`,
+`SHIPPING_CARRIER_AUTH` and `UCP_SIGNING_KEY`, and the content stack's `TOKEN_PEPPER`,
+`MEDIA_SIGNING_SECRET`, `STREAM_WEBHOOK_SECRET`, `MCP_TOKEN` and `ADMIN_TOKEN`. `PRINCIPAL_KEY`,
+`DATA_KEY` and `PASSWORD_PEPPER` are always required. The workflow has no checkout, so it can't read
+the registry to learn whether the deployment has `content` on: the `content` input says so, and
+with `content=true` `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET` are required too (a deployment's
+`provision.sh` generates them). Without it they are escrowed when present. The others are escrowed
+when present.
+
+- **Minified JSON.** A value holding a newline is refused, because the `NAME=value` format can't
+  restore it. `UCP_SIGNING_KEY` and `SHIPPING_CARRIER_AUTH` are JSON: set them minified, on one line
+  (`jq -c . key.json | gh secret set UCP_SIGNING_KEY --env production`).
+- **Plugin secrets** (`PLUGIN_<ID>_*`) are not escrowed. Each is a credential its issuer can
+  reissue (a carrier, a payment or a tax service), so a lost one is replaced there and set again.
+  Nothing in the core is sealed under one.
+- **Production only.** Escrow `production`; `demo` and `bench` hold nothing that can't be replaced.
+  The `environment` input takes any environment name.
 
 The job must run in the repository that holds the environment, and only a branch the environment
 allows can read it (`provision.sh` limits each to `main`). Prefer a private repository: there the
 artifact and the environment's name aren't public. A fleet in its own repository doesn't copy the
 workflow; it calls this one, so the job runs there with that repository's environment, and the
-check that every deployed secret is escrowed (a planned `scripts/escrow-secrets.test.ts`) would keep covering it:
+test that every deployed secret is escrowed (`scripts/escrow-secrets.test.ts`) keeps covering it:
 
 ```yaml
 # <fleet repo>/.github/workflows/escrow-secrets.yml
@@ -135,6 +160,7 @@ on:
   workflow_dispatch:
     inputs:
       environment: { description: The deployment's GitHub environment, required: true, type: string }
+      content: { description: The deployment has the content stack on, required: false, type: boolean }
 permissions:
   contents: read
 jobs:
@@ -142,12 +168,15 @@ jobs:
     uses: commerceworker/commerceworker/.github/workflows/escrow-secrets.yml@main
     with:
       environment: ${{ inputs.environment }}
+      content: ${{ inputs.content }}
     secrets: inherit # without it, the job sees none of the environment's secrets
 ```
 
 **Once, make the key** on the holder's machine, outside any checkout. Put the private half in a
 password manager outside GitHub and Cloudflare, delete the file, and pin the public half as
-`ESCROW_RECIPIENT` in `.github/workflows/escrow-secrets.yml`, through a pull request:
+`ESCROW_RECIPIENT` in `.github/workflows/escrow-secrets.yml`, through a one-line pull request that
+replaces the placeholder (`age1-PLACEHOLDER-set-the-owner-public-key`). Until then the Encrypt step
+refuses, with this same instruction:
 
 ```sh
 age-keygen -o ~/escrow.key     # prints the public key (age1...)
@@ -158,7 +187,7 @@ file came from before keeping it. Anyone can encrypt to a public key, so a file 
 proof: the run must be this workflow, on `main`, and a success.
 
 ```sh
-gh workflow run escrow-secrets.yml --ref main -f environment=production
+gh workflow run escrow-secrets.yml --ref main -f environment=production -f content=true   # content=false without the content stack
 gh run view <run-id> --json workflowName,headBranch,event,conclusion
 gh run download <run-id> --name escrow-production
 age --decrypt --identity ~/escrow.key escrow.age | cut -d= -f1    # names only
@@ -170,8 +199,8 @@ it is down; it expires after a day regardless. Keep every generation, named with
 for at least the database's recovery window: a restore to before a `DATA_KEY` rotation brings back
 values sealed under the old key. During a rotation, run it before removing `DATA_KEY_PREVIOUS`.
 
-**To recover,** set each value back on the environment. Values can contain `=`, so split on the first
-one only:
+**To recover,** set each value back on the environment (the restore one-liner below). Values can
+contain `=`, so split on the first one only:
 
 ```sh
 age --decrypt --identity ~/escrow.key escrow.age | while IFS= read -r line; do
@@ -199,7 +228,7 @@ how long the recovery may take. "Met" says whether the target can be reached tod
 | `AssistantAgent`                              | Best effort, 30-day object recovery | 1 day                 | **No**: nothing calls the object's point-in-time recovery                                       |
 | Durable workflows                             | None                                | 1 day, re-run by hand | Not proven: instances are not rebuilt from their rows                                           |
 | Queues                                        | The outbox window (168 hours)       | 1 hour                | Domain events only: messages the outbox doesn't feed can't replay                               |
-| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [escrowed](#escrowing-secrets) and decrypted, but no restore has set the values back |
+| `DATA_KEY`, `TOKEN_PEPPER`, `PASSWORD_PEPPER` | Zero                                | 1 hour                | Not proven: [escrowed](#escrowing-secrets) once the owner pins the key; no restore has set the values back |
 
 Workers redeploy or roll back in seconds, so a database restore's RTO is dominated by the restore
 itself.

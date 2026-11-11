@@ -80,7 +80,7 @@ const RESERVED = new Set([
 type Ring = (typeof RINGS)[number];
 
 /** Each app's secrets, read from the deploy job's environment (a GitHub environment's secrets). */
-const SECRETS = {
+export const SECRETS = {
   // (The storefront's are derived, not read as they are: `storefrontSecrets`.)
   web: [
     'PRINCIPAL_KEY',

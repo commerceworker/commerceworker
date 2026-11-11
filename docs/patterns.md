@@ -27,7 +27,7 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Durable Object migration tags only append, held by a test | both | Merged | `scripts/do-migrations.test.ts` |
 | Expand-only, hand-written, never-edited migrations | both | Merged | `packages/db/migrations` |
 | One zone with fixed host roles; intake mail on each deployment's host, never the apex | CommerceWorker | Merged | `docs/operations.md` |
-| Secrets escrow workflow | Platform | To merge | `scripts/escrow-secrets*`, `escrow-secrets.yml` (P8) |
+| Secrets escrow workflow | Platform | Merged (refuses until the owner pins the age key) | `scripts/escrow-secrets.test.ts`, `.github/workflows/escrow-secrets.yml` |
 | Private fleet registry repo handed the commit by CI | Platform | To merge, when customers exist | P8 |
 
 ## Architecture
