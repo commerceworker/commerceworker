@@ -4,7 +4,18 @@
  * came before this one. Pure; runs on both sides.
  */
 
-import { BASE_CURRENCY, type FlowNode, type OrderState, toBase } from '@commerceworker/core';
+import {
+  APPROVAL_MODE_LABELS,
+  type ApprovalMode,
+  approversLabel,
+  BASE_CURRENCY,
+  DEFAULT_APPROVERS,
+  type FlowNode,
+  isMemberRule,
+  type OrderState,
+  parseApprovers,
+  toBase,
+} from '@commerceworker/core';
 import { clock, money, until } from '@commerceworker/ui/lib/format';
 import { orderRef } from './format';
 
@@ -362,4 +373,36 @@ function linesOf(state: OrderState): string | undefined {
   const shown = lines.slice(0, 3).map((l) => `${l.qty} × ${l.name ?? l.sku}`);
   const more = lines.length - shown.length;
   return `${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}`;
+}
+
+/** What the inbox and the order page know of who votes on an approval and where the vote stands. */
+export type VoteRecord = {
+  approvers: string;
+  mode: string;
+  required: number;
+  approved: number;
+  rejected: number;
+  companyName?: string | null;
+};
+
+/** Whether a company's members, not staff, vote on it. */
+export const votedByMembers = (r: Pick<VoteRecord, 'approvers'>) => {
+  const p = parseApprovers(r.approvers);
+  return 'rule' in p && isMemberRule(p.rule);
+};
+
+/**
+ * Who votes and the tally, in a line: "Contoso · Company approvers · a quorum, 1 of 2". Null for
+ * the plain approval: any one staff approver, with nothing to tally.
+ */
+export function voteSummary(r: VoteRecord): string | null {
+  if (r.approvers.trim() === DEFAULT_APPROVERS && r.mode === 'any') return null;
+  const mode = APPROVAL_MODE_LABELS[r.mode as ApprovalMode]?.toLowerCase() ?? r.mode;
+  return [
+    r.companyName,
+    approversLabel(r.approvers),
+    `${mode}, ${r.approved} of ${r.required}${r.rejected ? `, ${r.rejected} rejected` : ''}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }

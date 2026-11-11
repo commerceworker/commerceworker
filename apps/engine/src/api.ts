@@ -38,6 +38,7 @@ import {
 import type { ProductDraftRequest } from '@commerceworker/core/product';
 import type { z } from 'zod';
 import { A2A_PATH, a2aCaller, handleA2A } from './a2a/route';
+import type { VoteResult } from './agent';
 import { routeAgents } from './agent-routes';
 import { copilot } from './ai';
 import { Refused } from './assistant/data';
@@ -117,6 +118,7 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
     decision: 'approved' | 'rejected',
     signed: SignedActor,
     note?: string,
+    onBehalfOf?: string,
   ) {
     const actor = await rpcActor(this.env, signed, `decide:${orderId}`);
     if (actor?.kind !== 'staff')
@@ -140,8 +142,17 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
       return { ok: false as const, reason: 'not_waiting' as const };
     const own = await separationRefusal(this.env, orderId, deciderId);
     if (own) return { ok: false as const, reason: 'own_order' as const, error: own };
-    await this.agent(orderId).decide(nodeId, decision, by, note, deciderId);
-    return { ok: true as const };
+    const voted = (await this.agent(orderId).castVote({
+      nodeId,
+      decision,
+      by,
+      note,
+      deciderId,
+      onBehalfOf,
+      role: actor.role,
+    })) as VoteResult;
+    if (!voted.ok) return { ok: false as const, reason: 'refused' as const, error: voted.error };
+    return { ok: true as const, outcome: voted.outcome, tally: voted.tally };
   }
 
   exportDataSubject(email: string) {

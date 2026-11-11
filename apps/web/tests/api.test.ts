@@ -202,6 +202,7 @@ describe('order actions over REST', () => {
       'approved',
       expect.any(String),
       undefined,
+      undefined,
     );
     // Who decides travels signed for this one call: the engine believes nothing else.
     expect(await actorOf(engine.decide.mock.calls.at(-1)![3], 'decide:ord_1')).toEqual({
@@ -210,6 +211,68 @@ describe('order actions over REST', () => {
       name: 'ops@example.com',
       role: 'operator',
     });
+  });
+
+  it('casts a vote for a company member, audits who it was for and where the vote stands, and says why a vote is refused', async () => {
+    audit.mockReset();
+    engine.decide.mockResolvedValueOnce({ ok: true, outcome: 'recorded', tally: '1 of 2' });
+    const voted = await post('orders/ord_1/approvals/appr', {
+      decision: 'approved',
+      note: 'Fine',
+      onBehalfOf: 'mem_ann',
+    });
+    expect(voted.status).toBe(200);
+    expect(await voted.json()).toEqual({ ok: true, outcome: 'recorded', tally: '1 of 2' });
+    expect(engine.decide).toHaveBeenLastCalledWith(
+      'ord_1',
+      'appr',
+      'approved',
+      expect.any(String),
+      'Fine',
+      'mem_ann',
+    );
+    expect(audit).toHaveBeenLastCalledWith(expect.anything(), 'approval.decided', {
+      actor: operator,
+      target: 'ord_1',
+      detail: {
+        nodeId: 'appr',
+        decision: 'approved',
+        note: 'Fine',
+        onBehalfOf: 'mem_ann',
+        outcome: 'recorded',
+        tally: '1 of 2',
+        via: 'api',
+      },
+    });
+
+    // One approver's decision audits as it always did, with no tally.
+    audit.mockClear();
+    engine.decide.mockResolvedValueOnce({ ok: true, outcome: 'approved', tally: '1 of 1' });
+    await post('orders/ord_1/approvals/mgr', { decision: 'approved' });
+    expect(audit).toHaveBeenLastCalledWith(expect.anything(), 'approval.decided', {
+      actor: operator,
+      target: 'ord_1',
+      detail: { nodeId: 'mgr', decision: 'approved', via: 'api' },
+    });
+
+    // A vote that can't be taken is a 409 with the reason, and nothing is audited.
+    audit.mockClear();
+    engine.decide.mockResolvedValueOnce({
+      ok: false,
+      reason: 'refused',
+      error: 'This person has already voted.',
+    });
+    const again = await post('orders/ord_1/approvals/appr', {
+      decision: 'approved',
+      onBehalfOf: 'mem_ann',
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: 'This person has already voted.' });
+    expect(audit).not.toHaveBeenCalled();
+    // `onBehalfOf` is a member id: a number or an empty one is a 400.
+    expect(
+      (await post('orders/ord_1/approvals/appr', { decision: 'approved', onBehalfOf: '' })).status,
+    ).toBe(400);
   });
 
   it('stamps who delivered an event, and refuses a payload naming its source or a return', async () => {

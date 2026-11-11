@@ -10,6 +10,7 @@ import {
 } from '@commerceworker/core';
 import type {
   ApprovalCursor,
+  ApprovalFilter,
   ApprovalScope,
   BoardFilter,
   Undone,
@@ -18,7 +19,7 @@ import { plural } from '@commerceworker/ui/lib/format';
 import type { OrderCursor } from './cursor';
 import { backOffice, flowStore, orderBoard, pricingStore } from './wire.server';
 
-export type { ApprovalCursor, ApprovalScope, Undone };
+export type { ApprovalCursor, ApprovalFilter, ApprovalScope, Undone };
 
 export type OrderFilters = {
   model?: string;
@@ -101,8 +102,9 @@ export async function listApprovals(
   after: ApprovalCursor | null = null,
   limit = APPROVALS_PAGE,
   scope?: ApprovalScope,
+  filter?: ApprovalFilter,
 ) {
-  return orderBoard().approvals(status, after, limit, scope);
+  return orderBoard().approvals(status, after, limit, scope, filter);
 }
 
 /**
@@ -115,7 +117,14 @@ export async function pendingApprovalCounts() {
 
 /** An order's D1 records, in one round trip. */
 export async function orderRecords(orderId: string) {
-  return orderBoard().records(orderId);
+  const board = orderBoard();
+  const [records, votes, voters] = await Promise.all([
+    board.records(orderId),
+    board.votes(orderId),
+    board.voters(orderId),
+  ]);
+  // The votes cast on its approvals, and the company members who may still vote.
+  return { ...records, votes, voters };
 }
 
 /**

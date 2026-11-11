@@ -5,6 +5,7 @@ export * from './api';
 export * from './assess';
 export * from './assistant';
 export * from './audit';
+export * from './b2b/approvals';
 export * from './b2b/budgets';
 export * from './b2b/companies';
 export * from './cart';

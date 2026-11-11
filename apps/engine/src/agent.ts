@@ -7,12 +7,15 @@
 
 import type { ReturnRequest } from '@commerceworker/core';
 import {
+  type ApprovalPlan,
   aiGateFeedback,
   approvalWait,
   atLeast,
   decisionProblem,
+  describePlan,
   EMPTY_ORDER_STATE,
   eraseOrderState,
+  evaluateApprovalStatus,
   eventDigest,
   eventProblem,
   eventWait,
@@ -33,6 +36,7 @@ import {
   type PendingWait,
   type Principal,
   type ProxiedPrincipal,
+  planSpec,
   ROLE_LABELS,
   type Role,
   TERMINAL_ORDER_STATUSES,
@@ -42,6 +46,7 @@ import {
 } from '@commerceworker/core';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
 import { sendAiFeedback } from './ai';
+import { plainPlan, planRequired, voteRefusal, voterOf } from './approvals';
 import { recordAudit } from './audit';
 import { compensateOrder } from './connectors';
 import { a2aAgent } from './namespaces';
@@ -50,8 +55,22 @@ import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
 import { releaseHold } from './ucp/payments';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
-import { orderRecords } from './wire';
+import { companyDirectory, orderRecords } from './wire';
 import { plural } from './words';
+
+/** What recording a vote answered: where the vote stands, or why it couldn't be taken. */
+export type VoteResult =
+  | {
+      ok: true;
+      outcome: 'recorded' | 'approved' | 'rejected';
+      /** The approvals so far of those needed: "1 of 2". */
+      tally: string;
+      /** Whether the audit row should carry the outcome and tally (more than one voice decides). */
+      audited: boolean;
+    }
+  | { ok: false; error: string };
+
+const refused = (error: string): VoteResult => ({ ok: false, error });
 
 /** What the Workflow reports (`OrderReport` in core, where `foldReport` applies it). */
 export type Report = OrderReport;
@@ -345,6 +364,7 @@ export class OrderAgent extends Agent<Env, State> {
   async openWait(w: PendingWait) {
     if (this.state.waits.some((x) => x.eventType === w.eventType)) return this.deliverHeld(w);
     if (w.kind === 'approval' && this.state.orderId) {
+      const plan = w.approval;
       await this.records().openApproval({
         id: newId('apr'),
         orderId: this.state.orderId,
@@ -353,6 +373,16 @@ export class OrderAgent extends Agent<Env, State> {
         title: w.title,
         assignee: w.assignee ?? '',
         amount: w.amount ?? null,
+        // Left out for staff approvers, whose row is what every approval was before approvers.
+        ...(plan
+          ? {
+              companyId: plan.companyId ?? null,
+              approvers: plan.approvers,
+              mode: plan.mode,
+              required: planRequired(plan, planSpec(plan)),
+              eligible: plan.eligible,
+            }
+          : {}),
       });
     }
     const node = this.state.nodes[w.nodeId] ?? { status: 'pending' as const, runs: 0 };
@@ -369,7 +399,7 @@ export class OrderAgent extends Agent<Env, State> {
         // An event wait reads by its step, as a step's own lines do; the key stays on the wait.
         message:
           w.kind === 'approval'
-            ? `Awaiting approval: ${w.title} (${w.assignee})`
+            ? `Awaiting approval: ${w.title} (${w.assignee})${w.approval && describePlan(w.approval) ? ` · ${describePlan(w.approval)}` : ''}`
             : `${this.stepLabel(w.nodeId)}: waiting`,
         key: `open:${w.eventType}`,
       }),
@@ -538,8 +568,9 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   /**
-   * Approve or reject the approval a node is waiting on. `deciderId` is the principal deciding,
-   * from an RPC caller; on a socket it is the signed-in caller, whatever the page sent.
+   * Cast a vote on the approval a node is waiting on, from the order page's socket. On a socket
+   * the caller is the signed-in person, whatever the page sent; `castVote` is the same for an RPC
+   * caller, who is named by `deciderId`.
    */
   @callable()
   async decide(
@@ -548,34 +579,135 @@ export class OrderAgent extends Agent<Env, State> {
     by = 'operator',
     note?: string,
     deciderId?: string,
-  ) {
+    onBehalfOf?: string,
+    role?: Role,
+  ): Promise<VoteResult & { ok: true }> {
     const caller = await this.authorize('approver');
-    const invalid = decisionProblem(decision, note);
-    if (invalid) throw new Error(invalid);
     // On a socket the audit trail names the signed-in person, never what the page sent.
-    if (caller) by = caller.email ?? caller.name;
-    by = String(by).slice(0, 200);
-    if (caller) deciderId = caller.id;
-    const own = this.state.orderId
-      ? await separationRefusal(this.env, this.state.orderId, deciderId)
-      : null;
-    if (own) throw new Error(own);
-    const w = approvalWait(this.state.waits, nodeId);
-    if (!w || !this.state.instanceId) throw new Error('That node is not waiting for an approval');
-    const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
-    await instance.sendEvent({ type: w.eventType, payload: { decision, by, note: note ?? null } });
-    // The AI gate that sent the order here learns whether the review was needed.
-    const feedback = aiGateFeedback(this.state, nodeId, decision);
-    if (feedback && this.state.orderId)
-      this.ctx.waitUntil(sendAiFeedback(this.env, this.state.orderId, feedback));
-    // On the order page's socket; an RPC caller (the web app, the assistant) records its own.
-    if (caller)
+    if (caller) {
+      by = caller.email ?? caller.name;
+      deciderId = caller.id;
+      role = caller.role;
+    }
+    const r = await this.castVote({ nodeId, decision, by, note, deciderId, onBehalfOf, role });
+    if (!r.ok) throw new Error(r.error);
+    // An RPC caller (the web app, the assistant) records its own audit row.
+    if (caller && this.state.orderId)
       await recordAudit(this.env, 'approval.decided', {
         actor: caller,
         target: this.state.orderId,
-        detail: { nodeId, decision, ...(note ? { note } : {}), via: 'app' },
+        detail: {
+          nodeId,
+          decision,
+          ...(note ? { note } : {}),
+          ...(onBehalfOf ? { onBehalfOf } : {}),
+          ...(r.audited ? { outcome: r.outcome, tally: r.tally } : {}),
+          via: 'app',
+        },
       });
-    return { ok: true };
+    return r;
+  }
+
+  /**
+   * Record a vote on the approval a node is waiting on. `deciderId` is the principal deciding and
+   * `role` their role, which a `staff:<role>` approval is held to. `onBehalfOf` is a company
+   * member's id: staff record that member's vote (docs/b2b.md, D3), with who did on the vote. The
+   * vote is recorded once per voter; the Workflow, which waits for one event, is sent it only once
+   * the votes decide the step (`evaluateApprovalStatus`), so every decision, from any route, goes
+   * through here. Until then the answer is `recorded` with the tally so far. A vote that can't be
+   * taken is answered, not thrown, so a caller can say why. Not `@callable`: only the engine
+   * reaches it, after it has checked the caller's role.
+   */
+  async castVote(v: {
+    nodeId: string;
+    decision: 'approved' | 'rejected';
+    by?: string;
+    note?: string | undefined;
+    deciderId?: string | undefined;
+    onBehalfOf?: string | undefined;
+    role?: Role | undefined;
+  }): Promise<VoteResult> {
+    const { nodeId, decision, note, deciderId, onBehalfOf } = v;
+    const invalid = decisionProblem(decision, note);
+    if (invalid) throw new Error(invalid);
+    const by = String(v.by ?? 'operator').slice(0, 200);
+    const orderId = this.state.orderId;
+    // The staff member recording or casting it can't be the one who started the order.
+    const own = orderId ? await separationRefusal(this.env, orderId, deciderId) : null;
+    if (own) throw new Error(own);
+    const w = approvalWait(this.state.waits, nodeId);
+    if (!w || !this.state.instanceId || !orderId)
+      throw new Error('That node is not waiting for an approval');
+    const plan: ApprovalPlan = w.approval ?? plainPlan();
+    const spec = planSpec(plan);
+    const voter = voterOf({ id: deciderId, by, role: v.role, onBehalfOf });
+    const records = this.records();
+    const before = await records.votes(orderId, w.eventType);
+    // A vote sent again (a retry after a lost answer) is the one already recorded: it only
+    // evaluates and sends, as a decision sent twice always did.
+    const problem = await voteRefusal(
+      this.env,
+      plan,
+      before,
+      voter,
+      this.state.order,
+      onBehalfOf,
+      decision,
+    );
+    if (problem) return refused(problem);
+    await records.recordVote(orderId, w.eventType, {
+      voterId: voter.id,
+      voterKind: voter.kind,
+      onBehalfBy: onBehalfOf ? (deciderId ?? by) : null,
+      decision,
+      note: note ?? null,
+      at: Date.now(),
+    });
+    // Read back after writing: of two votes racing, the later read sees both.
+    const tally = evaluateApprovalStatus(
+      spec,
+      plan.eligible,
+      await records.votes(orderId, w.eventType),
+    );
+    const voted = onBehalfOf ? await this.memberName(plan, onBehalfOf) : by;
+    if (tally.status === 'pending') {
+      this.patch({
+        timeline: this.log({
+          nodeId,
+          kind: 'approval',
+          message: `${w.title}: ${voted} voted ${decision === 'approved' ? 'to approve' : 'to reject'}${onBehalfOf ? ` (recorded by ${by})` : ''} (${tally.label})`,
+          key: `vote:${w.eventType}:${voter.id}`,
+        }),
+      });
+    } else {
+      const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
+      await instance.sendEvent({
+        type: w.eventType,
+        payload: {
+          decision: tally.status,
+          by: onBehalfOf ? `${voted} (recorded by ${by})` : by,
+          note: note ?? null,
+        },
+      });
+      // The AI gate that sent the order here learns whether the review was needed.
+      const feedback = aiGateFeedback(this.state, nodeId, tally.status);
+      if (feedback) this.ctx.waitUntil(sendAiFeedback(this.env, orderId, feedback));
+    }
+    return {
+      ok: true,
+      outcome: tally.status === 'pending' ? 'recorded' : tally.status,
+      tally: tally.label,
+      // A single staff decision is what every approval was: its audit row says no more.
+      audited: plan.mode !== 'any' || !!onBehalfOf,
+    };
+  }
+
+  /** A company member's name, for the timeline; their id when they can't be read. */
+  private async memberName(plan: ApprovalPlan, memberId: string) {
+    const m = plan.companyId
+      ? await companyDirectory(this.env).member({ all: true }, plan.companyId, memberId)
+      : undefined;
+    return m?.name ?? memberId;
   }
 
   /**

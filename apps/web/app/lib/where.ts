@@ -4,6 +4,7 @@
  * (tests/where.test.ts); the rows come from `overview()` and the steps from `flowSteps()`.
  */
 
+import { approversLabel } from '@commerceworker/core';
 import { assigneeLabel } from './format';
 
 export type FlowSteps = { id: string; name: string; steps: string[] };
@@ -12,7 +13,7 @@ export type WaitRow = {
   flowId: string;
   /** The index's `waiting_at`: one step's label, or several joined with " · ". */
   at: string | null;
-  /** The index's `waiting_for`: `person:<role>`, `event:<name>` or `timer`, joined with " · ". */
+  /** The index's `waiting_for`: `person:<role>`, `approvers:<rule>`, `event:<name>` or `timer`, joined with " · ". */
   for: string | null;
   n: number;
   oldest: number | null;
@@ -48,6 +49,7 @@ export function waitingOn(forValue: string | null): string | null {
         // As the orders list names them (`waitingForLabel`): the role, or "an approver".
         if (f.startsWith('person:'))
           return assigneeLabel(f.slice('person:'.length)) || 'an approver';
+        if (f.startsWith('approvers:')) return approversLabel(f.slice('approvers:'.length));
         if (f.startsWith('event:')) return 'an outside event';
         return f;
       }),

@@ -10,7 +10,11 @@ import {
   groupName,
   lockAt,
   rowContext,
+  votedByMembers,
+  voteSummary,
 } from '../app/lib/approvals';
+import { waitingForLabel } from '../app/lib/format';
+import { waitingOn } from '../app/lib/where';
 
 const state = (currency: string, total: number, fxRate: number): OrderState => ({
   ...EMPTY_ORDER_STATE,
@@ -333,5 +337,59 @@ describe('deadlineWords', () => {
       kind: 'at',
       when: 'Wed 2:00 PM UTC',
     });
+  });
+});
+
+describe('who votes on an approval', () => {
+  const vote = (over: Partial<Parameters<typeof voteSummary>[0]> = {}) => ({
+    approvers: 'staff:approver',
+    mode: 'any',
+    required: 1,
+    approved: 0,
+    rejected: 0,
+    companyName: null,
+    ...over,
+  });
+
+  it('says nothing for the plain approval any one staff approver decides', () => {
+    expect(voteSummary(vote())).toBeNull();
+    expect(voteSummary(vote({ approved: 1 }))).toBeNull();
+  });
+
+  it('names the company, the approvers, the mode and the tally', () => {
+    expect(
+      voteSummary(
+        vote({
+          approvers: 'company:approver',
+          mode: 'quorum',
+          required: 2,
+          approved: 1,
+          companyName: 'Contoso',
+        }),
+      ),
+    ).toBe('Contoso · Company approvers · a quorum, 1 of 2');
+    expect(
+      voteSummary(vote({ approvers: 'team:ops', mode: 'all', required: 3, rejected: 1 })),
+    ).toBe('A team’s members · every approver, 0 of 3, 1 rejected');
+    // Staff approvers that are counted still show their tally.
+    expect(voteSummary(vote({ mode: 'majority', required: 2, approved: 1 }))).toBe(
+      'Staff approvers · a majority, 1 of 2',
+    );
+  });
+
+  it('knows which approvals a company’s members vote on', () => {
+    expect(votedByMembers({ approvers: 'company:approver' })).toBe(true);
+    expect(votedByMembers({ approvers: 'members:a,b' })).toBe(true);
+    expect(votedByMembers({ approvers: 'team:t' })).toBe(true);
+    expect(votedByMembers({ approvers: 'staff:operator' })).toBe(false);
+    expect(votedByMembers({ approvers: 'nonsense' })).toBe(false);
+  });
+
+  it('labels what an order waits for when its approvers are a company’s members', () => {
+    expect(waitingForLabel('approvers:company:approver · event:payment.received')).toBe(
+      'Company approvers, Payment',
+    );
+    expect(waitingOn('approvers:members:a,b')).toBe('2 named members');
+    expect(waitingOn('person:sales_ops')).toBe('Sales ops');
   });
 });

@@ -129,12 +129,45 @@ export const approvals = sqliteTable(
     requestedAt: integer('requested_at').notNull(),
     decidedAt: integer('decided_at'),
     decidedBy: text('decided_by'),
+    /** The company whose members vote, for company, team and members approvers. */
+    companyId: text('company_id'),
+    /** Who may vote as the flow wrote it: `staff:<role>`, `company:<role>`, `team:<id>`, `members:<ids>`. */
+    approvers: text('approvers').notNull().default('staff:approver'),
+    /** any | all | majority | quorum (`APPROVAL_MODES`). */
+    mode: text('mode').notNull().default('any'),
+    /** The approvals that decide it, resolved when the wait opened. */
+    required: integer('required').notNull().default(1),
+    /** JSON array of the voters' ids; null when any staff with the role may decide. */
+    eligible: text('eligible'),
   },
   (t) => [
     index('approvals_status').on(t.status, t.requestedAt),
+    index('approvals_company')
+      .on(t.companyId, t.status, t.requestedAt)
+      .where(sql`${t.companyId} IS NOT NULL`),
     // One approval row per wait: a replayed `openWait` can't insert a second.
     uniqueIndex('approvals_wait').on(t.orderId, t.eventType),
   ],
+);
+
+/**
+ * One vote on an approval (`ApprovalVoteRecord`), unique per approval and voter. A voter is a staff
+ * principal or a company member; `onBehalfBy` is the staff principal who recorded a member's vote.
+ */
+export const approvalVotes = sqliteTable(
+  'approval_votes',
+  {
+    approvalId: text('approval_id').notNull(),
+    voterId: text('voter_id').notNull(),
+    /** staff | member. */
+    voterKind: text('voter_kind').notNull(),
+    onBehalfBy: text('on_behalf_by'),
+    /** approved | rejected. */
+    decision: text('decision').notNull(),
+    note: text('note'),
+    at: integer('at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.approvalId, t.voterId] })],
 );
 
 export const customers = sqliteTable(

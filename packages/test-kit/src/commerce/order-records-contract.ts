@@ -125,6 +125,88 @@ export function describeOrderRecordsContract(
       ]);
     });
 
+    it('keeps who may vote with the approval, and defaults it to any one staff approver', async () => {
+      const r = await fresh();
+      const base = {
+        orderId: 'oc_order',
+        nodeId: 'approve',
+        title: 'Approve',
+        assignee: 'manager',
+        amount: 1,
+      };
+      await r.openApproval({ ...base, id: 'oc_plain', eventType: 'approval:approve#1' });
+      await r.openApproval({
+        ...base,
+        id: 'oc_company',
+        eventType: 'approval:approve#2',
+        companyId: 'cus_co',
+        approvers: 'company:approver',
+        mode: 'quorum',
+        required: 2,
+        eligible: ['mem_a', 'mem_b', 'mem_c'],
+      });
+      expect(
+        (await r.approvals('oc_order')).map((a) => [
+          a.companyId,
+          a.approvers,
+          a.mode,
+          a.required,
+          a.eligible,
+        ]),
+      ).toEqual([
+        [null, 'staff:approver', 'any', 1, null],
+        ['cus_co', 'company:approver', 'quorum', 2, ['mem_a', 'mem_b', 'mem_c']],
+      ]);
+    });
+
+    it('records a vote once per voter on a wait, and reads them oldest first', async () => {
+      const r = await fresh();
+      await r.openApproval({
+        id: 'oc_v1',
+        orderId: 'oc_order',
+        nodeId: 'approve',
+        eventType: 'approval:approve#1',
+        title: 'Approve',
+        assignee: 'manager',
+        amount: 1,
+      });
+      const vote = (voterId: string, decision: 'approved' | 'rejected', at: number) => ({
+        voterId,
+        voterKind: 'member' as const,
+        onBehalfBy: 'usr_ada',
+        decision,
+        note: null,
+        at,
+      });
+      expect(
+        await r.recordVote('oc_order', 'approval:approve#1', vote('mem_b', 'approved', 20)),
+      ).toBe(true);
+      expect(
+        await r.recordVote('oc_order', 'approval:approve#1', vote('mem_a', 'approved', 10)),
+      ).toBe(true);
+      // The same voter again, even with another decision: the first vote stays.
+      expect(
+        await r.recordVote('oc_order', 'approval:approve#1', vote('mem_b', 'rejected', 30)),
+      ).toBe(false);
+      // A wait with no approval has nowhere to put a vote.
+      expect(await r.recordVote('oc_order', 'approval:gone#1', vote('mem_a', 'approved', 1))).toBe(
+        false,
+      );
+      expect(
+        (await r.votes('oc_order', 'approval:approve#1')).map((v) => [
+          v.approvalId,
+          v.voterId,
+          v.voterKind,
+          v.onBehalfBy,
+          v.decision,
+        ]),
+      ).toEqual([
+        ['oc_v1', 'mem_a', 'member', 'usr_ada', 'approved'],
+        ['oc_v1', 'mem_b', 'member', 'usr_ada', 'approved'],
+      ]);
+      expect(await r.votes('oc_order', 'approval:gone#1')).toEqual([]);
+    });
+
     it('opens an approval once per wait, records the decision, and cancels what is pending', async () => {
       const r = await fresh();
       const open = (id: string, eventType: string) =>

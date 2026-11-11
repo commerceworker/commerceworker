@@ -6,6 +6,13 @@
 
 import { z } from 'zod';
 import { assessConfigErrors, assessOutputs, assessQuestionsSchema } from './assess';
+import {
+  APPROVAL_MODES,
+  approvalConfigErrors,
+  DEFAULT_APPROVAL_MODE,
+  DEFAULT_APPROVERS,
+  DEFAULT_MAJORITY_PERCENT,
+} from './b2b/approvals';
 import { policyRulesSchema } from './policy';
 import { routeGuardErrors } from './route-guards';
 import { SHIPPING_SELECTIONS, shippingConfigSchema, taxRegionsSchema } from './shipping';
@@ -732,15 +739,50 @@ export const NODE_SPECS = [
     type: 'control.approval',
     category: 'control',
     label: 'Approval',
-    description: 'Waits for a person to approve or reject. Escalates when the timeout passes.',
+    description:
+      'Waits for people to approve or reject: any one staff approver, or a company’s members by vote. Escalates when the timeout passes.',
     icon: 'UserCheck',
     fields: [
       { key: 'title', label: 'Title', kind: 'text', default: 'Approve order {{order.id}}' },
-      { key: 'assignee', label: 'Assignee', kind: 'text', default: 'manager' },
+      {
+        key: 'assignee',
+        label: 'Assignee',
+        kind: 'text',
+        default: 'manager',
+        hint: 'Who the approval reads as assigned to; the approvers below decide it',
+      },
+      {
+        key: 'approvers',
+        label: 'Approvers',
+        kind: 'text',
+        default: DEFAULT_APPROVERS,
+        hint: 'staff:<role>, company:<role>, team:<id> or members:<id>,<id>. Company approvers vote through staff recording their vote',
+      },
+      {
+        key: 'mode',
+        label: 'Decided by',
+        kind: 'select',
+        options: [...APPROVAL_MODES],
+        default: DEFAULT_APPROVAL_MODE,
+        hint: 'any one approver, every approver, a majority, or a quorum. A rejection ends the vote',
+      },
+      {
+        key: 'quorum',
+        label: 'Quorum',
+        kind: 'number',
+        hint: 'With quorum: how many approvals decide it',
+      },
+      {
+        key: 'majorityPercent',
+        label: 'Majority percent',
+        kind: 'number',
+        hint: `With majority: more than this share of the approvers, 1 to 99 (default ${DEFAULT_MAJORITY_PERCENT})`,
+      },
       { key: 'timeout', label: 'Escalate after', kind: 'duration', default: '2 days' },
     ],
     outputs: ['approved', 'rejected', 'escalated'],
     waits: true,
+    validate: approvalConfigErrors,
   }),
   node({
     type: 'control.wait_event',

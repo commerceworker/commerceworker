@@ -33,6 +33,29 @@ export interface ApprovalRecord {
   readonly requestedAt: number;
   readonly decidedAt: number | null;
   readonly decidedBy: string | null;
+  /** The company whose members vote, for company, team and members approvers. */
+  readonly companyId: string | null;
+  /** Who may vote as the flow wrote it: `staff:approver`, `company:approver`, `team:<id>`, … */
+  readonly approvers: string;
+  /** any | all | majority | quorum. */
+  readonly mode: string;
+  /** The approvals that decide it, resolved when the wait opened. */
+  readonly required: number;
+  /** The voters' ids, resolved when the wait opened; null when any staff with the role may decide. */
+  readonly eligible: readonly string[] | null;
+}
+
+/** One vote on an approval, unique per approval and voter. */
+export interface ApprovalVoteRecord {
+  readonly approvalId: string;
+  /** A staff principal's id, or a company member's. */
+  readonly voterId: string;
+  readonly voterKind: 'staff' | 'member';
+  /** The staff principal who recorded a member's vote for them (D3); null for one's own. */
+  readonly onBehalfBy: string | null;
+  readonly decision: 'approved' | 'rejected';
+  readonly note: string | null;
+  readonly at: number;
 }
 
 /** An order's row as it starts. */
@@ -92,13 +115,29 @@ export interface OrderRecords {
   recordRun(run: NodeRunRecord): Promise<void>;
   /** The order's recorded runs. */
   runs(orderId: string): Promise<NodeRunRecord[]>;
-  /** Opens an approval once per order and wait: a replay keeps the first. */
+  /**
+   * Opens an approval once per order and wait: a replay keeps the first. Who may vote is optional:
+   * left out, it is any one staff approver, as every approval was before approvers were named.
+   */
   openApproval(
     a: Pick<
       ApprovalRecord,
       'id' | 'orderId' | 'nodeId' | 'eventType' | 'title' | 'assignee' | 'amount'
-    >,
+    > &
+      Partial<Pick<ApprovalRecord, 'companyId' | 'approvers' | 'mode' | 'required' | 'eligible'>>,
   ): Promise<void>;
+  /**
+   * Records a vote on the order's approval for this wait, once per voter: true when it was new,
+   * false when the voter had already voted (the first vote stays), or when there is no such
+   * approval.
+   */
+  recordVote(
+    orderId: string,
+    eventType: string,
+    vote: Omit<ApprovalVoteRecord, 'approvalId'>,
+  ): Promise<boolean>;
+  /** The votes on the order's approval for this wait, oldest first. */
+  votes(orderId: string, eventType: string): Promise<ApprovalVoteRecord[]>;
   /** Records the decision on the order's approval for this wait. */
   decideApproval(
     orderId: string,

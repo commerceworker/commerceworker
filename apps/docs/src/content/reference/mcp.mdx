@@ -197,6 +197,18 @@ a plugin), and `list_webhook_subscriptions` and `list_webhook_deliveries`, `list
 signing secret, a key or anything sealed. Their annotations are `readOnlyHint: true`. Lower roles
 aren't offered them.
 
+## Approvals decided by votes
+
+`decide_approval` and `decide_approvals` cast a vote on an [approval that several people
+decide](/guides/approvals-and-events/#who-approves-and-how-many-votes). Both take an optional
+`onBehalfOf`, a company member's id, for staff recording that member's vote (the card says whose
+vote it is and that you recorded it). `get_order` names each open approval's `approvers` and
+`tally`. Confirmed, a call answers `outcome` (`recorded` while more votes are needed and the order
+still waits, then `approved` or `rejected` once the votes decide it) and `tally` (like `1 of 2`);
+`decide_approvals` gives each approval's own `outcome` and `tally` in `results`. The same refusals
+hold as over REST, and each vote is audited as `approval.decided` with `onBehalfOf`, `outcome` and
+`tally`. A rejection ends the vote.
+
 ## Companies
 
 A business customer's [company](/guides/companies/), its members and its teams are three reads and six

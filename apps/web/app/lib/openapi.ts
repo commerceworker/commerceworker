@@ -345,19 +345,24 @@ export function openApiDocument(serverUrl: string) {
       },
       '/api/v1/orders/{id}/approvals/{nodeId}': {
         post: {
-          summary: 'Approve or reject an approval node',
+          summary: 'Approve or reject an approval node (cast a vote)',
           parameters: [
             orderId,
             { name: 'nodeId', in: 'path', required: true, schema: { type: 'string' } },
           ],
           requestBody: body(decisionInput),
           responses: {
-            '200': ok('Recorded'),
+            '200': ok(
+              '{ ok, outcome, tally }: outcome is `recorded` when more votes are needed and the order still waits, else `approved` or `rejected`; tally is the approvals so far of those needed, like "1 of 2"',
+            ),
             '403': ok(
               'The caller lacks the approver role, or started this order and the workspace separates approvals',
               '#/components/schemas/Error',
             ),
-            '409': ok('That node is not waiting for an approval', '#/components/schemas/Error'),
+            '409': ok(
+              'That node is not waiting for an approval, or the vote can’t be taken: not one of its approvers, already voted, already decided, a buyer on their own order, or a company that isn’t active',
+              '#/components/schemas/Error',
+            ),
             ...errors,
           },
         },

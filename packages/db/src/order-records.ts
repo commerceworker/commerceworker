@@ -6,10 +6,16 @@
  * store to the same behaviour.
  */
 import type { Clock } from '@commerceworker/ports';
-import type { OrderRecords } from '@commerceworker/ports/commerce';
+import type { ApprovalRecord, OrderRecords } from '@commerceworker/ports/commerce';
 import { and, asc, eq } from 'drizzle-orm';
 import { createDb } from './index';
-import { approvals, nodeRuns, orders } from './schema';
+import { approvals, approvalVotes, nodeRuns, orders } from './schema';
+
+/** An approvals row as the port names it: the voters' ids as a list. */
+export function approvalRecord(row: typeof approvals.$inferSelect): ApprovalRecord {
+  const { eligible, ...rest } = row;
+  return { ...rest, eligible: eligible ? (JSON.parse(eligible) as string[]) : null };
+}
 
 export function d1OrderRecords(d1: D1Database, clock: Clock): OrderRecords {
   const d = createDb(d1);
@@ -111,10 +117,54 @@ export function d1OrderRecords(d1: D1Database, clock: Clock): OrderRecords {
     },
 
     async openApproval(a) {
+      const { eligible, ...rest } = a;
       await d
         .insert(approvals)
-        .values({ ...a, status: 'pending', requestedAt: now() })
+        .values({
+          ...rest,
+          ...(eligible ? { eligible: JSON.stringify(eligible) } : {}),
+          status: 'pending',
+          requestedAt: now(),
+        })
         .onConflictDoNothing();
+    },
+
+    async recordVote(orderId, eventType, vote) {
+      // The approval's id comes from the wait, in the one statement, so a vote on a wait with no
+      // approval row writes nothing.
+      const res = await d1
+        .prepare(
+          `INSERT INTO approval_votes (approval_id, voter_id, voter_kind, on_behalf_by, decision, note, at)
+           SELECT id, ?, ?, ?, ?, ?, ? FROM approvals WHERE order_id = ? AND event_type = ?
+           ON CONFLICT (approval_id, voter_id) DO NOTHING`,
+        )
+        .bind(
+          vote.voterId,
+          vote.voterKind,
+          vote.onBehalfBy,
+          vote.decision,
+          vote.note,
+          vote.at,
+          orderId,
+          eventType,
+        )
+        .run();
+      return (res.meta.changes ?? 0) > 0;
+    },
+
+    async votes(orderId, eventType) {
+      return (
+        await d
+          .select({ vote: approvalVotes })
+          .from(approvalVotes)
+          .innerJoin(approvals, eq(approvals.id, approvalVotes.approvalId))
+          .where(and(eq(approvals.orderId, orderId), eq(approvals.eventType, eventType)))
+          .orderBy(asc(approvalVotes.at), asc(approvalVotes.voterId))
+      ).map(({ vote }) => ({
+        ...vote,
+        voterKind: vote.voterKind as 'staff' | 'member',
+        decision: vote.decision as 'approved' | 'rejected',
+      }));
     },
 
     async decideApproval(orderId, eventType, decision) {
@@ -132,11 +182,13 @@ export function d1OrderRecords(d1: D1Database, clock: Clock): OrderRecords {
     },
 
     async approvals(orderId) {
-      return d
-        .select()
-        .from(approvals)
-        .where(eq(approvals.orderId, orderId))
-        .orderBy(asc(approvals.requestedAt), asc(approvals.id));
+      return (
+        await d
+          .select()
+          .from(approvals)
+          .where(eq(approvals.orderId, orderId))
+          .orderBy(asc(approvals.requestedAt), asc(approvals.id))
+      ).map(approvalRecord);
     },
   };
 }

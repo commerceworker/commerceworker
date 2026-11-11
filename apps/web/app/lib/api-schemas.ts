@@ -29,7 +29,11 @@ export const orderEventInput = eventSchema.omit({ orderId: true });
 // each body to its tool.
 const F = OPERATION_FIELDS;
 
-export const decisionInput = z.object({ decision: F.decision, note: F.decisionNote.optional() });
+export const decisionInput = z.object({
+  decision: F.decision,
+  note: F.decisionNote.optional(),
+  onBehalfOf: F.onBehalfOf.optional(),
+});
 
 /** REST's reason is optional (it defaults to "Cancelled via API"); MCP's assistant asks for one. */
 export const cancelInput = z.object({ reason: F.cancelReason.optional() });

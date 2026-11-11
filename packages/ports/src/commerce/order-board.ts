@@ -98,8 +98,41 @@ export interface ApprovalRow {
   readonly customerName: string | null;
   readonly fxRate: number | null;
   readonly startedBy: string | null;
+  /** The company whose members vote; null for staff approvers. */
+  readonly companyId: string | null;
+  /** The company's name, when the approval has one. */
+  readonly companyName: string | null;
+  readonly approvers: string;
+  readonly mode: string;
+  /** The approvals that decide it. */
+  readonly required: number;
+  /** The votes so far, for the tally ("1 of 2"). */
+  readonly approved: number;
+  readonly rejected: number;
   /** How many approvals have this status in this scope, across every page. */
   readonly total: number;
+}
+
+/** What narrows the approvals inbox beyond its status and scope. */
+export interface ApprovalFilter {
+  /** Approvals of this company's members. */
+  readonly companyId?: string;
+  /** Approvals this voter may vote on: a company member's id (or a staff principal's, once resolved). */
+  readonly approver?: string;
+}
+
+/** A vote as an order page shows it: who, on which approval step, and who recorded it. */
+export interface ApprovalVoteView {
+  readonly approvalId: string;
+  readonly nodeId: string;
+  readonly voterId: string;
+  readonly voterKind: 'staff' | 'member';
+  readonly voterName: string | null;
+  readonly onBehalfBy: string | null;
+  readonly onBehalfName: string | null;
+  readonly decision: 'approved' | 'rejected';
+  readonly note: string | null;
+  readonly at: number;
 }
 
 /**
@@ -117,6 +150,14 @@ export interface ApprovalPage {
   readonly from: number;
   readonly total: number;
   readonly next: ApprovalCursor | null;
+}
+
+/** A company member who may vote on one of an order's pending approvals. */
+export interface ApprovalVoter {
+  readonly approvalId: string;
+  readonly nodeId: string;
+  readonly memberId: string;
+  readonly name: string;
 }
 
 export interface Overview {
@@ -343,7 +384,12 @@ export interface OrderBoard {
     after: ApprovalCursor | null,
     limit: number,
     scope?: ApprovalScope,
+    filter?: ApprovalFilter,
   ): Promise<ApprovalPage>;
+  /** The votes on an order's approvals, oldest first, with their voters' names. */
+  votes(orderId: string): Promise<ApprovalVoteView[]>;
+  /** The company members who may vote on the order's pending approvals, by name. */
+  voters(orderId: string): Promise<ApprovalVoter[]>;
   /** Pending approvals, by whether a decision can resume their order. */
   pendingApprovalCounts(): Promise<{ live: number; recorded: number }>;
   /** An order's records, in one round trip. */

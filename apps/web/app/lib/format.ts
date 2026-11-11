@@ -1,4 +1,5 @@
 import {
+  approversLabel,
   type NodeStatus,
   ORDER_CHANNEL_LABELS,
   type OrderChannel,
@@ -163,9 +164,11 @@ export const waitingForLabel = (s: string | null | undefined): string =>
             ? 'a timer'
             : t.startsWith('person:')
               ? assigneeLabel(t.slice(7)) || 'an approver'
-              : t.startsWith('event:')
-                ? eventShort(t.slice(6)) || 'an event'
-                : t,
+              : t.startsWith('approvers:')
+                ? approversLabel(t.slice(10))
+                : t.startsWith('event:')
+                  ? eventShort(t.slice(6)) || 'an event'
+                  : t,
         ),
     ),
   ].join(', ');
