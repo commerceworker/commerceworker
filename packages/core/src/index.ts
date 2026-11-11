@@ -8,6 +8,7 @@ export * from './audit';
 export * from './b2b/approvals';
 export * from './b2b/budgets';
 export * from './b2b/companies';
+export * from './b2b/purchase-orders';
 export * from './cart';
 export * from './cart-index';
 export * from './catalog';

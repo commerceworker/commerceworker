@@ -17,6 +17,7 @@ import {
   inboundEmails,
   messages,
   orders,
+  purchaseOrders,
   taxCertificates,
   users,
 } from '../src/schema';
@@ -38,6 +39,7 @@ async function seed(f: SubjectFixture) {
     [customerAddresses, customerAddresses.id],
     [companies, companies.customerId],
     [companyMembers, companyMembers.id],
+    [purchaseOrders, purchaseOrders.id],
     [checkoutSessions, checkoutSessions.id],
     [carts, carts.id],
   ] as const)
@@ -100,6 +102,13 @@ async function seed(f: SubjectFixture) {
     await db.insert(companies).values({ ...c, status: 'active', createdAt: 0, updatedAt: 0 });
   for (const m of f.companyMembers ?? [])
     await db.insert(companyMembers).values({ ...m, role: 'buyer', createdAt: 0, updatedAt: 0 });
+  for (const p of f.purchaseOrders ?? [])
+    await db.insert(purchaseOrders).values({
+      ...p,
+      shipTo: p.shipTo ? JSON.stringify(p.shipTo) : null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
   for (const c of f.checkouts ?? [])
     await db.insert(checkoutSessions).values({
       id: c.id,

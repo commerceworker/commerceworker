@@ -48,6 +48,8 @@ export interface SubjectRows {
   /** Their accounts' companies, and the company members with their email (any company). */
   readonly companies: Record<string, unknown>[];
   readonly companyMembers: Record<string, unknown>[];
+  /** Purchase orders of their accounts' companies and those their member rows placed (headers). */
+  readonly purchaseOrders: Record<string, unknown>[];
 }
 
 export interface SubjectStore {
@@ -97,6 +99,13 @@ export interface SubjectStore {
    * rows stay for the orders they placed. Returns how many.
    */
   eraseMembers(email: string): Promise<number>;
+  /**
+   * Blanks what the purchase orders of the subject's accounts' companies, and those placed by a
+   * member with their email, say of people: the ship-to's name and street lines and the notes, and
+   * the buyer. The number, status, currency, lines and the rest of the address stay, as the orders
+   * they started do. Run before the members are blanked. Returns how many.
+   */
+  erasePurchaseOrders(subject: Subject): Promise<number>;
 }
 
 /** The file store the subject's documents are in. */

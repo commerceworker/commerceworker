@@ -57,6 +57,15 @@ describe('invoicing an order', () => {
     expect(issued.issued?.dueAt).toBe(NOW + 86_400_000);
   });
 
+  it('shows the buyer’s PO number on the invoice, escaped, and none for an order without one', async () => {
+    const p = ports();
+    const withPo = { ...order('pc_northwind'), meta: { poNumber: 'PO-77 <b>' } } as Order;
+    const r = await invoiceOrder(p, withPo, 'invoice#1', opts, NOW);
+    expect(await p.documents.text(r.key)).toContain('<b>PO number:</b> PO-77 &lt;b&gt;');
+    const plain = await invoiceOrder(p, order('pc_northwind'), 'invoice#2', opts, NOW);
+    expect(await p.documents.text(plain.key)).not.toContain('PO number');
+  });
+
   it("charges a business customer's account once per step, unless the node keeps none", async () => {
     const p = ports();
     const r = await invoiceOrder(p, order('pc_northwind'), 'invoice#1', opts, NOW);

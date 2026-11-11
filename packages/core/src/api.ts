@@ -5,6 +5,7 @@
  * `StorefrontRpc`.
  */
 
+import type { PurchaseOrderStart } from './b2b/purchase-orders';
 import type {
   CartAttachment,
   CartOp,
@@ -139,6 +140,11 @@ export type StartOrderInput = {
    * on the order, and not part of the fingerprint.
    */
   startedBy?: string;
+  /**
+   * Ties the order to a purchase order (`PurchaseOrderStart`). `link` is for the engine's own
+   * callers (submitting a PO): the binding drops it, so a caller can't point an order at a PO.
+   */
+  purchaseOrder?: PurchaseOrderStart;
 };
 
 export type StartOrderResult = { orderId: string; replayed?: boolean };

@@ -61,6 +61,12 @@ describe('data subject requests', () => {
       { customerId: 'sc2_acct', legalName: 'Lovelace Engines Ltd' },
     ]);
     expect(x.companyMembers).toMatchObject([{ id: 'sc2_mem_ada' }]);
+    // Her company's purchase orders and the one she placed, with what they say of people.
+    expect(x.purchaseOrders.map((o) => o.id).sort()).toEqual(['sc2_po_acct', 'sc2_po_ada']);
+    expect(x.purchaseOrders.find((o) => o.id === 'sc2_po_acct')).toMatchObject({
+      notes: 'Call Charles on arrival',
+      poNumber: 'A-1',
+    });
     expect(x.inboundEmails.every((r) => !('r2Key' in r))).toBe(true);
   });
 
@@ -92,6 +98,17 @@ describe('data subject requests', () => {
       addresses: 1,
       // Charles, of her own company, and Ada herself in another one.
       companyMembers: 2,
+      // Her company's PO and the one she placed.
+      purchaseOrders: 2,
+    });
+    // Their words are gone from them; the number and status stay.
+    const after = (await p.subjects.rows(await p.subjects.subject('grace@example.com'), []))
+      .purchaseOrders;
+    expect(after.find((o) => o.id === 'sc2_po_ada')).toMatchObject({
+      notes: null,
+      buyerId: null,
+      poNumber: 'G-1',
+      status: 'fulfilled',
     });
     expect(deleted).toContain('orders/sc2_o_acct/');
     expect(deleted).toContain('inbound/sc2_in_2.eml');

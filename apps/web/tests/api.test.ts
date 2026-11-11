@@ -135,6 +135,8 @@ describe('starting orders over REST', () => {
       'plugin:punchout:po-1',
       'email:<m@x>',
       'a2a:1',
+      // A submitted purchase order's own start.
+      'po:x',
     ]) {
       const res = await handleApi(
         new Request('https://app.test/api/v1/orders', {
@@ -1460,6 +1462,76 @@ describe('operations REST runs as MCP does', () => {
       'set_budget_status',
       { companyId: 'cus_1', budgetId: 'bud_1', status: 'archived' },
     ]);
+    run.mockReset();
+  });
+
+  it('runs the purchase order tools: reads are a viewer’s, drafts and submitting an operator’s, the path naming the PO', async () => {
+    run.mockResolvedValueOnce({ ok: true, value: { purchaseOrders: [], total: 0, cursor: null } });
+    const listed = await handleApi(
+      new Request(
+        'https://app.test/api/v1/purchase-orders?companyId=cus_1&status=submitted&buyerId=mem_1&search=PO-&from=2026-11-01&to=2026-11-30&limit=5&nope=1',
+      ),
+      viewer,
+    );
+    expect(listed.status).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'list_purchase_orders',
+      {
+        companyId: 'cus_1',
+        status: 'submitted',
+        buyerId: 'mem_1',
+        search: 'PO-',
+        from: '2026-11-01',
+        to: '2026-11-30',
+        limit: 5,
+      },
+    ]);
+    run.mockResolvedValueOnce({ ok: true, value: { purchaseOrder: { id: 'po_1' } } });
+    expect(
+      (await handleApi(new Request('https://app.test/api/v1/purchase-orders/po_1'), viewer)).status,
+    ).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual(['get_purchase_order', { poId: 'po_1' }]);
+
+    // Drafting, editing, submitting and cancelling are an operator's.
+    const before = run.mock.calls.length;
+    for (const [path, body] of [
+      ['purchase-orders', { companyId: 'cus_1', poNumber: 'PO-1', lines: [{ sku: 'A', qty: 1 }] }],
+      ['purchase-orders/po_1/update', { notes: 'x' }],
+      ['purchase-orders/po_1/submit', {}],
+      ['purchase-orders/po_1/cancel', {}],
+    ] as const)
+      expect((await post(path, body, viewer)).status, path).toBe(403);
+    expect(run).toHaveBeenCalledTimes(before);
+
+    run.mockResolvedValue({ ok: true, value: { done: 'ok' } });
+    await post('purchase-orders', {
+      companyId: 'cus_1',
+      poNumber: 'PO-1',
+      lines: [{ sku: 'A', qty: 1 }],
+    });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'create_po_draft',
+      { companyId: 'cus_1', poNumber: 'PO-1', lines: [{ sku: 'A', qty: 1 }] },
+    ]);
+    // The path names the PO: a body can't name another.
+    await post('purchase-orders/po_1/update', { notes: 'Rush', poId: 'po_2' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'update_po_draft',
+      { poId: 'po_1', notes: 'Rush' },
+    ]);
+    await post('purchase-orders/po_1/submit', { poId: 'po_2' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual(['submit_po', { poId: 'po_1' }]);
+    await post('purchase-orders/po_1/cancel', { reason: 'Duplicate' });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'cancel_po',
+      { poId: 'po_1', reason: 'Duplicate' },
+    ]);
+    // A PO the engine refuses (not a draft any more) is a 409, as the other refusals are.
+    run.mockResolvedValueOnce({
+      ok: false,
+      error: 'PO-1 is submitted: only a draft can be changed.',
+    });
+    expect((await post('purchase-orders/po_1/update', { notes: 'x' })).status).toBe(409);
     run.mockReset();
   });
 

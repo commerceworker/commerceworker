@@ -33,6 +33,15 @@ export interface SubjectFixture {
     email: string;
     status: string;
   }[];
+  purchaseOrders?: {
+    id: string;
+    companyId: string;
+    buyerId: string | null;
+    poNumber: string;
+    status: string;
+    shipTo: Record<string, string> | null;
+    notes: string | null;
+  }[];
   checkouts?: { id: string; email: string; orderId: string | null }[];
   carts?: {
     id: string;
@@ -67,6 +76,7 @@ export class InMemorySubjectStore implements SubjectStore {
       addresses: c.addresses ?? [],
       companies: c.companies ?? [],
       companyMembers: c.companyMembers ?? [],
+      purchaseOrders: c.purchaseOrders ?? [],
       checkouts: c.checkouts ?? [],
       carts: c.carts ?? [],
       audit: c.audit ?? [],
@@ -145,6 +155,7 @@ export class InMemorySubjectStore implements SubjectStore {
       addresses: this.f.addresses.filter((a) => accounts.has(a.customerId)),
       companies: this.f.companies.filter((c) => accounts.has(c.customerId)),
       companyMembers: this.f.companyMembers.filter((m) => lower(m.email) === s.email),
+      purchaseOrders: this.theirPos(s).map((p) => structuredClone(p)),
     };
   }
 
@@ -248,6 +259,30 @@ export class InMemorySubjectStore implements SubjectStore {
     );
     for (const m of members) Object.assign(m, { name: ERASED, email: ERASED, status: 'removed' });
     return { taxCertificates: certs, addresses: addrs, companyMembers: members.length };
+  }
+
+  /** POs of the subject's accounts' companies and those placed by a member with their email. */
+  private theirPos(s: Subject) {
+    const accounts = new Set(s.accounts.map((c) => c.id));
+    const members = new Set(
+      this.f.companyMembers.filter((m) => lower(m.email) === s.email).map((m) => m.id),
+    );
+    return this.f.purchaseOrders.filter(
+      (p) => accounts.has(p.companyId) || (p.buyerId !== null && members.has(p.buyerId)),
+    );
+  }
+
+  async erasePurchaseOrders(s: Subject) {
+    const mine = this.theirPos(s);
+    for (const p of mine) {
+      p.notes = null;
+      p.buyerId = null;
+      if (p.shipTo) {
+        const { name: _n, line2: _l, ...rest } = p.shipTo;
+        p.shipTo = { ...rest, line1: '' };
+      }
+    }
+    return mine.length;
   }
 
   async eraseMembers(email: string) {

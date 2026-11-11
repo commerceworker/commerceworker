@@ -75,6 +75,43 @@ export const SUBJECT_FIXTURE: SubjectFixture = {
       status: 'active',
     },
   ],
+  purchaseOrders: [
+    // One of her company's, placed by Charles; one Ada placed for another company; one not hers.
+    {
+      id: 'sc2_po_acct',
+      companyId: 'sc2_acct',
+      buyerId: 'sc2_mem_charles',
+      poNumber: 'A-1',
+      status: 'ordered',
+      shipTo: {
+        name: 'Charles',
+        line1: '1 Dock Rd',
+        line2: 'Bay 2',
+        city: 'York',
+        postalCode: 'Y1',
+        country: 'GB',
+      },
+      notes: 'Call Charles on arrival',
+    },
+    {
+      id: 'sc2_po_ada',
+      companyId: 'sc2_other',
+      buyerId: 'sc2_mem_ada',
+      poNumber: 'G-1',
+      status: 'fulfilled',
+      shipTo: { line1: '2 Mill Ln', city: 'Leeds', postalCode: 'L1', country: 'GB' },
+      notes: 'Ada’s note',
+    },
+    {
+      id: 'sc2_po_grace',
+      companyId: 'sc2_other',
+      buyerId: null,
+      poNumber: 'G-2',
+      status: 'submitted',
+      shipTo: { name: 'Grace', line1: '3 Quay', city: 'Hull', postalCode: 'H1', country: 'GB' },
+      notes: 'Grace’s note',
+    },
+  ],
   checkouts: [
     { id: 'sc2_chk_placed', email: ADA, orderId: 'sc2_o_guest' },
     { id: 'sc2_chk_open', email: ADA, orderId: null },
@@ -137,6 +174,8 @@ export function describeSubjectStoreContract(
       expect(rows.addresses).toHaveLength(1);
       expect(rows.companies.map((c) => c.customerId)).toEqual(['sc2_acct']);
       expect(rows.companyMembers.map((m) => m.id)).toEqual(['sc2_mem_ada']);
+      // Her company's POs, and the one she placed; not Grace's.
+      expect(rows.purchaseOrders.map((p) => p.id).sort()).toEqual(['sc2_po_acct', 'sc2_po_ada']);
       expect((await s.checkouts(ADA, 10)).map((c) => c.id).sort()).toEqual([
         'sc2_chk_open',
         'sc2_chk_placed',
@@ -147,6 +186,52 @@ export function describeSubjectStoreContract(
       expect(await s.orderCarts(['sc2_o_acct'])).toEqual(['sc2_cart_staff']);
       expect(await s.wasErased('hash:ada')).toBe(true);
       expect(await s.wasErased('hash:other')).toBe(false);
+    });
+
+    it('blanks the people in their purchase orders, keeping number, status and the rest of the address', async () => {
+      const s = await fresh();
+      const ada = await s.subject(ADA);
+      const grace = await s.subject('grace@example.com');
+      const shipOf = (p: Record<string, unknown>) =>
+        typeof p.shipTo === 'string' ? JSON.parse(p.shipTo) : p.shipTo;
+      // Her company's PO and the one she placed; Grace's own is not hers.
+      expect(await s.erasePurchaseOrders(ada)).toBe(2);
+      const mine = (await s.rows(ada, [])).purchaseOrders;
+      // The one she placed no longer names her, so only her company's is found by her.
+      expect(mine.map((p) => p.id)).toEqual(['sc2_po_acct']);
+      expect(mine[0]).toMatchObject({
+        poNumber: 'A-1',
+        status: 'ordered',
+        buyerId: null,
+        notes: null,
+      });
+      expect(shipOf(mine[0] as Record<string, unknown>)).toEqual({
+        line1: '',
+        city: 'York',
+        postalCode: 'Y1',
+        country: 'GB',
+      });
+      const theirs = (await s.rows(grace, [])).purchaseOrders;
+      const byId = new Map(theirs.map((p) => [p.id, p]));
+      expect(byId.get('sc2_po_ada')).toMatchObject({
+        buyerId: null,
+        notes: null,
+        status: 'fulfilled',
+      });
+      expect(shipOf(byId.get('sc2_po_ada') as Record<string, unknown>)).toEqual({
+        line1: '',
+        city: 'Leeds',
+        postalCode: 'L1',
+        country: 'GB',
+      });
+      // Not hers: untouched.
+      expect(byId.get('sc2_po_grace')).toMatchObject({ notes: 'Grace’s note' });
+      expect(shipOf(byId.get('sc2_po_grace') as Record<string, unknown>)).toMatchObject({
+        name: 'Grace',
+        line1: '3 Quay',
+      });
+      // Again: her company's is still hers and is blanked (as it already is); hers is not.
+      expect(await s.erasePurchaseOrders(ada)).toBe(1);
     });
 
     it('blanks the company members with their email, keeping the rows, once', async () => {

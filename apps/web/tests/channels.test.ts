@@ -164,6 +164,11 @@ describe('EDI 850', () => {
     expect(startOrderOnce.mock.calls[0]![0]).toMatchObject({
       idempotencyKey: 'order:edi:NORTHWIND:NW-1',
       input: { model: 'b2b', channel: 'edi', customerId: 'cus_northwind' },
+      // Each PO is a company's purchase order too: the engine records it beside its order.
+      purchaseOrder: { record: { source: 'edi', poNumber: 'NW-1' } },
+    });
+    expect(startOrderOnce.mock.calls[1]![0]).toMatchObject({
+      purchaseOrder: { record: { source: 'edi', poNumber: 'NW-2' } },
     });
   });
 

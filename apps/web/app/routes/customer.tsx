@@ -50,6 +50,7 @@ import {
 import { BudgetsSection } from '~/components/budgets';
 import { CompanySection, EditCustomer, MembersSection, TeamsSection } from '~/components/company';
 import { FormSheet, useFormSheet } from '~/components/form-sheet';
+import { PurchaseOrdersSection } from '~/components/purchase-orders';
 import { StatusBadge, ToneBadge } from '~/components/status';
 import { useAssistant } from '~/lib/assistant';
 import { audit } from '~/lib/audit.server';
@@ -68,6 +69,7 @@ import { humanize, liveStatus, orderRef } from '~/lib/format';
 import { countOrders, listOrders } from '~/lib/orders.server';
 import { BOOK_STATES } from '~/lib/price-books';
 import { customerPricing } from '~/lib/price-books.server';
+import { companyPurchaseOrders } from '~/lib/purchase-orders.server';
 import { CERTIFICATE_STATES, expiryDay, placesLabel } from '~/lib/tax-certificates';
 import { useCan } from '~/lib/use-me';
 import type { Route } from './+types/customer';
@@ -102,6 +104,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const budgets = company
     ? await budgetsOf(params.customerId, new URL(request.url).searchParams)
     : null;
+  const purchaseOrders = company ? await companyPurchaseOrders(params.customerId) : null;
   const { stripeCustomerId: _c, stripePaymentMethodId: _pm, ...shown } = customer;
   return {
     customer: shown,
@@ -115,6 +118,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     credit,
     after: after ?? null,
     budgets,
+    purchaseOrders,
     // The next certificate's id, minted here so a form sent twice adds it once.
     nextId: newId('txc'),
   };
@@ -150,6 +154,7 @@ export default function CustomerPage() {
     credit,
     after,
     budgets,
+    purchaseOrders,
     nextId,
     pricing,
   } = useLoaderData<typeof loader>();
@@ -300,6 +305,9 @@ export default function CustomerPage() {
                 data={{ ...budgets, company: company.company, teams: company.teams }}
                 canOperate={canOperate}
               />
+            ) : null}
+            {purchaseOrders ? (
+              <PurchaseOrdersSection companyId={c.id} data={purchaseOrders} />
             ) : null}
           </>
         ) : null}

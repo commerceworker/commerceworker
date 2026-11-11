@@ -85,6 +85,12 @@ const trailOf = (p: Principal, tool: AssistantTool, opts: { via: Channel; direct
 
 import { draftPlugin } from './plugin-draft';
 import { draftProductContent } from './product-draft';
+import {
+  changePoDraft,
+  openPoDraft,
+  readPurchaseOrder,
+  readPurchaseOrders,
+} from './purchase-orders';
 
 const auditVia = (via: Channel): AuditVia => AUDIT_CHANNEL[via];
 
@@ -140,6 +146,8 @@ export const ACTION_TOOLS: ActionTool[] = [
   'put_company_team',
   'put_budget',
   'set_budget_status',
+  'submit_po',
+  'cancel_po',
   'set_member_role',
   'set_approval_separation',
   'set_assistant_routing',
@@ -357,6 +365,14 @@ export async function runTool<T extends AssistantTool>(
       return readPricePreview(env, input as ToolInput<'preview_price'>);
     case 'list_budgets':
       return readBudgets(env, input as ToolInput<'list_budgets'>);
+    case 'list_purchase_orders':
+      return readPurchaseOrders(env, input as ToolInput<'list_purchase_orders'>);
+    case 'get_purchase_order':
+      return readPurchaseOrder(env, input as ToolInput<'get_purchase_order'>);
+    case 'create_po_draft':
+      return openPoDraft(env, p, input as ToolInput<'create_po_draft'>, trailOf(p, name, opts));
+    case 'update_po_draft':
+      return changePoDraft(env, p, input as ToolInput<'update_po_draft'>, trailOf(p, name, opts));
     case 'list_integrations':
       return {
         integrations: await listIntegrations({ integrations: integrationStore(env) }, Date.now()),

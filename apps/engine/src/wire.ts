@@ -29,6 +29,7 @@ import { d1PluginInstallStore } from '@commerceworker/db/plugin-install-store';
 import { d1PriceBookStore } from '@commerceworker/db/price-book-store';
 import { d1PricingStore } from '@commerceworker/db/pricing-store';
 import { d1ProductIndexStore } from '@commerceworker/db/product-index-store';
+import { d1PurchaseOrderStore } from '@commerceworker/db/purchase-order-store';
 import { d1RetentionStore } from '@commerceworker/db/retention-store';
 import { d1SealedSecrets } from '@commerceworker/db/sealed-secrets';
 import { d1ShippingStore } from '@commerceworker/db/shipping-store';
@@ -70,6 +71,7 @@ import type {
   PriceBookStore,
   PricingStore,
   ProductIndexStore,
+  PurchaseOrderStore,
   RetentionStore,
   SealedSecretStore,
   ShippingStore,
@@ -334,6 +336,10 @@ export const priceBookStore = (env: Pick<Env, 'DB'>): PriceBookStore => d1PriceB
 
 export const taxCertificateStore = (env: Pick<Env, 'DB'>): TaxCertificateStore =>
   d1TaxCertificateStore(env.DB);
+
+/** Companies' purchase orders: drafts, and what an order's progress makes of them. */
+export const purchaseOrderStore = (env: Pick<Env, 'DB'>): PurchaseOrderStore =>
+  d1PurchaseOrderStore(env.DB);
 
 /** Companies' budgets and their spend ledger. */
 export const budgetStore = (env: Pick<Env, 'DB'>): BudgetStore => d1BudgetStore(env.DB);

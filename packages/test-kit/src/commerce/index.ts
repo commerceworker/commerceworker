@@ -55,6 +55,8 @@ export * from './pricing-store';
 export * from './pricing-store-contract';
 export * from './product-index-store';
 export * from './product-index-store-contract';
+export * from './purchase-order-store';
+export * from './purchase-order-store-contract';
 export * from './retention-store';
 export * from './retention-store-contract';
 export * from './scim-directory';

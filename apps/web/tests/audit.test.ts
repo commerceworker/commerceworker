@@ -144,6 +144,7 @@ suite('audit vocabulary', () => {
       'company',
       'credit',
       'budget',
+      'purchase_order',
       'catalog',
       'plugin',
       'personal_data',
@@ -170,6 +171,9 @@ suite('audit actors and targets', () => {
     );
     expect(targetHref({ action: 'flow.published', target: 'tpl-storefront-order' })).toBe(
       '/flows/tpl-storefront-order',
+    );
+    expect(targetHref({ action: 'purchase_order.submitted', target: 'po_mv65gs1' })).toBe(
+      '/purchase-orders/po_mv65gs1',
     );
     expect(targetHref({ action: 'team.user_added', target: 'ann@example.com' })).toBeNull();
     expect(targetHref({ action: 'order.started', target: null })).toBeNull();

@@ -196,7 +196,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        24,
+        26,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -274,6 +274,7 @@ describe('MCP', () => {
       'get_price_book',
       'get_product',
       'get_product_sheet',
+      'get_purchase_order',
       'list_budgets',
       'list_carts',
       'list_catalog_channels',
@@ -282,6 +283,7 @@ describe('MCP', () => {
       'list_flows',
       'list_price_books',
       'list_product_types',
+      'list_purchase_orders',
       'needs_attention',
       'preview_price',
     ]);
@@ -299,7 +301,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(75);
+    expect(operator).toHaveLength(81);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -342,6 +344,28 @@ describe('MCP', () => {
     expect(operator.find((t) => t.name === 'put_budget')).toMatchObject({
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     });
+    // Purchase orders: a viewer reads them; an operator drafts without a confirm (nothing starts),
+    // and submitting starts an order while cancelling ends one, each the same again as once.
+    for (const name of ['list_purchase_orders', 'get_purchase_order'])
+      expect(viewer.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        outputSchema: { type: 'object' },
+      });
+    for (const name of ['create_po_draft', 'update_po_draft', 'submit_po', 'cancel_po'])
+      expect(viewer.map((t) => t.name)).not.toContain(name);
+    for (const name of ['create_po_draft', 'update_po_draft'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      });
+    for (const name of ['submit_po', 'cancel_po'])
+      expect(operator.find((t) => t.name === name)).toMatchObject({
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      });
     // An admin also drafts plugins: no confirm, but it saves a draft, so it isn't read-only.
     // A cart is saved without a confirm (nothing is ordered); submitting it is an action.
     expect(operator.find((t) => t.name === 'change_cart')).toMatchObject({
@@ -357,7 +381,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(98);
+    expect(admin).toHaveLength(104);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [

@@ -5,6 +5,7 @@
  * about an order go to the workspace assistant (./assistant), which reads and acts on it here.
  */
 
+import { syncPoFromOrder } from '@commerceworker/application/commerce';
 import type { ReturnRequest } from '@commerceworker/core';
 import {
   type ApprovalPlan,
@@ -33,10 +34,12 @@ import {
   type OrderState,
   type OrderStatus,
   orderIndexRow,
+  orderPurchaseOrderId,
   type PendingWait,
   type Principal,
   type ProxiedPrincipal,
   planSpec,
+  poProgressOf,
   ROLE_LABELS,
   type Role,
   TERMINAL_ORDER_STATUSES,
@@ -55,7 +58,7 @@ import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
 import { releaseHold } from './ucp/payments';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
-import { companyDirectory, orderRecords } from './wire';
+import { companyDirectory, orderRecords, purchaseOrderStore } from './wire';
 import { plural } from './words';
 
 /** What recording a vote answered: where the vote stands, or why it couldn't be taken. */
@@ -261,6 +264,59 @@ export class OrderAgent extends Agent<Env, State> {
     this.indexed = key;
   }
 
+  /** What the purchase order last got from this object, so an unchanged report writes nothing. */
+  private poSynced: string | null = null;
+
+  /**
+   * Mirrors the order's progress into its purchase order, if it has one (`meta.purchaseOrderId`,
+   * which only the engine's start sets): `syncPoFromOrder` moves the PO along its lifecycle to where
+   * the progress puts it, and a repeat, from a replayed report or a restarted object, moves
+   * nothing. It runs from the reports and waits inside steps and the cancel, never from a path a
+   * replay would repeat with a different outcome.
+   */
+  private async syncPurchaseOrder() {
+    const s = this.state;
+    if (!s.orderId || !s.order || !orderPurchaseOrderId(s.order.meta)) return;
+    const approvals =
+      this.pinnedFlow()
+        ?.nodes.filter((n) => n.type === 'control.approval')
+        .map((n) => n.id) ?? [];
+    const progress = poProgressOf(s, approvals);
+    if (!progress) return;
+    const key = `${s.generation}|${progress}`;
+    if (key === this.poSynced) return;
+    await syncPoFromOrder(
+      { purchaseOrders: purchaseOrderStore(this.env) },
+      s.orderId,
+      progress,
+      Date.now(),
+    );
+    this.poSynced = key;
+  }
+
+  /**
+   * `syncPurchaseOrder` that never throws past its caller: a PO store problem can't hold up the
+   * report, the wait or the cancel it rides on, so it is tried again from an alarm instead.
+   */
+  private async mirrorPurchaseOrder() {
+    try {
+      await this.syncPurchaseOrder();
+    } catch (err) {
+      console.error(JSON.stringify({ type: 'purchase_order_sync_failed', error: String(err) }));
+      await this.schedule(30, 'syncPo', { attempt: 1 });
+    }
+  }
+
+  /** A mirror that failed, tried again (what it rode on is done). */
+  async syncPo(p: { attempt: number }) {
+    try {
+      await this.syncPurchaseOrder();
+    } catch (err) {
+      console.error(JSON.stringify({ type: 'purchase_order_sync_failed', error: String(err) }));
+      if (p.attempt < 5) await this.schedule(30, 'syncPo', { attempt: p.attempt + 1 });
+    }
+  }
+
   // ── Called by EngineApi and the Workflow ───────────────────────────────────
 
   /** The whole state: the synced state with the pinned flow and the full timeline. */
@@ -340,6 +396,7 @@ export class OrderAgent extends Agent<Env, State> {
     // A failed order rolls back inside the Workflow; poll it until it settles to record the outcome.
     if (folded.statusChanged && next.status === 'failed')
       await this.schedule(5, 'checkInstance', { attempt: 0 });
+    await this.mirrorPurchaseOrder();
   }
 
   /** Writes one finished node run for the dashboard's timing; a repeat is a no-op. */
@@ -405,6 +462,7 @@ export class OrderAgent extends Agent<Env, State> {
       }),
     });
     await this.syncIndex();
+    await this.mirrorPurchaseOrder();
     await this.deliverHeld(w);
   }
 
@@ -483,6 +541,7 @@ export class OrderAgent extends Agent<Env, State> {
       }),
     });
     await this.syncIndex();
+    await this.mirrorPurchaseOrder();
   }
 
   // ── Callable from the order page ──
@@ -844,6 +903,7 @@ export class OrderAgent extends Agent<Env, State> {
       }),
     });
     await this.syncIndex();
+    await this.mirrorPurchaseOrder();
     // Cancelling terminates the Workflow, so no End node announces it; the agent does.
     await this.schedule(0, 'emitWebhook', {
       key: 'cancel',

@@ -317,6 +317,57 @@ export const budgetSpend = sqliteTable(
 );
 
 /**
+ * A company's purchase order (`PurchaseOrder` in core). `status` is the PO lifecycle; `shipTo` is
+ * the address as JSON. A number is unique in its company among POs not cancelled, and an order has
+ * at most one PO.
+ */
+export const purchaseOrders = sqliteTable(
+  'purchase_orders',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id').notNull(),
+    buyerId: text('buyer_id'),
+    poNumber: text('po_number').notNull(),
+    /** draft | submitted | pending_approval | approved | rejected | ordered | fulfilled | cancelled. */
+    status: text('status').notNull().default('draft'),
+    currency: text('currency').notNull().default('USD'),
+    shipTo: text('ship_to'),
+    notes: text('notes'),
+    quoteId: text('quote_id'),
+    orderId: text('order_id'),
+    /** app | api | edi | email | punchout. */
+    source: text('source').notNull().default('app'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('purchase_orders_number')
+      .on(t.companyId, sql`lower(${t.poNumber})`)
+      .where(sql`${t.status} <> 'cancelled'`),
+    uniqueIndex('purchase_orders_order').on(t.orderId).where(sql`${t.orderId} is not null`),
+    index('purchase_orders_company').on(t.companyId, sql`${t.createdAt} desc`, sql`${t.id} desc`),
+    index('purchase_orders_status').on(t.status, sql`${t.createdAt} desc`, sql`${t.id} desc`),
+    index('purchase_orders_buyer')
+      .on(t.buyerId, sql`${t.createdAt} desc`)
+      .where(sql`${t.buyerId} is not null`),
+  ],
+);
+
+/** A purchase order's lines, in the order the buyer wrote them. */
+export const purchaseOrderLines = sqliteTable(
+  'purchase_order_lines',
+  {
+    poId: text('po_id').notNull(),
+    position: integer('position').notNull(),
+    sku: text('sku').notNull(),
+    name: text('name'),
+    qty: real('qty').notNull(),
+    unitPrice: real('unit_price'),
+  },
+  (t) => [primaryKey({ columns: [t.poId, t.position] })],
+);
+
+/**
  * A customer's tax exemption certificates (`TaxCertificate` in core). `regions` is JSON
  * (`TaxPlace[]`); revoked rows stay for the record; erasing the customer deletes them.
  */

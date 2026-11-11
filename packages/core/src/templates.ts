@@ -2,6 +2,7 @@
  * Seeded flows, at least one per commerce model. Each is a normal editable flow; the seed publishes version 1.
  */
 
+import { PO_FLOW_ID } from './b2b/purchase-orders';
 import { withDefaults } from './catalog';
 import { LOOP_INPUT } from './graph';
 import { autoLayout } from './layout';
@@ -307,6 +308,87 @@ export function b2bOrderFlow(): Flow {
         channels: ['email', 'edi', 'api', 'manual'],
       })
   );
+}
+
+/**
+ * What a purchase order above this in the base currency needs a company approver for (D4:
+ * thresholds are flow logic, so a deployment edits the number in its copy of the flow).
+ */
+export const B2B_PO_APPROVAL_OVER = 5000;
+
+/**
+ * A company's purchase order, started by submitting a PO (`submitPo`): validates the company and
+ * buyer, prices from the company's books, takes credit as a hold and records the spend against the
+ * company's and team's budgets, asks a company approver when the credit or a budget is over or the
+ * total is above the threshold, then reserves stock, invoices on net terms (the invoice carries the
+ * PO number) and ships. The PO's own status follows the order (`poTransitionFor`).
+ */
+export function b2bPurchaseOrderFlow(): Flow {
+  return new Builder()
+    .n('po', 'trigger.manual', 'Purchase order')
+    .n('validate', 'commerce.validate', 'Validate company and buyer')
+    .n('price', 'commerce.price', 'Price from books', { useContracts: true, usePriceRules: true })
+    .n('tax', 'commerce.tax', 'Tax', { rate: 0.0825 })
+    .n('credit', 'commerce.credit_check', 'Credit check', { hold: true })
+    .n('budget', 'commerce.budget_check', 'Budget check', { source: 'company', commit: true })
+    .n('threshold', 'control.condition', 'Over the approval threshold?', {
+      expression: gt('order.baseTotal', B2B_PO_APPROVAL_OVER),
+    })
+    .n('approval', 'control.approval', 'Company approval', {
+      title: 'Approve purchase order {{order.meta.poNumber}} ({{order.id}})',
+      assignee: 'company approver',
+      approvers: 'company:approver',
+      mode: 'any',
+      timeout: '3 days',
+    })
+    .n('reserve', 'commerce.reserve_inventory', 'Reserve stock')
+    .n('invoice', 'commerce.invoice', 'Invoice', { terms: 'net_30' })
+    .n('ship', 'commerce.ship', 'Ship', { carrier: 'freight' })
+    .n('done', 'control.end', 'Shipped', { outcome: 'completed' })
+    .n('decline', 'commerce.notify', 'Decline order', {
+      to: 'customer',
+      subject: 'We could not accept purchase order {{order.meta.poNumber}}',
+    })
+    .n('declined', 'control.end', 'Declined', { outcome: 'declined', reason: 'Not approved' })
+    .n('expire', 'commerce.notify', 'Decline order', {
+      to: 'customer',
+      subject: 'We could not accept purchase order {{order.meta.poNumber}}',
+    })
+    .n('expired', 'control.end', 'No decision', {
+      outcome: 'declined',
+      reason: 'No approval decision in time',
+    })
+    .n('backorder', 'control.end', 'Out of stock', {
+      outcome: 'failed',
+      reason: 'Insufficient stock; reservations released',
+    })
+    .e('po', 'validate')
+    .e('validate', 'price')
+    .e('price', 'tax')
+    .e('tax', 'credit')
+    .e('credit.ok', 'budget')
+    .e('credit.over_limit', 'approval')
+    .e('budget.within', 'threshold')
+    .e('budget.over', 'approval')
+    .e('threshold.true', 'approval')
+    .e('threshold.false', 'reserve')
+    .e('approval.approved', 'reserve')
+    .e('approval.rejected', 'decline')
+    .e('approval.escalated', 'expire')
+    .e('decline', 'declined')
+    .e('expire', 'expired')
+    .e('reserve.ok', 'invoice')
+    .e('reserve.backorder', 'backorder')
+    .e('invoice', 'ship')
+    .e('ship', 'done')
+    .build({
+      id: PO_FLOW_ID,
+      name: 'B2B purchase order',
+      description:
+        'A company’s purchase order: company and buyer checks, price-book pricing, a credit hold, the company’s budgets, a company approver when credit or a budget is over or the total is above the threshold, stock reservation, a net-30 invoice that carries the PO number, and shipment.',
+      model: 'b2b',
+      channels: ['api', 'manual', 'edi', 'email'],
+    });
 }
 
 export function reorderFlow(): Flow {
@@ -888,6 +970,7 @@ export function posSaleFlow(): Flow {
 export const TEMPLATES = {
   'tpl-purchase-request': purchaseRequestFlow,
   'tpl-b2b-order': b2bOrderFlow,
+  [PO_FLOW_ID]: b2bPurchaseOrderFlow,
   'tpl-reorder': reorderFlow,
   'tpl-subscription': subscriptionFlow,
   'tpl-storefront-order': storefrontOrderFlow,

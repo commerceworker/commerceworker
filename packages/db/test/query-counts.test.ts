@@ -5,6 +5,7 @@ import {
   routeFulfillment,
   schedulePayouts,
   splitBySeller,
+  syncPoFromOrder,
 } from '@commerceworker/application/commerce';
 import {
   FULFILLMENT_FIXTURE,
@@ -37,6 +38,7 @@ import { d1OrderRecords } from '../src/order-records';
 import { d1PaymentLedger } from '../src/payment-ledger';
 import { d1PriceBookStore } from '../src/price-book-store';
 import { d1PricingStore } from '../src/pricing-store';
+import { d1PurchaseOrderStore } from '../src/purchase-order-store';
 import { d1ShippingStore } from '../src/shipping-store';
 import committed from './query-counts.json';
 import { seedFulfillment, seedInventory, seedMarketplace, seedPricing } from './seeds';
@@ -87,6 +89,7 @@ function stores(d1: D1Database) {
     checkouts: d1CheckoutSessions(d1),
     companies: d1CompanyDirectory(d1),
     budgets: d1BudgetStore(d1),
+    purchaseOrders: d1PurchaseOrderStore(d1),
   };
 }
 
@@ -316,6 +319,63 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
   [
     'budgets: change a budget’s status',
     () => ports.budgets.transition(ALL, id('budget'), 'active', 'paused', now),
+  ],
+  [
+    'purchase orders: a page',
+    () =>
+      ports.purchaseOrders.list(ALL, { companyId: id('co'), status: 'submitted' }, { limit: 25 }),
+  ],
+  ['purchase orders: one PO and its lines', () => ports.purchaseOrders.get(ALL, id('po'))],
+  [
+    'purchase orders: draft with two lines',
+    () =>
+      ports.purchaseOrders.create(
+        {
+          id: id('po-new'),
+          companyId: id('co'),
+          buyerId: null,
+          poNumber: id('po-number'),
+          status: 'draft',
+          currency: 'USD',
+          shipTo: null,
+          notes: null,
+          quoteId: null,
+          orderId: null,
+          source: 'api',
+          createdAt: now,
+          updatedAt: now,
+        },
+        [
+          { sku: 'A', name: null, qty: 1, unitPrice: null },
+          { sku: 'B', name: null, qty: 2, unitPrice: null },
+        ],
+      ),
+  ],
+  [
+    'purchase orders: edit a draft’s header and lines',
+    () =>
+      ports.purchaseOrders.updateDraft(
+        ALL,
+        id('po-new'),
+        { notes: 'Rush', lines: [{ sku: 'C', name: null, qty: 3, unitPrice: null }] },
+        now,
+      ),
+  ],
+  [
+    'purchase orders: submit a draft',
+    () => ports.purchaseOrders.transition(ALL, id('po-new'), 'draft', 'submitted', now),
+  ],
+  [
+    'purchase orders: tie the order started',
+    () => ports.purchaseOrders.linkOrder(ALL, id('po-new'), id('po-order'), now),
+  ],
+  [
+    'OrderAgent: an order’s progress into its PO (one move)',
+    () => syncPoFromOrder(ports, id('po-order'), 'awaiting_approval', now),
+  ],
+  [
+    'OrderAgent: the same report again',
+    () => syncPoFromOrder(ports, id('po-order'), 'awaiting_approval', now),
   ],
   ['admin new order: every record for the pickers', () => ports.office.everything()],
   ['admin: currencies', () => ports.office.currencies()],

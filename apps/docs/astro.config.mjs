@@ -96,6 +96,7 @@ export default defineConfig({
             { label: 'Price books', slug: 'guides/price-books' },
             { label: 'Promotions', slug: 'guides/promotions' },
             { label: 'Companies', slug: 'guides/companies' },
+            { label: 'Purchase orders', slug: 'guides/purchase-orders' },
             { label: 'Approvals and events', slug: 'guides/approvals-and-events' },
             { label: 'Carts', slug: 'guides/carts' },
             { label: 'Punchout', slug: 'guides/punchout' },

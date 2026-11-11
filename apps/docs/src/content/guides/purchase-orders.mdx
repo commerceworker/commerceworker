@@ -1,0 +1,110 @@
+---
+title: Purchase orders
+description: A company buyer's purchase order as a record with an editable draft; submitting it starts an order on the B2B purchase order flow, its status follows the order, and inbound EDI and email POs are recorded too.
+---
+
+A purchase order (PO) is a company buyer's own order, kept as a record that outlives the order it
+starts. It belongs to a [company](/guides/companies/) and, when it names one, the member who placed
+it. It has a PO number (the buyer's own reference), lines, a ship-to address, notes and a status.
+
+Three kinds of PO are records: one drafted in the app or over the API, an [EDI 850](/guides/channel-adapters/)
+from a trading partner, and a PO that arrives by [email](/guides/email-intake/). The **Generate PO**
+step in a flow is a different thing: it files a document to a supplier and is not recorded here. POs
+that come in through [punchout](/guides/punchout/) are not recorded yet.
+
+## Lifecycle
+
+| From | Can become |
+|---|---|
+| `draft` | `submitted`, `cancelled` |
+| `submitted` | `pending_approval`, `approved`, `rejected`, `cancelled` |
+| `pending_approval` | `approved`, `rejected`, `cancelled` |
+| `approved` | `ordered` |
+| `ordered` | `fulfilled`, `cancelled` (when its order is cancelled) |
+| `rejected`, `fulfilled`, `cancelled` | nothing: they are final |
+
+**Only a draft can be edited.** Once a PO is submitted it has started an order, so a change is
+refused; cancel it and draft another. Each move is made only from the status it was read in, so a
+submit and a cancel sent at the same moment have one winner.
+
+A PO number is unique within its company, whatever the letter case. A cancelled PO gives its number
+back, so a corrected PO can use it again. Another company may use the same number.
+
+## Drafting
+
+A draft needs at least one line (a SKU and a quantity, optionally a name and the unit price the buyer
+expects: the flow prices the order, not the PO), a number, and an active company. A buyer, when
+named, must be an active member of that company. These are checked when the draft is saved and again
+when it is submitted, since the company or buyer may have changed in between. A PO has no total: the
+order it starts is priced, and its page shows the amount.
+
+Operators draft and edit POs on the **Purchase orders** page (`/purchase-orders`), where each draft
+opens in an editor, and from a company's customer page, which has a **Purchase orders** section. The
+list is newest first and narrows by company, status, buyer, a part of the PO number, and the dates
+created. Drafting and editing a draft ask for no confirmation, since a draft starts nothing.
+
+## Submitting
+
+Submitting moves the draft to `submitted` and starts an order on the **B2B purchase order** built-in
+flow, carrying the PO number, the buyer and the lines. It starts one order per PO however many times
+it is submitted: submitting again returns the same order, and finishes the start if it didn't
+complete the first time. The flow:
+
+1. Validates the company and buyer, prices from the company's [price books](/guides/price-books/) and
+   calculates tax.
+2. Takes the order's total as a credit hold, then checks it against the company's and team's
+   [budgets](/guides/companies/#budgets) and records the spend.
+3. Asks a company approver to approve when the order is over its credit limit or a strict budget, or
+   when its total is over $5,000 in the base currency (a number in the flow's condition, which you
+   can change in your copy). Company approvers [vote](/guides/approvals-and-events/); the approval
+   escalates to a decline after three days with no decision.
+4. Reserves stock, invoices on net 30 terms with the PO number on the invoice, and ships.
+
+See [Built-in flows](/guides/templates/) for the whole graph.
+
+## The PO follows the order
+
+From submission on, the order's progress is the PO's status:
+
+| The order | The PO |
+|---|---|
+| waits for an approval | `pending_approval` |
+| has no approval step left to wait for and is going ahead | `approved`, then `ordered` (a PO that needed no approval passes through `approved`) |
+| completes | `fulfilled` |
+| is declined while the PO waits for approval | `rejected` |
+| is declined after that, is cancelled, fails or rolls back | `cancelled` |
+
+Nothing but cancelling moves a PO past `submitted` by hand. **Cancelling** a PO cancels its order if
+it is still running, which gives back the credit hold, the budget spend and the reserved stock. A PO
+whose order has already ended can't be cancelled; its status says how it ended.
+
+## POs from EDI and email
+
+A PO in an [EDI 850](/guides/channel-adapters/) from a configured trading partner is recorded as
+`submitted` with source `edi`, with the lines and ship-to from the document, and follows its order
+like any other. A PO emailed from a known company's address is recorded as `submitted` with source
+`email`. The extract step reads the PO number from the document after the record is made, so an
+emailed PO's number starts as `EML-` and ten characters taken from the message; the number read from
+the document is on the order's variables, and the record keeps the provisional one for now. An email
+PO has no lines on its record until a later change reads them in. A PO that can't be recorded (a
+customer with no company, or a number the company already has) does not stop its order: the order
+runs without a record.
+
+## API and assistant
+
+| Tool | Role | Confirms | REST |
+|---|---|---|---|
+| `list_purchase_orders` | viewer | no | `GET /api/v1/purchase-orders` |
+| `get_purchase_order` | viewer | no | `GET /api/v1/purchase-orders/:poId` |
+| `create_po_draft` | operator | no | `POST /api/v1/purchase-orders` |
+| `update_po_draft` | operator | no | `POST /api/v1/purchase-orders/:poId/update` |
+| `submit_po` | operator | yes | `POST /api/v1/purchase-orders/:poId/submit` |
+| `cancel_po` | operator | yes | `POST /api/v1/purchase-orders/:poId/cancel` |
+
+The list takes `companyId`, `status`, `buyerId`, `search` (part of the PO number), `from` and `to`
+(days, `YYYY-MM-DD`, UTC, both inclusive), `cursor` and `limit` (25 by default, at most 100), and
+answers `purchaseOrders`, `total` and the next `cursor`. Over MCP and REST the two transports run the
+same code; see the [MCP](/reference/mcp/#purchase-orders) and [REST](/reference/rest-api/) references.
+Drafting, editing, submitting and cancelling write audit entries (`purchase_order.created`,
+`purchase_order.updated`, `purchase_order.submitted`, `purchase_order.cancelled`); a PO recorded from
+EDI or email writes `purchase_order.received`.

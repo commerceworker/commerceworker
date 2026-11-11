@@ -12,6 +12,7 @@ export * from './payments';
 export * from './price-books';
 export * from './price-order';
 export * from './principals';
+export * from './purchase-orders';
 export * from './rate-shipping';
 export * from './refresh-fx-rates';
 export * from './retention';
