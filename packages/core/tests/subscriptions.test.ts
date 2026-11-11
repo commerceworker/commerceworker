@@ -6,7 +6,7 @@
  * subscription's billing date by a day twice a year across a DST boundary.
  */
 import { describe, expect, it } from 'vitest';
-import { advancePeriod } from '../src/subscriptions';
+import { advancePeriod, calendarWait, nextPeriodBoundary } from '../src/subscriptions';
 
 describe('advancePeriod', () => {
   it('advances by day', () => {
@@ -157,5 +157,100 @@ describe('subscription state machine', () => {
 
   it('assertTransition throws on invalid', () => {
     expect(() => assertTransition('expired', 'active')).toThrow(/Invalid subscription transition/);
+  });
+});
+
+describe('nextPeriodBoundary', () => {
+  const day = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d, 9);
+  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+  it('walks 31 Jan to the end of February, then back to the 31st', () => {
+    const anchor = day(2024, 1, 31);
+    const first = nextPeriodBoundary(anchor, 'month', 1, anchor);
+    expect(iso(first)).toBe('2024-02-29');
+    const second = nextPeriodBoundary(anchor, 'month', 1, first);
+    expect(iso(second)).toBe('2024-03-31');
+    // A non-leap year clamps to the 28th, and April's 30th is its own clamp, not a drift from March.
+    const plain = day(2023, 1, 31);
+    expect(iso(nextPeriodBoundary(plain, 'month', 1, plain))).toBe('2023-02-28');
+    expect(iso(nextPeriodBoundary(plain, 'month', 1, day(2023, 3, 31)))).toBe('2023-04-30');
+  });
+
+  it('is the boundary strictly after now, so a wake at the boundary waits for the next', () => {
+    const anchor = day(2024, 1, 15);
+    expect(nextPeriodBoundary(anchor, 'month', 1, day(2024, 2, 15) - 1)).toBe(day(2024, 2, 15));
+    expect(nextPeriodBoundary(anchor, 'month', 1, day(2024, 2, 15))).toBe(day(2024, 3, 15));
+  });
+
+  it('counts periods and units from the anchor', () => {
+    const anchor = day(2024, 1, 31);
+    expect(iso(nextPeriodBoundary(anchor, 'month', 3, anchor))).toBe('2024-04-30');
+    expect(iso(nextPeriodBoundary(anchor, 'week', 2, anchor))).toBe('2024-02-14');
+    expect(iso(nextPeriodBoundary(day(2024, 2, 29), 'year', 1, day(2024, 3, 1)))).toBe(
+      '2025-02-28',
+    );
+  });
+
+  it('catches up across many elapsed periods without skipping an anchor day', () => {
+    const anchor = day(2020, 1, 31);
+    expect(iso(nextPeriodBoundary(anchor, 'month', 1, day(2026, 2, 10)))).toBe('2026-02-28');
+    expect(iso(nextPeriodBoundary(anchor, 'month', 1, day(2026, 2, 28)))).toBe('2026-03-31');
+    expect(iso(nextPeriodBoundary(anchor, 'day', 1, day(2024, 1, 1)))).toBe('2024-01-02');
+  });
+
+  it('takes an anchor still ahead as the first boundary, as a trial ending renews at its end', () => {
+    const anchor = day(2099, 1, 31);
+    expect(nextPeriodBoundary(anchor, 'month', 1, day(2026, 1, 1))).toBe(anchor);
+    // Once the anchor has passed, the periods count from it.
+    expect(iso(nextPeriodBoundary(anchor, 'month', 1, anchor))).toBe('2099-02-28');
+  });
+
+  it('throws on what a Date cannot hold, rather than searching forever', () => {
+    const now = day(2026, 1, 1);
+    expect(() => nextPeriodBoundary(1.7e18, 'month', 1, now)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(Number.NaN, 'month', 1, now)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(now, 'month', 1, 1.7e18)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(now, 'month', 5e6, now + 1)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(now, 'month', 0, now + 1)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(now, 'week', 1.5, now + 1)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(now, 'year', 101, now + 1)).toThrow(RangeError);
+    // A boundary that overflows the Date range is an Invalid Date, which never exceeds `now`.
+    expect(() => nextPeriodBoundary(8.64e15 - 1000, 'year', 1, 8.64e15 - 1)).toThrow(RangeError);
+    expect(() => nextPeriodBoundary(now, 'fortnight' as never, 1, now + 1)).toThrow(RangeError);
+  });
+});
+
+describe('calendarWait', () => {
+  const at = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d, 9);
+
+  it('wakes at the boundary itself at real time', () => {
+    const anchor = at(2024, 1, 31);
+    const now = at(2024, 2, 10);
+    expect(calendarWait(anchor, 'month', 1, now)).toEqual({
+      at: at(2024, 2, 29),
+      wake: at(2024, 2, 29),
+    });
+  });
+
+  it('under TIME_SCALE reports advancing dates and sleeps a scaled fraction of each', () => {
+    const scale = 1000;
+    const anchor = at(2024, 1, 31);
+    // Wall time since the anchor, as the scale sees it: 31 Jan to 29 Feb in 1/1000 of the time.
+    const boundaryAt = at(2024, 2, 29);
+    const first = calendarWait(anchor, 'month', 1, anchor + 1, scale);
+    expect(first.at).toBe(boundaryAt);
+    expect(first.wake).toBe(Math.round(anchor + (boundaryAt - anchor) / scale));
+    // Woken there, the next renewal is the next month, not the same instant again.
+    const woke = first.wake;
+    const second = calendarWait(anchor, 'month', 1, woke, scale);
+    expect(new Date(second.at).toISOString().slice(0, 10)).toBe('2024-03-31');
+    expect(second.wake).toBeGreaterThan(woke);
+  });
+
+  it('never sleeps under a second, and a future anchor wakes at it', () => {
+    const now = at(2026, 1, 1);
+    expect(calendarWait(now - 1, 'week', 1, now, 1e9).wake).toBe(now + 1000);
+    const trialEnds = at(2026, 2, 1);
+    expect(calendarWait(trialEnds, 'month', 1, now)).toEqual({ at: trialEnds, wake: trialEnds });
   });
 });

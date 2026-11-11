@@ -201,3 +201,7 @@ The Commerce page lists the workspace's rates; your administrator keeps them cur
 Fields of kind `duration` are a whole number and a unit: `second`, `minute`, `hour`, `day`, `week`,
 `month` (30 days) or `year` (365 days), singular or plural: `"30 seconds"`, `"2 days"`. No wait or
 timeout is shorter than one second.
+
+A `month` here is a fixed 30 days. For billing and renewals use a Wait node's calendar period
+(`every`) instead, which follows the real calendar; see
+[How a run moves through the graph](/guides/building-flows/#how-a-run-moves-through-the-graph).

@@ -546,6 +546,171 @@ describe('subscription', () => {
   });
 });
 
+describe('calendar waits', () => {
+  const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
+    id,
+    type,
+    label: id,
+    config,
+    position: { x: 0, y: 0 },
+  });
+  const edge = (source: string, target: string) => ({
+    id: `${source}.out-${target}`,
+    source,
+    target,
+    sourceHandle: null,
+    targetHandle: null,
+  });
+  const chain = (id: string, nodes: ReturnType<typeof node>[]) =>
+    publishFlow(db(), {
+      id,
+      name: id,
+      description: '',
+      model: 'subscription',
+      channels: [],
+      nodes: [node('start', 'trigger.manual'), ...nodes, node('done', 'control.end')],
+      edges: [
+        edge('start', nodes[0]!.id),
+        ...nodes.slice(1).map((n, i) => edge(nodes[i]!.id, n.id)),
+        edge(nodes.at(-1)!.id, 'done'),
+      ],
+    });
+  const run = async (flowId: string) => {
+    await introspect();
+    const { orderId } = await startOrder(env, {
+      flowId,
+      input: input({ model: 'subscription', customerId: 'cus_ada' }),
+    });
+    return orderId;
+  };
+  // The workflow's own steps, which the run's node rows don't show. A step that never ran is "none".
+  const stepResult = async (name: string) => {
+    const [instance] = await introspector.get();
+    return Promise.race([
+      instance!.waitForStepResult({ name }),
+      new Promise((r) => setTimeout(() => r('none'), 1500)),
+    ]);
+  };
+  // The month's last day when the anchor's own day is longer than the month.
+  const keepsDay = (iso: string, day: number) => {
+    const d = new Date(iso);
+    return (
+      d.getUTCDate() ===
+      Math.min(day, new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate())
+    );
+  };
+
+  beforeAll(async () => {
+    await chain('test-calendar-waits', [
+      // Past anchors: the next boundary after the real clock, on the anchor's 31st.
+      node('monthly', 'control.wait', { every: 'month', from: '2024-01-31T09:00:00.000Z' }),
+      node('quarterly', 'control.wait', {
+        every: 'month',
+        count: 3,
+        from: '2020-01-31T09:00:00.000Z',
+      }),
+      // A trial still running: the first renewal is its end.
+      node('trial', 'control.wait', { every: 'month', from: '2099-01-31T09:00:00.000Z' }),
+      node('fixed', 'control.wait', { duration: '3 days' }),
+    ]);
+    // `until` is in the past, so it wins over `every` and the flow takes no `:period` step.
+    await chain('test-wait-until', [
+      node('both', 'control.wait', {
+        every: 'month',
+        until: { '+': [{ var: 'now' }, 86_400_000] },
+      }),
+    ]);
+    for (const [id, from] of [
+      ['null', { var: 'vars.missing' }],
+      ['true', true],
+      ['array', []],
+      ['range', 1.7e18],
+      ['text', 'next tuesday-ish'],
+    ] as const)
+      await chain(`test-wait-bad-from-${id}`, [
+        node('w', 'control.wait', { every: 'month', from }),
+      ]);
+    await chain('test-wait-huge-count', [
+      node('w', 'control.wait', { every: 'month', count: 5e6, from: '2024-01-31T09:00:00.000Z' }),
+    ]);
+  });
+
+  it('wakes on the next boundary counted from the anchor, keeping its day of the month', async () => {
+    const orderId = await run('test-calendar-waits');
+    const done = await settled(orderId);
+    expect(done.status).toBe('completed');
+    const at = (id: string) => done.nodes[id]!.summary!.replace('Until ', '');
+    expect(new Date(at('monthly')).getTime()).toBeGreaterThan(Date.now());
+    expect(keepsDay(at('monthly'), 31)).toBe(true);
+    expect(keepsDay(at('quarterly'), 31)).toBe(true);
+    expect(done.nodes.trial!.summary).toBe('Until 2099-01-31T09:00:00.000Z');
+    // A duration wait is as it was, and none of the waits but the calendar ones add a step.
+    expect(done.nodes.fixed!.summary).toBe('Waited 3 days');
+    // The deadline is its own memoised step, so a replay sleeps to the same instant.
+    expect(await stepResult('monthly#1:period')).toMatchObject({ at: expect.any(Number) });
+    // A duration wait has none, and its step name is as it always was.
+    expect(await stepResult('fixed#1:period')).toBe('none');
+  });
+
+  it('lets until override every', async () => {
+    const done = await settled(await run('test-wait-until'));
+    expect(done.status).toBe('completed');
+    expect(done.nodes.both!.summary).toMatch(/^Until /);
+    expect(await stepResult('both#1:period')).toBe('none');
+  });
+
+  it.each([
+    ['null', 'anchor'],
+    ['true', 'anchor'],
+    ['array', 'anchor'],
+    ['range', 'anchor'],
+    ['text', 'anchor'],
+  ])('refuses a non-date anchor (%s), naming the node', async (id, word) => {
+    const orderId = await run(`test-wait-bad-from-${id}`);
+    const failed = await waitingOn(
+      orderId,
+      (s) => s.status === 'failed',
+      'a refused anchor',
+      30_000,
+    );
+    expect(failed.reason).toContain(word);
+    expect(failed.nodes.w!.status).toBe('failed');
+  });
+
+  it('refuses a count no Date can reach instead of hanging', async () => {
+    const orderId = await run('test-wait-huge-count');
+    const failed = await waitingOn(
+      orderId,
+      (s) => s.status === 'failed',
+      'a refused count',
+      30_000,
+    );
+    expect(failed.reason).toContain('1 to 1200');
+  });
+
+  it('runs the subscription template on a monthly wait from signup', async () => {
+    const orderId = await (async () => {
+      await introspect();
+      const { orderId } = await startOrder(env, {
+        flowId: 'tpl-subscription',
+        input: input({
+          model: 'subscription',
+          customerId: 'cus_ada',
+          lines: [{ sku: 'SUB-BOX', qty: 1 }],
+          meta: { simulate: 'charge_fail' },
+        }),
+      });
+      return orderId;
+    })();
+    const done = await settled(orderId);
+    const renewal = new Date(done.nodes.renewal!.summary!.replace('Until ', ''));
+    const signedUp = new Date(done.order!.createdAt);
+    expect(renewal.getTime()).toBeGreaterThan(Date.now());
+    expect(keepsDay(renewal.toISOString(), signedUp.getUTCDate())).toBe(true);
+    expect(done.nodes.retry_wait!.summary).toBe('Waited 3 days');
+  });
+});
+
 describe('continue as new', () => {
   const node = (id: string, type: string, config: Record<string, unknown> = {}) => ({
     id,

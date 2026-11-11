@@ -16,6 +16,7 @@ import {
 import { policyRulesSchema } from './policy';
 import { routeGuardErrors } from './route-guards';
 import { SHIPPING_SELECTIONS, shippingConfigSchema, taxRegionsSchema } from './shipping';
+import { MAX_PERIOD_COUNT, type SubscriptionInterval } from './subscriptions';
 
 export type NodeCategory = 'trigger' | 'commerce' | 'control' | 'ai';
 
@@ -91,6 +92,20 @@ export type NodeSpec = {
 };
 
 const OUT = ['out'];
+
+/** The calendar units a `control.wait` can count in (`advancePeriod` has more; these are billing's). */
+const WAIT_PERIODS = ['week', 'month', 'year'];
+
+function waitConfigErrors(config: Record<string, unknown>): string[] {
+  const unit = config.every;
+  if (!unit) return [];
+  const max = MAX_PERIOD_COUNT[unit as SubscriptionInterval];
+  const count = config.count;
+  // A cleared field is stored as null or "", which reads as no count rather than a type error.
+  if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > max)
+    return [`Periods: a whole number from 1 to ${max} ${unit}s`];
+  return [];
+}
 
 const node = (spec: NodeSpec) => spec;
 
@@ -801,18 +816,41 @@ export const NODE_SPECS = [
     type: 'control.wait',
     category: 'control',
     label: 'Wait',
-    description: 'Sleeps for a duration, or until a timestamp computed from the context.',
+    description:
+      'Sleeps for a duration, until a calendar period boundary, or until a timestamp computed from the context.',
     icon: 'Timer',
     fields: [
       { key: 'duration', label: 'Duration', kind: 'duration', default: '1 day' },
       {
+        key: 'every',
+        label: 'Every (calendar period)',
+        kind: 'select',
+        options: WAIT_PERIODS,
+        hint: 'Waits for the next boundary of this period, counted from the anchor; overrides duration',
+      },
+      {
+        key: 'count',
+        label: 'Periods',
+        kind: 'number',
+        default: 1,
+        schema: z.unknown(),
+        hint: 'Units per period, e.g. 3 months for a quarter',
+      },
+      {
+        key: 'from',
+        label: 'Anchor (expression)',
+        kind: 'logic',
+        hint: "Epoch ms or ISO date the periods count from, e.g. order.createdAt; a date still ahead is the first renewal, e.g. a trial's end; empty: now",
+      },
+      {
         key: 'until',
         label: 'Until (expression)',
         kind: 'logic',
-        hint: 'Epoch ms; overrides duration',
+        hint: 'Epoch ms; overrides duration and every',
       },
     ],
     outputs: OUT,
+    validate: waitConfigErrors,
   }),
   node({
     type: 'control.set',

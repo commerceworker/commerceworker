@@ -480,7 +480,15 @@ export function subscriptionFlow(): Flow {
         while: { '<': [{ var: 'vars.cycle' }, 12] },
         maxIterations: 12,
       })
-      .n('renewal', 'control.wait', 'Until renewal', { duration: '30 days' })
+      // The next monthly boundary counted from signup, so a subscription started on the 31st renews
+      // on the 28th or 29th of February and the 31st again in March, not every 30 days.
+      // `duration` stays beside `every` (which wins) so an engine that predates `every`, such as one
+      // rolled back, still waits 30 days here rather than falling to the catalog's one-day default.
+      .n('renewal', 'control.wait', 'Until renewal', {
+        duration: '30 days',
+        every: 'month',
+        from: { var: 'order.createdAt' },
+      })
       .n('charge', 'commerce.charge', 'Charge renewal')
       .n('retry_wait', 'control.wait', 'Dunning delay', { duration: '3 days' })
       .n('retry', 'commerce.charge', 'Retry charge')

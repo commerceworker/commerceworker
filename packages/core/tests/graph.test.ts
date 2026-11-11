@@ -57,6 +57,16 @@ describe('templates', () => {
       expect(errors).toEqual([]);
     });
   }
+
+  it('the subscription renewal waits monthly from signup, keeping its 30 days for an older engine', () => {
+    const renewal = tpl('tpl-subscription').nodes.find((n) => n.id === 'renewal');
+    expect(renewal?.config).toMatchObject({
+      every: 'month',
+      from: { var: 'order.createdAt' },
+      // An engine that predates `every` ignores it and would otherwise fall to a one-day default.
+      duration: '30 days',
+    });
+  });
 });
 
 describe('planner', () => {
