@@ -10,7 +10,10 @@ metadata:
 
 # Triage a CI failure
 
-Workflows: `.github/workflows/ci.yml` (verify on every push and PR; on `main`, when the repository
+Workflows: `.github/workflows/ci.yml` (`checks` and the `test (engine|content|rest)` shards on every
+push and PR, summed up by `verify`, which names the job that failed; `workflows` lints the
+workflows; the `devices (…)` jobs, summed up by `devices`, on PRs, nightly and by hand, skipped for a
+docs-only PR by `changes`; on `main`, when the repository
 variable `DEPLOY_ENABLED` is `true`, `plan` then the rings `staging` → `internal` → `canary` →
 `general`; a skipped `plan` with no deploy means the variable is off, not a failure), `deploy.yml` (one deployment, called per ring),
 `demo-reset.yml` (nightly, behind the same variable). `docs/deploy.md` "CI" describes them.
@@ -29,10 +32,13 @@ gh run view <run-id> --log-failed | tail -200       # the failing steps' logs
 
 | Where | Signal | Class | Next step |
 |---|---|---|---|
-| verify: Lint / Type-check / Build / Test | a compiler, Biome or vitest error with a file and line | **code** | Reproduce locally with the same command (`preflight`), fix on the branch |
-| verify: Test | passes locally, fails in CI, timing-sensitive (`testTimeout`, a wait) | **flake** | Re-run once (`gh run rerun <id> --failed`, the user approves). If it fails twice, it's code: a missing `disableSleeps` / `forceEventTimeout`, or order-dependent state |
-| verify: Test fleet | `scripts/fleet.test.ts` | **code** | `pnpm test:fleet` locally |
-| verify: Audit dependencies | an advisory at high or critical | **dependency** | Update or override the package; say which advisory |
+| checks: Lint / Type-check / Build, or test (…): Test | a compiler, Biome or vitest error with a file and line | **code** | Reproduce locally with the same command (`preflight`), fix on the branch |
+| test (…): Test | passes locally, fails in CI, timing-sensitive (`testTimeout`, a wait) | **flake** | Re-run once (`gh run rerun <id> --failed`, the user approves). If it fails twice, it's code: a missing `disableSleeps` / `forceEventTimeout`, or order-dependent state |
+| verify (only) | `checks` or a `test (…)` job wasn't `success` (its log lists each) | **see that job** | Triage the job it names; `verify` itself never fails on its own |
+| workflows: actionlint / zizmor | a finding with a file and line in `.github/` | **code** | `actionlint` and `uvx zizmor .github` locally; fix it, or ignore it in place with a reason (`# zizmor: ignore[rule]`) |
+| devices (web n/4) / devices (storefront) | a Playwright failure, retried twice | **code** or **flake** | Download its `device-test-traces-<job>` artifact; run that shard locally (`playwright test --shard=n/4`) |
+| checks: Test fleet | `scripts/fleet.test.ts` | **code** | `pnpm test:fleet` locally |
+| checks: Audit dependencies | an advisory at high or critical | **dependency** | Update or override the package; say which advisory |
 | plan | "missing d1Id / catalogKvId / plugin d1Id" | **provisioning** | The deployment isn't provisioned. The user runs `./scripts/provision.sh <id>`, or sets `"hold": true` |
 | deploy: Check deploy credentials / Collect secrets | missing `CLOUDFLARE_API_TOKEN`, `PRINCIPAL_KEY`, `DATA_KEY`, `STRIPE_SECRET_KEY` (or wrong mode) | **secrets** | The user adds it to the deployment's GitHub environment. Nothing was migrated |
 | deploy: any `wrangler` step | Cloudflare API codes `7403`, `10013`, 5xx after the `retry` helper's three attempts | **platform blip** | Re-run the failed jobs |

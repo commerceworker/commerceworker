@@ -121,7 +121,7 @@ pnpm test:toolkit
 
 This runs `.claude/scripts/toolkit-check.sh` (skill and agent frontmatter against the Agent Skills spec,
 preloads that exist, hook scripts executable and parseable, map regexes that compile), then the
-two hook suites in `hooks/tests/`. CI runs it in the verify job. Changes to `settings.json` take
+two hook suites in `hooks/tests/`. CI runs it in the `checks` job (part of `verify`). Changes to `settings.json` take
 effect in a new session; skills and agents reload on their own.
 
 ## Adding to the toolkit

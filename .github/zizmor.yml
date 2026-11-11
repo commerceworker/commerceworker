@@ -1,0 +1,8 @@
+# zizmor (CI's `workflows` job, and `uvx zizmor .github` locally). A finding is fixed, or ignored
+# where it stands with a comment saying why; only a rule that can't be satisfied yet is off here.
+rules:
+  # GitHub's `uses: $/...` self-repository form (July 2026) is the better one, but actionlint, which
+  # runs beside zizmor, can't parse it yet and fails the job. Switch the four ring jobs and the
+  # setup action to it once actionlint accepts it.
+  self-repository:
+    disable: true

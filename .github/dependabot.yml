@@ -9,6 +9,10 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    # A release waits a week before it's proposed: most hijacked packages are found and pulled
+    # within days. Security updates aren't held back.
+    cooldown:
+      default-days: 7
     groups:
       # The AI SDK stack moves in lockstep (most of it is pinned exactly in the catalog, and
       # @cloudflare/ai-chat tracks agents), so its bumps, majors included, arrive together in
@@ -28,11 +32,17 @@ updates:
       # Pinned: 5.0.4's module cache breaks @cloudflare/vitest-plugin (see AGENTS.md).
       - dependency-name: vitest
 
+  # The workflows, and the composite actions in .github/actions/ (each listed: Dependabot reads
+  # only .github/workflows/ from `/`).
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/setup
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]

@@ -10,8 +10,9 @@ metadata:
 
 # Preflight
 
-CI's `verify` job (`.github/workflows/ci.yml`) runs lint, type-check, build, test, the fleet
-tests and `pnpm audit`, each even when an earlier one failed. Run the same locally, scoped to what
+CI's `verify` check (`.github/workflows/ci.yml`) is its `checks` job (lint, type-check, build,
+the fleet and toolkit tests and `pnpm audit`, each even when an earlier one failed) and the tests,
+split across three `test (…)` jobs. Run the same locally, scoped to what
 changed, so a PR is green the first time.
 
 ## What changed

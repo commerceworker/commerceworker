@@ -28,12 +28,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - name: Build plugin bundles
         env:
           DEPLOYMENT: ${{ inputs.deployment }}
@@ -106,12 +103,9 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - name: Install retry helper
         run: |
           mkdir -p "$HOME/.local/bin"
@@ -197,7 +191,10 @@ jobs:
         env:
           PRINCIPAL_KEY: ${{ secrets.PRINCIPAL_KEY }}
           PRINCIPAL_KEY_PREVIOUS: ${{ secrets.PRINCIPAL_KEY_PREVIOUS }}
-          ENV_SECRETS: ${{ toJSON(secrets) }}
+          # Every secret, on purpose: plugin secrets are named by each plugin's manifest
+          # (PLUGIN_<ID>_<NAME>), so they can't be listed here; fleet.ts keeps only
+          # each plugin's own PLUGIN_<ID>_* ones. Only this step and the check below see them all.
+          ENV_SECRETS: ${{ toJSON(secrets) }} # zizmor: ignore[overprovisioned-secrets]
         run: |
           for p in $PLUGINS; do
             node scripts/fleet.ts secrets plugin "$RUNNER_TEMP/plugin-$p-secrets.json" "$p" "$ID"
@@ -216,7 +213,7 @@ jobs:
       - name: Check plugin secrets
         if: env.PLUGINS != '' || env.SANDBOXED_PLUGINS != ''
         env:
-          ENV_SECRETS: ${{ toJSON(secrets) }}
+          ENV_SECRETS: ${{ toJSON(secrets) }} # zizmor: ignore[overprovisioned-secrets]
         run: |
           if [ -n "$SECRETS_STORE" ]; then
             # Names only. Listing a store needs the token's Account Secrets Store Read (Edit to
