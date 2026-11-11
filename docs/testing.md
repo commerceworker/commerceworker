@@ -3,14 +3,21 @@
 What pnpm test runs in each package, how the engine runs real Workflows in workerd, and where to add a test.
 
 `pnpm test` runs `turbo run test`, which runs `vitest run` in every package that has tests. The
-`test` task has no `dependsOn`, so a failing dependency never silently skips a package's tests.
-CI runs it after lint, type-check and build, two test tasks at a time (`TURBO_CONCURRENCY: 2`: on the
-runner's 4 vCPUs, turbo's default of ten starved the catalog's Durable Object tests past their
-timeouts), then audits production dependencies
-(`.github/workflows/ci.yml`), each step running even when an earlier one failed. A separate
-`devices` job runs the web app's [device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit,
-and on a pull request a `commits` job lints each commit message against Conventional Commits
-(`commitlint.config.ts`).
+`test` task depends only on the generated embeds (`generate`), never on another package's tests, so
+a failing dependency never silently skips a package's tests. CI (`.github/workflows/ci.yml`) splits
+it across three `test (…)` jobs: `engine`, `content` (the studio, pipeline and store) and `rest`
+(every other package; it excludes exactly the packages the named shards take, so a new package is
+always tested). Each runs two test tasks at a time (`TURBO_CONCURRENCY: 2`: on the runner's 4
+vCPUs, turbo's default of ten starved the catalog's Durable Object tests past their timeouts).
+Nothing is cached between runs: a test task's hash covers its own package's files, not its
+dependencies' source, so a cached pass could hide a break in `packages/core`. Beside them, the
+`checks` job runs lint, type-check, build, `pnpm test:fleet`, `pnpm test:toolkit` and the audit of
+production dependencies, each step running even when an earlier one failed, and a job named
+`verify` passes only when every one of those jobs did. The `workflows` job lints the workflows
+themselves with actionlint and zizmor (`.github/zizmor.yml`; locally, `actionlint` and
+`uvx zizmor .github`). Device-test jobs run the web app's and the storefront's
+[device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit, and on a pull request a
+`commits` job lints each commit message against Conventional Commits (`commitlint.config.ts`).
 
 | Package | Environment | Config |
 |---|---|---|
@@ -610,17 +617,24 @@ page's dependencies; `open()` in `e2e/helpers.ts` waits until app.css has applie
 hydrated. If the dev server's Workers runtime crashes (it restarts itself), `open()` waits for the server
 to answer again and loads the page once more; a test the crash catches mid-action (a form
 submit) gets one retry locally, and Playwright lists it as flaky rather than passed. On CI the
-suite runs one test at a time with two retries, and a failing run keeps its traces as the `device-test-traces` artifact (open one with
-`pnpm --filter @commerceworker/web exec playwright show-trace <trace.zip>`).
+suite runs one test at a time with two retries, split four ways with Playwright's `--shard` into
+the jobs `devices (web 1/4)` to `devices (web 4/4)`, each with its own dev server (so no test shares
+a server it didn't before), beside `devices (storefront)`. A job named `devices` passes when all of
+them did. They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on
+the push a merge makes, since the pull request already ran them; a pull request that only touches
+`docs/`, `apps/docs/`, `apps/marketing/`, `.claude/` or top-level Markdown skips them (the `changes`
+job decides). A failing job keeps its traces as the `device-test-traces-<job>` artifact (open one
+with `pnpm --filter @commerceworker/web exec playwright show-trace <trace.zip>`). One shard runs
+locally the same way: `pnpm --filter @commerceworker/web exec playwright test --shard=2/4`.
 
 The WebKit download (`~/.cache/ms-playwright`) is cached with `actions/cache`, keyed on the installed
 Playwright version, and fetched only on a miss. Its system libraries still come from apt on every run;
-that step has a 5 minute timeout and one retry (6 minutes), so a slow Ubuntu mirror costs minutes, not
-the job's 25 minute budget.
+that step has a 5 minute timeout and one 10 minute retry, so a slow Ubuntu mirror costs minutes, not
+the tests' own 15 minute budget.
 
 The storefront has its own device tests, `pnpm --filter @commerceworker/storefront e2e` (`apps/storefront/e2e/`, the
 same five projects and the same mechanics, on port 5391 and `E2E_PORT` to move it, with its own engine and state under
-`apps/storefront/.wrangler/e2e`, since a Worker's dev server runs only its own auxiliary Workers), and CI's `devices` job runs both.
+`apps/storefront/.wrangler/e2e`, since a Worker's dev server runs only its own auxiliary Workers), and CI runs it in its own `devices (storefront)` job.
 `buyer.spec.ts` covers the pages every buyer can reach without an external cart a plugin opened, which the device tests'
 engine has none of: a start link that can't be redeemed (`410`, the reason on screen, no cookie set), a cart page
 without the buyer's cookie (`401`), a buyer's signed cookie (`signCartGuestSession` with the dev storefront key, `storefrontKey(DEV_PRINCIPAL_KEY)`) for a cart the
@@ -698,7 +712,7 @@ deploy's smoke test requests only `/health`, which the gateway answers without t
 | `.claude/hooks/tests/docs-hooks.test.sh` | `docs-impact` naming pages once per file per session, `docs-drift` counting only the session's uncommitted edits, `block-generated` denying `theme.css` and `worker-configuration.d.ts` |
 | `.claude/hooks/tests/guard-hooks.test.sh` | `guard-bash` denying deploys, rollbacks, remote migrations, Time Travel restores and resource deletes (also chained after another command) and asking before pushing `main`, force pushes, `gh pr merge`, remote D1 SQL, Worker secrets and provisioning; `guard-invariants` denying an edit to a migration already on `origin/main` (a throwaway repo), the vendored UCP schemas and z-suffixed routes, and asking before the routing golden test, the frozen Durable Object migrations, and a `wrangler.jsonc` edit that changes, removes or reorders an applied Durable Object migration or adds a deleted or renamed class (appending one, or an unrelated edit, is silent); `rules-impact` once per file; `format` fixing and reporting through Biome; `session-context` in a plain checkout and a worktree |
 
-CI runs it in the verify job.
+CI runs it in the `checks` job, one of the jobs `verify` sums up.
 
 ## Catalog benchmark
 

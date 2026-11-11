@@ -189,11 +189,16 @@ All settings are listed in [Configuration](configuration.md).
 Production deploys from CI: merging to `main` is the release, once deploys are on. Until the
 repository variable `DEPLOY_ENABLED` is `true`, CI only verifies: the `plan` job, which every ring
 needs, is skipped, and so is the nightly demo reset. `.github/workflows/ci.yml` runs lint,
-type-check, build, tests, the fleet tests (`pnpm test:fleet`), the Claude Code toolkit's tests
-(`pnpm test:toolkit`) and `pnpm audit --prod --audit-level high` on every push and pull request, and
-beside them the web app's [device tests](testing.md#devices-the-web-app-on-iphone-and-ipad) (the
-`devices` job, which doesn't gate a deploy). On a pull request the `commits` job also runs
-commitlint (`commitlint.config.ts`) over every commit the PR adds. On `main`, once the repository variable
+type-check, build, the fleet tests (`pnpm test:fleet`), the Claude Code toolkit's tests
+(`pnpm test:toolkit`) and `pnpm audit --prod --audit-level high` (the `checks` job) and the tests,
+split across three `test (…)` jobs, on every push and pull request; the `verify` job passes only
+when all of them did, and it is what `plan` (so every deploy) needs. The `workflows` job lints the
+workflows with actionlint and zizmor. Beside them run the web app's and the storefront's
+[device tests](testing.md#devices-the-web-app-on-iphone-and-ipad), in five `devices (…)` jobs summed
+up by one named `devices`, which doesn't gate a deploy; they run on pull requests, nightly and by
+hand, not on the push a merge makes ([Testing](testing.md#devices-the-web-app-on-iphone-and-ipad)).
+On a pull request the `commits` job also runs commitlint (`commitlint.config.ts`) over every commit
+the PR adds. On `main`, once the repository variable
 `DEPLOY_ENABLED` is `true` (Settings → Secrets and variables → Actions → Variables), it then deploys
 every deployment in `deployments/`, ring by ring ([Operations](operations.md#rings)). Each
 deployment's job (`.github/workflows/deploy.yml`) records a D1 Time Travel bookmark, migrates its
@@ -228,7 +233,13 @@ them it fails rather than skipping. The environment must have `PRINCIPAL_KEY`, t
 (`permissions: contents: read`), actions are pinned to commit SHAs (Dependabot updates them), and a
 push to `main` never cancels a run that has started. A run still waiting for one ahead of it is
 replaced by a newer push (GitHub keeps one waiting run per concurrency group), which deploys
-everything the replaced run would have.
+everything the replaced run would have. The event is part of the group, so a nightly or manual run
+never replaces a waiting push. No checkout keeps the token in the workspace
+(`persist-credentials: false`), every job sets itself up through `.github/actions/setup` (pnpm,
+Node from `.nvmrc`, the frozen lockfile), and Dependabot holds a new release a week (`cooldown`)
+before it proposes it. Each ring hands `deploy.yml` its secrets with `secrets: inherit`, for
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` when they are repository secrets, so the
+repository's own secrets stay those two; everything else a deployment needs is in its environment.
 
 Each deploy step runs through a small `retry` helper (three attempts, 15 then 30 seconds apart),
 because the Cloudflare API occasionally fails a request outright (codes `7403`, `10013`) and every

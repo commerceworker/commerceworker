@@ -71,4 +71,5 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Public SDK (core, edge, management) and a CLI with device-flow login | Platform | Merged for content; commerce endpoints P7 | `packages/sdk/*`, `packages/cli` |
 | Ledger design system: one token set held to both admins' CSS by a test, with WCAG contrast checks | both | Merged | `packages/design`, `packages/ui` |
 | Device tests (WebKit as iPhone, iPad and desktop) | both | Merged | `apps/web/e2e` |
+| CI split into parallel jobs, each set summed up by one check (`verify`, `devices`); device tests skip the merge push and docs-only PRs, and run nightly | Platform | Merged | `.github/workflows/ci.yml` |
 | Automated accessibility checks in the device tests (`@axe-core/playwright`) | Platform | Content: merged · Commerce: P9 | `apps/studio/e2e` |

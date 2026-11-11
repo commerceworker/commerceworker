@@ -4,12 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly on main, for the device tests: the push a merge makes skips them (the pull request
+  # already ran them), so this catches anything two merges broke together. Run it by hand too.
+  schedule:
+    - cron: '30 5 * * *'
+  workflow_dispatch:
 
 # A new push to a pull request supersedes its last run; a push to main never cancels one that
 # has started. A run still waiting behind one is replaced by a newer push, which ships the same
-# commits and more.
+# commits and more. The event is part of the group, so a nightly or manual run on main never
+# replaces a waiting push (which would drop that push's deploy).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The default GITHUB_TOKEN only needs to read the repository.
@@ -17,22 +23,17 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  # Lint, types and build, and the checks that aren't vitest. Every step runs even when an earlier
+  # one fails, so a red build reports all of its problems in one go.
+  checks:
     runs-on: ubuntu-latest
-    # Two test tasks at a time (the Test step) take about 14 minutes on the runner: room to spare.
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-          cache: pnpm
+          persist-credentials: false
+      - uses: ./.github/actions/setup
 
-      - run: pnpm install --frozen-lockfile
-
-      # Every check runs even when an earlier one fails, so a red build reports all of its
-      # problems in one go.
       - name: Lint
         if: ${{ !cancelled() }}
         run: pnpm lint
@@ -44,16 +45,6 @@ jobs:
       - name: Build
         if: ${{ !cancelled() }}
         run: pnpm build
-
-      # Includes the engine's end-to-end Workflow runs in workerd (Durable Objects, Workflows,
-      # D1, R2) with AI_MODE=mock — no network or Cloudflare account needed.
-      - name: Test
-        if: ${{ !cancelled() }}
-        run: pnpm test
-        # Two test tasks at a time, not turbo's ten: on the runner's 4 vCPUs, ten workerd pools at
-        # once starved the catalog's Durable Object tests past their timeouts.
-        env:
-          TURBO_CONCURRENCY: 2
 
       # The registry in deployments/ and the configs rendered from it.
       - name: Test fleet
@@ -71,6 +62,79 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm audit --prod --audit-level high
 
+  # `pnpm test`, split across three runners so the slowest packages don't queue behind each other:
+  # the engine on its own, the content stack's three slowest, and every other package. `rest`
+  # excludes exactly the packages the named shards run, so a new package is always tested.
+  # Includes the engine's end-to-end Workflow runs in workerd (Durable Objects, Workflows, D1, R2)
+  # with AI_MODE=mock: no network or Cloudflare account needed. Nothing is cached between runs: a
+  # test task's hash doesn't cover its dependencies' source, so a cached pass could hide a break.
+  test:
+    name: test (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [engine, content, rest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Test
+        env:
+          SHARD: ${{ matrix.shard }}
+          ENGINE: '@commerceworker/engine'
+          CONTENT: '@commerceworker/studio @commerceworker/pipeline @commerceworker/store'
+          # Two test tasks at a time, not turbo's ten: on the runner's 4 vCPUs, ten workerd pools at
+          # once starved the catalog's Durable Object tests past their timeouts.
+          TURBO_CONCURRENCY: 2
+        run: |
+          filters=()
+          case "$SHARD" in
+            engine) for p in $ENGINE; do filters+=("--filter=$p"); done ;;
+            content) for p in $CONTENT; do filters+=("--filter=$p"); done ;;
+            rest) for p in $ENGINE $CONTENT; do filters+=("--filter=!$p"); done ;;
+            *) echo "::error::unknown test shard $SHARD"; exit 1 ;;
+          esac
+          pnpm exec turbo run test "${filters[@]}"
+
+  # The check a merge waits for, and what plan (so every deploy) needs: all of the above passed.
+  verify:
+    needs: [checks, test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every verify job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null
+
+  # The workflows themselves: actionlint (expressions, job graph, and shellcheck over every `run:`)
+  # and zizmor (template injection, credentials, pinning, over-broad secrets and permissions).
+  # zizmor's configuration is .github/zizmor.yml.
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
+        with:
+          args: -color
+      - name: zizmor
+        if: ${{ !cancelled() }}
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: 1.32.0
+          # Findings in the log, not uploaded to code scanning (which would need security-events: write).
+          advanced-security: false
+
   # Every commit a pull request adds follows Conventional Commits (commitlint.config.ts). Only the
   # PR's own range is checked, so commits from before the rule aren't held to it.
   commits:
@@ -81,13 +145,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
+          persist-credentials: false
+      - uses: ./.github/actions/setup
 
       - name: Lint commit messages
         env:
@@ -95,25 +154,70 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
+  # Whether the device tests need to run: always, except for a pull request that touches only
+  # docs (docs/, apps/docs/), the marketing site (apps/marketing/), the Claude Code toolkit
+  # (.claude/) or top-level Markdown, none of which the web app or the storefront serves. A rename
+  # counts its old path too. Not on a push to main: the pull request already ran them.
+  changes:
+    if: ${{ github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      devices: ${{ steps.files.outputs.devices }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "devices=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files"
+          count=$(wc -l < "$RUNNER_TEMP/files")
+          # The API lists at most 3,000 files; past that, run everything.
+          if [ "$count" -ge 3000 ] || grep -qvE '^(docs/|apps/docs/|apps/marketing/|\.claude/|[^/]+\.md$)' "$RUNNER_TEMP/files"; then
+            echo "devices=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Only docs, marketing, toolkit or Markdown changed ($count files): device tests skipped"
+            echo "devices=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # The web app and the storefront in WebKit as an iPhone and an iPad, both ways up, and a desktop:
   # layout, safe areas, touch targets and the on-screen keyboard (apps/web/e2e, apps/storefront/e2e).
   # The dev servers run offline (mock AI, no remote bindings, their own databases), so no Cloudflare
-  # account is needed.
+  # account is needed. The admin's suite is split four ways with Playwright's --shard, and the
+  # storefront's runs beside it: each job has its own dev server, still running one test at a time
+  # (playwright.config.ts), so splitting changes nothing a test sees.
   # Pinned: the cached WebKit links the image's own libraries (ICU), and ubuntu-latest moving to
   # 26.04 left it unable to start. Move it on purpose, once Playwright supports the new image.
-  devices:
+  device-tests:
+    name: devices (${{ matrix.name }})
+    needs: changes
+    if: ${{ needs.changes.outputs.devices == 'true' }}
     runs-on: ubuntu-24.04
     # Up to 15 minutes for the system libraries when the mirror is slow (5, then a 10 minute
-    # retry), and the device tests' own 20: a slow mirror never eats the tests' time.
-    timeout-minutes: 40
+    # retry), and the device tests' own 15: a slow mirror never eats the tests' time.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: web 1/4, app: web, shard: 1/4, id: web-1 }
+          - { name: web 2/4, app: web, shard: 2/4, id: web-2 }
+          - { name: web 3/4, app: web, shard: 3/4, id: web-3 }
+          - { name: web 4/4, app: web, shard: 4/4, id: web-4 }
+          - { name: storefront, app: storefront, shard: '', id: storefront }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       # The browser download is cached by Playwright version and Ubuntu release (a build for one
       # release can't load another's system libraries), so it is fetched only on a miss. The
       # system libraries come from apt, which the runner's Ubuntu mirror sometimes serves very
@@ -156,23 +260,34 @@ jobs:
           done
           pnpm --filter @commerceworker/web exec playwright install-deps webkit
       - name: Device tests
-        timeout-minutes: 20
-        run: pnpm --filter @commerceworker/web e2e
-      # The storefront's own, on its own port and engine; it runs even when the admin's failed.
-      - name: Storefront device tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: pnpm --filter @commerceworker/storefront e2e
+        timeout-minutes: 15
+        env:
+          APP: ${{ matrix.app }}
+          SHARD: ${{ matrix.shard }}
+        run: pnpm --filter "@commerceworker/$APP" exec playwright test ${SHARD:+"--shard=$SHARD"}
       # A failure's traces (DOM, network, console at each step): open with `playwright show-trace`.
       - name: Keep the failures' traces
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: device-test-traces
-          path: |
-            apps/web/test-results/
-            apps/storefront/test-results/
+          name: device-test-traces-${{ matrix.id }}
+          path: apps/${{ matrix.app }}/test-results/
           retention-days: 7
+
+  # One check for all the device-test jobs: red if any failed or was cancelled, green when they
+  # passed or a docs-only pull request skipped them.
+  devices:
+    needs: [changes, device-tests]
+    if: ${{ always() && github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every device-test job passed or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null
 
   # The fleet: every deployment in deployments/, grouped by ring. Each ring waits for the one
   # before it to finish cleanly; an empty ring is skipped. See docs/operations.md. A ring after
@@ -181,9 +296,13 @@ jobs:
   # Deploys are off until the repository variable DEPLOY_ENABLED is `true` (Settings → Secrets and
   # variables → Actions → Variables). Without it a push to main still runs verify, and every ring
   # below is skipped, since each needs this job.
+  # Each ring hands deploy.yml its secrets with `secrets: inherit`. Its job reads its environment's
+  # secrets either way; inherit is for CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID when they are
+  # repository secrets. Naming those two instead makes actionlint reject every environment secret
+  # deploy.yml reads, so keep the repository's own secrets to those two.
   plan:
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    if: ${{ needs.verify.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -194,12 +313,9 @@ jobs:
       deployments: ${{ steps.rings.outputs.deployments }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - id: rings
         run: |
           rings=$(node scripts/fleet.ts matrix)
@@ -221,7 +337,7 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] (see plan)
 
   internal:
     needs: [plan, staging]
@@ -234,7 +350,7 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] (see plan)
 
   canary:
     needs: [plan, internal]
@@ -247,7 +363,7 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] (see plan)
 
   general:
     needs: [plan, canary]
@@ -262,4 +378,4 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit] (see plan)
