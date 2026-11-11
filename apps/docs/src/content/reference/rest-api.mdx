@@ -8,7 +8,11 @@ import Values from '../../components/Values.astro';
 The REST API is served at `https://app.commerceworker.com/api/v1`. Its OpenAPI 3.1 document is public at
 `GET /api/v1/openapi.json` (cacheable for five minutes), and the [OpenAPI explorer](/api/) renders
 it. Its request bodies are generated from the schemas the routes validate with, so they match what
-the server accepts. Response bodies are described here.
+the server accepts. Every operation has a unique `operationId` (snake_case), the name a generated client
+gives its method; the routes that run a workspace tool take the tool's name. The `200` response of those
+routes is typed as the tool's result, the same shape MCP returns as structured content, and the
+refusals (`400`, `401`, `403`, `404`, `429`, and `409` or `422` where a route has one) are `{ error }`.
+Where the explorer shows only a description for a response, its shape is described here.
 
 ## Authentication
 

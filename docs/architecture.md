@@ -174,7 +174,12 @@ routes.
 The `/api/v1` routes are in `apps/web/app/lib/api.server.ts`. Request bodies in the OpenAPI
 document (`apps/web/app/lib/openapi.ts`, served at `/api/v1/openapi.json` and rendered by the docs'
 explorer) are generated from the zod schemas the handlers validate with
-(`apps/web/app/lib/api-schemas.ts`), so they can't drift. Event payloads are capped at 32 KiB
+(`apps/web/app/lib/api-schemas.ts`), so they can't drift. Every operation has an `operationId`: the tool's name for a `REST_OPERATIONS`
+row, an entry of `OPERATION_IDS` for a hand-written route (`withOperationIds` refuses a route
+without one). A `REST_OPERATIONS` row's `200` is the JSON Schema of `TOOL_OUTPUTS[tool]`
+(`runRestOperation` returns the tool's value as it stands, which MCP sends as structured content);
+a few hand-written routes use core's zod schemas (product types, channels, categories, UCP
+settings), the rest keep prose. Event payloads are capped at 32 KiB
 (`MAX_EVENT_PAYLOAD_BYTES`, `packages/core/src/api.ts`); the OrderAgent's `deliver`, `decide` and
 `cancel` enforce the same bounds on the live socket as the REST schemas do.
 

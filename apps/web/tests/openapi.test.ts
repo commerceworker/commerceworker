@@ -1,7 +1,8 @@
-import { OUTBOUND_EVENTS } from '@commerceworker/core';
+import { OUTBOUND_EVENTS, TOOL_OUTPUTS } from '@commerceworker/core';
 import { describe, expect, it } from 'vitest';
 import { subscriptionInput } from '../app/lib/api-schemas';
 import { openApiDocument } from '../app/lib/openapi';
+import { REST_OPERATIONS } from '../app/lib/rest-operations';
 
 describe('OpenAPI document', () => {
   const doc = openApiDocument('https://commerceworker.example');
@@ -85,6 +86,88 @@ describe('OpenAPI document', () => {
     );
     expect(doc.paths['/api/v1/channels/shopify/orders'].post.security).toEqual([]);
     expect(doc.paths['/api/v1/channels/edi/850'].post).not.toHaveProperty('security');
+  });
+});
+
+describe('OpenAPI operations', () => {
+  const errorRef = '#/components/schemas/Error';
+  const json = JSON.parse(JSON.stringify(openApiDocument('https://commerceworker.example')));
+  type Op = {
+    operationId?: string;
+    responses: Record<string, { content?: Record<string, { schema?: Record<string, unknown> }> }>;
+  };
+  const operations = (Object.entries(json.paths) as [string, Record<string, Op>][]).flatMap(
+    ([route, item]) => Object.entries(item).map(([method, op]) => ({ route, method, op })),
+  );
+
+  it('names every operation, once, in snake_case', () => {
+    const ids = operations.map(({ op }) => op.operationId);
+    for (const [i, id] of ids.entries())
+      expect(id, `${operations[i]!.method} ${operations[i]!.route}`).toMatch(/^[a-z][a-z0-9_]*$/);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('names a REST operation by its tool', () => {
+    for (const rest of REST_OPERATIONS) {
+      const op = json.paths[`/api/v1${rest.path}`][rest.method.toLowerCase()];
+      expect(op.operationId).toBe(rest.tool);
+    }
+  });
+
+  it('types every REST operation response as its tool output', () => {
+    for (const rest of REST_OPERATIONS) {
+      const op = json.paths[`/api/v1${rest.path}`][rest.method.toLowerCase()] as Op;
+      const schema = op.responses['200']?.content?.['application/json']?.schema;
+      expect(schema, rest.tool).toHaveProperty('type', 'object');
+      expect(schema, rest.tool).toHaveProperty('properties');
+    }
+  });
+
+  it('describes what a tool answers: a real tool output validates against its response schema', () => {
+    // The shapes the engine's tools return for these (runRestOperation sends the tool's value as is).
+    const attention = TOOL_OUTPUTS.needs_attention.parse({
+      approvals: [{ id: 'a1', orderId: 'o1', title: 'Approve' }],
+      failed: [],
+      stalled: [],
+      counts: { approvals: 1, failed: 0, stalled: 0 },
+    });
+    const schema = json.paths['/api/v1/attention'].get.responses['200'].content['application/json']
+      .schema as {
+      required: string[];
+      properties: Record<string, { type: string }>;
+    };
+    expect(schema.required.sort()).toEqual(Object.keys(attention).sort());
+    expect(schema.properties.approvals?.type).toBe('array');
+    expect(TOOL_OUTPUTS.needs_attention.safeParse({ approvals: [] }).success).toBe(false);
+  });
+
+  it('describes the same refusals on every authenticated operation, and signed routes by signature', () => {
+    for (const { route, method, op } of operations) {
+      const signed = (json.paths[route][method] as { security?: unknown[] }).security?.length === 0;
+      const codes = Object.keys(op.responses);
+      expect(codes, `${method} ${route}`).toEqual(
+        expect.arrayContaining(
+          signed ? ['400', '401', '404', '429'] : ['400', '401', '403', '404', '429'],
+        ),
+      );
+      for (const code of codes.filter((c) => /^4/.test(c))) {
+        const schema = op.responses[code]?.content?.['application/json']?.schema;
+        // Erasure's refusal names the orders in the way, not an `error`.
+        if (route === '/api/v1/data-subjects/erase' && code === '409')
+          expect(schema).toHaveProperty('required', ['ok', 'reason', 'orders']);
+        else expect(schema, `${method} ${route} ${code}`).toEqual({ $ref: errorRef });
+      }
+    }
+  });
+
+  it('types the hand-written responses that have a zod schema', () => {
+    const channel =
+      json.paths['/api/v1/catalog/channels'].post.responses['200'].content['application/json']
+        .schema;
+    expect(channel.properties.channel.properties.defaultLocale.type).toBe('string');
+    const ucp =
+      json.paths['/api/v1/ucp/settings'].post.responses['200'].content['application/json'].schema;
+    expect(ucp.properties.settings.properties.checkoutFlowId).toBeDefined();
   });
 });
 
