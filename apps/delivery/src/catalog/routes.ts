@@ -44,10 +44,13 @@ export type Route =
 
 /** Products a listing page holds by default, and at most. */
 export const PAGE = { default: 24, max: 100 } as const;
-const MAX_FILTERS = 20;
-const MAX_VALUES = 50;
-const SORT = /^(newest|[A-Za-z0-9][A-Za-z0-9._-]{0,127}_(asc|desc))$/;
-const NUMBER = /^-?\d+(\.\d+)?$/;
+/** Limits the SDK's catalog client generates its own copies of (`packages/sdk/catalog`). */
+export const MAX_FILTERS = 20;
+export const MAX_VALUES = 50;
+/** The longest slug a route accepts. */
+export const SLUG_MAX = 200;
+export const SORT = /^(newest|[A-Za-z0-9][A-Za-z0-9._-]{0,127}_(asc|desc))$/;
+export const NUMBER = /^-?\d+(\.\d+)?$/;
 
 type Bad = { ok: false; status: 400; error: string };
 const bad = (error: string): Bad => ({ ok: false, status: 400, error });
@@ -143,7 +146,7 @@ export function parse(url: URL): Parsed {
       if (one === null || !isCode(one)) return { ok: false, status: 400, error: 'bad sku' };
       return { ok: true, route: { kind: 'sku', channel, locale, sku: one } };
     case 'slugs':
-      if (one === null || one.length > 200 || !SLUG.test(one))
+      if (one === null || one.length > SLUG_MAX || !SLUG.test(one))
         return { ok: false, status: 400, error: 'bad slug' };
       return { ok: true, route: { kind: 'slug', channel, locale, slug: one } };
     case 'search': {

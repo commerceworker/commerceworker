@@ -40,7 +40,7 @@
     "studio:db:migrate:local": "pnpm --filter @commerceworker/studio exec wrangler d1 migrations apply DB --local",
     "studio:dev:reset": "rm -rf apps/studio/.wrangler/state && pnpm studio:db:migrate:local",
     "sync:theme": "pnpm --filter @commerceworker/design sync:theme",
-    "sdk:generate": "pnpm --filter @commerceworker/sdk-commerce generate:operations",
+    "sdk:generate": "pnpm --filter @commerceworker/sdk-commerce generate:operations && pnpm --filter @commerceworker/sdk-catalog generate:limits",
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true"
   },
   "devDependencies": {

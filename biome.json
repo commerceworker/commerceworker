@@ -20,7 +20,8 @@
       "!packages/core/tests/fixtures/ucp",
       "!packages/docs-index/src/generated.ts",
       "!packages/http/src/mcp/skills.generated.ts",
-      "!packages/sdk/commerce/src/generated/operations.ts"
+      "!packages/sdk/commerce/src/generated/operations.ts",
+      "!packages/sdk/catalog/src/generated/limits.ts"
     ]
   },
   "formatter": {
