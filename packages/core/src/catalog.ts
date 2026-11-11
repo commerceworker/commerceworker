@@ -360,10 +360,35 @@ export const NODE_SPECS = [
     type: 'commerce.budget_check',
     category: 'commerce',
     label: 'Budget check',
-    description: 'Checks a purchase request against the department budget.',
+    description:
+      'Checks a purchase request against a budget. With the node as its source it holds the order to the one amount set here. With the company as its source it holds the order to the budgets of the buyer’s company and team, each per calendar period: a strict budget the order would go over sends it to over, an advisory one passes it with a warning. With commit on, a passing order’s total is recorded as spend, and given back if the order later fails or is cancelled.',
     icon: 'Wallet',
-    fields: [{ key: 'budget', label: 'Budget', kind: 'number', default: 25000 }],
+    fields: [
+      {
+        key: 'source',
+        label: 'Budget from',
+        kind: 'select',
+        options: ['node', 'company'],
+        default: 'node',
+        hint: 'node uses the amount below; company uses the budgets set on the buyer’s company and team',
+      },
+      {
+        key: 'budget',
+        label: 'Budget',
+        kind: 'number',
+        default: 25000,
+        hint: 'The most one order may total, base currency (when the budget is from the node)',
+      },
+      {
+        key: 'commit',
+        label: 'Record the spend',
+        kind: 'boolean',
+        default: false,
+        hint: 'Count the order against the company’s budgets when it passes (the company source)',
+      },
+    ],
     outputs: ['within', 'over'],
+    rollback: true,
   }),
   node({
     type: 'commerce.reserve_inventory',

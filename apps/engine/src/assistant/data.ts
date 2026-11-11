@@ -69,6 +69,7 @@ import {
   runRouting,
   stepUpNeeded,
 } from './admin';
+import { previewBudget, previewBudgetStatus, runBudget, runBudgetStatus } from './budgets';
 import { previewCancelCart, previewSubmit, runCancelCart, runSubmit } from './carts';
 import { previewPublishCatalog, runPublishCatalog } from './catalog';
 import {
@@ -478,6 +479,8 @@ export type ActionInput = {
   put_company_members: ToolInput<'put_company_members'>;
   remove_company_member: ToolInput<'remove_company_member'>;
   put_company_team: ToolInput<'put_company_team'>;
+  put_budget: ToolInput<'put_budget'>;
+  set_budget_status: ToolInput<'set_budget_status'>;
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
@@ -763,6 +766,10 @@ export async function previewAction<T extends ActionTool>(
           input as ActionInput['put_contract_prices'],
           roleBlock,
         );
+      case 'put_budget':
+        return await previewBudget(env, input as ActionInput['put_budget'], roleBlock);
+      case 'set_budget_status':
+        return await previewBudgetStatus(env, input as ActionInput['set_budget_status'], roleBlock);
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -1081,6 +1088,10 @@ export async function runAction<T extends ActionTool>(
       return runPriceBookAssignment(env, p, input as ActionInput['assign_price_book'], trail);
     case 'put_contract_prices':
       return runContractPrices(env, p, input as ActionInput['put_contract_prices'], trail);
+    case 'put_budget':
+      return runBudget(env, p, input as ActionInput['put_budget'], trail);
+    case 'set_budget_status':
+      return runBudgetStatus(env, p, input as ActionInput['set_budget_status'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

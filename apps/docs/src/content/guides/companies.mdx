@@ -1,6 +1,6 @@
 ---
 title: Companies
-description: A business customer's company, its status, members, roles and teams; how an order from a company is accepted or declined; and what flows and promotions can read of them.
+description: A business customer's company, its status, members, roles and teams; how an order from a company is accepted or declined; its budgets; and what flows and promotions can read of them.
 ---
 
 A business customer is a company. It has a status, a legal name and tax id, and optionally a parent
@@ -94,3 +94,49 @@ For example, a Condition step that sends an order above its buyer's limit to an 
 ```
 
 A flow reads these as they stood when the order started its run.
+
+## Budgets
+
+A budget is an amount a company, or one of its teams, may spend in a period. Budgets are in the
+base currency. They are on the company's page under **Budgets**, where each shows its spend in the
+current period as a bar (green while there is room, amber from 80%, red once over) and in words
+("$9,600.00 of $12,000.00 · Nearly spent · $2,400.00 left"), so colour is never the only signal.
+
+| Field | Meaning |
+|---|---|
+| Amount | What may be spent in one period |
+| Period | Weekly, monthly, quarterly, yearly or one time. Periods are UTC calendar periods: a week starts on Monday, a quarter on 1 January, April, July or October. A one-time budget is a single period from its start, with no end |
+| Applies to | The whole company, or one team. A team's budget also covers the teams under it, so an order is held to the company's budgets, its buyer's team's, and those of the teams above |
+| Enforcement | **Advisory** (the default) lets an order over the budget through with a warning. **Strict** declines an order that would take the budget below zero |
+| Starts on | The day it starts counting; today when left out |
+
+A budget is **Active**, **Paused** (orders aren't held to it; its spend is kept) or **Archived**
+(final; its spend stays on record). **Pause**, **Resume** and **Archive** are those moves. A budget's
+company, team, period and start can't change once it exists: add a new budget instead. Its name,
+amount and enforcement can.
+
+Spend is a ledger, never a counter. Each order that is recorded adds one row per budget it counts
+against, and a period's spend is the sum of its rows, so a new period starts at zero with nothing to
+reset, and an order that is given back nets to nothing. **Spend ledger** on a budget lists those
+rows, newest first, with the order each came from and **Reversed** on those given back.
+
+### Holding orders to budgets
+
+A flow holds an order to its budgets with the **Budget check** step. Its **Budget from** field
+chooses what it checks:
+
+- **Node** (the default) holds the order to the one amount on the step, as before. Nothing is read from the company.
+- **Company** holds the order to the budgets of the order's company and its buyer's team (`meta.buyerId`). The step takes `within` when no strict budget would go below zero, and `over` when one would; an advisory budget the order goes over passes, with a warning in the step's summary. The step's output lists every budget it checked: its amount, what the period had spent, what would remain after this order, whether the order exceeds it, and the warning. An order from a customer with no company, or a company with no budgets in force, is within.
+
+With **Record the spend** on, a passing order's total is recorded against every budget it was
+checked against, in one write: if a strict budget filled in the meantime (another order was recorded first), nothing is
+recorded and the order takes `over`. So two orders checked at once can't together take a strict
+budget below zero. The step records once however many times it is retried. The period is the one
+the step runs in, not the one the order started in.
+
+Recorded spend is given back when the order later fails and rolls back, when it is cancelled, and
+when it ends declined or cancelled. An order that completes keeps it.
+
+Staff and agents manage budgets over the [REST API](/reference/rest-api/), the
+[assistant](/guides/assistant/) and [MCP](/reference/mcp/#budgets); changes ask first on a confirm
+card, and anyone who can see the company can read its budgets.

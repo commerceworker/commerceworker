@@ -73,6 +73,8 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'put_price_book_entries',
   'put_contract_prices',
   'set_price_book_status',
+  // Archiving a budget is final.
+  'set_budget_status',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -108,6 +110,7 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'put_contract_prices',
   'set_price_book_status',
   'assign_price_book',
+  'set_budget_status',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',

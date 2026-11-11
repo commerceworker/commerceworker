@@ -102,10 +102,8 @@ unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
 ## Actions wait for the person
 
 An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order`, `submit_cart`,
-`publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, `set_fx_rate`,
-`verify_tax_certificate`, `revoke_tax_certificate`, `set_credit_limit`, `adjust_credit`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the admin tools (`set_member_role`,
 `publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, the [price book](/guides/price-books/) writes (`create_price_book`, `set_price_book_status`, `put_price_book_entries`, `assign_price_book`, `put_contract_prices`), `set_fx_rate`,
-`verify_tax_certificate`, `revoke_tax_certificate`, the admin tools (`set_member_role`,
+`verify_tax_certificate`, `revoke_tax_certificate`, `set_credit_limit`, `adjust_credit`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the [budget](#budgets) tools (`put_budget`, `set_budget_status`), the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
 `uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
@@ -179,6 +177,8 @@ Annotations also tell a client when to confirm:
 | `create_price_book` | a write, not destructive: it adds a draft |
 | `assign_price_book` | `idempotentHint: true`: assigning again is refused, as is taking away what isn't assigned |
 | `put_price_book_entries`, `put_contract_prices`, `set_price_book_status` | `destructiveHint: true` and `idempotentHint: true`: they replace what buyers pay (or, archiving, retire a book for good), and the same input again changes nothing more |
+| `set_budget_status` | `destructiveHint: true` and `idempotentHint: true`: archiving a budget is final, and the same move again changes nothing |
+| `put_budget` | a write, not destructive, not idempotent: without a `budgetId` it adds another budget |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
 `assess_order` set `openWorldHint: true` (a started order runs its flow for real):
@@ -252,6 +252,22 @@ refused up front for an unknown book, customer or SKU, an impossible move (a dra
 inactive; an archived book can't change), a code already taken, or an entry with both a price and a
 percentage. Only a person confirms them: over REST an API token is refused (`403`), and a typed A2A
 skill never runs them. See [Price books](/guides/price-books/).
+
+## Budgets
+
+A company's [budgets](/guides/companies/#budgets) are one read and two writes, REST's
+`/api/v1/companies/:companyId/budgets` routes by another way in. They run the same code, so they refuse
+what REST refuses and write the same audit entries (`budget.saved`, `budget.status_changed`). Reading
+needs the `viewer` role; the writes need `operator`, and an API token may use them (none changes what a
+buyer pays: a budget holds an order only through a flow's Budget check).
+
+| Tool | Does |
+|---|---|
+| `list_budgets` | `{ companyId, teamId?, status?, cursor?, limit? }`: a page of the company's budgets by name (at most 100 a page); each with its `amount`, `period`, `enforcement`, `status`, `teamId`, the `window` it counts now (`start` and `end`, `end` null for a one-time budget; null before the budget starts), what that window has `spent` and what is `remaining`. Answers `budgets`, `total` and the next `cursor` (`null` at the end). `readOnlyHint: true` |
+| `put_budget` | `{ companyId, name, amount, period?, teamId?, enforcement?, startsOn?, budgetId? }`: adds a budget (`period` is required; `enforcement` defaults to `advisory`, `startsOn` to today in UTC), or with a `budgetId` changes its name, amount and enforcement. Its period, team and start can't change; a closed or rejected company's budgets aren't changed; a company holds at most 100 |
+| `set_budget_status` | `{ companyId, budgetId, status }`: `active` and `paused` to each other, either to `archived`, which is final |
+
+Amounts are in the base currency. The previews say what the budget does to orders.
 
 ## Exchange rates
 

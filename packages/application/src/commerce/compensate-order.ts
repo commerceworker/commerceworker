@@ -6,12 +6,14 @@
  */
 import type {
   BalanceStore,
+  BudgetStore,
   FulfillmentStore,
   InventoryStore,
   LabelService,
   MarketplaceStore,
   ShippingStore,
 } from '@commerceworker/ports/commerce';
+import { reverseBudgetSpend } from './budgets';
 import { type InvoicePorts, voidInvoices } from './invoices';
 import { voidAuthorizations } from './payments';
 import { voidOpenLabels } from './shipping-labels';
@@ -23,12 +25,13 @@ export type CompensationPorts = InvoicePorts & {
   readonly marketplace: MarketplaceStore;
   readonly fulfillment: FulfillmentStore;
   readonly balances: BalanceStore;
+  readonly budgets: BudgetStore;
 };
 
 /** What a cancel undid, counted. */
 export type Undid = Awaited<ReturnType<typeof compensateOrder>>;
 
-export async function compensateOrder(ports: CompensationPorts, orderId: string) {
+export async function compensateOrder(ports: CompensationPorts, orderId: string, now: number) {
   // First, so a label a provider made is voided there before its shipment reads as cancelled.
   const labels = await voidOpenLabels(ports, orderId);
   const [
@@ -40,6 +43,7 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string)
     revoked,
     invoices,
     creditReleased,
+    budgetSpendReversed,
   ] = await Promise.all([
     ports.inventory.release(orderId),
     voidAuthorizations(ports, orderId),
@@ -50,6 +54,8 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string)
     voidInvoices(ports, orderId),
     // Credit the order still holds goes back to the customer's limit; a charged hold stays charged.
     ports.balances.releaseHolds(orderId),
+    // What the order spent of its company's budgets goes back to them.
+    reverseBudgetSpend(ports, orderId, now),
   ]);
   // After the void, so an invoice found paid at the processor keeps its (settled) account charge.
   const unbilled = await ports.balances.reverse(orderId);
@@ -66,6 +72,7 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string)
     revoked,
     unbilled,
     creditReleased,
+    budgetSpendReversed,
     invoicesVoided: invoices.voided,
     invoicesPaid: invoices.paid,
     labelsNotVoided: labels.failed,

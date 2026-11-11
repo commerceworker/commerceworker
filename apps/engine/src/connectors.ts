@@ -56,7 +56,7 @@ export {
  * Undo everything compensable for an order (cancel path; Workflow rollback covers failures): the
  * `compensateOrder` use-case (@commerceworker/application/commerce) over this deployment's ports.
  */
-export const compensateOrder = (env: Env, orderId: string) =>
+export const compensateOrder = (env: Env, orderId: string, now = Date.now()) =>
   uc.compensateOrder(
     {
       ...commercePorts(env),
@@ -65,6 +65,7 @@ export const compensateOrder = (env: Env, orderId: string) =>
       invoices: invoiceStore(env),
     },
     orderId,
+    now,
   );
 
 export const idFor = newId;

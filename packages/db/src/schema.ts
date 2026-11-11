@@ -230,6 +230,60 @@ export const companyMembers = sqliteTable(
 );
 
 /**
+ * A company's budget (`Budget` in core), optionally for one of its teams and those under it.
+ * Amounts are in the base currency. `status` is the budget lifecycle.
+ */
+export const budgets = sqliteTable(
+  'budgets',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id').notNull(),
+    teamId: text('team_id'),
+    name: text('name').notNull(),
+    amount: real('amount').notNull(),
+    /** weekly | monthly | quarterly | yearly | one_time (`budgetWindow`). */
+    period: text('period').notNull(),
+    /** When the budget starts counting (ms); a one-time budget's window opens here. */
+    anchor: integer('anchor').notNull(),
+    /** strict | advisory. */
+    enforcement: text('enforcement').notNull().default('advisory'),
+    /** active | paused | archived (`BUDGET_LIFECYCLE`). */
+    status: text('status').notNull().default('active'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    index('budgets_company').on(t.companyId, t.name, t.id),
+    index('budgets_active').on(t.companyId, t.teamId).where(sql`${t.status} = 'active'`),
+  ],
+);
+
+/**
+ * The budget spend ledger: what a window's spend is summed from. A `commit` row is keyed by order,
+ * step and budget; a `reverse` row (`rev_` and the commit's id) carries the negated amount in the
+ * same window.
+ */
+export const budgetSpend = sqliteTable(
+  'budget_spend',
+  {
+    id: text('id').primaryKey(),
+    budgetId: text('budget_id').notNull(),
+    orderId: text('order_id').notNull(),
+    amount: real('amount').notNull(),
+    /** commit | reverse. */
+    kind: text('kind').notNull(),
+    /** The start of the window the spend counted in (ms, UTC). */
+    windowStart: integer('window_start').notNull(),
+    at: integer('at').notNull(),
+  },
+  (t) => [
+    index('budget_spend_window').on(t.budgetId, t.windowStart),
+    index('budget_spend_ledger').on(t.budgetId, sql`${t.at} desc`, sql`${t.id} desc`),
+    index('budget_spend_order').on(t.orderId),
+  ],
+);
+
+/**
  * A customer's tax exemption certificates (`TaxCertificate` in core). `regions` is JSON
  * (`TaxPlace[]`); revoked rows stay for the record; erasing the customer deletes them.
  */

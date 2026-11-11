@@ -1,6 +1,7 @@
 export * from './addresses';
 export * from './apply-promotions';
 export * from './audit-trail';
+export * from './budgets';
 export * from './companies';
 export * from './compensate-order';
 export * from './credit';

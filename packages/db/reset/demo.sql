@@ -39,6 +39,8 @@ DELETE FROM products;
 DELETE FROM sellers;
 DELETE FROM locations;
 DELETE FROM tax_certificates;
+DELETE FROM budget_spend;
+DELETE FROM budgets;
 DELETE FROM company_members;
 DELETE FROM company_teams;
 DELETE FROM companies;

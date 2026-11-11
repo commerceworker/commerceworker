@@ -143,6 +143,7 @@ suite('audit vocabulary', () => {
       'customer',
       'company',
       'credit',
+      'budget',
       'catalog',
       'plugin',
       'personal_data',

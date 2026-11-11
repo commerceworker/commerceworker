@@ -861,6 +861,8 @@ function undoneText(u: Awaited<ReturnType<typeof compensateOrder>>) {
   if (u.invoicesPaid.length) parts.push(`left paid invoices ${u.invoicesPaid.join(', ')}`);
   if (u.unbilled) parts.push(`reversed ${plural(u.unbilled, 'account charge')}`);
   if (u.creditReleased) parts.push(`released ${plural(u.creditReleased, 'credit hold')}`);
+  if (u.budgetSpendReversed)
+    parts.push(`gave back ${plural(u.budgetSpendReversed, 'budget spend')}`);
   if (u.sellerOrdersCancelled) parts.push(plural(u.sellerOrdersCancelled, 'seller order'));
   if (u.payoutsReversed) parts.push(`reversed ${plural(u.payoutsReversed, 'payout')}`);
   if (u.revoked) parts.push(`revoked ${plural(u.revoked, 'code')}`);

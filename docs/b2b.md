@@ -70,7 +70,7 @@ again.
 | S1 Companies (built) | `companies` (1:1 with a business customer), teams (a tree), members (fixed company roles, an optional per-member order limit), the buyer on an order, creating and editing customers. Lifecycles: company `pending → active ⇄ suspended → closed` (or `rejected`), member `invited → active ⇄ inactive → removed`. `validateOrder` declines orders from inactive companies or buyers. JSON Logic gains `company.*` and `buyer.*` | none |
 | S2 Price books (built) | Named books (priority, dates, status) assigned to a company or a tier, entries as price rules, a write path for contract prices. Within the price-book source, the highest-priority assigned book wins, then the lowest price in it. Read in the same single batch | S1 for company assignments |
 | S3 Credit ledger (built) | Holds taken by the credit check, guarded so the check and the hold are one batch and no interleaving exceeds a limit. Converted to the charge at invoicing, released on rollback, cancel and order end. Limit editing and adjustments (person-confirmed) | S1 |
-| S4 Budgets | Per company and team, per calendar period, `strict` or `advisory`. Spend is a ledger keyed by order and step and summed per window, never a mutable counter. Reversed on rollback | S1 |
+| S4 Budgets (built) | Per company and team, per calendar period, `strict` or `advisory`. Spend is a ledger keyed by order and step and summed per window, never a mutable counter. Reversed on rollback | S1 |
 | S5 Approvals | `control.approval` gains approvers (`staff:<role>`, `company:<role>`, team, members) and a mode (`any`, `all`, `majority`, `quorum`). Votes are recorded once, and the OrderAgent resumes the wait only once the vote is decided, so the Workflow and its step names are unchanged. Thresholds are flow logic over `company.*`. No route approves outside the flow | S1 |
 | S6 Purchase orders | Buyer PO records with editable drafts. Submitting starts an order on a B2B PO flow, and the PO's status follows the order. Inbound EDI, email and punchout POs create records too | S1, S3, S4, S5 |
 | S7 Quotes | Negotiated, versioned quotes. A `quote` price source with the highest priority, valid only while accepted, unexpired, for its company and within its quantities. Quote to PO draft, or straight to an order | S1, S2, S6 |
@@ -96,6 +96,39 @@ assigned books still price (pricing isn't access control; `validateOrder` declin
 - **Zero limit.** A new business customer's limit is zero; `set_credit_limit` is how it gets one.
 - **Left for later.** Credit routes are customer-scoped; company-member access to a credit account waits for company-scoped
   API tokens (D11). An over-limit order that a person approves proceeds with no hold.
+
+### S4 notes
+
+Built on D5 (each budget is `strict` or `advisory`, advisory unless chosen) and D8 (amounts in the base
+currency), neither yet confirmed by the product owner.
+
+- **Ledger.** `budget_spend` rows are keyed `bsp_<order>_<step>_<budget>` (a retried step commits once); a
+  reversal is a row of its own, `rev_` and the commit's id, of the negated amount in the same window, so a
+  window's spend is `sum(amount)` over its rows and a reversed order nets to nothing. Never a counter: a window
+  that has passed just stops being asked about (v1's counter never reset). Migration `0071`.
+- **Windows.** UTC calendar periods (`budgetWindow`, reusing `advancePeriod`): a week from Monday, a month, a
+  quarter from January, April, July or October, a year; `one_time` is one window from its anchor with no end. A
+  budget isn't in force before its anchor. The window is read at the step's own clock (`Date.now()` inside the
+  step), not the run's start, so an order that waited for an approval counts when it is checked.
+- **Which budgets.** The order's customer is the company; a budget with no team is the company's, and a team's
+  covers the teams under it, so an order is held to the company's budgets plus its buyer's team's and every team
+  above it (`budgetsFor`, `budgetTeamIds`). At most 50 apply to one order, 100 a company.
+- **One check, one commit.** `checkBudgets` reads the budgets in force (one statement) and their windows' spend
+  (one statement, the pairs in one JSON parameter); `commitBudgetSpend` is one `INSERT … SELECT` that writes every
+  line or none, refusing when a strict budget's window has less left than its line, so two orders racing for a
+  strict budget take only what fits and an advisory budget is never left recorded for an order a strict one
+  refused. The commit is the authority: a strict budget that filled after the read sends the order `over`. A
+  retried step asks without its own rows (`spentIn`'s `except`) so a budget its own spend filled doesn't refuse it.
+- **Node.** `commerce.budget_check` gains `source` (`node`, the default, which is today's behaviour exactly, or
+  `company`) and `commit`. The node is `rollback: true` with a `ROLLBACKS` entry that reverses the order's
+  commits; `compensateOrder` reverses them for a cancel; a Workflow that ends declined or cancelled reverses them in
+  its own `<end key>:budgets` step, only when the flow has a committing budget check, so no published flow's step
+  names change.
+- **Immutable.** A budget's company, team, period and start can't change once it exists (the ledger counts in
+  them); name, amount and enforcement can. Archiving is final.
+- **Left for later.** The ledger lists commits with whether each was reversed; it has no manual adjustment (no
+  one gives spend back by hand). Budgets are per company and team only; a member's own limit is S5's.
+  Approving an over-budget order by a person (`over` into an approval) is flow logic: S5 adds the approvers.
 
 After S1 there are three parallel streams: S2; S3; and S4 followed by S5. S6 follows S3, S4 and
 S5, and S7 follows S2 and S6.

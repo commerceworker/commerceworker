@@ -25,6 +25,17 @@ INSERT OR IGNORE INTO company_members (id, company_id, name, email, role, team_i
   ('mem_nw_ben', 'cus_northwind', 'Ben Ito', 'ben@northwind.example', 'buyer', 'team_nw_warehouse', 'active', 2500.0, 1767225600000, 1767225600000),
   ('mem_nw_cy', 'cus_northwind', 'Cy Duarte', 'cy@northwind.example', 'approver', 'team_nw_purchasing', 'invited', NULL, 1767225600000, 1767225600000);
 
+-- Two of Northwind's budgets: a one-time fit-out for the warehouse team (advisory, mostly spent,
+-- with one order's spend since reversed) and a strict monthly one for the whole company.
+INSERT OR IGNORE INTO budgets (id, company_id, team_id, name, amount, period, anchor, enforcement, status, created_at, updated_at) VALUES
+  ('bud_nw_fitout', 'cus_northwind', 'team_nw_warehouse', 'Warehouse fit-out', 12000.0, 'one_time', 1767225600000, 'advisory', 'active', 1767225600000, 1767225600000),
+  ('bud_nw_supplies', 'cus_northwind', NULL, 'Office supplies', 4000.0, 'monthly', 1767225600000, 'strict', 'active', 1767225600000, 1767225600000);
+
+INSERT OR IGNORE INTO budget_spend (id, budget_id, order_id, amount, kind, window_start, at) VALUES
+  ('bsp_demo_fitout_1', 'bud_nw_fitout', 'ord_demo_fitout_1', 9600.0, 'commit', 1767225600000, 1768435200000),
+  ('bsp_demo_fitout_2', 'bud_nw_fitout', 'ord_demo_fitout_2', 1500.0, 'commit', 1767225600000, 1769040000000),
+  ('rev_bsp_demo_fitout_2', 'bud_nw_fitout', 'ord_demo_fitout_2', -1500.0, 'reverse', 1767225600000, 1769126400000);
+
 INSERT OR IGNORE INTO sellers (id, name, email, commission_pct, auto_accept, active) VALUES
   ('sel_brightside', 'Brightside Audio', 'orders@brightside.example', 0.12, 1, 1),
   ('sel_kettle', 'Kettle & Co', 'shop@kettleandco.example', 0.15, 0, 1);

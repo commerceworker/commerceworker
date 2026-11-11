@@ -2,6 +2,7 @@ import type { Order } from '@commerceworker/core';
 import {
   FakeLabelService,
   InMemoryBalanceStore,
+  InMemoryBudgetStore,
   InMemoryFulfillmentStore,
   InMemoryInventoryStore,
   InMemoryInvoiceStore,
@@ -38,6 +39,7 @@ function ports() {
     balances: new InMemoryBalanceStore({
       customers: [{ id: 'ada', balance: 0, creditLimit: 500 }],
     }),
+    budgets: new InMemoryBudgetStore(),
     inventory: new InMemoryInventoryStore({ products: [{ sku: 'TEE', stock: 10 }] }),
     shipping: new InMemoryShippingStore(clock),
     labels: new FakeLabelService(),
@@ -72,7 +74,7 @@ describe('cancelling an order', () => {
     );
     expect((await p.inventory.levels(['TEE'])).get('TEE')).toEqual({ stock: 10, reserved: 2 });
 
-    const undid = await compensateOrder(p, 'o1');
+    const undid = await compensateOrder(p, 'o1', 1);
     expect(undid).toMatchObject({
       released: expect.any(Number),
       voided: 1,
@@ -88,7 +90,7 @@ describe('cancelling an order', () => {
     expect((await p.inventory.levels(['TEE'])).get('TEE')).toEqual({ stock: 10, reserved: 0 });
 
     // A second cancel (a retry, or one racing the first) undoes nothing more.
-    expect(await compensateOrder(p, 'o1')).toMatchObject({
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
       released: 0,
       voided: 0,
       invoicesVoided: 0,
@@ -123,7 +125,7 @@ describe('cancelling an order', () => {
   });
 
   it('undoes nothing for an order that holds nothing', async () => {
-    expect(await compensateOrder(ports(), 'o_none')).toEqual({
+    expect(await compensateOrder(ports(), 'o_none', 1)).toEqual({
       released: 0,
       voided: 0,
       cancelled: 0,
@@ -133,9 +135,42 @@ describe('cancelling an order', () => {
       revoked: 0,
       unbilled: 0,
       creditReleased: 0,
+      budgetSpendReversed: 0,
       invoicesVoided: 0,
       invoicesPaid: [],
       labelsNotVoided: 0,
     });
+  });
+
+  it('gives back the budget spend the order recorded, once', async () => {
+    const p = ports();
+    const window = { start: 0, end: null };
+    await p.budgets.put({
+      id: 'bud_1',
+      companyId: 'ada',
+      teamId: null,
+      name: 'Office',
+      amount: 500,
+      period: 'one_time',
+      anchor: 0,
+      enforcement: 'strict',
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await p.budgets.commit({
+      orderId: 'o1',
+      stepKey: 'budget#1',
+      at: 1,
+      lines: [{ budgetId: 'bud_1', amount: 100, window }],
+    });
+    const spent = async () =>
+      (await p.budgets.spentIn([{ budgetId: 'bud_1', windowStart: 0 }])).get('bud_1@0');
+    expect(await spent()).toBe(100);
+
+    expect(await compensateOrder(p, 'o1', 2)).toMatchObject({ budgetSpendReversed: 1 });
+    expect(await spent()).toBe(0);
+    expect(await compensateOrder(p, 'o1', 3)).toMatchObject({ budgetSpendReversed: 0 });
+    expect(await spent()).toBe(0);
   });
 });

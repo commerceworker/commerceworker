@@ -311,6 +311,9 @@ on, and its JSON body (or, for a `GET`, its query string) gives the rest of the 
 | `POST` | `/api/v1/companies/:companyId/members` | `{ members: [{ email, name, role?, teamId?, orderLimit?, status? }] }`: adds up to 100 members by email, or changes those already there (operator) |
 | `POST` | `/api/v1/companies/:companyId/members/:memberId/remove` | Removes a member for good (operator) |
 | `POST` | `/api/v1/companies/:companyId/teams` | `{ name, teamId?, parentTeamId? }`: adds a team, or renames and moves one (operator) |
+| `GET` | `/api/v1/companies/:companyId/budgets?teamId=&status=&cursor=&limit=` | A page of the company's [budgets](/guides/companies/#budgets) by name, each with what its current period has spent: `{ budgets, total, cursor }` (viewer) |
+| `POST` | `/api/v1/companies/:companyId/budgets` | `{ name, amount, period?, teamId?, enforcement?, startsOn?, budgetId? }`: adds a budget, or changes one's name, amount and enforcement (operator) |
+| `POST` | `/api/v1/companies/:companyId/budgets/:budgetId/status` | `{ status }`: pauses, resumes or archives a budget (operator) |
 | `POST` | `/api/v1/customers/:customerId/tax-certificates/:certificateId/verify` | Verifies a tax exemption certificate |
 | `GET` | `/api/v1/customers/:customerId/credit?after=&limit=` | A business customer's credit account: `limit`, `balance`, `held`, `available` and a page of the ledger, newest first with `balanceAfter` per entry; `next` is the cursor for `after` |
 | `POST` | `/api/v1/customers/:customerId/credit/limit` | `{ limit }`: sets the credit limit (admin; a person, not an API token) |

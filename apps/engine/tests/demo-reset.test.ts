@@ -38,6 +38,14 @@ describe('the demo reset', () => {
         `INSERT INTO company_teams (id, company_id, name, path) VALUES ('team_v', 'cus_visitor', 'V', '/team_v/')`,
       ),
       db.prepare(
+        `INSERT INTO budgets (id, company_id, name, amount, period, anchor, created_at, updated_at)
+         VALUES ('bud_v', 'cus_visitor', 'V', 10, 'monthly', 0, 0, 0)`,
+      ),
+      db.prepare(
+        `INSERT INTO budget_spend (id, budget_id, order_id, amount, kind, window_start, at)
+         VALUES ('bsp_v', 'bud_v', 'ord_v', 5, 'commit', 0, 0)`,
+      ),
+      db.prepare(
         `INSERT INTO company_members (id, company_id, name, email, created_at, updated_at)
          VALUES ('mem_v', 'cus_visitor', 'V', 'v@example.com', 0, 0)`,
       ),
@@ -71,6 +79,8 @@ describe('the demo reset', () => {
     await run(db, testEnv.TEST_DEMO_RESET);
     expect(await count(db, 'companies')).toBe(0);
     expect(await count(db, 'company_teams')).toBe(0);
+    expect(await count(db, 'budgets')).toBe(0);
+    expect(await count(db, 'budget_spend')).toBe(0);
     expect(await count(db, 'company_members')).toBe(0);
     expect(await count(db, 'orders')).toBe(0);
     expect(await count(db, 'flows')).toBe(0);

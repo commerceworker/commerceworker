@@ -6,6 +6,7 @@
   "description": "D1 schema (Drizzle) and migrations: flows and versions, the orders index, approvals, and the mock commerce back office (customers, products, contracts, reservations, payments, shipments, documents, outbox).",
   "exports": {
     ".": "./src/index.ts",
+    "./budget-store": "./src/budget-store.ts",
     "./company-directory": "./src/company-directory.ts",
     "./pricing-store": "./src/pricing-store.ts",
     "./price-book-store": "./src/price-book-store.ts",

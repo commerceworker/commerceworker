@@ -1346,6 +1346,60 @@ describe('operations REST runs as MCP does', () => {
     expect((await post('price-books/pb_1/status', { status: 'draft' })).status).toBe(400);
   });
 
+  it('reads and writes a company’s budgets as the tools do, the path naming the company and the budget', async () => {
+    run.mockResolvedValueOnce({ ok: true, value: { budgets: [], total: 0, cursor: null } });
+    const listed = await handleApi(
+      new Request(
+        'https://app.test/api/v1/companies/cus_1/budgets?status=active&teamId=team_1&limit=5&companyId=cus_2&nope=1',
+      ),
+      viewer,
+    );
+    expect(listed.status).toBe(200);
+    // The path names the company: a query can't name another.
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'list_budgets',
+      { companyId: 'cus_1', status: 'active', teamId: 'team_1', limit: 5 },
+    ]);
+    // Reading is a viewer's; changing is an operator's.
+    const before = run.mock.calls.length;
+    expect(
+      (
+        await post(
+          'companies/cus_1/budgets',
+          { name: 'Office', amount: 5, period: 'monthly' },
+          viewer,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (await post('companies/cus_1/budgets/bud_1/status', { status: 'paused' }, viewer)).status,
+    ).toBe(403);
+    expect(run).toHaveBeenCalledTimes(before);
+
+    run.mockResolvedValue({ ok: true, value: { done: 'ok' } });
+    await post('companies/cus_1/budgets', {
+      name: 'Office',
+      amount: 500,
+      period: 'monthly',
+      enforcement: 'strict',
+      companyId: 'cus_2',
+    });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'put_budget',
+      { companyId: 'cus_1', name: 'Office', amount: 500, period: 'monthly', enforcement: 'strict' },
+    ]);
+    await post('companies/cus_1/budgets/bud_1/status', {
+      status: 'archived',
+      budgetId: 'bud_2',
+      companyId: 'cus_2',
+    });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'set_budget_status',
+      { companyId: 'cus_1', budgetId: 'bud_1', status: 'archived' },
+    ]);
+    run.mockReset();
+  });
+
   it("answers the engine's refusal, holds the tool's role, and leaves other paths alone", async () => {
     run.mockResolvedValueOnce({ ok: false, error: 'A person verifies a certificate…' });
     expect((await post('customers/cus_1/tax-certificates/txc_1/verify', {})).status).toBe(409);

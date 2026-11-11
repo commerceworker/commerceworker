@@ -11,6 +11,13 @@ import { assessQuestionsSchema } from './assess';
 import type { AssistantTool } from './assistant';
 import { AUDIT_GROUPS, type AuditGroup } from './audit';
 import {
+  BUDGET_ENFORCEMENTS,
+  BUDGET_PAGE,
+  BUDGET_PERIODS,
+  BUDGET_STATUSES,
+  budgetInput,
+} from './b2b/budgets';
+import {
   COMPANY_ROLES,
   COMPANY_STATUSES,
   companyMembersInput,
@@ -625,6 +632,25 @@ export const TOOL_INPUTS = {
       .describe('In the base currency: negative for a credit memo or a payment received'),
     reason: z.string().min(1).max(500).describe('What the ledger shows beside the entry'),
   }),
+  list_budgets: z.object({
+    companyId: z.string().max(100).describe('The business customer’s id'),
+    teamId: z.string().max(100).optional().describe('Only the budgets of this team'),
+    status: z.enum(BUDGET_STATUSES).optional(),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(BUDGET_PAGE.max)
+      .optional()
+      .describe(`Default ${BUDGET_PAGE.default}`),
+  }),
+  put_budget: budgetInput,
+  set_budget_status: z.object({
+    companyId: z.string().max(100),
+    budgetId: z.string().max(100),
+    status: z.enum(BUDGET_STATUSES),
+  }),
   set_member_role: z.object({ userId: z.string().max(60), role: z.enum(ROLES) }),
   set_approval_separation: z.object({ on: z.boolean() }),
   set_assistant_routing: z.object({ on: z.boolean() }),
@@ -717,6 +743,26 @@ const memberOutput = row({
   teamId: z.string().nullable(),
   status: z.enum(MEMBER_STATUSES),
   orderLimit: z.number().nullable().describe('Base currency; null for no limit of their own'),
+});
+
+const budgetOutput = row({
+  id: z.string(),
+  companyId: z.string(),
+  teamId: z.string().nullable().describe('The team it covers (and those under it); null for all'),
+  name: z.string(),
+  amount: z.number().describe('Per window, base currency'),
+  period: z.enum(BUDGET_PERIODS),
+  anchor: z.number().describe('When it starts counting (ms, UTC)'),
+  enforcement: z.enum(BUDGET_ENFORCEMENTS),
+  status: z.enum(BUDGET_STATUSES),
+  window: row({
+    start: z.number().describe('When the current window opened (ms, UTC)'),
+    end: z.number().nullable().describe('When it closes; null for a one-time budget'),
+  })
+    .nullable()
+    .describe('The window now; null before the budget starts'),
+  spent: z.number().describe('Committed in the current window'),
+  remaining: z.number().describe('Amount less spent; negative when over'),
 });
 
 const feedOutput = row({
@@ -1157,6 +1203,13 @@ export const TOOL_OUTPUTS = {
   put_price_book_entries: actionOutput,
   assign_price_book: actionOutput,
   put_contract_prices: actionOutput,
+  list_budgets: row({
+    budgets: z.array(budgetOutput),
+    total: z.number().describe('Every budget the filters match'),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
+  }),
+  put_budget: actionOutput,
+  set_budget_status: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
@@ -1224,6 +1277,9 @@ export const REST_OPERATION_TOOLS = [
   'get_credit_account',
   'set_credit_limit',
   'adjust_credit',
+  'list_budgets',
+  'put_budget',
+  'set_budget_status',
   'run_stock_review',
   'find_products',
   'assess_order',

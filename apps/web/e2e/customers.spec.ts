@@ -106,3 +106,69 @@ test('the customers list filters by kind and company status, and offers a new cu
   await sheet.getByLabel('Kind').selectOption('business');
   await fits(page, isTouch(info));
 });
+
+test('a company’s budgets show their spend as a bar and in words, and its ledger opens', async ({
+  page,
+}) => {
+  await open(page, '/customers/cus_northwind');
+  const budgets = page.locator('#budgets');
+  await expect(budgets.getByRole('heading', { name: 'Budgets', exact: true })).toBeVisible();
+  const fitout = budgets.getByRole('listitem').filter({ hasText: 'Warehouse fit-out' });
+  // The figure is words as well as a bar, and the meter is there for assistive tech.
+  await expect(fitout).toContainText('$9,600.00');
+  await expect(fitout).toContainText('Nearly spent');
+  await expect(fitout.getByLabel('Warehouse fit-out spend')).toHaveAttribute('value', '9600');
+  await expect(budgets.getByRole('listitem').filter({ hasText: 'Office supplies' })).toContainText(
+    'Within budget',
+  );
+  await fitout.getByRole('link', { name: 'Spend ledger of Warehouse fit-out' }).click();
+  const ledger = page.getByRole('region', { name: 'Spend ledger' });
+  await expect(ledger).toContainText('ord_demo_fitout_1');
+  // The reversed order's spend is on the ledger, marked as given back.
+  await expect(ledger.getByRole('row').filter({ hasText: 'ord_demo_fitout_2' })).toContainText(
+    'Reversed',
+  );
+  const [scroll, width] = await page.evaluate(() => [
+    document.documentElement.scrollWidth,
+    window.innerWidth,
+  ]);
+  expect(scroll, `page is ${scroll}px wide in a ${width}px viewport`).toBeLessThanOrEqual(width);
+});
+
+test('the budgets’ controls take a 44px tap on touch screens', async ({ page }, info) => {
+  test.skip(!isTouch(info), 'touch screens only');
+  await open(page, '/customers/cus_northwind');
+  const small = await page.$$eval('#budgets button, #budgets a', (els) =>
+    els
+      .filter((el) => el.getBoundingClientRect().width > 0)
+      .map((el) => {
+        const after = getComputedStyle(el, '::after');
+        const h = Math.max(el.getBoundingClientRect().height, Number.parseFloat(after.height) || 0);
+        return { name: el.getAttribute('aria-label') ?? el.textContent, h };
+      })
+      .filter((c) => c.h < 44),
+  );
+  expect(small).toEqual([]);
+});
+
+test('adding a budget opens a form that fits the screen and reads at 16px on touch', async ({
+  page,
+}, info) => {
+  await open(page, '/customers/cus_northwind');
+  await page.getByRole('button', { name: 'Add budget' }).click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByLabel('Amount')).toBeVisible();
+  await expect(sheet.getByLabel('Period')).toBeVisible();
+  await expect(sheet.getByLabel('Applies to')).toBeVisible();
+  await expect(sheet.getByLabel('Enforcement')).toBeVisible();
+  await fits(page, isTouch(info));
+});
+
+test('editing a budget fixes its period and team', async ({ page }) => {
+  await open(page, '/customers/cus_northwind');
+  await page.getByRole('button', { name: 'Edit Office supplies' }).click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByLabel('Name')).toHaveValue('Office supplies');
+  await expect(sheet.getByLabel('Period')).toBeDisabled();
+  await expect(sheet.getByLabel('Applies to')).toBeDisabled();
+});

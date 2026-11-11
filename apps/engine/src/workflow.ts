@@ -16,7 +16,7 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import { releaseCredit } from '@commerceworker/application/commerce';
+import { releaseCredit, reverseBudgetSpend } from '@commerceworker/application/commerce';
 import {
   type AccountContext,
   beginNode,
@@ -53,7 +53,7 @@ import { instanceExists } from './orders';
 import { emit, orderSummary } from './outbox';
 import { voidAuthorizations } from './payments';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
-import { balanceStore } from './wire';
+import { balanceStore, budgetStore } from './wire';
 import { capReason, failureReason, plural } from './words';
 
 export type OrderWorkflowParams = {
@@ -201,6 +201,9 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
     // whole batch, so a hold a sibling placed alongside the End node is voided too.
     if (end && (outcome === 'declined' || outcome === 'cancelled')) {
       await this.voidOpenHolds(step, p, end.nodeId, end.key);
+      // The same for the budgets: an order that never completes spent none of what it recorded.
+      if (flow.nodes.some((n) => n.type === 'commerce.budget_check' && n.config?.commit === true))
+        await this.giveBackBudgetSpend(step, p, end.nodeId, end.key);
     }
     // Whatever the outcome but failed (a failed run's rollbacks give the credit back), an order
     // that ends holds no credit: an invoice already converted its hold, and any left over (a card
@@ -283,6 +286,49 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
           }
         }
         return released;
+      },
+    );
+  }
+
+  /**
+   * Gives back the budget spend the order recorded, as one step (`<end key>:budgets`). Retry-safe:
+   * each commit is reversed once, so a retry finds none left and reports nothing.
+   */
+  private async giveBackBudgetSpend(
+    step: WorkflowStep,
+    p: OrderWorkflowParams,
+    nodeId: string,
+    key: string,
+  ) {
+    const env = this.env;
+    const fx = effectKey(p.generation, key);
+    await step.do(
+      `${key}:budgets`,
+      { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+      async () => {
+        const reversed = await reverseBudgetSpend(
+          { budgets: budgetStore(env) },
+          p.orderId,
+          Date.now(),
+        );
+        if (reversed) {
+          // Sent from inside the step, so it is reported once; a failed report doesn't redo the reversal.
+          try {
+            await orderAgent(env, p.orderId).report({
+              generation: p.generation,
+              log: {
+                at: Date.now(),
+                nodeId,
+                kind: 'rollback',
+                message: `Gave back ${plural(reversed, 'budget spend')}: the order ended without completing`,
+                key: `${fx}:budgets`,
+              },
+            });
+          } catch (err) {
+            console.warn('budget reversal report failed', err);
+          }
+        }
+        return reversed;
       },
     );
   }
