@@ -36,6 +36,7 @@ import {
   inboundEmails,
   messages,
   orders,
+  purchaseOrders,
   taxCertificates,
   users,
   webhookDeliveries,
@@ -59,6 +60,10 @@ const blankedMember = {
   orderLimit: null,
   teamId: null,
 };
+
+/** The ids of the company members with this email, as a subquery. */
+const memberIds = (email: string) =>
+  sql`(select id from company_members where lower(email) = ${email})`;
 
 const checkoutBuyer = (email: string) =>
   sql`lower(json_extract(${checkoutSessions.data}, '$.buyer.email')) = ${email.toLowerCase()}`;
@@ -124,23 +129,39 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
     async rows(s, orderIds) {
       const accountIds = s.accounts.map((c) => c.id);
       const where = (column: SQLWrapper) => (run: string[]) => inArray(column as never, run) as SQL;
-      const [msgs, sentTo, docs, inbound, certificates, addresses, accountCompanies, memberRows] =
-        await Promise.all([
-          inRuns(orderIds, (r) => d.select().from(messages).where(where(messages.orderId)(r))),
-          d.select().from(messages).where(lower(messages.recipient, s.email)),
-          inRuns(orderIds, (r) => d.select().from(documents).where(where(documents.orderId)(r))),
-          d.select().from(inboundEmails).where(lower(inboundEmails.sender, s.email)),
-          inRuns(accountIds, (r) =>
-            d.select().from(taxCertificates).where(where(taxCertificates.customerId)(r)),
-          ),
-          inRuns(accountIds, (r) =>
-            d.select().from(customerAddresses).where(where(customerAddresses.customerId)(r)),
-          ),
-          inRuns(accountIds, (r) =>
-            d.select().from(companies).where(where(companies.customerId)(r)),
-          ),
-          d.select().from(companyMembers).where(lower(companyMembers.email, s.email)),
-        ]);
+      const [
+        msgs,
+        sentTo,
+        docs,
+        inbound,
+        certificates,
+        addresses,
+        accountCompanies,
+        memberRows,
+        accountPos,
+        memberPos,
+      ] = await Promise.all([
+        inRuns(orderIds, (r) => d.select().from(messages).where(where(messages.orderId)(r))),
+        d.select().from(messages).where(lower(messages.recipient, s.email)),
+        inRuns(orderIds, (r) => d.select().from(documents).where(where(documents.orderId)(r))),
+        d.select().from(inboundEmails).where(lower(inboundEmails.sender, s.email)),
+        inRuns(accountIds, (r) =>
+          d.select().from(taxCertificates).where(where(taxCertificates.customerId)(r)),
+        ),
+        inRuns(accountIds, (r) =>
+          d.select().from(customerAddresses).where(where(customerAddresses.customerId)(r)),
+        ),
+        inRuns(accountIds, (r) => d.select().from(companies).where(where(companies.customerId)(r))),
+        d.select().from(companyMembers).where(lower(companyMembers.email, s.email)),
+        inRuns(accountIds, (r) =>
+          d.select().from(purchaseOrders).where(where(purchaseOrders.companyId)(r)),
+        ),
+        d
+          .select()
+          .from(purchaseOrders)
+          .where(sql`${purchaseOrders.buyerId} in ${memberIds(s.email)}`)
+          .limit(500),
+      ]);
       return {
         messages: [...new Map([...msgs, ...sentTo].map((m) => [m.id, m])).values()],
         documents: docs.map((x) => ({
@@ -154,6 +175,7 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         addresses,
         companies: accountCompanies,
         companyMembers: memberRows,
+        purchaseOrders: [...new Map([...accountPos, ...memberPos].map((p) => [p.id, p])).values()],
       };
     },
 
@@ -311,6 +333,28 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         addresses: addresses.length,
         companyMembers: members.length,
       };
+    },
+
+    async erasePurchaseOrders(s) {
+      // The ship-to keeps its city, region, postcode and country; the buyer and notes go.
+      const blank = `UPDATE purchase_orders SET notes = NULL, buyer_id = NULL,
+        ship_to = CASE WHEN ship_to IS NULL THEN NULL
+          ELSE json_remove(json_set(ship_to, '$.line1', ''), '$.name', '$.line2') END`;
+      const statements = [
+        ...chunks(s.accounts.map((c) => c.id)).map((ids) =>
+          d1
+            .prepare(`${blank} WHERE company_id IN (${ids.map(() => '?').join(', ')})`)
+            .bind(...ids),
+        ),
+        d1
+          .prepare(
+            `${blank} WHERE buyer_id IN (SELECT id FROM company_members WHERE lower(email) = ?)`,
+          )
+          .bind(s.email),
+      ];
+      const done = await d1.batch(statements);
+      // A PO of both kinds is blanked by the first statement, which nulls the buyer the second reads.
+      return done.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
     },
 
     async eraseMembers(email) {

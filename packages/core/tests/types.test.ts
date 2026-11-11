@@ -60,7 +60,10 @@ describe('models', () => {
   it('starts every model from a template', () => {
     for (const model of ORDER_MODELS)
       expect(TEMPLATES[DEFAULT_TEMPLATE[model]]).toBeTypeOf('function');
-    expect(templatesFor('b2b').map((f) => f.id)).toEqual(['tpl-b2b-order']);
+    expect(templatesFor('b2b').map((f) => f.id)).toEqual([
+      'tpl-b2b-order',
+      'tpl-b2b-purchase-order',
+    ]);
     for (const [id, build] of Object.entries(TEMPLATES)) {
       const flow = build();
       expect(flow.id).toBe(id);

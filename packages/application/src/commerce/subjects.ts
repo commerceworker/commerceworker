@@ -110,6 +110,7 @@ export async function exportDataSubject(
     addresses: held.addresses.map(({ key: _key, ...a }) => a),
     companies: held.companies,
     companyMembers: held.companyMembers,
+    purchaseOrders: held.purchaseOrders,
     truncated: rows.length > EXPORT_MAX,
     teamMember: s.teamMember,
   };
@@ -151,6 +152,7 @@ export async function eraseDataSubject(
     taxCertificates: 0,
     addresses: 0,
     companyMembers: 0,
+    purchaseOrders: 0,
     teamMember: s.teamMember,
   };
 
@@ -186,6 +188,8 @@ export async function eraseDataSubject(
   const unlinked = await ports.subjects.eraseUnlinked(s.email);
   result.inboundEmails += unlinked.inboundEmails;
   result.messages += unlinked.messages;
+  // Their companies' POs, and those their member rows placed, before those rows are blanked.
+  result.purchaseOrders = await ports.subjects.erasePurchaseOrders(s);
   for (const c of s.accounts) {
     // Their tax certificates go whole, files and rows: a certificate names the business and its
     // registration, and no order needs it once the orders it exempted are written.

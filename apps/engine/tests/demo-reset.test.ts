@@ -46,6 +46,13 @@ describe('the demo reset', () => {
          VALUES ('bsp_v', 'bud_v', 'ord_v', 5, 'commit', 0, 0)`,
       ),
       db.prepare(
+        `INSERT INTO purchase_orders (id, company_id, po_number, created_at, updated_at)
+         VALUES ('po_v', 'cus_visitor', 'PO-V', 0, 0)`,
+      ),
+      db.prepare(
+        `INSERT INTO purchase_order_lines (po_id, position, sku, qty) VALUES ('po_v', 0, 'WID-100', 1)`,
+      ),
+      db.prepare(
         `INSERT INTO company_members (id, company_id, name, email, created_at, updated_at)
          VALUES ('mem_v', 'cus_visitor', 'V', 'v@example.com', 0, 0)`,
       ),
@@ -81,6 +88,8 @@ describe('the demo reset', () => {
     expect(await count(db, 'company_teams')).toBe(0);
     expect(await count(db, 'budgets')).toBe(0);
     expect(await count(db, 'budget_spend')).toBe(0);
+    expect(await count(db, 'purchase_orders')).toBe(0);
+    expect(await count(db, 'purchase_order_lines')).toBe(0);
     expect(await count(db, 'company_members')).toBe(0);
     expect(await count(db, 'orders')).toBe(0);
     expect(await count(db, 'flows')).toBe(0);

@@ -146,6 +146,12 @@ export type AssistantTool =
   | 'list_budgets'
   | 'put_budget'
   | 'set_budget_status'
+  | 'list_purchase_orders'
+  | 'get_purchase_order'
+  | 'create_po_draft'
+  | 'update_po_draft'
+  | 'submit_po'
+  | 'cancel_po'
   | 'set_member_role'
   | 'set_approval_separation'
   | 'set_plugin_enabled'
@@ -856,6 +862,54 @@ export const ASSISTANT_TOOLS: Record<
     description:
       'Pause a budget (orders aren’t held to it, and its spend is kept), resume it, or archive it for good.',
   },
+  list_purchase_orders: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Listed purchase orders',
+    title: 'List purchase orders',
+    description:
+      'Buyers’ purchase orders, newest first and a page at a time: PO number, company, buyer, status, source and the order each started. Narrow by company, status, buyer, a PO number search, or the dates created; pass the cursor a page returned for the next.',
+  },
+  get_purchase_order: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Read a purchase order',
+    title: 'Get a purchase order',
+    description:
+      'One purchase order with its lines, ship-to, notes and the order it started, which carries its progress.',
+  },
+  create_po_draft: {
+    role: 'operator',
+    confirm: false,
+    label: 'Drafted a purchase order',
+    title: 'Create a purchase order draft',
+    description:
+      'Save a draft purchase order for a company: its PO number (unique within the company), lines, ship-to and the member buying. A draft starts nothing; submit_po sends it.',
+  },
+  update_po_draft: {
+    role: 'operator',
+    confirm: false,
+    label: 'Changed a purchase order draft',
+    title: 'Change a purchase order draft',
+    description:
+      'Change a draft purchase order: any of its number, buyer, ship-to, notes or its whole list of lines. Only a draft can be changed; a submitted one has started an order.',
+  },
+  submit_po: {
+    role: 'operator',
+    confirm: true,
+    label: 'Submit a purchase order',
+    title: 'Submit a purchase order',
+    description:
+      'Submit a draft purchase order: it starts an order on the B2B purchase order flow (credit, budget and approvals apply), and the PO’s status then follows the order. Submitting again starts nothing new.',
+  },
+  cancel_po: {
+    role: 'operator',
+    confirm: true,
+    label: 'Cancel a purchase order',
+    title: 'Cancel a purchase order',
+    description:
+      'Cancel a purchase order that hasn’t ended. If its order is running it is cancelled too, giving back its credit hold, budget spend and stock.',
+  },
   // The Team and Plugins pages' changes, for admins. Those the pages ask a step-up for need one on
   // the card too (`ActionPreview.stepUp`).
   set_member_role: {
@@ -1045,6 +1099,8 @@ export const WRITES_WITHOUT_CONFIRM: readonly AssistantTool[] = [
   'draft_product_content',
   'create_cart',
   'change_cart',
+  'create_po_draft',
+  'update_po_draft',
   'start_scenario',
   'create_flow',
   'duplicate_flow',

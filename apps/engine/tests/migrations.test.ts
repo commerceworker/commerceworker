@@ -574,3 +574,69 @@ describe('0072_approval_votes', () => {
     await vote('av_b', 'mem_1').run();
   });
 });
+
+describe('0073_purchase_orders', () => {
+  it('adds the tables beside what is there, a draft by default, and keeps numbers and orders unique', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0073_');
+    await applyD1Migrations(db, applied);
+    await db.batch([
+      db.prepare(
+        `INSERT INTO customers (id, name, email, kind) VALUES ('po_biz', 'Biz', 'b@x.test', 'business')`,
+      ),
+      db.prepare(
+        `INSERT INTO orders (id, model, status, flow_id, flow_version, customer_id, created_at, updated_at)
+         VALUES ('po_o', 'b2b', 'completed', 'f', 1, 'po_biz', 1, 1)`,
+      ),
+    ]);
+    await applyD1Migrations(db, [next]);
+
+    // Existing rows are untouched, and nothing was written for them.
+    expect(await db.prepare("SELECT customer_id FROM orders WHERE id = 'po_o'").first()).toEqual({
+      customer_id: 'po_biz',
+    });
+    for (const table of ['purchase_orders', 'purchase_order_lines'])
+      expect(await db.prepare(`SELECT count(*) AS n FROM ${table}`).first()).toEqual({ n: 0 });
+
+    const po = (id: string, number: string, over = '', company = 'po_biz') =>
+      db
+        .prepare(
+          `INSERT INTO purchase_orders (id, company_id, po_number, ${over ? 'status, ' : ''}created_at, updated_at)
+           VALUES (?, ?, ?, ${over ? `'${over}', ` : ''}1, 1)`,
+        )
+        .bind(id, company, number);
+    await po('po_1', 'PO-100').run();
+    expect(
+      await db
+        .prepare(
+          "SELECT status, currency, source, order_id, buyer_id FROM purchase_orders WHERE id = 'po_1'",
+        )
+        .first(),
+    ).toEqual({ status: 'draft', currency: 'USD', source: 'app', order_id: null, buyer_id: null });
+
+    // A number is the company's once, whatever its case; another company, and a cancelled PO's
+    // number, are free.
+    await expect(po('po_2', 'po-100').run()).rejects.toThrow(/UNIQUE/);
+    await po('po_3', 'PO-100', '', 'po_other').run();
+    await db.prepare("UPDATE purchase_orders SET status = 'cancelled' WHERE id = 'po_1'").run();
+    await po('po_4', 'PO-100').run();
+    await po('po_5', 'PO-100', 'cancelled').run();
+
+    // An order has at most one PO; POs with no order share the null.
+    await db.prepare("UPDATE purchase_orders SET order_id = 'po_o' WHERE id = 'po_3'").run();
+    await expect(
+      db.prepare("UPDATE purchase_orders SET order_id = 'po_o' WHERE id = 'po_4'").run(),
+    ).rejects.toThrow(/UNIQUE/);
+
+    // A line sits once at its position in its PO.
+    const line = (position: number) =>
+      db
+        .prepare(
+          `INSERT INTO purchase_order_lines (po_id, position, sku, qty) VALUES ('po_3', ?, 'WID-100', 2)`,
+        )
+        .bind(position);
+    await line(0).run();
+    await expect(line(0).run()).rejects.toThrow(/UNIQUE|PRIMARY/);
+    await line(1).run();
+  });
+});

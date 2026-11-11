@@ -96,6 +96,28 @@ plan:
   (`needs_attention` and the inbox are the reads), so the filters aren't an API yet. Company approvals aren't
   decided inline from the inbox or its batch.
 
+**S6 is built**, on the defaults of D6 (a buyer's PO and the inbound EDI, email and punchout POs are all records; `commerce.generate_po` stays the supplier document) and D7 (a quote reaches an order through a PO draft: `quote_id` is nullable on the PO and left for S7), neither yet confirmed by the product owner. What depends on a default stays in one place: D6 is `PO_SOURCES` (`packages/core/src/b2b/purchase-orders.ts`), `recordInboundPo` and `PurchaseOrderStart`. Beyond the plan:
+
+- A PO's number is unique within its company among POs not cancelled (any case), so a cancelled PO gives its number back. Migration `0073`.
+- The engine ties an order to its PO, never the caller's meta: `StartOrderInput.purchaseOrder` is `{ link }` (submitting a PO) or `{ record }` (EDI and email), `fromOutside` drops a `link` from a caller, and `start` strips `meta.purchaseOrderId` from every caller and sets it itself, so the PO an order's progress is mirrored into is never one a caller named. The order is linked before its flow launches.
+- Submitting is idempotent by PO id (the start key is `po:<id>`, reserved from REST callers like the other core namespaces); a submit whose order never started finishes on the next try (the card seeds the flow first), a start that races a copy of itself replays instead of being refused, and a link the PO refuses stops the start. A cancel that lands between the submit and the link cancels the order that started after it: `cancelPo` re-reads the PO once it is cancelled and cancels an order the plan didn't know. The submit card lists the lines, what the buyer expects, the ship-to and the buyer.
+- The OrderAgent's mirror never throws past its report, wait or cancel: a failure is logged and retried from an alarm (`syncPo`), so `forgetEvents` and the `checkInstance` schedule still run.
+- An emailed PO is recorded only when the sender was authenticated (`INTAKE_REQUIRE_AUTH` on); otherwise anyone could write a company's POs.
+- Erasing a person blanks the ship-to name and street lines, the notes and the buyer on their companies' POs and those their member rows placed (number, status, lines, city, postcode and country stay); export lists them.
+- The PO's status mirror runs in the OrderAgent (`syncPurchaseOrder`, from `report`, `openWait`, `checkInstance` and the cancel), through `poProgressOf` and `syncPoFromOrder`, one lifecycle move at a time. `approved` is passed through when no approval is needed. A declined order is a rejection while the PO waits and a cancellation after. An approval gate that was rejected or timed out doesn't count as cleared (`poProgressOf` reads the node's `approved` branch), so its PO is rejected, never ordered first. A flow with no approval node is `proceeding` from the first report, so its PO is `ordered` while the order validates; a decline at validation then reads as a cancellation.
+- An inbound PO follows whatever flow its order routes to: EDI 850s and emailed POs run on the default B2B order flow unless `ORDER_ROUTES` sends `b2b:edi` or the mailbox to `tpl-b2b-purchase-order`. The order carries the record's number as `meta.poNumber` (unless the caller named one), so its invoice shows it, except an emailed PO's provisional one.
+- The template's approval threshold is the number in the flow's condition over `order.baseTotal` (D4), `5000` in the base currency; a deployment edits its copy.
+- This closes v1's audit gaps for editable draft POs and company-filtered PO lists: only a draft is editable, and every read takes a `scope`.
+
+Left for later:
+
+- Punchout POs aren't recorded: the plugin starts its orders through the plugin host API, and recording would need a manifest capability and a story for a changed PO version that replaces an order.
+- An email PO's record keeps its provisional number (`EML-…`) and no lines until a later change amends it from the extract node.
+- A PO has no total: the flow prices the order, and the order page has it.
+- Company-member access to POs waits for company-bound tokens (D11).
+- POs are in subject export and erasure but not the retention sweep (an erased order's PO keeps its words until the person is erased).
+- `quote_id` is S7's.
+
 | Slice | Scope | Depends on |
 |---|---|---|
 | S1 Companies (built) | `companies` (1:1 with a business customer), teams (a tree), members (fixed company roles, an optional per-member order limit), the buyer on an order, creating and editing customers. Lifecycles: company `pending → active ⇄ suspended → closed` (or `rejected`), member `invited → active ⇄ inactive → removed`. `validateOrder` declines orders from inactive companies or buyers. JSON Logic gains `company.*` and `buyer.*` | none |
@@ -103,7 +125,7 @@ plan:
 | S3 Credit ledger (built) | Holds taken by the credit check, guarded so the check and the hold are one batch and no interleaving exceeds a limit. Converted to the charge at invoicing, released on rollback, cancel and order end. Limit editing and adjustments (person-confirmed) | S1 |
 | S4 Budgets (built) | Per company and team, per calendar period, `strict` or `advisory`. Spend is a ledger keyed by order and step and summed per window, never a mutable counter. Reversed on rollback | S1 |
 | S5 Approvals (built) | `control.approval` gains approvers (`staff:<role>`, `company:<role>`, team, members) and a mode (`any`, `all`, `majority`, `quorum`). Votes are recorded once, and the OrderAgent resumes the wait only once the vote is decided, so the Workflow and its step names are unchanged. Thresholds are flow logic over `company.*`. No route approves outside the flow | S1 |
-| S6 Purchase orders | Buyer PO records with editable drafts. Submitting starts an order on a B2B PO flow, and the PO's status follows the order. Inbound EDI, email and punchout POs create records too | S1, S3, S4, S5 |
+| S6 Purchase orders (built) | Buyer PO records with editable drafts. Submitting starts an order on a B2B PO flow, and the PO's status follows the order. Inbound EDI and email POs create records too (punchout's is a follow-up) | S1, S3, S4, S5 |
 | S7 Quotes | Negotiated, versioned quotes. A `quote` price source with the highest priority, valid only while accepted, unexpired, for its company and within its quantities. Quote to PO draft, or straight to an order | S1, S2, S6 |
 | S8 Close | A B2B scenario and docs run, `patterns.md` and `port-map.md` updated, a `hexagonal-guardian` pass, a generated lifecycle reference | all |
 

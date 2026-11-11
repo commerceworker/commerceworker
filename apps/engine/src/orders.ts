@@ -1,3 +1,4 @@
+import { recordInboundPo } from '@commerceworker/application/commerce';
 import {
   type FlowVersion,
   newId,
@@ -11,10 +12,11 @@ import {
   startFingerprint,
   withoutSimulation,
 } from '@commerceworker/core';
+import { recordAudit } from './audit';
 import { rememberAddress } from './customer-addresses';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
-import { documentStore, orderRecords } from './wire';
+import { companyDirectory, documentStore, orderRecords, purchaseOrderStore } from './wire';
 import type { OrderWorkflowParams } from './workflow';
 
 /**
@@ -25,9 +27,77 @@ import type { OrderWorkflowParams } from './workflow';
  * order's webhooks at a platform.
  */
 export function fromOutside<T extends StartOrderInput>(req: T): T {
-  const meta = req.input.meta;
-  if (!meta || !('ucp' in meta || 'cart' in meta || 'plugin' in meta)) return req;
+  // `purchaseOrder` is the engine's own call to tie an order to a PO: a `link` from a caller would
+  // point an order at a PO it names, so it goes. A `record` is the web app's own, for an inbound PO.
+  const out: T = req.purchaseOrder && 'link' in req.purchaseOrder ? withoutLink(req) : req;
+  const meta = out.input.meta;
+  if (!meta || !('ucp' in meta || 'cart' in meta || 'plugin' in meta)) return out;
   const { ucp: _ucp, cart: _cart, plugin: _plugin, ...rest } = meta;
+  return { ...out, input: { ...out.input, meta: rest } };
+}
+
+function withoutLink<T extends StartOrderInput>(req: T): T {
+  const { purchaseOrder: _link, ...rest } = req;
+  return rest as T;
+}
+
+/**
+ * Ties the order to its purchase order, if the request names one, and returns the PO for
+ * `meta.purchaseOrderId`: the one place that meta is set, so the PO an order's progress is mirrored
+ * into is never one a caller named. A `link` ties the order a submitted PO starts; a `record` writes
+ * the PO an inbound order is (EDI, email), once per order, and an order whose PO can't be recorded
+ * (no company, a number the company already holds) goes ahead without one. Safe to repeat.
+ */
+async function tiePurchaseOrder(
+  env: Env,
+  req: StartOrderInput,
+  orderId: string,
+  now: number,
+): Promise<{ id: string; poNumber: string | null } | undefined> {
+  const want = req.purchaseOrder;
+  if (!want) return undefined;
+  const store = purchaseOrderStore(env);
+  if ('link' in want) {
+    // The order exists but isn't this PO's: its progress must never reach another's, so it stops here.
+    if (!(await store.linkOrder({ all: true }, want.link, orderId, now)))
+      throw new Error(`Purchase order ${want.link} can't be tied to order ${orderId}`);
+  } else {
+    const input = orderInputSchema.parse(req.input);
+    const r = await recordInboundPo(
+      { purchaseOrders: store, companies: companyDirectory(env) },
+      {
+        orderId,
+        companyId: input.customerId,
+        poNumber: want.record.poNumber,
+        source: want.record.source,
+        currency: input.currency,
+        lines: input.lines,
+        shipTo: input.meta.shipTo,
+        buyerId: orderBuyerId(input.meta),
+      },
+      now,
+    );
+    if (!r.ok)
+      console.warn(
+        JSON.stringify({ type: 'purchase_order_not_recorded', orderId, error: r.error }),
+      );
+    else if (r.audit)
+      await recordAudit(env, r.audit.action, {
+        actor: { kind: 'channel', id: `${want.record.source}`, name: want.record.source },
+        target: r.audit.target ?? null,
+        detail: r.audit.detail,
+      });
+  }
+  const po = await store.byOrder(orderId);
+  // An emailed PO's number is provisional, so it stays off the invoice; the others' is the buyer's own.
+  return po && { id: po.id, poNumber: po.source === 'email' ? null : po.poNumber };
+}
+
+/** What a caller's `meta` may carry into an order: nothing that names a PO. */
+function withoutPurchaseOrderId<T extends StartOrderInput>(req: T): T {
+  const meta = req.input.meta;
+  if (!meta || !('purchaseOrderId' in meta)) return req;
+  const { purchaseOrderId: _po, ...rest } = meta;
   return { ...req, input: { ...req.input, meta: rest } };
 }
 
@@ -56,10 +126,11 @@ async function start(
 ): Promise<StartOrderOnceResult> {
   // Every way in (the web app, the REST API, inbound orders, email, A2A, UCP) starts here, so a
   // simulated failure can't reach a deployment that doesn't allow them, whoever asks.
-  const req =
+  const req = withoutPurchaseOrderId(
     String(env.SIMULATE_FAILURES) === 'true'
       ? asked
-      : { ...asked, input: withoutSimulation(asked.input) };
+      : { ...asked, input: withoutSimulation(asked.input) },
+  );
   const fingerprint = key ? (given ?? (await startFingerprint(req))) : null;
   const existing = async () => (key ? await orderRecords(env).byIdempotencyKey(key) : undefined);
   const replay = async (
@@ -73,7 +144,8 @@ async function start(
     ) {
       const flow = await loadFlowVersion(env, row.flowId, row.flowVersion);
       if (!flow) throw new Error(`Flow ${row.flowId} v${row.flowVersion} not found`);
-      await launch(env, req, flow, row.id, row.createdAt);
+      const po = await tiePurchaseOrder(env, req, row.id, row.createdAt);
+      await launch(env, req, flow, row.id, row.createdAt, po);
     }
     return { orderId: row.id, replayed: true };
   };
@@ -83,6 +155,18 @@ async function start(
   const flow = await loadFlowVersion(env, req.flowId, req.version);
   if (!flow) throw new Error(`Flow ${req.flowId} has no published version`);
   const input = orderInputSchema.parse(req.input);
+  if (req.purchaseOrder && 'link' in req.purchaseOrder) {
+    // Refused before the order exists, so a PO that can't be this order's leaves nothing behind.
+    const po = await purchaseOrderStore(env).get({ all: true }, req.purchaseOrder.link);
+    if (po?.orderId && key) {
+      // It has an order. If that is this request's (a submit whose first try got that far, or a
+      // retry that raced it), this is a replay of it, not a refusal.
+      const started = await existing();
+      if (started) return replay(started);
+    }
+    if (!po || po.companyId !== input.customerId || po.orderId)
+      throw new Error(`Purchase order ${req.purchaseOrder.link} can't start this order`);
+  }
   const orderId = newId('ord');
   const now = Date.now();
   try {
@@ -120,7 +204,8 @@ async function start(
   } catch (err) {
     console.error(JSON.stringify({ type: 'customer_address_failed', orderId, error: String(err) }));
   }
-  await launch(env, req, flow, orderId, now);
+  const po = await tiePurchaseOrder(env, req, orderId, now);
+  await launch(env, req, flow, orderId, now, po);
   return { orderId };
 }
 
@@ -133,10 +218,19 @@ async function launch(
   flow: FlowVersion,
   orderId: string,
   createdAt: number,
+  po?: { id: string; poNumber: string | null },
 ) {
   const input = orderInputSchema.parse(req.input);
   const order: Order = {
     ...input,
+    // The PO's number is the buyer's reference on the invoice, unless the caller named one.
+    meta: po
+      ? {
+          ...(po.poNumber ? { poNumber: po.poNumber } : {}),
+          ...input.meta,
+          purchaseOrderId: po.id,
+        }
+      : input.meta,
     id: orderId,
     createdAt,
     subtotal: 0,

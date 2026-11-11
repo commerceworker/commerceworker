@@ -26,6 +26,13 @@ import {
   MEMBER_STATUSES,
   updateCustomerInput,
 } from './b2b/companies';
+import {
+  createPoDraftInput,
+  PO_PAGE,
+  PO_SOURCES,
+  PO_STATUSES,
+  updatePoDraftInput,
+} from './b2b/purchase-orders';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
 import { CREDIT_ENTRY_KINDS, MAX_CREDIT_ADJUSTMENT } from './credit';
 import { FX_SOURCES } from './fx';
@@ -660,6 +667,38 @@ export const TOOL_INPUTS = {
     budgetId: z.string().max(100),
     status: z.enum(BUDGET_STATUSES),
   }),
+  list_purchase_orders: z.object({
+    companyId: z.string().max(100).optional().describe('Only this company’s purchase orders'),
+    status: z.enum(PO_STATUSES).optional(),
+    buyerId: z.string().max(100).optional().describe('Only POs this company member placed'),
+    search: z.string().max(100).optional().describe('Part of the PO number'),
+    from: z.iso.date().optional().describe('Created on or after this day (UTC), YYYY-MM-DD'),
+    to: z.iso.date().optional().describe('Created on or before this day (UTC), YYYY-MM-DD'),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(PO_PAGE.max)
+      .optional()
+      .describe(`Default ${PO_PAGE.default}`),
+  }),
+  get_purchase_order: z.object({ poId: z.string().min(1).max(100) }),
+  create_po_draft: createPoDraftInput,
+  update_po_draft: updatePoDraftInput,
+  submit_po: z.object({
+    poId: z.string().min(1).max(100),
+    flowId: z
+      .string()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('The flow to run it on; defaults to the B2B purchase order flow'),
+  }),
+  cancel_po: z.object({
+    poId: z.string().min(1).max(100),
+    reason: z.string().trim().min(1).max(500).optional().describe('Kept on the order’s timeline'),
+  }),
   set_member_role: z.object({ userId: z.string().max(60), role: z.enum(ROLES) }),
   set_approval_separation: z.object({ on: z.boolean() }),
   set_assistant_routing: z.object({ on: z.boolean() }),
@@ -772,6 +811,30 @@ const budgetOutput = row({
     .describe('The window now; null before the budget starts'),
   spent: z.number().describe('Committed in the current window'),
   remaining: z.number().describe('Amount less spent; negative when over'),
+});
+
+const poLineOutput = row({
+  sku: z.string(),
+  name: z.string().nullable(),
+  qty: z.number(),
+  unitPrice: z.number().nullable().describe('What the buyer expected to pay; the flow prices it'),
+});
+const purchaseOrderOutput = row({
+  id: z.string(),
+  companyId: z.string(),
+  buyerId: z.string().nullable(),
+  poNumber: z.string(),
+  status: z.enum(PO_STATUSES),
+  currency: z.string(),
+  shipTo: z.record(z.string(), z.string()).nullable(),
+  notes: z.string().nullable(),
+  quoteId: z.string().nullable(),
+  orderId: z.string().nullable().describe('The order it started; null until submitted'),
+  source: z.enum(PO_SOURCES),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  lineCount: z.number().optional(),
+  lines: z.array(poLineOutput).optional(),
 });
 
 const feedOutput = row({
@@ -1227,6 +1290,24 @@ export const TOOL_OUTPUTS = {
   }),
   put_budget: actionOutput,
   set_budget_status: actionOutput,
+  list_purchase_orders: row({
+    purchaseOrders: z.array(purchaseOrderOutput),
+    total: z.number().describe('Every purchase order the filters match'),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
+  }),
+  get_purchase_order: row({ purchaseOrder: purchaseOrderOutput }),
+  create_po_draft: row({
+    done: z.string().describe('What happened'),
+    href: z.string(),
+    purchaseOrder: purchaseOrderOutput,
+  }),
+  update_po_draft: row({
+    done: z.string().describe('What happened'),
+    href: z.string(),
+    purchaseOrder: purchaseOrderOutput,
+  }),
+  submit_po: actionOutput,
+  cancel_po: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
@@ -1297,6 +1378,12 @@ export const REST_OPERATION_TOOLS = [
   'list_budgets',
   'put_budget',
   'set_budget_status',
+  'list_purchase_orders',
+  'get_purchase_order',
+  'create_po_draft',
+  'update_po_draft',
+  'submit_po',
+  'cancel_po',
   'run_stock_review',
   'find_products',
   'assess_order',

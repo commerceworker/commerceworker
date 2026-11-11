@@ -5,6 +5,7 @@ import {
   paymentSource,
   type ShopifyOrder,
   shopifyToInbound,
+  toStartRequest,
   verifyShopifyHmac,
   x12FunctionalAck,
   x12850ToInbound,
@@ -182,6 +183,22 @@ describe('X12 850', () => {
       error: 'SE for 0001 counts 10 segments; the transaction has 11',
     });
     expect(parseX12('hello')).toMatchObject({ ok: false });
+  });
+
+  it('carries the 850’s ship-to into the order’s meta, where a purchase order record reads it', () => {
+    const p = parseX12(interchange('*', '~', [po850('*', '~', '0001', 'NW-7781', lines('*'))]));
+    if (!p.ok) throw new Error(p.error);
+    const r = x12850ToInbound(p.interchange.transactions[0]!, {
+      sender: 'NORTHWIND',
+      customerId: 'cus_northwind',
+    });
+    if (!r.ok) throw new Error(r.error);
+    // The mapper puts it at the top level; starting the order moves it to `meta.shipTo`.
+    const start = toStartRequest(inboundOrderSchema.parse(r.order), 'tpl-b2b-order');
+    expect(start.input.meta).toMatchObject({
+      shipTo: { name: 'Northwind Dock 4', line1: '500 Harbor Way', city: 'Oakland' },
+      edi: { poNumber: 'NW-7781' },
+    });
   });
 
   it('refuses an 850 with no PO number, a bad line count or a line without a part number', () => {

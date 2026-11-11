@@ -275,6 +275,74 @@ describe('planner', () => {
   });
 });
 
+describe('the B2B purchase order template', () => {
+  const flow = tpl('tpl-b2b-purchase-order');
+  const node = (id: string) => flow.nodes.find((n) => n.id === id)!;
+  const THROUGH = ['po', 'validate', 'price', 'tax', 'credit', 'budget'];
+
+  it('is configured as the plan says', () => {
+    expect(flow.model).toBe('b2b');
+    expect(node('credit').config).toMatchObject({ hold: true });
+    expect(node('budget').config).toMatchObject({ source: 'company', commit: true });
+    expect(node('threshold').config.expression).toEqual({
+      '>': [{ var: 'order.baseTotal' }, 5000],
+    });
+    expect(node('approval').config).toMatchObject({ approvers: 'company:approver', mode: 'any' });
+    expect(node('invoice').config).toMatchObject({ terms: 'net_30' });
+  });
+
+  it('skips the approval for a PO within credit, budget and the threshold', () => {
+    const { ran, ended, state } = simulate(flow, (id) =>
+      id === 'threshold' ? ['false'] : undefined,
+    );
+    expect(ended).toBe('done');
+    expect(ran).toEqual([...THROUGH, 'threshold', 'reserve', 'invoice', 'ship', 'done']);
+    expect(state.nodes.approval!.status).toBe('skipped');
+  });
+
+  it('asks a company approver above the threshold, and carries on once approved', () => {
+    const { ran, ended } = simulate(flow, (id) => (id === 'threshold' ? ['true'] : undefined));
+    expect(ended).toBe('done');
+    expect(ran).toEqual([
+      ...THROUGH,
+      'threshold',
+      'approval',
+      'reserve',
+      'invoice',
+      'ship',
+      'done',
+    ]);
+  });
+
+  it('sends an order over its credit limit or a strict budget to the approver too', () => {
+    const overCredit = simulate(flow, (id) => (id === 'credit' ? ['over_limit'] : undefined));
+    expect(overCredit.ran).toContain('approval');
+    // The threshold isn't asked: credit sent it straight to the approval.
+    expect(overCredit.ran).not.toContain('budget');
+    expect(overCredit.state.nodes.threshold!.status).toBe('skipped');
+    const overBudget = simulate(flow, (id) => (id === 'budget' ? ['over'] : undefined));
+    expect(overBudget.ran).toContain('approval');
+    expect(overBudget.state.nodes.threshold!.status).toBe('skipped');
+  });
+
+  it('ends declined when the approver rejects or nobody decides, and failed on no stock', () => {
+    const rejected = simulate(flow, (id) =>
+      id === 'threshold' ? ['true'] : id === 'approval' ? ['rejected'] : undefined,
+    );
+    expect(rejected.ended).toBe('declined');
+    expect(rejected.state.nodes.reserve!.status).toBe('skipped');
+    const escalated = simulate(flow, (id) =>
+      id === 'threshold' ? ['true'] : id === 'approval' ? ['escalated'] : undefined,
+    );
+    expect(escalated.ended).toBe('expired');
+    const noStock = simulate(flow, (id) =>
+      id === 'threshold' ? ['false'] : id === 'reserve' ? ['backorder'] : undefined,
+    );
+    expect(noStock.ended).toBe('backorder');
+    expect(noStock.state.nodes.invoice!.status).toBe('skipped');
+  });
+});
+
 describe('validateGraph', () => {
   const base = (): FlowGraph => ({
     nodes: [

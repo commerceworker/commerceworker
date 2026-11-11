@@ -60,7 +60,7 @@
  *
  * Channel adapters:
  *   POST /api/v1/channels/shopify/orders         Shopify orders/create webhook (X-Shopify-Hmac-Sha256)
- *   POST /api/v1/channels/edi/850                raw X12 850 interchange (operator; EDI_PARTNERS)
+ *   POST /api/v1/channels/edi/850                raw X12 850 interchange (operator; EDI_PARTNERS); each PO is also recorded as a purchase order
  */
 
 import { env } from 'cloudflare:workers';
@@ -83,6 +83,7 @@ import {
   PLUGIN_BUNDLE_MAX_BYTES,
   PLUGIN_ID_RE,
   type Principal,
+  type PurchaseOrderStart,
   parseEdiPartners,
   parseOrderRoutes,
   parseX12,
@@ -886,6 +887,8 @@ async function startInbound(
   o: InboundOrder,
   trail: InboundTrail,
   known?: Awaited<ReturnType<typeof currencies>>,
+  /** Set when the order is a company's PO (EDI 850): the engine records the PO beside it. */
+  purchaseOrder?: PurchaseOrderStart,
 ): Promise<InboundOutcome> {
   if (!(known ?? (await currencies())).some((c) => c.currency === o.currency))
     return {
@@ -900,6 +903,7 @@ async function startInbound(
     // finds its order after the flow is unpublished or the routes change.
     const res = await engine().startOrderOnce({
       ...toStartRequest(o, flowId),
+      ...(purchaseOrder ? { purchaseOrder } : {}),
       fingerprint: await inboundFingerprint(o),
     });
     if ('mismatch' in res)
@@ -1009,10 +1013,14 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
     const valid = inboundOrderSchema.safeParse(mapped.order);
     if (!valid.success)
       return { control: tx.control, status: 400, error: valid.error.issues[0]?.message };
-    const r = await startInbound(valid.data, trail, known);
+    const poNumber = (mapped.order.meta.edi as { poNumber: string }).poNumber;
+    // The PO is a record of its company too, in submitted, as EDI.
+    const r = await startInbound(valid.data, trail, known, {
+      record: { source: 'edi', poNumber },
+    });
     return {
       control: tx.control,
-      poNumber: (mapped.order.meta.edi as { poNumber: string }).poNumber,
+      poNumber,
       status: r.status,
       ...r.body,
     };

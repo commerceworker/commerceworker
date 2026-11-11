@@ -36,6 +36,7 @@ import {
   ChevronsUpDown,
   ChevronUp,
   Ellipsis,
+  FileText,
   Gauge,
   LayoutDashboard,
   MessageSquareText,
@@ -174,6 +175,7 @@ const NAV: NavItem[] = [
   { to: '/carts', label: 'Carts', icon: ShoppingCart },
   { to: '/flows', label: 'Flows', icon: Workflow, section: 'Build' },
   { to: '/commerce', label: 'Commerce', icon: Store, section: 'Reference' },
+  { to: '/purchase-orders', label: 'Purchase orders', icon: FileText, section: 'Reference' },
   { to: '/catalog', label: 'Catalog', icon: Package, section: 'Reference' },
   { to: '/performance', label: 'Performance', icon: Gauge, section: 'Reference' },
 ];

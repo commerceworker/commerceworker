@@ -14,6 +14,7 @@ import {
   authenticated,
   CUSTOMER_MATCHED_BY,
   composeDocument,
+  fingerprintOf,
   flowForMailbox,
   htmlToText,
   type IntakeAttachment,
@@ -102,6 +103,19 @@ export async function receiveEmail(
   const result = await startOrderOnce(env, {
     flowId,
     idempotencyKey: `email:${messageId}`,
+    // A company's emailed PO is a record too (D6). Its own number isn't known until the extract
+    // node reads the document, so the record carries one made from the message until then.
+    // Not when the sender wasn't authenticated: anyone could then write a company's POs.
+    ...(sender.customerId && checked
+      ? {
+          purchaseOrder: {
+            record: {
+              source: 'email' as const,
+              poNumber: `EML-${(await fingerprintOf(messageId)).slice(0, 10).toUpperCase()}`,
+            },
+          },
+        }
+      : {}),
     input: {
       model: flow.model,
       channel: 'email',

@@ -7,6 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readAttachments, receiveEmail } from '../src/email';
 import { ensureTemplates } from '../src/flows';
 import { EXECUTORS } from '../src/nodes';
+import { purchaseOrderStore } from '../src/wire';
 
 type Sent = { reject?: string; replies: unknown[] };
 
@@ -123,6 +124,18 @@ describe('email intake', () => {
     });
     expect(await env.DOCS.head(`orders/${orderId}/inbound/message.eml`)).not.toBeNull();
 
+    // A company's emailed PO is a record too, from the message: its own number isn't read yet.
+    const po = await purchaseOrderStore(env).byOrder(orderId);
+    expect(po).toMatchObject({
+      companyId: 'cus_northwind',
+      source: 'email',
+      orderId,
+      poNumber: expect.stringMatching(/^EML-[0-9A-F]{10}$/),
+    });
+    expect(s.order!.meta.purchaseOrderId).toBe(po?.id);
+    // The provisional number stays off the invoice.
+    expect(s.order!.meta.poNumber).toBeUndefined();
+
     // The AI extract node reads lines from the body and the attachment.
     const extracted = await (async () => {
       for (let i = 0; i < 100; i++) {
@@ -141,6 +154,15 @@ describe('email intake', () => {
     const again = inbound(mail);
     expect(await receiveEmail(again.message, env)).toEqual({ status: 'duplicate', orderId });
     expect(again.sent.replies).toHaveLength(0);
+    expect(
+      (
+        await purchaseOrderStore(env).list(
+          { all: true },
+          { companyId: 'cus_northwind' },
+          { limit: 50 },
+        )
+      ).rows.filter((r) => r.source === 'email'),
+    ).toHaveLength(1);
     const rows = await db()
       .select()
       .from(inboundEmails)
@@ -208,6 +230,33 @@ describe('email intake', () => {
     const s = await state((out as { orderId: string }).orderId);
     expect(s.order).toMatchObject({ model: 'procurement', customerId: undefined });
     expect(s.order!.meta).toMatchObject({ senderMatch: 'allowlist' });
+    // No customer, so no company to keep a PO for.
+    expect(
+      await purchaseOrderStore(env).byOrder((out as { orderId: string }).orderId),
+    ).toBeUndefined();
+    expect(s.order!.meta.purchaseOrderId).toBeUndefined();
+  });
+});
+
+describe('email intake without a sender check', () => {
+  it('records no purchase order for a sender that wasn’t authenticated', async () => {
+    const mail = inbound({
+      from: 'purchasing@northwind.example',
+      to: 'orders@commerceworker.com',
+      subject: 'PO unchecked',
+      body: '1 x WID-100',
+      messageId: '<unchecked-po@northwind.example>',
+      auth: 'mx.cloudflare.net; dmarc=fail; spf=fail',
+    });
+    const out = await receiveEmail(mail.message, {
+      ...env,
+      INTAKE_REQUIRE_AUTH: 'false',
+    } as unknown as Env);
+    expect(out).toMatchObject({ status: 'accepted' });
+    const orderId = (out as { orderId: string }).orderId;
+    // The order runs (and is held to no exemptions), but anyone could have sent it as the company.
+    expect(await purchaseOrderStore(env).byOrder(orderId)).toBeUndefined();
+    expect((await state(orderId)).order!.meta.purchaseOrderId).toBeUndefined();
   });
 });
 

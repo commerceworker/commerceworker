@@ -73,7 +73,14 @@ export async function invoiceOrder(
     order.id,
     'invoice',
     `${stepKey.replace('#', '-')}.html`,
-    renderDocument(`Invoice ${order.id}`, order, now, { Terms: opts.terms, Due: due }),
+    renderDocument(`Invoice ${order.id}`, order, now, {
+      // A buyer's PO number (`meta.poNumber`) is what their accounts payable matches an invoice to.
+      ...(typeof order.meta?.poNumber === 'string' && order.meta.poNumber
+        ? { 'PO number': order.meta.poNumber }
+        : {}),
+      Terms: opts.terms,
+      Due: due,
+    }),
   );
   const customer = await ports.pricing.customer(order.customerId);
   const owed =

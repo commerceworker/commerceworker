@@ -188,3 +188,4 @@
 ^packages/design/src/tokens\.ts$	apps/docs/src/styles/content.css apps/studio/DESIGN.md	prose
 ^package\.json$	docs/content/development.md	prose
 ^(packages/core/src/b2b/budgets\.ts|packages/(db/src/budget-store|application/src/commerce/budgets|ports/src/commerce/budgets)\.ts|apps/engine/src/assistant/budgets\.ts|apps/web/app/components/budgets\.tsx)$	guides/companies reference/mcp reference/rest-api docs/data-model.md docs/b2b.md	prose
+^(packages/core/src/b2b/purchase-orders\.ts|packages/(db/src/purchase-order-store|application/src/commerce/purchase-orders|ports/src/commerce/purchase-orders)\.ts|apps/engine/src/assistant/purchase-orders\.ts)$	guides/purchase-orders guides/companies reference/mcp reference/rest-api docs/data-model.md docs/b2b.md	prose

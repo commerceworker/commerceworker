@@ -127,6 +127,7 @@ import {
   runPriceBookEntries,
   runPriceBookStatus,
 } from './price-books';
+import { previewCancelPo, previewSubmitPo, runCancelPo, runSubmitPo } from './purchase-orders';
 
 export class Refused extends Error {}
 
@@ -511,6 +512,8 @@ export type ActionInput = {
   put_company_team: ToolInput<'put_company_team'>;
   put_budget: ToolInput<'put_budget'>;
   set_budget_status: ToolInput<'set_budget_status'>;
+  submit_po: ToolInput<'submit_po'>;
+  cancel_po: ToolInput<'cancel_po'>;
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
@@ -823,6 +826,10 @@ export async function previewAction<T extends ActionTool>(
         return await previewBudget(env, input as ActionInput['put_budget'], roleBlock);
       case 'set_budget_status':
         return await previewBudgetStatus(env, input as ActionInput['set_budget_status'], roleBlock);
+      case 'submit_po':
+        return await previewSubmitPo(env, input as ActionInput['submit_po'], roleBlock);
+      case 'cancel_po':
+        return await previewCancelPo(env, input as ActionInput['cancel_po'], roleBlock);
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -1182,6 +1189,10 @@ export async function runAction<T extends ActionTool>(
       return runBudget(env, p, input as ActionInput['put_budget'], trail);
     case 'set_budget_status':
       return runBudgetStatus(env, p, input as ActionInput['set_budget_status'], trail);
+    case 'submit_po':
+      return runSubmitPo(env, p, input as ActionInput['submit_po'], trail);
+    case 'cancel_po':
+      return runCancelPo(env, p, input as ActionInput['cancel_po'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

@@ -73,8 +73,10 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'put_price_book_entries',
   'put_contract_prices',
   'set_price_book_status',
-  // Archiving a budget is final.
+  // Archiving a budget is final; submitting a PO starts an order and cancelling one cancels it.
   'set_budget_status',
+  'submit_po',
+  'cancel_po',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -111,6 +113,9 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'set_price_book_status',
   'assign_price_book',
   'set_budget_status',
+  // The same PO again starts no second order and finds the cancel done.
+  'submit_po',
+  'cancel_po',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -124,6 +129,8 @@ const IDEMPOTENT = new Set<AssistantTool>([
 const OPEN_WORLD = new Set<AssistantTool>([
   'cancel_order',
   'submit_cart',
+  'submit_po',
+  'cancel_po',
   'run_stock_review',
   'start_order',
   'restart_order',

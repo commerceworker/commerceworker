@@ -103,7 +103,7 @@ unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
 
 An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order`, `submit_cart`,
 `publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, the [price book](/guides/price-books/) writes (`create_price_book`, `set_price_book_status`, `put_price_book_entries`, `assign_price_book`, `put_contract_prices`), `set_fx_rate`,
-`verify_tax_certificate`, `revoke_tax_certificate`, `set_credit_limit`, `adjust_credit`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the [budget](#budgets) tools (`put_budget`, `set_budget_status`), the admin tools (`set_member_role`,
+`verify_tax_certificate`, `revoke_tax_certificate`, `set_credit_limit`, `adjust_credit`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the [budget](#budgets) tools (`put_budget`, `set_budget_status`), the [purchase order](#purchase-orders) tools (`submit_po`, `cancel_po`), the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
 `uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
@@ -179,6 +179,8 @@ Annotations also tell a client when to confirm:
 | `put_price_book_entries`, `put_contract_prices`, `set_price_book_status` | `destructiveHint: true` and `idempotentHint: true`: they replace what buyers pay (or, archiving, retire a book for good), and the same input again changes nothing more |
 | `set_budget_status` | `destructiveHint: true` and `idempotentHint: true`: archiving a budget is final, and the same move again changes nothing |
 | `put_budget` | a write, not destructive, not idempotent: without a `budgetId` it adds another budget |
+| `submit_po`, `cancel_po` | `destructiveHint: true` and `idempotentHint: true`: submitting starts an order (once per purchase order) and cancelling cancels it; the same call again changes nothing |
+| `create_po_draft`, `update_po_draft` | writes without a confirmation, not destructive: a draft starts nothing |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
 `assess_order` set `openWorldHint: true` (a started order runs its flow for real):
@@ -280,6 +282,23 @@ buyer pays: a budget holds an order only through a flow's Budget check).
 | `set_budget_status` | `{ companyId, budgetId, status }`: `active` and `paused` to each other, either to `archived`, which is final |
 
 Amounts are in the base currency. The previews say what the budget does to orders.
+
+## Purchase orders
+
+A company's [purchase orders](/guides/purchase-orders/) are two reads and four writes, REST's
+`/api/v1/purchase-orders` routes by another way in. They run the same code, so they refuse what REST
+refuses and write the same audit entries (`purchase_order.created`, `.updated`, `.submitted`,
+`.cancelled`). Reading needs the `viewer` role; the writes need `operator`, and an API token may use
+them. Drafting and editing a draft need no confirmation; submitting and cancelling do.
+
+| Tool | Does |
+|---|---|
+| `list_purchase_orders` | `{ companyId?, status?, buyerId?, search?, from?, to?, cursor?, limit? }`: a page of purchase orders, newest first (at most 100 a page); `from` and `to` are days (`YYYY-MM-DD`, UTC, inclusive). Answers `purchaseOrders`, `total` and the next `cursor` (`null` at the end). `readOnlyHint: true` |
+| `get_purchase_order` | `{ poId }`: one purchase order with its `lines`, ship-to, notes and the `orderId` it started. `readOnlyHint: true` |
+| `create_po_draft` | `{ companyId, poNumber, lines, buyerId?, currency?, shipTo?, notes?, quoteId? }`: saves a draft. The number is unique within the company; the company must be active and the buyer an active member of it |
+| `update_po_draft` | `{ poId, poNumber?, buyerId?, currency?, shipTo?, notes?, quoteId?, lines? }`: changes a draft; `lines` replaces the whole list. Refused once the purchase order is submitted |
+| `submit_po` | `{ poId, flowId? }`: submits a draft and starts its order on the B2B purchase order flow (or `flowId`), once however often it is called |
+| `cancel_po` | `{ poId, reason? }`: cancels a purchase order that hasn't ended, and its order if it is running |
 
 ## Exchange rates
 

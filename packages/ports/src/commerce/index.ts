@@ -27,6 +27,7 @@ export * from './plugin-installs';
 export * from './price-books';
 export * from './pricing';
 export * from './product-index';
+export * from './purchase-orders';
 export * from './retention';
 export * from './scim-directory';
 export * from './sealed-secrets';

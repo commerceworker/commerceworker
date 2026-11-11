@@ -1,6 +1,6 @@
 ---
 title: Companies
-description: A business customer's company, its status, members, roles and teams; how an order from a company is accepted or declined; its budgets; and what flows and promotions can read of them.
+description: A business customer's company, its status, members, roles and teams; how an order from a company is accepted or declined; its budgets and purchase orders; and what flows and promotions can read of them.
 ---
 
 A business customer is a company. It has a status, a legal name and tax id, and optionally a parent
@@ -143,3 +143,9 @@ when it ends declined or cancelled. An order that completes keeps it.
 Staff and agents manage budgets over the [REST API](/reference/rest-api/), the
 [assistant](/guides/assistant/) and [MCP](/reference/mcp/#budgets); changes ask first on a confirm
 card, and anyone who can see the company can read its budgets.
+
+## Purchase orders
+
+A company's buyers' purchase orders are records of their own, with editable drafts, and a submitted
+one starts an order that is held to the company's credit and budgets. See
+[Purchase orders](/guides/purchase-orders/).

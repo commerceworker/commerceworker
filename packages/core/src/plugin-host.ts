@@ -210,6 +210,8 @@ export const RESERVED_ORDER_KEY_PREFIXES = [
   'a2a:',
   'assistant:',
   'replenish:',
+  // A submitted purchase order's own order start (`poOrderKey`).
+  'po:',
 ] as const;
 
 export const reservedOrderKey = (key: string) =>
