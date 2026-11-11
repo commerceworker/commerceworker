@@ -26,7 +26,7 @@ a comment, if the user prefers a green suite), and report the bug with the faili
 
 - Never update a golden value in `packages/core/tests/product-routing.test.ts`, and never edit
   `packages/core/tests/fixtures/ucp`. The hooks deny or ask; respect the answer.
-- vitest stays at 5.0.3.
+- vitest stays at 5.0.5, and every workerd project sets `fsModuleCache: false`.
 - No sleeps. Engine waits are disabled or forced with `introspectWorkflow` + `modifyAll`.
 - Test the second run of things: a retried step, a replayed report, a reused idempotency key, an
   expired or forged credential, a compensation that runs twice.

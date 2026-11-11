@@ -32,8 +32,10 @@ themselves with actionlint and zizmor (`.github/zizmor.yml`; locally, `actionlin
 | `apps/web` | Node | `apps/web/vitest.config.ts` |
 
 :::caution
-vitest is pinned to `5.0.3` in the workspace catalog (`pnpm-workspace.yaml`): 5.0.4's module cache
-breaks `@cloudflare/vitest-plugin`. Don't bump it without running the engine and catalog suites.
+vitest is pinned to `5.0.5` in the workspace catalog (`pnpm-workspace.yaml`), and every workerd
+project sets `fsModuleCache: false`: since 5.0.4 the Workers pool shares one module cache, which
+parallel suites would read while another rewrites it. Don't bump it without running the engine and
+catalog suites.
 :::
 
 ## Core: the planner and pure logic
