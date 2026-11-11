@@ -38,6 +38,8 @@ gh run view <run-id> --log-failed | tail -200       # the failing steps' logs
 | workflows: actionlint / zizmor | a finding with a file and line in `.github/` | **code** | `actionlint` and `uvx zizmor .github` locally; fix it, or ignore it in place with a reason (`# zizmor: ignore[rule]`) |
 | devices (web n/4) / devices (storefront) | a Playwright failure, retried twice | **code** or **flake** | Download its `device-test-traces-<job>` artifact; run that shard locally (`playwright test --shard=n/4`) |
 | checks: Test fleet | `scripts/fleet.test.ts` | **code** | `pnpm test:fleet` locally |
+| checks: Test fleet | `scripts/turbo-cache.test.ts`: "`<file>` must change the hash of `<task>`" | **code** | A task reads a file turbo doesn't know about: declare it in that package's `turbo.json` (`inputs`, or `dependsOn` its package's `transit`) |
+| a push to main (or the nightly) fails a task its pull request passed | the task was replayed from turbo's cache on the PR | **code** (a missing turbo input) | Fix the break, then declare the input the task read and add a case to `scripts/turbo-cache.test.ts`, so the next PR runs it |
 | checks: Audit dependencies | an advisory at high or critical | **dependency** | Update or override the package; say which advisory |
 | plan | "missing d1Id / catalogKvId / plugin d1Id" | **provisioning** | The deployment isn't provisioned. The user runs `./scripts/provision.sh <id>`, or sets `"hold": true` |
 | deploy: Check deploy credentials / Collect secrets | missing `CLOUDFLARE_API_TOKEN`, `PRINCIPAL_KEY`, `DATA_KEY`, `STRIPE_SECRET_KEY` (or wrong mode) | **secrets** | The user adds it to the deployment's GitHub environment. Nothing was migrated |

@@ -191,7 +191,9 @@ repository variable `DEPLOY_ENABLED` is `true`, CI only verifies: the `plan` job
 needs, is skipped, and so is the nightly demo reset. `.github/workflows/ci.yml` runs lint,
 type-check, build, the fleet tests (`pnpm test:fleet`), the Claude Code toolkit's tests
 (`pnpm test:toolkit`) and `pnpm audit --prod --audit-level high` (the `checks` job) and the tests,
-split across three `test (…)` jobs, on every push and pull request; the `verify` job passes only
+split across three `test (…)` jobs, on every push, pull request and merge-queue group (pull requests
+and the queue replay unchanged packages from turbo's cache; a push to `main` runs everything:
+[Testing](testing.md)); the `verify` job passes only
 when all of them did, and it is what `plan` (so every deploy) needs. The `workflows` job lints the
 workflows with actionlint and zizmor. Beside them run the web app's and the storefront's
 [device tests](testing.md#devices-the-web-app-on-iphone-and-ipad), in five `devices (…)` jobs summed

@@ -9,15 +9,22 @@ it across three `test (…)` jobs: `engine`, `content` (the studio, pipeline and
 (every other package; it excludes exactly the packages the named shards take, so a new package is
 always tested). Each runs two test tasks at a time (`TURBO_CONCURRENCY: 2`: on the runner's 4
 vCPUs, turbo's default of ten starved the catalog's Durable Object tests past their timeouts).
-Nothing is cached between runs: a test task's hash covers its own package's files, not its
-dependencies' source, so a cached pass could hide a break in `packages/core`. Beside them, the
+Each job keeps turbo's task cache between runs, so a package no change touched replays its passing
+result. A task's hash covers its package's files, every package it depends on however far away
+(the `transit` task in `turbo.json`), and each file it reads from outside its package, declared in
+the package's own `turbo.json`; `scripts/turbo-cache.test.ts` (in `pnpm test:fleet`) changes each
+such file and checks the hash moves. A new test or build that reads a file from another package
+that isn't a dependency (by path, or through a Vite or vitest config) declares it there, as an
+`inputs` path or a dependency on that package's `transit`, with a case in that test. Only pull
+requests and the merge queue read the cache; a push to `main`, the nightly and a manual run do
+every task from scratch, so a hash missing an input can't reach a deploy. Beside them, the
 `checks` job runs lint, type-check, build, `pnpm test:fleet`, `pnpm test:toolkit` and the audit of
 production dependencies, each step running even when an earlier one failed, and a job named
 `verify` passes only when every one of those jobs did. The `workflows` job lints the workflows
 themselves with actionlint and zizmor (`.github/zizmor.yml`; locally, `actionlint` and
 `uvx zizmor .github`). Device-test jobs run the web app's and the storefront's
-[device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit, and on a pull request a
-`commits` job lints each commit message against Conventional Commits (`commitlint.config.ts`).
+[device tests](#devices-the-web-app-on-iphone-and-ipad) in WebKit, and on a pull request and in
+the merge queue a `commits` job lints each commit message against Conventional Commits (`commitlint.config.ts`).
 
 | Package | Environment | Config |
 |---|---|---|
