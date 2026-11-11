@@ -228,7 +228,7 @@ jobs:
   # account is needed. The admin's suite is split four ways with Playwright's --shard, and the
   # storefront's runs beside it: each job has its own dev server, still running one test at a time
   # (playwright.config.ts), so splitting changes nothing a test sees.
-  # On ubuntu-latest (26.04) like every other job: Playwright 1.64 ships WebKit built for 26.04. The
+  # On ubuntu-latest (26.04) like every other job: Playwright 1.65 ships WebKit built for 26.04. The
   # cache key below includes the Ubuntu release, so a build for one image is never loaded on another
   # (an older WebKit linked 24.04's ICU and couldn't start on 26.04).
   device-tests:
