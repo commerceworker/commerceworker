@@ -230,7 +230,7 @@ if they differ) and generates the docs theme. After changing a token: change `to
   D1 bookmark, migrates D1, deploys catalog, delivery, plugins (with their own migrations),
   engine, web and docs, smoke-tests, and rolls the Workers back on failure (D1 stays migrated;
   `docs/deploy.md` "Restoring D1"). If a deploy job fails, re-run its failed jobs.
-- vitest is pinned to 5.0.3: 5.0.4's module cache breaks `@cloudflare/vitest-plugin`.
+- vitest is pinned to 5.0.5, and every workerd project sets `fsModuleCache: false`: since 5.0.4 the Workers pool shares one module cache, which parallel suites would otherwise read while another rewrites it.
 - `@callable()` uses TC39 decorators; `apps/web/vite.config.ts` and `apps/engine/vitest.config.ts`
   include `agents/vite` so they're transformed.
 - After changing an app's `wrangler.jsonc`: `pnpm --filter @commerceworker/<app> types`.

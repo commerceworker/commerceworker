@@ -54,7 +54,7 @@ pnpm test                                                # everything, through t
 
 ## Rules
 
-- **vitest is pinned to 5.0.3** in `pnpm-workspace.yaml`; 5.0.4 breaks `@cloudflare/vitest-plugin`.
+- **vitest is pinned to 5.0.5** in `pnpm-workspace.yaml`, and every workerd project sets `fsModuleCache: false`; without it the shared module cache breaks parallel `@cloudflare/vitest-plugin` suites.
 - **Never change a golden value** in `packages/core/tests/product-routing.test.ts`. A failing
   golden test means the code change is wrong, not the test.
 - **Never edit `packages/core/tests/fixtures/ucp`.** They're UCP's published schemas, vendored

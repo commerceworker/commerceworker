@@ -133,12 +133,19 @@ const postEdi = (body: string, role: Principal['role'] = 'operator') =>
   );
 
 describe('EDI 850', () => {
-  beforeEach(() => startOrderOnce.mockReset());
+  // Braces: a returned mock is run by vitest as the test's cleanup hook, with no arguments.
+  beforeEach(() => {
+    startOrderOnce.mockReset();
+  });
 
   it('starts one order per purchase order for the partner’s customer', async () => {
-    startOrderOnce
-      .mockResolvedValueOnce({ orderId: 'ord_a' })
-      .mockResolvedValueOnce({ orderId: 'ord_b', replayed: true });
+    // The route starts a few POs at once, and each awaits a real digest first, so they reach the
+    // engine in either order: answer by idempotency key, never by call order.
+    startOrderOnce.mockImplementation(async ({ idempotencyKey }: { idempotencyKey: string }) =>
+      idempotencyKey === 'order:edi:NORTHWIND:NW-1'
+        ? { orderId: 'ord_a' }
+        : { orderId: 'ord_b', replayed: true },
+    );
     const res = await postEdi(x12('NORTHWIND', [tx('0001', 'NW-1'), tx('0002', 'NW-2')]));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { functionalAck: string };
@@ -161,19 +168,21 @@ describe('EDI 850', () => {
         { control: '0002', poNumber: 'NW-2', status: 200, orderId: 'ord_b', replayed: true },
       ],
     });
-    expect(startOrderOnce.mock.calls[0]![0]).toMatchObject({
+    const started = (key: string) =>
+      startOrderOnce.mock.calls.map((c) => c[0]).find((a) => a.idempotencyKey === key);
+    expect(started('order:edi:NORTHWIND:NW-1')).toMatchObject({
       idempotencyKey: 'order:edi:NORTHWIND:NW-1',
       input: { model: 'b2b', channel: 'edi', customerId: 'cus_northwind' },
       // Each PO is a company's purchase order too: the engine records it beside its order.
       purchaseOrder: { record: { source: 'edi', poNumber: 'NW-1' } },
     });
-    expect(startOrderOnce.mock.calls[1]![0]).toMatchObject({
+    expect(started('order:edi:NORTHWIND:NW-2')).toMatchObject({
       purchaseOrder: { record: { source: 'edi', poNumber: 'NW-2' } },
     });
   });
 
   it('acknowledges a PO it couldn’t take as rejected', async () => {
-    startOrderOnce.mockResolvedValueOnce({ orderId: 'ord_c' });
+    startOrderOnce.mockResolvedValue({ orderId: 'ord_c' });
     const noPo = ['ST*850*0002', 'PO1*1*1*EA*1**VP*WID-100', 'CTT*1', 'SE*4*0002'].join('~');
     const res = await postEdi(x12('NORTHWIND', [tx('0001', 'NW-3'), noPo]));
     const body = (await res.json()) as { results: { status: number }[]; functionalAck: string };
