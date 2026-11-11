@@ -112,6 +112,7 @@
 ^(scripts/plugin-check\.ts|apps/engine/tests/plugin[^/]*|apps/engine/tests/(plugins|sandboxed)/|apps/web/tests/(plugins|plugin-view)\.test\.ts|packages/core/tests/(plugins|plugin-ui)\.test\.ts)	docs/plugins.md docs/testing.md	prose
 ^deployments/	docs/plugins.md	prose
 ^apps/web/app/lib/(api\.server|openapi)\.ts$	docs/plugins.md	prose
+^apps/web/app/lib/(openapi|rest-operations)\.ts$	docs/content/sdks.md	prose
 ^apps/engine/src/outbox\.ts$	docs/plugins.md	prose
 ^(\.github/workflows/deploy\.yml|scripts/(fleet|provision)\.(ts|sh))$	docs/plugins.md	prose
 ^apps/(web/app/(routes/plugins|lib/plugin-installs\.server)|engine/src/plugin-installs)\.tsx?$	guides/installing-plugins reference/rest-api docs/plugins.md	prose
@@ -191,3 +192,4 @@
 ^(packages/core/src/b2b/purchase-orders\.ts|packages/(db/src/purchase-order-store|application/src/commerce/purchase-orders|ports/src/commerce/purchase-orders)\.ts|apps/engine/src/assistant/purchase-orders\.ts)$	guides/purchase-orders guides/companies reference/mcp reference/rest-api docs/data-model.md docs/b2b.md	prose
 ^(packages/core/src/b2b/quotes\.ts|packages/(db/src/quote-store|application/src/commerce/quotes|ports/src/commerce/quotes)\.ts|apps/engine/src/assistant/quotes\.ts)$	guides/quotes guides/price-books guides/purchase-orders reference/mcp reference/rest-api reference/expressions docs/data-model.md docs/b2b.md	prose
 ^packages/core/src/(lifecycle|lifecycles|credit|price-books|b2b/(companies|budgets|purchase-orders|quotes))\.ts$	reference/lifecycles	gen
+^packages/sdk/commerce/(src|scripts)/	reference/rest-api docs/content/sdks.md	prose

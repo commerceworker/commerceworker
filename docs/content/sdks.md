@@ -28,6 +28,8 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 | Edge functions, constrained devices, single-locale, minimal payload | `@commerceworker/sdk/edge`         |
 | React Native apps with offline sync                                 | `@commerceworker/sdk/react-native` |
 | Programmatic authoring/publishing (writes)                          | `@commerceworker/sdk/management`   |
+| Commerce: orders, carts, catalog, pricing, B2B, webhook subscriptions | `@commerceworker/sdk/commerce`   |
+| Verifying a commerce webhook delivery                               | `@commerceworker/sdk/commerce/webhooks` |
 | Types for entry fields                                              | `@commerceworker/sdk/codegen`      |
 | Rendering rich text to HTML, Markdown or plain text (any framework) | `@commerceworker/sdk/rich-text`    |
 
@@ -592,6 +594,94 @@ A Delivery client (not preview) never sends one: Delivery is served from the cac
 and is eventually consistent after a publish (see [Consistency](./consistency.md)). The
 in-memory cache (`cacheTtlMs`) answers without asking the api, so a cached read does not see a
 later write; `clearCache()` after writing.
+
+## `@commerceworker/sdk/commerce` — the commerce client
+
+Zero-dependency client for the commerce REST API (`/api/v1` on the app host), for servers and
+scripts (an API token never belongs in a browser). Unlike the content clients it is **generated**:
+`packages/sdk/commerce/scripts/generate.ts` imports `openApiDocument()` from
+`apps/web/app/lib/openapi.ts` (the way `apps/docs/src/pages/openapi.json.ts` does) and writes
+`src/generated/operations.ts`: a request type and a `<OperationId>Result` type per operation, from
+the JSON Schemas the web app builds from its zod schemas, and the table of how to call each
+(`OPERATIONS`: method, path, path params, where the input goes) and which page by cursor
+(`PAGINATION`). The generator lives in the package's `scripts/`, not `src/`, so nothing the package
+ships imports web source; the file it writes is committed.
+
+```sh
+pnpm sdk:generate   # after any change to apps/web/app/lib/openapi.ts, rest-operations.ts or a tool's schema
+```
+
+`test/generated.test.ts` runs `generate.ts --check` and fails when the committed file is stale, so a
+REST change can't merge without its regenerated types. The script is named `generate:operations`,
+not `generate`, because turbo's `generate` task runs a package's `generate` before its tests and
+would rewrite the file the drift test is checking. `test/emit.test.ts` holds the emitter to small
+hand-written documents; it throws on a JSON Schema keyword it doesn't know rather than guess.
+
+```ts
+import { createCommerceClient, CommerceRateLimitError } from '@commerceworker/sdk/commerce';
+
+const commerce = createCommerceClient({
+  baseUrl: 'https://app.your-workspace.commerceworker.com',
+  token: process.env.COMMERCEWORKER_API_TOKEN!,
+  fetch, // optional
+});
+
+const { orderId } = await commerce.startOrder(
+  { flowId: 'checkout', input: { model: 'b2c', lines: [{ sku: 'A1', qty: 1 }] } },
+  { idempotencyKey: 'cart-42' },
+);
+for await (const quote of commerce.paginate('list_quotes', { status: 'sent' })) console.log(quote.id);
+```
+
+- **One method per `operationId`**, camel-cased (`list_orders` → `listOrders`), plus
+  `call('list_orders', input)`. Path params are taken from the input; the rest of a `GET` or
+  `DELETE` input is the query string, a `POST`'s is the JSON body, and an operation with a file body
+  (`importCatalogFeed`, `receiveEdi850`) takes `{ body, contentType?, …query }`. An input with no
+  required field may be left out.
+- **Not generated:** the receivers a provider calls with a signature instead of a token
+  (`receive_order_event`, `receive_stripe_webhook`, `receive_shopify_order`,
+  `receive_inbound_order`), which the generator skips because their OpenAPI `security` is `[]`.
+- **Idempotency.** `{ idempotencyKey }` sends `Idempotency-Key`. Only an operation whose OpenAPI
+  parameters name that header (`start_order`) takes one; the client throws for the rest instead of
+  implying a safety it doesn't have. `{ headers }` sends others (`If-Match` for `submitCart`).
+- **Errors.** Every failure is a `CommerceError` (naming follows `ManagementError`: `<Surface>Error`
+  for the base, `is…` guards to narrow), with `kind`, `operationId`, a `requestId` (`x-request-id`,
+  else `cf-ray`) and, for a network failure, the original as `cause`. A non-2xx is a
+  `CommerceApiError` (`status`, `body`, `issues`, `retryAfterSec` from `Retry-After`), with a
+  subclass for 400, 401, 403, 404, 409, 422 and 429 (`CommerceBadRequestError`,
+  `CommerceUnauthorizedError`, `CommerceForbiddenError`, `CommerceNotFoundError`,
+  `CommerceConflictError`, `CommerceUnprocessableError`, `CommerceRateLimitError`). A request with no
+  answer is a `CommerceConnectionError`; one past `timeoutMs` (client or call option, per attempt)
+  is a `CommerceTimeoutError`. A caller's own `AbortSignal` abort is rethrown as it is.
+  **Narrow with `isCommerceError(e)`, `isCommerceApiError(e, kind?)` and
+  `isCommerceConnectionError(e)`, not `instanceof`**: they check a `Symbol.for` brand and `kind`, so
+  they hold when an app loads both the ESM and the CJS build, each with its own classes.
+- **Retries.** `maxRetries` (client or call option; default 2, 0 turns them off) resends on 429, 5xx
+  and connection errors, with exponential backoff and full jitter (500 ms doubling, capped at 8 s)
+  or the `Retry-After` the server sent (over a minute is not waited for: the error is thrown). Only
+  a GET, a DELETE, or a write sent with an `idempotencyKey` is resent; any other write may have
+  happened already.
+- **Method names are part of the API.** They are the flat camelCase of the operationIds, and
+  `test/client.test.ts` snapshots the sorted list, so renaming an operationId fails there until the
+  snapshot is updated on purpose (a breaking change for SDK users).
+- **Paging.** `pages(op, input)` and `paginate(op, input)` follow `cursor` for the operations whose
+  input takes a `cursor` and whose result returns one (`PAGINATION`). A cursor field named
+  otherwise is not detected, so `list_price_books` (`after`/`next`) and the audit events (`before`
+  and `after`) are plain calls; an untyped result (`list_orders`, `get_catalog_board_column`) is
+  named in `UNTYPED_PAGES` in `emit.ts`, and the generator throws if a result has more than one array
+  and no entry. The operations in `UNTYPED` in `apps/web/tests/openapi.test.ts` (most hand-written routes
+  and every file or signed receiver) have no response schema in the document yet, so their result
+  is `unknown` until they are typed. That test fails if an operation outside the list is untyped or
+  an entry is stale, so the list only shrinks: type the route in `openapi.ts`, delete its entry,
+  regenerate.
+- **Webhooks.** `@commerceworker/sdk/commerce/webhooks` is `verifyCommerceWebhook(rawBody, header,
+  secrets, { toleranceSec })` for `X-CommerceWorker-Signature: t=…,k=…,v1=…` (`packages/core/src/webhooks.ts`),
+  on Web Crypto. It returns `{ ok, timestamp, keyId? }` or `{ ok: false, reason }`; `secrets` may be
+  several during a rotation. Its test signs with core's `signWebhook` (a devDependency, tests only)
+  so the two can't drift apart.
+- **Bundle.** `packages/sdk/sdk/test/commerce-bundle.test.ts` builds the two commerce entries and
+  fails if the output contains zod, `@commerceworker/core` or a `node:` import. Only types are
+  generated from zod's output; nothing of it ships.
 
 ## `@commerceworker/sdk/codegen` — typed field shapes from your content model
 

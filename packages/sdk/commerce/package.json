@@ -1,0 +1,44 @@
+{
+  "name": "@commerceworker/sdk-commerce",
+  "version": "0.1.0",
+  "private": true,
+  "homepage": "https://docs.commerceworker.com/reference/rest-api/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/commerceworker/commerceworker",
+    "directory": "packages/sdk/commerce"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./webhooks": {
+      "types": "./src/webhooks.ts",
+      "default": "./src/webhooks.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/webhooks.ts --format esm,cjs && tsc -p tsconfig.json --noEmit false --declaration --emitDeclarationOnly --outDir dist --rootDir src",
+    "generate:operations": "tsx scripts/generate.ts",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

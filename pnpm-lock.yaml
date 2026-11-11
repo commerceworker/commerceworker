@@ -1680,6 +1680,30 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@30.1.3)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/sdk/commerce:
+    devDependencies:
+      '@commerceworker/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@commerceworker/typescript-config':
+        specifier: workspace:*
+        version: link:../../typescript-config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      tsup:
+        specifier: 'catalog:'
+        version: 9.0.0(jiti@2.7.0)(postcss@8.5.32)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.15
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@30.1.3)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/sdk/core:
     devDependencies:
       '@commerceworker/typescript-config':
@@ -1776,6 +1800,9 @@ importers:
       '@commerceworker/sdk-codegen':
         specifier: workspace:*
         version: link:../codegen
+      '@commerceworker/sdk-commerce':
+        specifier: workspace:*
+        version: link:../commerce
       '@commerceworker/sdk-core':
         specifier: workspace:*
         version: link:../core

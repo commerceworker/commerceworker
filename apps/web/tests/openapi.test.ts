@@ -107,6 +107,83 @@ describe('OpenAPI operations', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  // The hand-written routes whose success response is still only a description. The SDK types
+  // their result `unknown`. This list may only shrink: type a route's response and delete it here.
+  const UNTYPED = [
+    'add_ucp_platform',
+    'cancel_catalog_feed',
+    'cancel_order',
+    'create_integration',
+    'create_webhook_subscription',
+    'decide_approval',
+    'delete_catalog_categories',
+    'delete_catalog_channel',
+    'delete_catalog_products',
+    'delete_catalog_type',
+    'delete_webhook_subscription',
+    'deliver_order_event',
+    'disable_plugin',
+    'discard_catalog_drafts',
+    'discard_catalog_edits',
+    'draft_catalog_product',
+    'erase_data_subject',
+    'export_data_subject',
+    'get_catalog_board',
+    'get_catalog_board_column',
+    'get_catalog_feed',
+    'get_catalog_product',
+    'get_catalog_product_sheet',
+    'get_order_state',
+    'get_plugin_usage',
+    'get_ucp',
+    'import_catalog_feed',
+    'list_audit_events',
+    'list_carts',
+    'list_catalog_feeds',
+    'list_flows',
+    'list_integrations',
+    'list_orders',
+    'list_plugins',
+    'list_webhook_deliveries',
+    'list_webhook_subscriptions',
+    'publish_catalog_edits',
+    'put_catalog_products',
+    'rebuild_catalog_gaps',
+    'receive_edi_850',
+    'receive_inbound_order',
+    'receive_order_event',
+    'receive_shopify_order',
+    'receive_stripe_webhook',
+    'reindex_catalog',
+    'resolve_catalog_alias',
+    'revoke_integration',
+    'revoke_ucp_platform',
+    'rotate_integration_secret',
+    'rotate_webhook_subscription_secret',
+    'save_catalog_drafts',
+    'stage_catalog_edits',
+    'submit_cart',
+    'upload_plugin',
+    'verify_audit_chain',
+  ];
+
+  const typed = (op: Op) =>
+    ['200', '201', '202'].some((c) => op.responses[c]?.content?.['application/json']?.schema);
+
+  it('gives every operation a typed success response, except the listed untyped routes', () => {
+    const untyped = operations.filter(({ op }) => !typed(op)).map(({ op }) => op.operationId);
+    expect(untyped.sort()).toEqual([...UNTYPED].sort());
+  });
+
+  it('keeps no stale entry in the untyped list', () => {
+    const byId = new Map(operations.map(({ op }) => [op.operationId, op]));
+    for (const id of UNTYPED) {
+      const op = byId.get(id);
+      expect(op, `${id} is not an operation`).toBeDefined();
+      expect(typed(op as Op), `${id} is typed now: remove it from UNTYPED`).toBe(false);
+    }
+  });
+
   it('names a REST operation by its tool', () => {
     for (const rest of REST_OPERATIONS) {
       const op = json.paths[`/api/v1${rest.path}`][rest.method.toLowerCase()];
