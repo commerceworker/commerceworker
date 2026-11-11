@@ -15,7 +15,9 @@ result. A task's hash covers its package's files, every package it depends on ho
 the package's own `turbo.json`; `scripts/turbo-cache.test.ts` (in `pnpm test:fleet`) changes each
 such file and checks the hash moves. A new test or build that reads a file from another package
 that isn't a dependency (by path, or through a Vite or vitest config) declares it there, as an
-`inputs` path or a dependency on that package's `transit`, with a case in that test. Only pull
+`inputs` path or a dependency on that package's `transit`, with a case in that test. The root `scripts/*.ts` are type-checked by `scripts/tsconfig.json` as the root task
+`//#check-types:scripts` (run by `pnpm check-types`; not `//#check-types`, which would run the root
+script of that name, `turbo run check-types`), with `scripts/**` and the packages they import by path as inputs. Only pull
 requests and the merge queue read the cache; a push to `main`, the nightly and a manual run do
 every task from scratch, so a hash missing an input can't reach a deploy. Beside them, the
 `checks` job runs lint, type-check, build, `pnpm test:fleet`, `pnpm test:toolkit` and the audit of

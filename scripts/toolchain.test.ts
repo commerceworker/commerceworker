@@ -45,7 +45,7 @@ function catalogVersion(name: string): string {
 
 const major = (range: string) => Number(/(\d+)/.exec(range)?.[1]);
 
-const floorRange: string = json('package.json').engines?.node;
+const floorRange: string | undefined = json('package.json').engines?.node;
 assert.ok(
   floorRange,
   'package.json needs "engines": { "node": ">=NN" }: it is the toolchain floor',
@@ -88,6 +88,12 @@ test('the @types/node catalog major equals the floor major', () => {
 
 // apps/docs and apps/marketing are Astro projects: they extend Astro's own config.
 const ASTRO = new Set(['apps/docs/tsconfig.json', 'apps/marketing/tsconfig.json']);
+// The root scripts have no package of their own to depend on the shared config, so they reach the
+// same base by its path.
+const ROOT_SCRIPTS = {
+  path: 'scripts/tsconfig.json',
+  base: '../packages/typescript-config/base.json',
+};
 
 test('every tsconfig extends the shared configs and sets no target, module or moduleResolution', () => {
   const tsconfigs = files.filter(
@@ -99,11 +105,13 @@ test('every tsconfig extends the shared configs and sets no target, module or mo
     const extended = [config.extends].flat().filter(Boolean) as string[];
     const ok = ASTRO.has(path)
       ? extended.length === 1 && extended[0] === 'astro/tsconfigs/strict'
-      : extended.length > 0 &&
-        extended.every(
-          // A sibling tsconfig (tsconfig.test.json) inherits the shared base through ./tsconfig.json.
-          (e) => e.startsWith('@commerceworker/typescript-config/') || e === './tsconfig.json',
-        );
+      : path === ROOT_SCRIPTS.path
+        ? extended.length === 1 && extended[0] === ROOT_SCRIPTS.base
+        : extended.length > 0 &&
+          extended.every(
+            // A sibling tsconfig (tsconfig.test.json) inherits the shared base through ./tsconfig.json.
+            (e) => e.startsWith('@commerceworker/typescript-config/') || e === './tsconfig.json',
+          );
     assert.ok(
       ok,
       `${path} must extend @commerceworker/typescript-config/* (base, worker or react-app)${
@@ -141,7 +149,8 @@ test('no bundler targets a Node below the floor', () => {
 });
 
 test("biome.json's $schema version equals the catalog's Biome version", () => {
-  const schema: string = json('biome.json').$schema;
+  const schema: string | undefined = json('biome.json').$schema;
+  assert.ok(schema, 'biome.json needs a $schema');
   const version = /schemas\/([^/]+)\/schema\.json$/.exec(schema)?.[1];
   const catalog = catalogVersion('@biomejs/biome').replace(/^[\^~]/, '');
   assert.equal(

@@ -87,6 +87,24 @@
     "check-types": {
       "dependsOn": ["^check-types", "^generate", "generate", "^transit"]
     },
+    // The root scripts (scripts/tsconfig.json), which run under Node's type stripping and so are
+    // never compiled. Named apart from `check-types` because a root task runs the root package's
+    // script of the same name, and that one is `turbo run check-types`. The scripts import the
+    // plugin SDK (and through it core and security) by path, not as a dependency, so their closure
+    // is declared: the files tsc reads, and the SDK's `transit` for what it depends on.
+    "//#check-types:scripts": {
+      "dependsOn": ["@commerceworker/plugin-sdk#transit"],
+      "inputs": [
+        "scripts/**/*.ts",
+        "scripts/tsconfig.json",
+        "$TURBO_ROOT$/packages/plugin-sdk/src/**",
+        "$TURBO_ROOT$/packages/plugin-sdk/package.json",
+        "$TURBO_ROOT$/packages/core/src/**",
+        "$TURBO_ROOT$/packages/core/package.json",
+        "$TURBO_ROOT$/packages/security/src/**",
+        "$TURBO_ROOT$/packages/security/package.json"
+      ]
+    },
     "dev": {
       "dependsOn": ["^generate", "generate"],
       "cache": false,

@@ -322,9 +322,14 @@ test('a storefront host is a host name, and the registry may name it', () => {
 
 test("a customer's limits replace the base budgets they name", () => {
   const big = toDeployment({ ...acme, limits: { webhooks: 6000 } });
-  const limit = (c: {
-    ratelimits: { name: string; simple: { limit: number; period: number } }[];
-  }) => Object.fromEntries(c.ratelimits.map((r) => [r.name, r.simple]));
+  // Takes the rendered config as fleet.ts types it (a loose record), so the shape is read, not checked.
+  const limit = (c: Record<string, unknown>) =>
+    Object.fromEntries(
+      (c.ratelimits as { name: string; simple: { limit: number; period: number } }[]).map((r) => [
+        r.name,
+        r.simple,
+      ]),
+    );
   const c = limit(renderWeb(base('web'), big));
   assert.deepEqual(c.WEBHOOK_LIMIT, { limit: 6000, period: 60 });
   assert.deepEqual(c.API_LIMIT, limit(base('web')).API_LIMIT);
@@ -741,7 +746,8 @@ const withLedger = toDeployment({
 test('no plugins changes nothing in the engine and web configs', () => {
   const none = toDeployment({ id: 'acme', ring: 'canary', slot: 2, d1Id: 'd1-acme' });
   assert.deepEqual(none.plugins, {});
-  const bindings = (c: { services: { binding: string }[] }) => c.services.map((s) => s.binding);
+  const bindings = (c: Record<string, unknown>) =>
+    (c.services as { binding: string }[]).map((s) => s.binding);
   assert.deepEqual(bindings(renderEngine(base('engine'), none)), bindings(base('engine')));
   assert.deepEqual(bindings(renderWeb(base('web'), none)), bindings(base('web')));
 });
@@ -1391,7 +1397,10 @@ test("Logpush's R2 token writes objects in the logs bucket and nothing else", ()
   assert.throws(() => logpushToken(acme, 'not-an-account', groups), /account id/);
 
   // An existing token is rolled only when it holds exactly that policy.
-  const details = (policies: unknown[], name = t.name) => ({ name, policies });
+  const details = (
+    policies: NonNullable<Parameters<typeof tokenMatches>[0]['policies']>,
+    name = t.name,
+  ) => ({ name, policies });
   const named = (p: (typeof t.policies)[0]) => ({
     id: 'policy-1',
     ...p,
@@ -1851,7 +1860,7 @@ test("provisioning knows the content stack's resource names, and only for a cont
   assert.equal(v.CONTENT_MEDIA, 'commerceworker-media-acme');
   assert.equal(v.CONTENT_VECTORS, 'commerceworker-vectors-acme');
   assert.equal(v.ASSET_EVENTS, 'commerceworker-asset-events-acme');
-  assert.deepEqual(v.CONTENT_QUEUES.split(' '), [
+  assert.deepEqual((v.CONTENT_QUEUES as string).split(' '), [
     'commerceworker-events-acme',
     'commerceworker-events-dlq-acme',
     'commerceworker-bulk-acme',
