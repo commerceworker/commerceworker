@@ -203,6 +203,43 @@ Each deployment's job, `.github/workflows/deploy.yml`, runs in that deployment's
 To gate a ring, add a required reviewer to its deployments' environments: the `canary` jobs then
 wait for approval after `internal` succeeds.
 
+### What provisioning sets on the environment
+
+`provision.sh` limits each deployment's GitHub environment to the `main` branch: its
+`deployment_branch_policy` is `{protected_branches: false, custom_branch_policies: true}` with one
+branch policy, `main`. A workflow on any other branch can't deploy to the environment or read its
+secrets; the deploy jobs run from `main` (CI's `plan` runs them only for a push to `main`), and the
+nightly demo reset runs from the default branch. A PUT to an environment replaces its protection
+rules, so the script reads the environment first: one already on custom branch policies is not
+written again, and otherwise the wait timer, required reviewers and self-review setting it has are
+sent back with the policy. It adds the `main` policy only when the list lacks one, and it stops
+without writing if it can't read the environment (a token without admin access).
+
+To apply it to the live environments, the owner re-runs provisioning with `gh` signed in as a repository
+admin (a token with the `repo` scope) and `wrangler` logged in; it changes nothing else that exists:
+
+```bash
+./scripts/provision.sh commerceworker   # the `production` environment
+./scripts/provision.sh demo             # `deploy-demo`
+```
+
+Run `./scripts/provision.sh bench` too once `bench` is provisioned (until then it has no
+environment to lock). The `npm` environment isn't provisioned by the script; its tag rule is set by
+hand ([Releasing the SDK](content/deployment.md#releasing-the-sdk)).
+
+To check an environment (read-only):
+
+```bash
+gh api repos/commerceworker/commerceworker/environments/production \
+  --jq '{policy: .deployment_branch_policy, rules: [.protection_rules[].type]}'
+gh api repos/commerceworker/commerceworker/environments/production/deployment-branch-policies \
+  --jq '[.branch_policies[] | {name, type}]'
+```
+
+Expect `custom_branch_policies: true` and a single `main` branch policy. A 404 means the
+environment doesn't exist yet: GitHub creates one, with no branch limit, the first time a job names
+it, so provision a deployment before its first deploy.
+
 ## Plugins
 
 A plugin is installed by listing it under `plugins` in a deployment's file (see the registry above

@@ -101,7 +101,10 @@ scheduled actions, asset expiry, retention, the reseal and the rest. Two things 
 ## Provisioning a deployment
 
 `scripts/fleet.ts` and `scripts/provision.sh` read the registry in `deployments/`, and
-`provision.sh` creates the deployment's GitHub environment and secrets on this repository.
+`provision.sh` creates the deployment's GitHub environment and secrets on this repository, and limits the
+environment to the `main` branch, keeping any reviewers and wait timer it has ([what it sets and how to
+check it](../operations.md#what-provisioning-sets-on-the-environment)). To lock an environment that
+already exists, run `./scripts/provision.sh <id>` again as a repository admin.
 
 1. Add `<id>.jsonc` to the registry (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
 2. Run `./scripts/provision.sh <id>` (needs `wrangler login` and `gh auth login`; no token to
@@ -276,7 +279,12 @@ One-time setup, by the npm org's owner, before the first release:
    `--access public`), because npm can configure a trusted publisher only for a package that exists.
 3. On the package's settings, add the trusted publisher: GitHub Actions, organization
    `commerceworker`, repository `commerceworker`, workflow `sdk-release.yml`, environment `npm`.
-4. In the repository's Settings, Environments, create `npm` with required reviewers.
+4. In the repository's Settings, Environments, create `npm` with required reviewers, and limit it
+   to the tag the release runs from: under Deployment branches and tags choose "Selected branches
+   and tags", add a tag rule `sdk-v*` and a branch rule `main` (a rehearsal run from the Actions
+   tab runs from a branch). Without a rule, a workflow on any branch could use the environment's
+   OIDC identity, which npm trusts. `provision.sh` doesn't create this environment, so this one
+   is by hand.
 
 Until then the workflow can run as a dry run but cannot publish.
 
