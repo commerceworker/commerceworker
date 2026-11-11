@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@commerceworker/sdk-codegen": "workspace:*",
+    "@commerceworker/sdk-commerce": "workspace:*",
     "@commerceworker/sdk-core": "workspace:*",
     "@commerceworker/sdk-management": "workspace:*",
     "@commerceworker/typescript-config": "workspace:*",

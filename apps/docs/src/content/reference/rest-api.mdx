@@ -45,7 +45,7 @@ The app acts as the person who approved it, at the lower of the role granted and
 disabled or deleted person's grants stop working at once. It is not that person, though: what a
 person alone confirms, such as a price, rate or tax change, is refused to an OAuth grant as it is
 to an API token (`403`). A token granted for `/mcp` or `/a2a` is refused here with `401`, and one
-granted for the API is refused there. `cmw_live_` tokens work as before.
+granted for the API is refused there. `cmw_live_` tokens work as before. The [command-line tool](/reference/cli/) signs in this way with `commerceworker login`.
 
 The API sends no CORS headers, with any credential, so a browser page can't call it directly: call it from your backend and keep tokens there.
 

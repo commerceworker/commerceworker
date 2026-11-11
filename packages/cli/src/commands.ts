@@ -1,67 +1,55 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, resolve } from 'node:path';
 import { generateTypes } from '@commerceworker/sdk-codegen';
-import type {
-  EntryFields,
-  ImportAnalysis,
-  ImportInput,
-  ManagementClient,
-} from '@commerceworker/sdk-management';
+import type { EntryFields, ImportAnalysis, ImportInput } from '@commerceworker/sdk-management';
+import {
+  announce,
+  arg,
+  bool,
+  type Command,
+  type CommandContext,
+  confirm,
+  int,
+  jsonFlag,
+  list,
+  type OptionSpec,
+  str,
+  YES,
+} from './args.js';
+import { COMMERCE_COMMANDS, commerceLogin, commerceWhoami, isCommerceCall } from './commerce.js';
 import {
   credentialsMode,
   FILE_MODE,
   type Profile,
+  productOf,
   readCredentials,
   writeCredentials,
 } from './credentials.js';
-import type { Io } from './io.js';
 import { formatOf, loadModel, type Plan, planModel, renderModel, toDrafts } from './model.js';
 import {
-  type DeviceAuthorization,
   discover,
+  isCommerceMetadata,
   pollForToken,
   registerClient,
   revoke,
+  type ServerMetadata,
   startDevice,
 } from './oauth.js';
-import { CliError, EXIT, pairs, type Result, table, usageError } from './output.js';
-import { clientFor, profileName, type Session, type Target, trimUrl, whoAmI } from './session.js';
+import { CliError, EXIT, pairs, table, usageError } from './output.js';
+import { clientFor, originOf, profileName, type Session, trimUrl, whoAmI } from './session.js';
 
 /** The API version this CLI is written against (`info.version` of the api's `/openapi.json`). */
 export const API_VERSION = '0.1.0';
 
-export interface OptionSpec {
-  readonly type: 'string' | 'boolean';
-  readonly short?: string;
-  readonly multiple?: boolean;
-  readonly description: string;
-}
-
-export interface CommandContext {
-  readonly args: readonly string[];
-  readonly values: Readonly<Record<string, string | boolean | string[] | undefined>>;
-  readonly io: Io;
-  readonly target: Target;
-  readonly json: boolean;
-  /** The session, resolved on first use (`doctor` and `login` work without one). */
-  readonly session: () => Promise<Session>;
-  readonly client: () => Promise<ManagementClient>;
-}
-
-export interface Command {
-  /** One or two words: `spaces`, `entries list`. */
-  readonly name: string;
-  /** Positional arguments, as shown in usage: `<id>`, `<file>`. */
-  readonly args?: string;
-  readonly summary: string;
-  readonly options: Readonly<Record<string, OptionSpec>>;
-  readonly run: (ctx: CommandContext) => Promise<Result>;
-}
-
 /** Options every command takes. */
 export const GLOBAL_OPTIONS: Readonly<Record<string, OptionSpec>> = {
   json: { type: 'boolean', description: 'Print the result as JSON on stdout' },
-  url: { type: 'string', description: 'The deployment’s API origin (default: the profile’s)' },
+  pretty: { type: 'boolean', description: 'Indent the JSON (commerce commands print JSON always)' },
+  url: {
+    type: 'string',
+    description:
+      'The deployment’s origin: the API for content, the admin for commerce (default: the profile’s)',
+  },
   space: { type: 'string', description: 'Space id (default: the profile’s, or the token’s)' },
   environment: {
     type: 'string',
@@ -72,74 +60,29 @@ export const GLOBAL_OPTIONS: Readonly<Record<string, OptionSpec>> = {
   help: { type: 'boolean', short: 'h', description: 'Show help' },
 };
 
-const str = (ctx: CommandContext, key: string) => ctx.values[key] as string | undefined;
-const bool = (ctx: CommandContext, key: string) => ctx.values[key] === true;
-const list = (ctx: CommandContext, key: string) => (ctx.values[key] as string[] | undefined) ?? [];
-
-function arg(ctx: CommandContext, index: number, name: string): string {
-  const value = ctx.args[index];
-  if (!value) throw usageError(`Missing ${name}.`);
-  return value;
-}
-
-function int(ctx: CommandContext, key: string): number | undefined {
-  const raw = str(ctx, key);
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) throw usageError(`--${key} must be a whole number.`);
-  return n;
-}
-
-/** A JSON value from the flag itself, or from a file with `@path`. */
-async function jsonFlag<T>(ctx: CommandContext, key: string): Promise<T> {
-  const raw = str(ctx, key);
-  if (raw === undefined) throw usageError(`--${key} is required.`);
-  const text = raw.startsWith('@')
-    ? await readFile(resolve(ctx.io.cwd, raw.slice(1)), 'utf8')
-    : raw;
-  try {
-    return JSON.parse(text) as T;
-  } catch (err) {
-    throw usageError(`--${key} is not valid JSON: ${(err as Error).message}`);
-  }
-}
-
-/**
- * Asks before a write when a person is there to answer; refuses when nobody is (CI, an agent),
- * unless `--yes` says the caller already decided.
- */
-async function confirm(ctx: CommandContext, question: string): Promise<void> {
-  if (bool(ctx, 'yes')) return;
-  if (!ctx.io.interactive) {
-    throw new CliError(
-      'Not a terminal, so nothing can be confirmed: pass --yes to go ahead.',
-      EXIT.usage,
-      'confirmation_required',
-    );
-  }
-  const answer = (await ctx.io.ask(`${question} [y/N] `)).trim().toLowerCase();
-  if (answer !== 'y' && answer !== 'yes') {
-    throw new CliError('Cancelled.', EXIT.failure, 'cancelled');
-  }
-}
-
-const YES: OptionSpec = {
-  type: 'boolean',
-  short: 'y',
-  description: 'Don’t ask for confirmation (required when not on a terminal)',
-};
-
 // --- auth --------------------------------------------------------------------
 
 const login: Command = {
   name: 'login',
-  summary: 'Sign in to a deployment with the OAuth device flow, or store an API key',
+  product: 'both',
+  summary: 'Sign in to a deployment with the OAuth device flow, or store an API key or token',
   options: {
     token: {
       type: 'string',
-      description: 'Store this API key or personal access token instead of signing in',
+      description:
+        'Store this API key or token instead of signing in; `-` reads it from stdin (prefer that or COMMERCEWORKER_TOKEN: argv is visible to other users)',
     },
-    scope: { type: 'string', description: 'Scopes to ask for, space-separated' },
+    scope: { type: 'string', description: 'Content: scopes to ask for, space-separated' },
+    product: {
+      type: 'string',
+      description:
+        'commerce or content (default: from the server’s metadata, or the token’s prefix)',
+    },
+    role: {
+      type: 'string',
+      description: 'Commerce: the role to act with: viewer, approver or operator (default: viewer)',
+    },
+    open: { type: 'boolean', description: 'Open the verification page in a browser' },
   },
   async run(ctx) {
     const { io, target } = ctx;
@@ -149,12 +92,33 @@ const login: Command = {
     const rawUrl = target.url ?? io.env.COMMERCEWORKER_URL ?? existing?.url;
     if (!rawUrl) throw usageError('Pass --url, the deployment’s API origin.');
     const url = trimUrl(rawUrl);
-    const token = str(ctx, 'token');
+    originOf(url);
+    let token = str(ctx, 'token');
+    if (token === '-') {
+      token = (await io.readStdin()).trim();
+      if (!token) throw usageError('--token - reads the token from stdin, and stdin was empty.');
+    }
+    const flag = str(ctx, 'product');
+    if (flag !== undefined && flag !== 'commerce' && flag !== 'content') {
+      throw usageError('--product is commerce or content.');
+    }
+
+    // A commerce deployment is its own authorization server, with roles for scopes; a content
+    // deployment's scopes are content ones.
+    let meta: ServerMetadata | undefined;
+    let product = flag;
+    if (!product && token) product = token.startsWith('cmw_live_') ? 'commerce' : 'content';
+    if (!product) {
+      meta = await discover(io, url);
+      product = isCommerceMetadata(meta, originOf(url)) ? 'commerce' : 'content';
+    }
+    if (product === 'commerce') return commerceLogin(ctx, name, url, token, meta);
 
     let profile: Profile;
     if (token) {
       const me = await whoAmI(io, url, token);
       profile = {
+        product: 'content',
         url,
         space: target.space ?? spaceFrom(me.spaceId),
         environment: target.environment ?? 'main',
@@ -163,21 +127,27 @@ const login: Command = {
         subject: me.subject,
       };
     } else {
-      const meta = await discover(io, url);
-      let clientId = existing?.url === url ? existing.clientId : undefined;
-      clientId ??= meta.commerceworker_cli_client_id ?? (await registerClient(io, meta));
-      const device = await startDevice(io, meta, clientId, str(ctx, 'scope')).catch(async (err) => {
-        // A client from an earlier login may have been deleted: register again, once.
-        if (err instanceof CliError && err.code === 'invalid_client' && existing?.clientId) {
-          clientId = await registerClient(io, meta);
-          return startDevice(io, meta, clientId, str(ctx, 'scope'));
-        }
-        throw err;
-      });
-      announce(ctx, device);
-      const tokens = await pollForToken(io, meta, clientId, device);
+      const found = meta ?? (await discover(io, url));
+      let clientId =
+        existing && productOf(existing) === 'content' && existing.url === url
+          ? existing.clientId
+          : undefined;
+      clientId ??= found.commerceworker_cli_client_id ?? (await registerClient(io, found));
+      const device = await startDevice(io, found, clientId, str(ctx, 'scope')).catch(
+        async (err) => {
+          // A client from an earlier login may have been deleted: register again, once.
+          if (err instanceof CliError && err.code === 'invalid_client' && existing?.clientId) {
+            clientId = await registerClient(io, found);
+            return startDevice(io, found, clientId, str(ctx, 'scope'));
+          }
+          throw err;
+        },
+      );
+      await announce(ctx, device);
+      const tokens = await pollForToken(io, found, clientId, device);
       const me = await whoAmI(io, url, tokens.access_token);
       profile = {
+        product: 'content',
         url,
         space: target.space ?? spaceFrom(me.spaceId),
         environment: target.environment ?? existing?.environment ?? 'main',
@@ -217,27 +187,9 @@ function spaceFrom(spaceId: string): string {
   return spaceId;
 }
 
-/** Tells the person where to approve. Always stderr: stdout is the command's result. */
-function announce(ctx: CommandContext, device: DeviceAuthorization) {
-  const url = device.verification_uri_complete ?? device.verification_uri;
-  if (ctx.json) {
-    ctx.io.stderr(
-      JSON.stringify({
-        event: 'device_authorization',
-        verificationUri: url,
-        userCode: device.user_code,
-        expiresIn: device.expires_in,
-      }),
-    );
-  } else {
-    ctx.io.stderr(
-      `Open ${url}\nand confirm the code ${device.user_code} (it expires in ${Math.round(device.expires_in / 60)} minutes). Waiting…`,
-    );
-  }
-}
-
 const logout: Command = {
   name: 'logout',
+  product: 'both',
   summary: 'Revoke the stored tokens and forget the profile',
   options: {},
   async run({ io, target }) {
@@ -250,10 +202,14 @@ const logout: Command = {
     let revoked = false;
     // Only tokens this CLI obtained: a stored API key belongs to whoever minted it.
     if (profile.refreshToken) {
-      const meta = await discover(io, profile.url).catch(() => undefined);
+      const meta = await discover(
+        io,
+        profile.url,
+        productOf(profile) === 'commerce' ? profile.url : undefined,
+      ).catch(() => undefined);
       if (meta) {
-        revoked = await revoke(io, meta, profile.clientId, profile.refreshToken);
-        await revoke(io, meta, profile.clientId, profile.accessToken);
+        revoked = await revoke(io, meta, profile.clientId, profile.refreshToken, 'refresh_token');
+        await revoke(io, meta, profile.clientId, profile.accessToken, 'access_token');
       }
     }
     const { [name]: _gone, ...rest } = credentials.profiles;
@@ -264,15 +220,23 @@ const logout: Command = {
     return {
       json: { profile: name, removed: true, revoked },
       human: `Signed out of ${profile.url} (profile ${name}).`,
+      jsonDefault: productOf(profile) === 'commerce',
     };
   },
 };
 
 const whoami: Command = {
   name: 'whoami',
+  product: 'both',
   summary: 'Show who the token is, where it points and what it may do',
-  options: {},
+  options: {
+    product: {
+      type: 'string',
+      description: 'commerce or content, for a COMMERCEWORKER_TOKEN (default: the token’s prefix)',
+    },
+  },
   async run(ctx) {
+    if (await isCommerceCall(ctx)) return commerceWhoami(ctx);
     const session = await ctx.session();
     const me = await whoAmI(ctx.io, session.url, session.token);
     const out = {
@@ -294,6 +258,7 @@ const whoami: Command = {
 
 const spaces: Command = {
   name: 'spaces',
+  product: 'content',
   summary: 'List the spaces the token can reach',
   options: {},
   async run(ctx) {
@@ -306,6 +271,7 @@ const spaces: Command = {
 
 const modelExport: Command = {
   name: 'model export',
+  product: 'content',
   summary: 'Write the content model to a JSON or TypeScript file',
   options: {
     out: {
@@ -334,6 +300,7 @@ const modelExport: Command = {
 
 const modelApply: Command = {
   name: 'model apply',
+  product: 'content',
   args: '<file>',
   summary: 'Show what a model file changes, then make the space match it',
   options: {
@@ -447,6 +414,7 @@ export function renderPlan(plan: Plan): string {
 
 const entriesList: Command = {
   name: 'entries list',
+  product: 'content',
   summary: 'List entries as they are now, drafts included',
   options: {
     'content-type': { type: 'string', description: 'Only entries of this type' },
@@ -474,6 +442,7 @@ const entriesList: Command = {
 
 const entriesGet: Command = {
   name: 'entries get',
+  product: 'content',
   args: '<id>',
   summary: 'Show one entry and its draft fields',
   options: {},
@@ -490,6 +459,7 @@ const FIELDS: OptionSpec = {
 
 const entriesCreate: Command = {
   name: 'entries create',
+  product: 'content',
   summary: 'Create a draft entry',
   options: {
     'content-type': { type: 'string', description: 'The content type’s apiId (required)' },
@@ -509,6 +479,7 @@ const entriesCreate: Command = {
 
 const entriesUpdate: Command = {
   name: 'entries update',
+  product: 'content',
   args: '<id>',
   summary: 'Save a new draft version with these field values',
   options: {
@@ -544,6 +515,7 @@ const BULK_PUBLISH_MAX = 1000;
 
 const entriesPublish: Command = {
   name: 'entries publish',
+  product: 'content',
   args: '<id...>',
   summary: 'Publish the current draft of one entry, or of up to 1,000 at once',
   options: {
@@ -610,6 +582,7 @@ const MIME: Readonly<Record<string, string>> = {
 
 const assetsUpload: Command = {
   name: 'assets upload',
+  product: 'content',
   args: '<file>',
   summary: 'Upload a file as a new asset (multipart above 100 MiB)',
   options: {
@@ -664,6 +637,7 @@ function keyValues(ctx: CommandContext, key: string): Record<string, string> {
 
 const importCommand: Command = {
   name: 'import',
+  product: 'content',
   args: '<file>',
   summary: 'Import a CSV, JSON or WXR file into one content type, as drafts',
   options: {
@@ -767,6 +741,7 @@ function renderAnalysis(a: ImportAnalysis): string {
 
 const types: Command = {
   name: 'types',
+  product: 'content',
   summary: 'Generate TypeScript types from the content model',
   options: {
     out: { type: 'string', short: 'o', description: 'File to write; stdout if absent' },
@@ -798,6 +773,7 @@ export interface Check {
 
 const doctor: Command = {
   name: 'doctor',
+  product: 'content',
   summary: 'Check sign-in, reachability, the API version and access to the space',
   options: {},
   async run(ctx) {
@@ -898,6 +874,8 @@ const doctor: Command = {
 const major = (v: string) => v.split('.')[0];
 const minor = (v: string) => v.split('.')[1];
 
+export type { Command, CommandContext, OptionSpec } from './args.js';
+
 export const COMMANDS: readonly Command[] = [
   login,
   logout,
@@ -914,4 +892,5 @@ export const COMMANDS: readonly Command[] = [
   importCommand,
   types,
   doctor,
+  ...COMMERCE_COMMANDS,
 ];

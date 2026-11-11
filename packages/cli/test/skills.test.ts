@@ -72,7 +72,12 @@ function invocations(snippet: string): { command: string; flags: string[]; raw: 
     const words = (m[1] as string).trim().split(/\s+/).filter(Boolean);
     if (words.length === 0) continue;
     const two = `${words[0]} ${words[1]}`;
-    const command = commandNames.has(two) ? two : (words[0] as string);
+    const three = `${two} ${words[2]}`;
+    const command = commandNames.has(three)
+      ? three
+      : commandNames.has(two)
+        ? two
+        : (words[0] as string);
     const flags = words
       .filter((w) => w.startsWith('--'))
       .map((w) => (w.slice(2).split('=')[0] as string).replace(/^no-/, ''));
@@ -151,6 +156,33 @@ function docsPage(path: string): string | undefined {
   }
   return undefined;
 }
+
+describe('the commerce commands in the building skill', () => {
+  const text = readFileSync(join(skillsDir, 'building-on-commerceworker', 'SKILL.md'), 'utf8');
+
+  it('are all taught, so an agent learns what the CLI can do', () => {
+    // One example per family (`orders`, `flows`, `carts`, …) is enough: the rest share its shape.
+    const taught = new Set(codeSnippets(text).flatMap((s) => invocations(s).map((i) => i.command)));
+    for (const c of COMMANDS.filter((c) => c.product === 'commerce')) {
+      const family = c.name.split(' ')[0];
+      expect(
+        [...taught].some((t) => t.startsWith(family as string)),
+        `no example of ${c.name}`,
+      ).toBe(true);
+    }
+  });
+
+  it('keep content-only commands out of the commerce commands', () => {
+    for (const c of COMMANDS) {
+      expect(['content', 'commerce', 'both']).toContain(c.product);
+    }
+    expect(COMMANDS.filter((c) => c.product === 'both').map((c) => c.name)).toEqual([
+      'login',
+      'logout',
+      'whoami',
+    ]);
+  });
+});
 
 describe('developer skills', () => {
   it('ships the three skills', () => {

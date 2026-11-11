@@ -85,6 +85,8 @@ async function cli(
     },
     ask: async () => '',
     platform: process.platform,
+    openUrl: async () => {},
+    readStdin: async () => '',
   };
   return {
     io,

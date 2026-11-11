@@ -1,0 +1,121 @@
+---
+title: Command-line tool
+description: Sign in to CommerceWorker from a terminal or CI and run orders, flows, approvals, carts and catalog commands, or any REST operation, with JSON output.
+---
+
+`commerceworker` runs the [REST API](/reference/rest-api/) from a terminal, a CI job or a coding
+agent. It comes with the SDK package, `@commerceworker/sdk`, and needs Node 24 or later.
+
+```sh
+npm install -D @commerceworker/sdk
+npx commerceworker --help
+```
+
+The same command also works with a content deployment; this page covers commerce, and
+[the content guide](/content/guides/cli/) covers the rest.
+
+## Sign in
+
+```sh
+commerceworker login --url https://app.your-workspace.commerceworker.com --role operator
+```
+
+`--url` is your workspace's admin address. `login` uses the OAuth device flow: it prints a code and
+an address, you open the address, sign in if you aren't, check the code and approve. The CLI then
+acts as you with the `--role` you asked for (`viewer`, the default, `approver` or `operator`),
+never above your own role and never `admin`. It opens no browser unless you pass `--open`, and then only for a plain https page on your workspace.
+The approval page names the client "Official CommerceWorker CLI". Access
+lasts an hour and the CLI refreshes it as you use it; a second command running at the same moment
+reuses the refresh instead of spending it twice.
+
+To use an [API token](/reference/rest-api/#authentication) instead, for a role the device flow
+doesn't grant, store it:
+
+```sh
+printf '%s' "$COMMERCEWORKER_API_TOKEN" | commerceworker login --url https://app.your-workspace.commerceworker.com --token -
+```
+
+`--token -` reads the token from stdin. Prefer it, or `COMMERCEWORKER_TOKEN`, to `--token <value>`:
+a value on the command line is visible to other users of the machine.
+
+`logout` revokes the refresh token at the server and forgets the profile. Tokens are kept in
+`credentials.json` in your user config directory (`~/.config/commerceworker`, or
+`%APPDATA%\commerceworker` on Windows), readable only by you. Name a profile with `--profile` to
+keep several workspaces; a profile belongs to one product, and a command for the other one tells
+you so instead of guessing.
+
+The CLI sends a token only over https (plain http works for `localhost`), and a stored profile's
+token goes only to the address it was issued for: `--url` with another address is refused, so use
+`--profile`, or `COMMERCEWORKER_TOKEN` with `--url`. Text a server sends is shown with its control
+characters removed.
+
+In CI, skip the file: set `COMMERCEWORKER_TOKEN` (an API token) and `COMMERCEWORKER_URL` (the admin
+address). `COMMERCEWORKER_PROFILE` picks a profile and `COMMERCEWORKER_CONFIG_DIR` moves the file.
+
+## Who am I
+
+```sh
+commerceworker whoami
+```
+
+```json
+{"url":"https://app.your-workspace.commerceworker.com","source":"default","kind":"oauth","role":"operator","subject":{"id":"usr_…","name":"Ann","email":"ann@example.com"}}
+```
+
+It answers [`GET /api/v1/me`](/reference/rest-api/#who-am-i): who the credential is, its role and
+when it ends.
+
+## Commands
+
+| Command | Does | Needs |
+| --- | --- | --- |
+| `orders list` | Orders, newest first (`--status`, `--model`, `--channel`, `--q`, `--limit`, `--cursor`; `--all` follows every page) | `viewer` |
+| `orders get <id>` | One order: its state, steps and what it waits on | `viewer` |
+| `orders cancel <id>` | Cancel it and roll its steps back (`--reason`) | `operator` |
+| `flows list`, `flows get <flow>` | Flows, and one flow's graph and draft | `viewer` |
+| `flows publish <flow>` | Publish the draft (`--draft` from `flows get`: refused if it changed since) | `operator` |
+| `flows test <flow>` | Run the draft against its test scenarios (`--draft`) | `operator` |
+| `approvals decide <order> <step>` | `--decision approved` or `rejected` (`--note`, `--on-behalf-of`) | `approver` |
+| `carts list`, `carts get <id>` | Carts (`--status`, `--limit`), and one cart | `viewer` |
+| `catalog products get <key>` | One catalog product | `viewer` |
+| `catalog products put --input <json\|@file>` | Create or replace products: an array, or `{ "products": [...] }` | `operator` |
+| `run <operationId> --input <json\|@file>` | Any REST operation by its `operationId` | the operation's |
+
+`run` reaches every operation in the [OpenAPI document](/api/): `commerceworker run --list` names
+them, and `--input` is the request as one JSON object, path parameters included.
+
+```sh
+commerceworker run get_order_state --input '{"id":"ord_123"}'
+commerceworker run start_order --input @order.json --idempotency-key order-42
+```
+
+`commerceworker <command> --help` lists every option.
+
+## Output for scripts and agents
+
+Every commerce command prints one JSON document on stdout, compact on one line; `--pretty`
+indents it. Nothing else goes to stdout, so `commerceworker orders list | jq` works. Progress and
+errors go to stderr.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | It worked |
+| `1` | The API refused, or the network failed |
+| `2` | A bad command line, or a missing or invalid `--input` |
+| `3` | Not signed in, or the token was refused |
+
+An API error is one JSON line on stderr, with the error's `code` (`bad_request`, `unauthorized`,
+`forbidden`, `not_found`, `conflict`, `unprocessable`, `rate_limited`, `server`, `connection` or
+`timeout`), its `status`, the `requestId` to quote to support, and `issues`, one entry per invalid
+field:
+
+```json
+{"error":{"code":"bad_request","message":"Invalid body","status":400,"requestId":"req_42","operationId":"cancel_order","issues":[{"path":"reason","message":"too long"}]}}
+```
+
+What changes what buyers pay or owe, such as a price, an exchange rate or a tax certificate, is
+done by a person signed in as themselves, never by a token. When the server refuses an operation
+for that reason (`403`), the error carries an `adminLink`: the admin page where you can do it.
+
+Reads and deletes are retried on a `429` or a server error, and a write only when you pass an
+`--idempotency-key`.

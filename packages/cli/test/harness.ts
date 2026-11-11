@@ -13,6 +13,7 @@ export interface Call {
   readonly path: string;
   readonly headers: Headers;
   readonly body: string | undefined;
+  readonly signal: AbortSignal | undefined;
 }
 
 type Handler = (call: Call) => unknown;
@@ -39,13 +40,19 @@ export const status = (code: number, body: unknown = {}) =>
  */
 export async function harness(
   routes: Record<string, Handler>,
-  opts: { env?: Record<string, string>; interactive?: boolean; answers?: string[] } = {},
+  opts: {
+    env?: Record<string, string>;
+    interactive?: boolean;
+    answers?: string[];
+    stdin?: string;
+  } = {},
 ) {
   const configDir = join(await mkdtemp(join(tmpdir(), 'cw-cli-')), 'config');
   const calls: Call[] = [];
   const stdout: string[] = [];
   const stderr: string[] = [];
   const sleeps: number[] = [];
+  const opened: string[] = [];
   let clock = Date.parse('2026-11-01T12:00:00Z');
   const answers = [...(opts.answers ?? [])];
 
@@ -57,6 +64,7 @@ export async function harness(
       path: url.pathname,
       headers: new Headers(init.headers),
       body: typeof init.body === 'string' ? init.body : undefined,
+      signal: init.signal ?? undefined,
     };
     calls.push(call);
     const handler =
@@ -78,15 +86,22 @@ export async function harness(
     sleep: async (ms) => {
       sleeps.push(ms);
       clock += ms;
+      // The clock is fake; yield to real I/O so a concurrent holder of the credentials lock can finish.
+      await new Promise((resolve) => setTimeout(resolve, 1));
     },
     ask: async () => answers.shift() ?? '',
     platform: process.platform,
+    readStdin: async () => opts.stdin ?? '',
+    openUrl: async (url) => {
+      opened.push(url);
+    },
   };
 
   return {
     io,
     calls,
     sleeps,
+    opened,
     configDir,
     stdout,
     stderr,
