@@ -65,7 +65,7 @@ import { receives } from '~/lib/routing';
 import { useCan } from '~/lib/use-me';
 import type { Route } from './+types/flows';
 
-export const meta = () => [{ title: 'Flows · CommerceWorker' }];
+export const meta = () => [{ title: 'Order Flows · CommerceWorker' }];
 
 const SELLING = ORDER_MODELS.filter((m) => !BUY_SIDE_MODELS.includes(m));
 
@@ -253,7 +253,7 @@ export default function Flows() {
   return (
     <>
       <PageHeader
-        title="Flows"
+        title="Order Flows"
         subtitle="The process each kind of order follows. Orders keep the version they started on, so edits never change a running order."
         actions={
           canOperate && !archived ? (

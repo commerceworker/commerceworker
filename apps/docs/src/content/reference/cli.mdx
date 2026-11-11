@@ -72,7 +72,7 @@ when it ends.
 | `orders list` | Orders, newest first (`--status`, `--model`, `--channel`, `--q`, `--limit`, `--cursor`; `--all` follows every page) | `viewer` |
 | `orders get <id>` | One order: its state, steps and what it waits on | `viewer` |
 | `orders cancel <id>` | Cancel it and roll its steps back (`--reason`) | `operator` |
-| `flows list`, `flows get <flow>` | Flows, and one flow's graph and draft | `viewer` |
+| `flows list`, `flows get <flow>` | Order Flows, and one flow's graph and draft | `viewer` |
 | `flows publish <flow>` | Publish the draft (`--draft` from `flows get`: refused if it changed since) | `operator` |
 | `flows test <flow>` | Run the draft against its test scenarios (`--draft`) | `operator` |
 | `approvals decide <order> <step>` | `--decision approved` or `rejected` (`--note`, `--on-behalf-of`) | `approver` |

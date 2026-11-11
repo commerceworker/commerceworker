@@ -92,7 +92,7 @@ test('the customers list filters by kind and company status, and offers a new cu
   await expect(customers.getByRole('link', { name: 'Ada Lovelace' })).toHaveCount(0);
   await customers.getByLabel('Kind').selectOption('consumer');
   await expect(page).toHaveURL(/customer-kind=consumer/);
-  await expect(customers).toContainText('Nothing here matches those filters');
+  await expect(customers).toContainText('No customers match those filters');
   await customers.getByRole('link', { name: 'Clear filters' }).click();
   await expect(customers.getByRole('link', { name: 'Ada Lovelace' })).toBeVisible();
 

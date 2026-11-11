@@ -100,7 +100,7 @@ may be added later, so a client should ignore fields it doesn't know. `assess_or
 `propose_flow_change` wait on a model: a client that sends a progress token hears when they start.
 A refusal from live data (nothing is waiting on that event, the approval is
 already decided, the order has finished, you started the order and the workspace [separates approvals](/guides/team-and-roles/#approvals), a cart is locked or not priced yet) is returned as a tool error the model can read, not a
-protocol error. Any other failure is a tool error saying something went wrong on CommerceWorker's side,
+protocol error. Any other failure is a tool error saying CommerceWorker couldn't complete the call,
 without the details. A tool the role can't use is not listed, and calling it by name fails as
 unknown. On 2026-07-28 the tool list may be cached by the client for a minute.
 

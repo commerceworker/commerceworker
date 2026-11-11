@@ -86,10 +86,10 @@ export default defineConfig({
         {
           label: 'Guides',
           items: [
-            { label: 'Building flows', slug: 'guides/building-flows' },
+            { label: 'Building Order Flows', slug: 'guides/building-flows' },
             { label: 'Commerce models', slug: 'guides/commerce-models' },
             { label: 'Fulfillment', slug: 'guides/fulfillment' },
-            { label: 'Built-in flows', slug: 'guides/templates' },
+            { label: 'Built-in Order Flows', slug: 'guides/templates' },
             { label: 'Marketplace', slug: 'guides/marketplace' },
             { label: 'Product catalog', slug: 'guides/product-catalog' },
             { label: 'Payments', slug: 'guides/payments' },

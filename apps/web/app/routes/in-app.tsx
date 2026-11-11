@@ -70,8 +70,8 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     );
   }
   return (
-    <Refused title="Something went wrong" icon={<TriangleAlert aria-hidden="true" />}>
-      <p>{said ?? 'This page couldn’t load. Try again, or go back to the overview.'}</p>
+    <Refused title="This page couldn’t load" icon={<TriangleAlert aria-hidden="true" />}>
+      <p>{said ?? 'The request failed. Try again, or go back to the overview.'}</p>
     </Refused>
   );
 }

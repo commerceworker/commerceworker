@@ -8,7 +8,7 @@ test('leaving unsaved edits asks in place; the safe choice has focus and Escape 
   await open(page, '/flows/tpl-storefront-order');
   const name = page.getByRole('textbox', { name: 'Flow name' });
   await name.fill('Storefront order, edited');
-  await page.getByRole('link', { name: 'Flows', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Order Flows', exact: true }).first().click();
   const ask = page.getByRole('alertdialog');
   await expect(ask).toContainText('unsaved changes');
   await expect(ask.getByRole('button', { name: 'Stay' })).toBeFocused();

@@ -174,7 +174,7 @@ after the assistant restarted mid-run), it finds the order it already started. O
 answered, the conversation keeps only its ids, so a guest buyer's contact isn't stored there. A
 page's card left unanswered for a day is dropped as declined, and only its ids are kept.
 
-Flows have writes that run without a card, since a draft runs only once published: `create_flow`
+Order Flows have writes that run without a card, since a draft runs only once published: `create_flow`
 (a model's template, a blank start, or drafted from a description), `duplicate_flow` and
 `archive_flow` (archive or restore a draft that was never published). `save_flow_draft` is the
 editor's **Save**, and only the editor calls it, since it overwrites the draft. The assistant
@@ -254,13 +254,13 @@ role change, a sign-out or a disabled account applies to an open panel at once. 
 ## Flow changes
 
 Ask for a change to a flow ("add a fraud check after credit"). The `propose_flow_change` tool
-(`operator`) drafts a whole new graph with the same copilot that creates flows, validates it, and
+(`operator`) drafts a whole new graph with the same drafting that creates flows from a description, validates it, and
 returns the explanation, a count of what it adds, removes, edits and rewires, and any problems. It
 never saves anything. **Review in editor** opens the flow's editor with the proposal, where
 accepting it is one undoable edit that you can still save and publish. In the editor the draft
 builds on the graph on screen. A request that changes nothing says so, with no card.
 
-Creating a flow from a description still happens on the Flows page.
+Creating an Order Flow from a description still happens on the Order Flows page.
 
 ## Carts
 

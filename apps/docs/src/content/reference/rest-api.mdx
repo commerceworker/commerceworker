@@ -195,12 +195,12 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 
 An admin's reads, removals, revocations and agentic checkout settings above are also [MCP tools](/reference/mcp/#outside-access) that run the same code. Creating or rotating a subscription, integration or platform is REST's alone: its secret or key is shown once.
 
-## Flows
+## Order Flows
 
 `GET /api/v1/flows` lists every flow, most recently updated first, with `id`, `name`,
 `description`, `model`, `channels`, `publishedVersion` (null until the first publish),
 `hasUnpublishedChanges` (the draft differs from the published version), `updatedAt` and `nodeCount`.
-Archived drafts are left out. Flows are edited and published in the dashboard's editor; the API starts orders on them.
+Archived drafts are left out. Order Flows are edited and published in the dashboard's editor; the API starts orders on them.
 
 ## Start an order
 

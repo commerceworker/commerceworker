@@ -83,10 +83,7 @@ export async function action({ request }: Route.ActionArgs) {
   const flowId = str('flowId');
   const flow = (await publishedFlowGraphs()).find((x) => x.id === flowId);
   if (!flow)
-    return fail(
-      'Pick a published flow. Flows must be published before orders can run on them.',
-      'flowId',
-    );
+    return fail('Pick a published Order Flow. An order can run only on a published one.', 'flowId');
 
   const office = await commerceData();
   const parsed = parseLines(str('lines'), new Set(office.products.map((p) => p.sku)));

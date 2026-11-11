@@ -506,7 +506,7 @@ export default function Commerce() {
                   );
                 })}
                 {q && !inventory.total ? (
-                  <TableEmpty colSpan={5}>Nothing here matches “{q}”.</TableEmpty>
+                  <TableEmpty colSpan={5}>No products match “{q}”.</TableEmpty>
                 ) : null}
               </TableBody>
             </Table>
@@ -580,7 +580,7 @@ export default function Commerce() {
                     ) : (
                       <Tr>
                         <Td colSpan={4} className="py-1 pl-8 text-muted-foreground text-xs">
-                          {q ? 'Nothing here matches.' : 'No stock held here.'}
+                          {q ? 'No stock matches.' : 'No stock held here.'}
                         </Td>
                       </Tr>
                     )}
@@ -643,7 +643,7 @@ export default function Commerce() {
                     </Tr>
                   ))}
                   {q && !sellers.total ? (
-                    <TableEmpty colSpan={3}>Nothing here matches “{q}”.</TableEmpty>
+                    <TableEmpty colSpan={3}>No sellers match “{q}”.</TableEmpty>
                   ) : null}
                 </TableBody>
               </Table>
@@ -732,7 +732,7 @@ export default function Commerce() {
                 })}
                 {!customers.total ? (
                   <TableEmpty colSpan={5}>
-                    Nothing here matches{q ? ` “${q}”` : ' those filters'}.
+                    No customers match{q ? ` “${q}”` : ' those filters'}.
                   </TableEmpty>
                 ) : null}
               </TableBody>

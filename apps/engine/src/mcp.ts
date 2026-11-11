@@ -361,7 +361,7 @@ async function createServer(p: Principal) {
           if (err instanceof Refused) return refusal(err.message);
           // Anything else stays here: a database or provider error is not the model's to see.
           console.error('mcp tool', name, err);
-          return refusal('Something went wrong on CommerceWorker’s side. Try again in a moment.');
+          return refusal('CommerceWorker couldn’t complete this call. Try again in a moment.');
         }
       },
     );

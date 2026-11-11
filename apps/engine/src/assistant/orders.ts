@@ -57,7 +57,7 @@ async function publishedFlow(env: Env, flowId: string) {
 /** What is wrong with a new order, in the words the form used; null when it can start. */
 async function startProblem(env: Env, i: StartInput): Promise<string | null> {
   if (!(await publishedFlow(env, i.flowId)))
-    return 'Pick a published flow. Flows must be published before orders can run on them.';
+    return 'Pick a published Order Flow. An order can run only on a published one.';
   if (!i.lines.length && !i.documentText) return 'Add at least one line.';
   if (i.customerId && i.contact) return 'Choose a customer or a guest contact, not both.';
   const skus = [...new Set(i.lines.map((l) => l.sku))];
@@ -240,7 +240,7 @@ export async function runStart(
   trail: Trail,
 ) {
   const flow = await publishedFlow(env, i.flowId);
-  if (!flow) throw new Refused('Pick a published flow.');
+  if (!flow) throw new Refused('Pick a published Order Flow.');
   return startKeyed(env, p, i.flowId, inputOf(i, flow.model), key, trail);
 }
 
@@ -261,6 +261,6 @@ export async function startScenario(env: Env, p: Principal, id: string, trail: T
   if (!s || !(await demoLoaded(env))) throw new Refused('That demo scenario isn’t available here.');
   await ensureTemplates(env);
   if (!(await publishedFlow(env, s.flowId)))
-    throw new Refused('Its flow is not published. Publish it on the Flows page first.');
+    throw new Refused('Its Order Flow is not published. Publish it on the Order Flows page first.');
   return startKeyed(env, p, s.flowId, s.input, undefined, { ...trail, scenario: s.id });
 }

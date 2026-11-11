@@ -2189,7 +2189,7 @@ describe('MCP', () => {
       flowId: 'flw_broken',
     });
     expect(broken.isError).toBe(true);
-    expect(broken.content[0]!.text).toMatch(/went wrong on CommerceWorker/);
+    expect(broken.content[0]!.text).toMatch(/CommerceWorker couldn’t complete this call/);
     expect(broken.content[0]!.text).not.toMatch(/JSON/);
   });
 

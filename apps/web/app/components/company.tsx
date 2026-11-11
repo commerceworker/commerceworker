@@ -273,7 +273,7 @@ function MemberForm({
             aria-describedby={`member-limit-hint-${id}`}
           />
           <FieldDescription id={`member-limit-hint-${id}`}>
-            The most one order of theirs may total, in the base currency. Flows can read it as
+            The most one order of theirs may total, in the base currency. Order Flows can read it as
             buyer.orderLimit.
           </FieldDescription>
         </Field>
@@ -608,7 +608,7 @@ export function TeamsSection({ data, canOperate }: { data: CompanyData; canOpera
     <Section
       id="teams"
       title="Teams"
-      description="A company’s teams nest, and a member belongs to one. Flows can read a buyer’s team as buyer.team."
+      description="A company’s teams nest, and a member belongs to one. Order Flows can read a buyer’s team as buyer.team."
       actions={
         canOperate && !closed ? (
           <FormSheet

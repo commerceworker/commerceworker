@@ -1,10 +1,10 @@
 ---
 title: AI nodes and the assistant
-description: The AI nodes, the heuristic each falls back to, Assess, the flow copilot and the workspace assistant.
+description: The AI nodes, the heuristic each falls back to, Assess, drafting an Order Flow from a description, and the workspace assistant.
 ---
 
-CommerceWorker uses Workers AI in three places: the AI nodes in a flow, the flow copilot, and the
-[workspace assistant](#the-assistant). The AI nodes and the copilot share the same guarantees:
+CommerceWorker uses Workers AI in three places: the AI nodes in an Order Flow, flow drafting, and the
+[workspace assistant](#the-assistant). The AI nodes and flow drafting share the same guarantees:
 
 - **Structured answers.** Every call asks for JSON in a fixed schema, at a low temperature
   (`0.2`, at most 2048 tokens).
@@ -29,7 +29,7 @@ CommerceWorker uses Workers AI in three places: the AI nodes in a flow, the flow
   "no usable lines in the answer"). Assess and the assistant's order assessment record the same
   fields. The Extract order and Demand forecast summaries show the source too.
 
-By default the AI nodes and the copilot use `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, the
+By default the AI nodes and flow drafting use `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, the
 assistant `@cf/moonshotai/kimi-k2.6`, and Assess `@cf/cloudflare/clef`. Your CommerceWorker
 administrator can change them for the workspace.
 
@@ -126,7 +126,7 @@ Three things are different:
 - **The [assistant](#the-assistant)** shows the order data its tools return to the assistant model,
   for the person who is asking and what their role may see. Its `assess_order` tool follows the
   rules above.
-- **The flow copilot** sends flow graphs and the node catalog, not order data.
+- **Flow drafting** sends flow graphs and the node catalog, not order data.
 - **A drafted cart reply** (the cart Thread's **Draft a reply**) sends the cart chat's newest 30
   messages, authors as buyer, you or staff and never their names, with personal details masked
   unless the deployment sends personal data. It has no tools, and nothing is sent until a person
@@ -218,9 +218,9 @@ number used. Later nodes can read the answers, for example in a
 Without the model, a `noul` is 0.5, a `score` is uniform over its levels, and a `choice` leans
 toward the option whose id and description share the most words (4 letters or more) with the state.
 
-## The flow copilot
+## Drafting a flow
 
-The copilot proposes a whole graph. It is reachable from **Describe it** when creating a flow and,
+Flow drafting proposes a whole graph. It is reachable from **Describe it** when creating a flow and,
 in the editor, through the [assistant](/guides/assistant/#flow-changes). The model gets the node
 catalog (types, outputs, config fields) and the graph rules, and returns a complete graph plus an
 explanation. CommerceWorker then fills each node's missing config from its defaults, keeps existing
@@ -230,7 +230,7 @@ nodes' positions (laying the graph out again only when nodes were added), and
 In the editor the result is a proposal: it shows the explanation and what it adds, removes, edits
 and rewires, and the graph changes only if you accept it. Accepting doesn't publish.
 
-Without the model, the copilot understands one sentence shape, "add a *node label* after *node id
+Without the model, flow drafting understands one sentence shape, "add a *node label* after *node id
 or label*" ("fraud" or "risk" mean Risk score; "the", "a" and "an" are ignored), and splices the
 node into that node's outgoing edges.
 
@@ -240,7 +240,7 @@ The [workspace assistant](/guides/assistant/) is the chat panel available on eve
 a multi-turn, tool-calling conversation, with up to 6 tool steps per message, and offers only the
 tools your role can use. Its `assess_order` tool runs the same Assess call as the node on one order
 (`questions`, optional `images`) and returns the probabilities; its `propose_flow_change` tool uses
-the copilot above, its admin-only `draft_plugin` tool writes a rule plugin for review (see
+flow drafting above, its admin-only `draft_plugin` tool writes a rule plugin for review (see
 [Plugin drafts](/guides/assistant/#plugin-drafts)), and its `draft_product_content` tool drafts a
 catalog product's missing text (see [Product content](/guides/assistant/#product-content)). Without the model, a rule-based fallback takes the turn; see
 [Without the model](/guides/assistant/#without-the-model).
