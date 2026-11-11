@@ -24,7 +24,11 @@ describe the code at the time they were written, and the code wins.
 **Rule.** In `apps/engine/src/workflow.ts`, every effect happens inside a `step.do`, and so does
 anything that reads the clock or calls a model. Nodes are applied in graph order after each batch.
 Step names are `${nodeId}#${run}` (with `:open`, `:close`, `:until` suffixes for control nodes) and
-must never change in a way that renames a published flow's steps.
+must never change in a way that renames a published flow's steps. Whatever throws out of `run()`
+fails the order: `run`'s catch reports it (a `run:failed` step, then its `:emit` unless a node's own
+step or a failing End node already announced it), because the agent watches the instance only after a
+`failed` report. A release step after an End never fails an ended order (no rollback of a completed
+order): it logs and audits instead.
 
 **Why.** A Workflow replays from the top after every hibernation and retry; completed steps return
 their cached result *by name*. Code outside a step runs again on every replay, so an effect there
