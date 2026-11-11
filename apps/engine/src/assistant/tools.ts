@@ -85,6 +85,7 @@ const trailOf = (p: Principal, tool: AssistantTool, opts: { via: Channel; direct
   };
 };
 
+import { openHostedCheckout } from './checkouts';
 import { draftPlugin } from './plugin-draft';
 import { draftProductContent } from './product-draft';
 import {
@@ -236,6 +237,13 @@ export async function runTool<T extends AssistantTool>(
       return listCarts(env, input as ToolInput<'list_carts'>);
     case 'get_cart':
       return getCart(env, (input as ToolInput<'get_cart'>).cartId);
+    case 'create_checkout':
+      return openHostedCheckout(
+        env,
+        p,
+        input as ToolInput<'create_checkout'>,
+        trailOf(p, name, opts),
+      );
     case 'create_cart':
       return openCart(env, p, input as ToolInput<'create_cart'>, opts.via);
     case 'change_cart': {

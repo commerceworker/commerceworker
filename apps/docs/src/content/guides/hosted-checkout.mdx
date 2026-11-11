@@ -1,0 +1,35 @@
+---
+title: Hosted checkout
+description: A checkout page on your storefront for one buyer, opened by a one-time link you make through the API. The page is coming; the link and the session behind it are in.
+---
+
+A hosted checkout is a checkout for one buyer on your storefront (`shop.<your domain>`), started by
+you rather than by the buyer. You make it through the [REST API](/reference/rest-api/#hosted-checkouts), over
+[MCP](/reference/mcp/) or with the [assistant](/guides/assistant/) with `create_checkout`, naming the lines
+(and the buyer, ship-to and customer if you know them), and you get back an id and a link. Give the buyer
+the link.
+
+:::note
+The checkout page itself is coming. Today the link opens a placeholder that lists the lines; paying
+and placing the order are not on it yet.
+:::
+
+## What the link does
+
+The link opens once. Opening it shows a "Continue to checkout" page, so an email scanner or link
+preview that fetches the link doesn't use it up; the buyer's tap on the button hands their browser a
+cookie for that checkout alone and goes to the checkout. After that, a second visit to the same link, or one after the checkout has expired, is refused and
+you make a new one. The cookie is private to the buyer's browser: it opens that one checkout and
+nothing else, not another buyer's, not an order, not the admin. A checkout that an AI platform started
+over [agentic checkout](/reference/ucp/) is never opened by a hosted link, and the other way round.
+
+The checkout is priced by your checkout flow, as every other checkout is, and lasts six hours. What the
+buyer can change on it is their own details (name, email, address, shipping option, pickup store and
+promotion codes); they can never change a price, and the lines stay yours unless you let the buyer edit
+them.
+
+## Turning it on
+
+Hosted checkout is off by default, and the setting that turns it on is not in the admin yet. While it is
+off, `create_checkout` makes no link and links already made stop working until it is on. It uses your
+agentic checkout flow unless a different one is named.

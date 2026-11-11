@@ -138,7 +138,7 @@ export const SHIP_TO_LIMITS: Record<keyof ShipAddress, number> = {
 export const MAX_SHIPPING_OPTION_ID = 80;
 
 const shipToField = (f: keyof ShipAddress) => z.string().trim().max(SHIP_TO_LIMITS[f]).optional();
-const shipToSchema = z.object({
+export const shipToSchema = z.object({
   name: shipToField('name'),
   line1: shipToField('line1'),
   line2: shipToField('line2'),

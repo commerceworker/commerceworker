@@ -166,6 +166,7 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 | `POST` | `/api/v1/carts/:id/ops` | One cart op, such as `{ op: "add", sku, qty }` | `{ cart }`, or `409 { error }` |
 | `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `cartVersion`, or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
 | `POST` | `/api/v1/carts/:id/cancel` | | `{ cart }`, or `409 { error }` |
+| `POST` | `/api/v1/checkouts` | `{ lines, buyer?, shipTo?, customerId? }` | `{ id, url }` (operator) |
 | `GET` | `/api/v1/audit-events?type=&before=&after=&limit=` | | `{ events }` (admin) |
 | `GET` | `/api/v1/audit-events/verify?after=` | | `{ ok, checked, last, next }` or `{ ok: false, brokenAt, reason }` (admin) |
 | `POST` | `/api/v1/data-subjects/export` | `{ email }` | A JSON file: `{ email, customers, orders, messages, inboundEmails, documents, carts, taxCertificates, addresses, companies, companyMembers, purchaseOrders, quotes, truncated, teamMember }` (admin) |
@@ -336,6 +337,16 @@ payment authorizations, cancels shipments and staged pickups, restocks shipped s
 `409` `{ error: "The order has already finished" }`; an unknown order is `404`.
 
 ## Carts
+
+### Hosted checkouts
+
+`POST /api/v1/checkouts` makes a [hosted checkout](/guides/hosted-checkout/) for one buyer and returns
+`{ id, url }`: the checkout's id (`chk_…`) and the one-time link to give the buyer. `lines` is one to
+100 `{ sku, qty }` (never a price: the checkout flow prices them), `buyer` is optionally `{ email?,
+firstName?, lastName?, phone? }`, `shipTo` an optional address, and `customerId` an optional customer
+(`cus_…`) whose contract prices apply and who the order is for. It needs an operator and is refused (`422`)
+while hosted checkout is off, for a customer or SKU that doesn't exist, or when nothing in it can be
+bought. Each call makes a new checkout; the link opens it once and is never shown again.
 
 A [cart](/guides/carts/) is a list of lines your team builds before it becomes an order, priced
 by its flow after every change. These routes reach the carts opened on the Carts page (or here);

@@ -88,17 +88,21 @@ export async function exportDataSubject(
     messages: held.messages,
     inboundEmails: held.inboundEmails.map(({ r2Key: _key, ...r }) => r),
     documents: held.documents,
-    checkouts: (await ports.subjects.checkouts(s.email, EXPORT_MAX)).map(
-      ({ id, status, buyer, shipTo, lines, orderId, createdAt }) => ({
-        id,
-        status,
-        buyer,
-        shipTo,
-        lines,
-        orderId,
-        createdAt,
-      }),
-    ),
+    checkouts: (
+      await ports.subjects.checkouts(
+        s.email,
+        s.accounts.map((c) => c.id),
+        EXPORT_MAX,
+      )
+    ).map(({ id, status, buyer, shipTo, lines, orderId, createdAt }) => ({
+      id,
+      status,
+      buyer,
+      shipTo,
+      lines,
+      orderId,
+      createdAt,
+    })),
     carts: carts
       .filter((c) => c !== null)
       // Plain data, not the RPC result it came in.

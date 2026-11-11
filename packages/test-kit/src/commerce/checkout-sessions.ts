@@ -32,6 +32,20 @@ export class InMemoryCheckoutSessions implements CheckoutSessionStore {
     return true;
   }
 
+  async ownerOf(id: string) {
+    return this.rows.get(id)?.ownerId ?? null;
+  }
+
+  async transfer(id: string, from: string, to: string, now: number) {
+    const r = this.rows.get(id);
+    if (!r || r.ownerId !== from) return null;
+    const s = this.parse(r.data);
+    if (s.expiresAt <= now || s.status === 'completed' || s.status === 'canceled') return null;
+    const next = { ...s, ownerId: to };
+    this.rows.set(id, { ...r, ownerId: to, data: JSON.stringify(next) });
+    return next;
+  }
+
   async forOrder(orderId: string) {
     for (const r of this.rows.values()) {
       const s = this.parse(r.data);

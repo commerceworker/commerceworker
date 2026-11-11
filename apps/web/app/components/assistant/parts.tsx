@@ -125,6 +125,7 @@ const ICONS: Record<string, LucideIcon> = {
   list_carts: ShoppingCart,
   get_cart: ShoppingCart,
   create_cart: ShoppingCart,
+  create_checkout: ShoppingCart,
   change_cart: ShoppingCart,
   list_flows: Workflow,
   get_flow: Workflow,
@@ -151,6 +152,7 @@ const RUNNING: Record<string, string> = {
   list_carts: 'Listing carts',
   get_cart: 'Reading the cart',
   create_cart: 'Opening a cart',
+  create_checkout: 'Making a checkout link',
   change_cart: 'Changing the cart',
   list_flows: 'Listing flows',
   get_flow: 'Reading the flow',
@@ -186,6 +188,9 @@ function found(name: string, out: Record<string, unknown>): string | null {
     case 'create_cart':
     case 'change_cart':
       return `${plural(n(out.lines), 'line')}${out.priced && out.total ? ` · ${out.total}` : ''}`;
+    case 'create_checkout':
+      // The one-time link is for the person, here; the model is told only that it was shown.
+      return typeof out.url === 'string' ? `Link for the buyer: ${out.url}` : null;
     case 'list_flows':
       return plural(n(out.flows), 'flow');
     case 'get_flow':

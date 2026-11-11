@@ -41,9 +41,17 @@ import {
   QUOTE_STATUSES,
   updateQuoteInput,
 } from './b2b/quotes';
-import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
+import {
+  CART_STATUSES,
+  cartOpSchema,
+  MAX_CART_TITLE,
+  normalizePromoCode,
+  shipToSchema,
+} from './cart';
+import { MAX_CHECKOUT_LINES, MAX_LINE_QUANTITY } from './checkout';
 import { CREDIT_ENTRY_KINDS, MAX_CREDIT_ADJUSTMENT } from './credit';
 import { FX_SOURCES } from './fx';
+import { hostedBuyerSchema } from './hosted-checkout';
 import { flowGraphSchema } from './order-schemas';
 import { MAX_DECISION_NOTE, RESERVED_EVENT_FIELDS } from './order-waits';
 import { pluginCasesSchema } from './plugins';
@@ -243,6 +251,27 @@ export const TOOL_INPUTS = {
     title: F.cartTitle,
     flowId: F.cartFlowId.describe('A published flow with a Price lines step (list_flows)'),
     customerId: F.cartCustomerId.optional().describe('The customer it is for (cus_…)'),
+  }),
+  create_checkout: z.object({
+    lines: z
+      .array(
+        z.object({
+          sku: z.string().min(1).max(100),
+          qty: z.number().int().min(1).max(MAX_LINE_QUANTITY),
+        }),
+      )
+      .min(1)
+      .max(MAX_CHECKOUT_LINES)
+      .describe('What the buyer is buying; the checkout flow prices it'),
+    buyer: hostedBuyerSchema
+      .optional()
+      .describe('Who is buying, if known; the page asks for the rest'),
+    shipTo: shipToSchema.optional().describe('Where it ships, if known'),
+    customerId: F.cartCustomerId
+      .optional()
+      .describe(
+        'The customer it is for (cus_…): their contract prices apply and the order is theirs',
+      ),
   }),
   change_cart: z.object({
     cartId,
@@ -1158,6 +1187,12 @@ export const TOOL_OUTPUTS = {
     items: z.array(row({ key: z.string(), title: z.string(), column: z.string() })),
     cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
   }),
+  create_checkout: row({
+    id: z.string().describe('The checkout (chk_…)'),
+    url: z
+      .string()
+      .describe('The one-time link to give the buyer: it opens their checkout page once'),
+  }),
   create_cart: cartOutput,
   change_cart: cartOutput.extend({ applied: z.number().describe('Ops applied') }),
   decide_approval: actionOutput.extend({
@@ -1565,6 +1600,7 @@ export const REST_OPERATION_TOOLS = [
   'list_quotes',
   'get_quote',
   'create_quote',
+  'create_checkout',
   'update_quote',
   'send_quote',
   'accept_quote',

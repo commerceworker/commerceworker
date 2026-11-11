@@ -27,7 +27,11 @@ const retryable = (code: string, content: string) => ({
 });
 
 /**
- * Completes `s` (read at `s.version`, neither complete nor canceled). Throws when the processor or
+ * Completes `s` (read at `s.version`, neither complete nor canceled).
+ *
+ * For a hosted checkout's completion (not built yet): its buyer pays with their own instrument.
+ * Never on-account, never the customer's credit or saved cards (`customerId` prices a session, it
+ * is no authority to charge), unless the operator explicitly allows it. Throws when the processor or
  * the order fails, after opening the session again and releasing the hold.
  */
 export async function completeSession(
@@ -82,6 +86,7 @@ export async function completeSession(
         model: flow.model,
         channel: caller.channel,
         externalId: claimed.id,
+        ...(claimed.customerId ? { customerId: claimed.customerId } : {}),
         title: `Checkout ${claimed.id}`,
         currency: claimed.currency,
         lines: q.lines.map((l) => ({ sku: l.sku, name: l.title, qty: l.qty })),

@@ -159,8 +159,8 @@ changed the cart in between (a `change_cart`, someone on the cart's page), the c
 refused with "The cart changed since you confirmed; preview it again" and nothing is submitted.
 The same holds when the person confirms through an eliciting client.
 
-Reads, `propose_flow_change`, `draft_plugin`, `draft_product_content`, `create_cart` and
-`change_cart` do not take a code: a cart is only a draft of an order until `submit_cart`, and a
+Reads, `propose_flow_change`, `draft_plugin`, `draft_product_content`, `create_cart`,
+`change_cart` and `create_checkout` do not take a code: a cart is only a draft of an order until `submit_cart`, and a
 product draft changes nothing until a person publishes it. Over [A2A](/reference/a2a/), typed skills
 (and `place_order`) run directly, as REST calls do, and `chat` already asks for `{ "confirm": true }`.
 
@@ -186,6 +186,7 @@ Annotations also tell a client when to confirm:
 | `put_budget` | a write, not destructive, not idempotent: without a `budgetId` it adds another budget |
 | `submit_po`, `cancel_po` | `destructiveHint: true` and `idempotentHint: true`: submitting starts an order (once per purchase order) and cancelling cancels it; the same call again changes nothing |
 | `create_po_draft`, `update_po_draft` | writes without a confirmation, not destructive: a draft starts nothing |
+| `create_checkout` | a write without a confirmation, not destructive, not idempotent: each call makes a checkout and its one-time link, and nothing is ordered until the buyer completes it |
 | `send_quote`, `accept_quote`, `decline_quote`, `expire_quote` | `destructiveHint: true` and `idempotentHint: true`: a sent quote can't be edited, accepting or ending one changes what a company pays, and the same move again changes nothing |
 | `convert_quote` | `destructiveHint: true`, `idempotentHint: true` and `openWorldHint: true`: it makes a PO draft or starts an order, once per quote |
 | `create_quote`, `update_quote`, `revise_quote` | writes without a confirmation, not destructive: a draft prices nothing |

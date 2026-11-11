@@ -84,6 +84,7 @@ export type AssistantTool =
   | 'catalog_board'
   | 'catalog_board_column'
   | 'create_cart'
+  | 'create_checkout'
   | 'change_cart'
   | 'decide_approval'
   | 'decide_approvals'
@@ -383,6 +384,14 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Open a cart',
     description:
       'Open a cart priced by a published flow that prices orders, for a customer if given. Nothing is ordered until the cart is submitted.',
+  },
+  create_checkout: {
+    role: 'operator',
+    confirm: false,
+    label: 'Made a checkout link',
+    title: 'Create a hosted checkout',
+    description:
+      'Start a hosted checkout for a buyer: lines, and the buyer and ship-to if known, optionally for a customer. Returns the one-time link that opens the buyer’s checkout page on the storefront. Nothing is ordered until the buyer completes it. Needs hosted checkout turned on and a checkout flow.',
   },
   change_cart: {
     role: 'operator',
@@ -1206,6 +1215,7 @@ export const WRITES_WITHOUT_CONFIRM: readonly AssistantTool[] = [
   'draft_plugin',
   'draft_product_content',
   'create_cart',
+  'create_checkout',
   'change_cart',
   'create_po_draft',
   'update_po_draft',

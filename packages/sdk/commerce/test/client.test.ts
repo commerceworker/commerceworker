@@ -87,6 +87,25 @@ describe('request mapping', () => {
     expect(JSON.parse(String(c?.init.body))).toEqual({ cartVersion: 3 });
   });
 
+  it('makes a hosted checkout with a POST of its lines and returns its id and one-time link', async () => {
+    const link = { id: 'chk_1', url: 'https://shop.test/checkout/start/chk_1/tok' };
+    const { fetchImpl, calls } = fake(() => link);
+    const made = await client(fetchImpl).createCheckout({
+      lines: [{ sku: 'MON-27', qty: 1 }],
+      buyer: { email: 'ada@example.com' },
+      customerId: 'cus_1',
+    });
+    expect(made).toEqual(link);
+    const [c] = calls;
+    expect(c?.init.method).toBe('POST');
+    expect(c?.url.pathname).toBe('/api/v1/checkouts');
+    expect(JSON.parse(String(c?.init.body))).toEqual({
+      lines: [{ sku: 'MON-27', qty: 1 }],
+      buyer: { email: 'ada@example.com' },
+      customerId: 'cus_1',
+    });
+  });
+
   it('sends nothing for a POST that takes no body', async () => {
     const { fetchImpl, calls } = fake(() => ({}));
     await client(fetchImpl).cancelCart({ id: 'c1' });

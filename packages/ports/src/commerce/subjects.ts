@@ -64,8 +64,12 @@ export interface SubjectStore {
   orders(subject: Subject, opts: { active?: boolean; limit: number }): Promise<SubjectOrder[]>;
   /** Their messages, documents, inbound emails, certificates, addresses, companies and member rows, for an export. */
   rows(subject: Subject, orderIds: readonly string[]): Promise<SubjectRows>;
-  /** Their checkout sessions, as stored. */
-  checkouts(email: string, limit: number): Promise<CheckoutSession[]>;
+  /** Their checkout sessions, as stored: the buyer's by email, and those made for their accounts. */
+  checkouts(
+    email: string,
+    customerIds: readonly string[],
+    limit: number,
+  ): Promise<CheckoutSession[]>;
   /** External carts whose buyer is `email`. */
   buyerCarts(email: string, limit: number): Promise<string[]>;
   /** Staff carts for these accounts. */
@@ -90,7 +94,8 @@ export interface SubjectStore {
   /** Blanks what isn't tied to an order: inbound emails and messages; deletes unplaced checkouts. */
   eraseUnlinked(email: string): Promise<{ messages: number; inboundEmails: number }>;
   /**
-   * Deletes an account's certificates and addresses and blanks the account, its company and every
+   * Deletes an account's certificates and addresses and the checkouts opened for it that placed no
+   * order (a hosted checkout names its customer), and blanks the account, its company and every
    * member of it (their rows stay, for the orders they placed).
    */
   eraseAccount(

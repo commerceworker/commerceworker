@@ -84,6 +84,39 @@ export const ucpPlatformKeySchema = z.object({
 /** A registered platform as the storefront needs it: who it is and the profile it must name. */
 export type UcpPlatformRef = { id: string; name: string; profileUrl: string };
 
+/** The workspace setting (`workspace_settings`) holding `StorefrontSettings` as JSON. */
+export const STOREFRONT_SETTINGS_KEY = 'storefront';
+
+/**
+ * What the public storefront offers buyers. Hosted checkout is off until an admin turns it on:
+ * with it off the engine refuses every hosted call and `create_checkout` makes no link.
+ */
+export const storefrontSettingsSchema = z.object({
+  checkout: z
+    .object({
+      enabled: z.boolean().default(false),
+      /** The flow a hosted checkout is priced by and places its order on; UCP's when unset. */
+      checkoutFlowId: z.string().min(1).max(100).nullable().default(null),
+      /** Whether the buyer may change the lines on their page; off, only the merchant's call does. */
+      editLines: z.boolean().default(false),
+    })
+    .default({ enabled: false, checkoutFlowId: null, editLines: false }),
+});
+export type StorefrontSettings = z.infer<typeof storefrontSettingsSchema>;
+
+export const STOREFRONT_OFF: StorefrontSettings = storefrontSettingsSchema.parse({});
+
+/** Settings as stored, or off when there are none or they don't parse. */
+export function readStorefrontSettings(raw: string | null | undefined): StorefrontSettings {
+  if (!raw) return STOREFRONT_OFF;
+  try {
+    const parsed = storefrontSettingsSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : STOREFRONT_OFF;
+  } catch {
+    return STOREFRONT_OFF;
+  }
+}
+
 export const UCP_OFF: UcpSettings = { checkoutFlowId: null, links: [], orderUrl: null };
 
 /** Settings as stored, or off when there are none or they don't parse. */

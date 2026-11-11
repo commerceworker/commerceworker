@@ -82,3 +82,24 @@ test('serves no admin: its routes are not here, and /health answers', async ({ r
   // Its profile is off until an admin turns agentic checkout on.
   expect((await request.get('/.well-known/ucp')).status()).toBe(404);
 });
+
+test('a hosted checkout’s start link shows a Continue page that spends nothing, sized for a finger', async ({
+  page,
+}) => {
+  for (const visit of [1, 2]) {
+    const res = await page.goto('/checkout/start/chk_e2e/0a9f');
+    // Opening the link twice is no use of it: only the button's POST redeems.
+    expect(res?.status(), `visit ${visit}`).toBe(200);
+    expect(res?.headers()['set-cookie']).toBeUndefined();
+    expect(res?.headers()['cache-control']).toBe('no-store');
+    expect(res?.headers()['referrer-policy']).toBe('no-referrer');
+    await expect(page.getByRole('heading', { name: 'Your checkout is ready' })).toBeVisible();
+  }
+  const button = page.getByRole('button', { name: 'Continue to checkout' });
+  await expect(button).toBeVisible();
+  expect((await button.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await fits(page);
+  const viewport = await page.locator('meta[name="viewport"]').getAttribute('content');
+  expect(viewport).toContain('viewport-fit=cover');
+  await expect(page.getByRole('navigation')).toHaveCount(0);
+});

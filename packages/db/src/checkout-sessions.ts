@@ -7,7 +7,7 @@
  */
 import type { CheckoutSession } from '@commerceworker/core';
 import type { CheckoutSessionStore } from '@commerceworker/ports/commerce';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt, notInArray, sql } from 'drizzle-orm';
 import { createDb } from './index';
 import { checkoutSessions } from './schema';
 
@@ -51,6 +51,35 @@ export function d1CheckoutSessions(d1: D1Database): CheckoutSessionStore {
         .where(and(eq(checkoutSessions.id, next.id), eq(checkoutSessions.version, readVersion)))
         .returning({ id: checkoutSessions.id });
       return res.length > 0;
+    },
+
+    async ownerOf(id) {
+      const row = await d
+        .select({ ownerId: checkoutSessions.ownerId })
+        .from(checkoutSessions)
+        .where(eq(checkoutSessions.id, id))
+        .get();
+      return row?.ownerId ?? null;
+    },
+
+    async transfer(id, from, to, now) {
+      // One statement: the owner is compared where it is written, so two redeemers can't both win.
+      const rows = await d
+        .update(checkoutSessions)
+        .set({
+          ownerId: to,
+          data: sql`json_set(${checkoutSessions.data}, '$.ownerId', ${to})`,
+        })
+        .where(
+          and(
+            eq(checkoutSessions.id, id),
+            eq(checkoutSessions.ownerId, from),
+            gt(checkoutSessions.expiresAt, now),
+            notInArray(checkoutSessions.status, ['completed', 'canceled']),
+          ),
+        )
+        .returning({ data: checkoutSessions.data });
+      return rows[0] ? (JSON.parse(rows[0].data) as CheckoutSession) : null;
     },
 
     async forOrder(orderId) {

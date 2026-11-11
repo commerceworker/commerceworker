@@ -15,6 +15,7 @@ exports[`method names > are the flat camelCase of every operationId 1`] = `
   "changeCart",
   "convertQuote",
   "createCart",
+  "createCheckout",
   "createCustomer",
   "createFlow",
   "createIntegration",

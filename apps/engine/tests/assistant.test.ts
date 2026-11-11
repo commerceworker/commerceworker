@@ -18,9 +18,17 @@ import {
   users,
   workspaceSettings,
 } from '@commerceworker/db';
+import { convertToModelMessages, tool, type UIMessage } from 'ai';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { type AssistantAgent, answeredOnly, DIRECT, readContext } from '../src/assistant/agent';
+import { z } from 'zod';
+import {
+  type AssistantAgent,
+  answeredOnly,
+  DIRECT,
+  modelView,
+  readContext,
+} from '../src/assistant/agent';
 import { previewAction, Refused, runAction } from '../src/assistant/data';
 import { describeResult, heuristicStep } from '../src/assistant/model';
 import { runTool } from '../src/assistant/tools';
@@ -28,6 +36,7 @@ import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
 import { startOrder } from '../src/orders';
 import { signed } from './principal';
+import { enableUcp } from './ucp-helpers';
 
 const db = () => createDb(env.DB);
 const state = async (id: string) => (await env.ORDER_AGENT.getByName(id).snapshot()) as OrderState;
@@ -1150,5 +1159,64 @@ describe('record_return', () => {
     await expect(runAction(env, op, 'record_return', input, 'MCP')).rejects.toThrow();
     await expect(runAction(env, op, 'record_return', input, 'A2A')).rejects.toThrow();
     expect((await state(orderId)).waits.some((w) => w.event === 'return.requested')).toBe(true);
+  });
+});
+
+describe('a hosted checkout’s one-time link', () => {
+  it('shows the person the link and the model only that it was shown', async () => {
+    await ensureTemplates(env);
+    await enableUcp();
+    await db()
+      .insert(workspaceSettings)
+      .values({
+        key: 'storefront',
+        value: JSON.stringify({ checkout: { enabled: true } }),
+        updatedAt: Date.now(),
+        updatedBy: 'test',
+      })
+      .onConflictDoUpdate({
+        target: workspaceSettings.key,
+        set: { value: JSON.stringify({ checkout: { enabled: true } }) },
+      });
+    const op = await who('operator', 'linker@example.com');
+    const output = (await runTool(
+      env,
+      strip(op),
+      'create_checkout',
+      { lines: [{ sku: 'MON-27', qty: 1 }] },
+      { via: 'assistant' },
+    )) as { id: string; url: string };
+    // The tool's own result, which the panel shows, holds the link.
+    expect(output.url).toMatch(/\/checkout\/start\/chk_[\w-]+\/[0-9a-f]{48}$/);
+    // What the model reads of that result, now and on a later turn, holds no link.
+    const seen = modelView.create_checkout!({ output });
+    expect(JSON.stringify(seen)).not.toContain(output.url);
+    expect(JSON.stringify(seen)).not.toMatch(/[0-9a-f]{48}/);
+    expect(seen.value.id).toBe(output.id);
+    const history: UIMessage[] = [
+      {
+        id: 'm1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-create_checkout',
+            toolCallId: 'c1',
+            state: 'output-available',
+            input: { lines: [] },
+            output,
+          },
+        ],
+      },
+    ];
+    const converted = await convertToModelMessages(history, {
+      tools: {
+        create_checkout: tool({
+          inputSchema: z.object({}),
+          toModelOutput: modelView.create_checkout!,
+        }),
+      },
+    });
+    expect(JSON.stringify(converted)).not.toContain(output.url);
+    expect(JSON.stringify(converted)).toContain('shown to the user');
   });
 });

@@ -337,7 +337,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(93);
+    expect(operator).toHaveLength(94);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -379,6 +379,13 @@ describe('MCP', () => {
     });
     expect(operator.find((t) => t.name === 'put_budget')).toMatchObject({
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    });
+    // A hosted checkout's link is an operator's, with no confirm: nothing is ordered until the buyer
+    // completes it, and the link opens once. A viewer is not offered it.
+    expect(viewer.map((t) => t.name)).not.toContain('create_checkout');
+    expect(operator.find((t) => t.name === 'create_checkout')).toMatchObject({
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      outputSchema: { type: 'object', properties: { id: {}, url: {} } },
     });
     // Purchase orders: a viewer reads them; an operator drafts without a confirm (nothing starts),
     // and submitting starts an order while cancelling ends one, each the same again as once.
@@ -452,7 +459,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(116);
+    expect(admin).toHaveLength(117);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [

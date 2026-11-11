@@ -42,6 +42,7 @@ export const OPERATIONS = {
   change_cart: { method: 'POST', path: '/api/v1/carts/{id}/ops', pathParams: ["id"], input: 'body' },
   convert_quote: { method: 'POST', path: '/api/v1/quotes/{quoteId}/convert', pathParams: ["quoteId"], input: 'body' },
   create_cart: { method: 'POST', path: '/api/v1/carts', pathParams: [], input: 'body' },
+  create_checkout: { method: 'POST', path: '/api/v1/checkouts', pathParams: [], input: 'body' },
   create_customer: { method: 'POST', path: '/api/v1/customers', pathParams: [], input: 'body' },
   create_flow: { method: 'POST', path: '/api/v1/flows/new', pathParams: [], input: 'body' },
   create_integration: { method: 'POST', path: '/api/v1/integrations', pathParams: [], input: 'body' },
@@ -438,6 +439,41 @@ export type CreateCartInput = {
 export type CreateCartResult = {
   cart: Cart;
 };
+
+/** Create a hosted checkout (Operator) (request) */
+export type CreateCheckoutInput = {
+  /** What the buyer is buying; the checkout flow prices it */
+  lines: {
+    sku: string;
+    qty: number;
+  }[];
+  /** Who is buying, if known; the page asks for the rest */
+  buyer?: {
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+  };
+  /** Where it ships, if known */
+  shipTo?: {
+    name?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    region?: string;
+    postalCode?: string;
+    country?: string;
+  };
+  /** The customer it is for (cus_…): their contract prices apply and the order is theirs */
+  customerId?: string;
+};
+
+export type CreateCheckoutResult = {
+  /** The checkout (chk_…) */
+  id: string;
+  /** The one-time link to give the buyer: it opens their checkout page once */
+  url: string;
+} & { [key: string]: unknown };
 
 /** Add a customer (Operator) (request) */
 export type CreateCustomerInput = {
@@ -1266,7 +1302,7 @@ export type ImportCatalogFeedResult = FeedResponse;
 
 /** Audit log, newest first; or with `after`, oldest first for export (admin) (request) */
 export type ListAuditEventsInput = {
-  type?: "auth" | "team" | "token" | "scim" | "api" | "oauth" | "integration" | "ucp" | "order" | "approval" | "cart" | "flow" | "webhook" | "stock" | "promotion" | "price_book" | "contract_price" | "fx" | "tax_certificate" | "customer" | "company" | "credit" | "budget" | "purchase_order" | "quote" | "catalog" | "plugin" | "personal_data";
+  type?: "auth" | "team" | "token" | "scim" | "api" | "oauth" | "integration" | "ucp" | "order" | "approval" | "cart" | "checkout" | "flow" | "webhook" | "stock" | "promotion" | "price_book" | "contract_price" | "fx" | "tax_certificate" | "customer" | "company" | "credit" | "budget" | "purchase_order" | "quote" | "catalog" | "plugin" | "personal_data";
   before?: number;
   after?: number;
   limit?: number;
@@ -3951,6 +3987,8 @@ export interface OperationTypes {
   convert_quote: { input: ConvertQuoteInput; result: ConvertQuoteResult };
   /** Open a cart (operator) */
   create_cart: { input: CreateCartInput; result: CreateCartResult };
+  /** Create a hosted checkout (Operator) */
+  create_checkout: { input: CreateCheckoutInput; result: CreateCheckoutResult };
   /** Add a customer (Operator) */
   create_customer: { input: CreateCustomerInput; result: CreateCustomerResult };
   /** Create a flow (Operator) */

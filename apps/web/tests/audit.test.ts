@@ -132,6 +132,7 @@ suite('audit vocabulary', () => {
       'order',
       'approval',
       'cart',
+      'checkout',
       'flow',
       'webhook',
       'stock',

@@ -118,7 +118,12 @@ async function seed(f: SubjectFixture) {
       id: c.id,
       ownerId: 'platform',
       status: c.orderId ? 'completed' : 'incomplete',
-      data: JSON.stringify({ id: c.id, buyer: { email: c.email }, orderId: c.orderId }),
+      data: JSON.stringify({
+        id: c.id,
+        buyer: { email: c.email },
+        orderId: c.orderId,
+        ...(c.customerId ? { customerId: c.customerId } : {}),
+      }),
       orderId: c.orderId,
       createdAt: 0,
       updatedAt: 0,

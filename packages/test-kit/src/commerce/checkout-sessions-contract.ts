@@ -52,6 +52,36 @@ export function describeCheckoutSessionsContract(
       });
     });
 
+    it('hands a session to a new owner once, and only while it is open and unexpired', async () => {
+      const s = await make();
+      await s.create(session('csc_4', { ownerId: 'start:a' }));
+      expect(await s.ownerOf('csc_4')).toBe('start:a');
+      expect(await s.ownerOf('csc_none')).toBeNull();
+      // Not its owner: nothing moves.
+      expect(await s.transfer('csc_4', 'start:b', 'cookie:1', 2_000)).toBeNull();
+      expect(await s.transfer('csc_none', 'start:a', 'cookie:1', 2_000)).toBeNull();
+      expect(await s.transfer('csc_4', 'start:a', 'cookie:1', 2_000)).toMatchObject({
+        id: 'csc_4',
+        ownerId: 'cookie:1',
+      });
+      // Used: a second redemption finds it no longer the start link's.
+      expect(await s.transfer('csc_4', 'start:a', 'cookie:2', 2_000)).toBeNull();
+      expect(await s.ownerOf('csc_4')).toBe('cookie:1');
+      // The old owner reads nothing now; the new one reads the session with its own owner.
+      expect(await s.load('start:a', 'csc_4')).toBeNull();
+      expect(await s.load('cookie:1', 'csc_4')).toMatchObject({ ownerId: 'cookie:1' });
+      expect(await s.save(session('csc_4', { ownerId: 'cookie:1', version: 2 }), 1)).toBe(true);
+    });
+
+    it('does not hand over an expired or finished session', async () => {
+      const s = await make();
+      await s.create(session('csc_5', { ownerId: 'start:a' }));
+      expect(await s.transfer('csc_5', 'start:a', 'cookie:1', 9_000)).toBeNull();
+      await s.create(session('csc_6', { ownerId: 'start:a', status: 'canceled' }));
+      expect(await s.transfer('csc_6', 'start:a', 'cookie:1', 2_000)).toBeNull();
+      expect(await s.ownerOf('csc_6')).toBe('start:a');
+    });
+
     it('finds the session that placed an order', async () => {
       const s = await make();
       await s.create(session('csc_3'));
