@@ -73,5 +73,5 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Device tests (WebKit as iPhone, iPad and desktop) | both | Merged | `apps/web/e2e` |
 | CI split into parallel jobs, each set summed up by one check (`verify`, `devices`); device tests skip the merge push and docs-only PRs, and run nightly | Platform | Merged | `.github/workflows/ci.yml` |
 | Turbo task cache kept between CI runs, read only by pull requests and the merge queue, each outside input declared and proven by a hash test | Platform | Merged | `turbo.json`, `*/turbo.json`, `scripts/turbo-cache.test.ts` |
-| Merge queue: each pull request tested on top of `main` and those ahead of it before it merges | Platform | Partial: CI runs in the queue; the ruleset turning it on is next | `ci.yml` (`merge_group`), the `main` ruleset |
+| Merge queue: each pull request tested on top of `main` and those ahead of it before it merges | Platform | Merged | `ci.yml` (`merge_group`), the `main` ruleset |
 | Automated accessibility checks in the device tests (`@axe-core/playwright`) | Platform | Content: merged · Commerce: P9 | `apps/studio/e2e` |
