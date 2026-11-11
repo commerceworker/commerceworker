@@ -676,9 +676,10 @@ describe('an external cart’s buyer', () => {
   });
 
   it('can’t use a start link once the cart’s time has passed', async () => {
-    // A second's margin: opening refuses a time already past, and under load it can take a while.
-    const c = await open({ expiresAt: Date.now() + 1_000 });
-    await new Promise((r) => setTimeout(r, 1_100));
+    // Opening refuses a time already past, so open it with time to spare and move the cart's
+    // time into the past, as `atTime` does for the expiry test below (no real wait).
+    const c = await open();
+    await atTime(c.cartId, Date.now() - 1);
     expect(await cartAgent(c.cartId).redeemStart(c.token)).toBeNull();
     expect(await cartAgent(c.cartId).issueStart()).toBeNull();
   });

@@ -459,6 +459,12 @@ describe('A2A push notifications', () => {
     });
     return received;
   }
+  /** This task's pushes: fetch is global to the isolate, so other tests' retried pushes land in the same list. */
+  const forTask = (pushes: Push[], taskId: string) =>
+    pushes.filter((p) => {
+      const u = p.body.statusUpdate ?? p.body.task ?? p.body;
+      return (u.taskId ?? u.id) === taskId;
+    });
   const states = (pushes: Push[], taskId: string) =>
     pushes
       .map((p) => p.body.statusUpdate ?? p.body.task)
@@ -484,20 +490,25 @@ describe('A2A push notifications', () => {
       async () => states(received, placed.id).includes('TASK_STATE_INPUT_REQUIRED'),
       'the push for the approval',
     );
-    const first = received.find((p) => p.url === 'https://hooks.example/a2a')!;
+    const first = forTask(received, placed.id).find((p) => p.url === 'https://hooks.example/a2a')!;
     expect(first.headers.get('x-a2a-notification-token')).toBe('tok_1');
     expect(first.headers.get('content-type')).toContain('application/a2a+json');
 
     // The request is over. The approval is decided elsewhere (the order page), and the task's
     // URL still hears about it.
-    const before = received.length;
+    const before = forTask(received, placed.id).length;
     const wait = (await state(orderId)).waits.find((w) => w.kind === 'approval')!;
     await env.ORDER_AGENT.getByName(orderId).decide(wait.nodeId, 'approved', 'someone@example.com');
     await until(
-      async () => received.slice(before).some((p) => p.body.statusUpdate?.taskId === placed.id),
+      async () =>
+        forTask(received, placed.id)
+          .slice(before)
+          .some((p) => p.body.statusUpdate?.taskId === placed.id),
       'a push after the request ended',
     );
-    const later = received.slice(before).map((p) => p.body.statusUpdate?.status);
+    const later = forTask(received, placed.id)
+      .slice(before)
+      .map((p) => p.body.statusUpdate?.status);
     expect(JSON.stringify(later)).not.toContain('Approve B2B order');
     // Every update is pushed once: no state and line repeats back to back.
     const lines = received
@@ -533,7 +544,7 @@ describe('A2A push notifications', () => {
       disabledAt: Date.now(),
     });
 
-    const before = received.length;
+    const before = forTask(received, placed.id).length;
     const wait = (await state(orderId)).waits.find((w) => w.kind === 'approval')!;
     await env.ORDER_AGENT.getByName(orderId).decide(wait.nodeId, 'approved', 'someone@example.com');
     await until(
@@ -542,7 +553,7 @@ describe('A2A push notifications', () => {
     );
     await runDurableObjectAlarm(env.A2A_AGENT.getByName(`user:${op.id}`));
     await new Promise((r) => setTimeout(r, 300));
-    expect(received.slice(before)).toEqual([]);
+    expect(forTask(received, placed.id).slice(before)).toEqual([]);
   });
 
   it('forgets every push config when the caller’s apps are disconnected', async () => {
@@ -635,7 +646,9 @@ describe('A2A push notifications', () => {
     );
     await runDurableObjectAlarm(stub);
     await until(async () => states(received, taskId).length > 0, 'the retried push');
-    expect(received[0]!.headers.get('authorization')).toBe('Bearer abc');
+    expect(
+      received.find((p) => p.url === 'https://hooks.example/retry')!.headers.get('authorization'),
+    ).toBe('Bearer abc');
     await until(
       async () =>
         runInDurableObject(
@@ -710,7 +723,7 @@ describe('A2A push notifications', () => {
     vi.restoreAllMocks();
     const after = receiver();
     await runDurableObjectAlarm(stub);
-    expect(after).toHaveLength(0);
+    expect(after.filter((p) => p.url === 'https://hooks.example/drop')).toHaveLength(0);
     expect(received).toHaveLength(0);
   });
 });

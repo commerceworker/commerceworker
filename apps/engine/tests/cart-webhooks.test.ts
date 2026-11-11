@@ -254,7 +254,9 @@ describe('cart events', () => {
     const [canceled] = await settled(id, 1);
     expect(canceled).toMatchObject({ event: 'cart.canceled', status: 'delivered' });
     expect(canceled!.payload).not.toContain('Bee Buyer');
-    expect(received.map((r) => r.payload.event)).toEqual(['cart.canceled']);
+    expect(received.filter((r) => r.payload.cartId === id).map((r) => r.payload.event)).toEqual([
+      'cart.canceled',
+    ]);
     // The failed cart.created isn't retried with the name it carried.
     expect(await queued(id)).toEqual([]);
   });
@@ -274,13 +276,14 @@ describe('cart events', () => {
     const retry = () => cart(id).emitWebhook({ event: 'cart.canceled', cart: summary, attempt: 5 });
 
     up = true;
-    const before = received.length;
+    const mine = () => received.filter((r) => r.payload.cartId === id);
+    const before = mine().length;
     await retry();
     await retry();
-    const resent = received.slice(before);
+    const resent = mine().slice(before);
     // Each subscription's first attempt went to both; the retry only to the one that was down.
     expect(resent.map((r) => r.url)).toEqual(['https://hooks.example/flaky']);
-    const first = received.find((r) => r.url.endsWith('/flaky'))!;
+    const first = mine().find((r) => r.url.endsWith('/flaky'))!;
     expect(resent[0]!.payload.id).toBe(first.payload.id);
     expect(resent[0]!.headers.get('x-commerceworker-delivery')).toBe(first.payload.id);
 
@@ -343,16 +346,18 @@ describe('cart events', () => {
 
   it('takes back what a delivery on its way wrote when an erasure ran meanwhile', async () => {
     let calls = 0;
+    let releaseFirst = false;
     const received = receiver();
     vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
       const payload = JSON.parse(String(init?.body)) as CartEventPayload;
       received.push({ url: '', body: String(init?.body), headers: new Headers(), payload });
-      // The first, cart.created, is slow and then fails: the erasure runs while it is on its way.
-      // (Its timer runs in the cart's own context; a promise the test settled would never reach it.)
-      if (++calls === 1)
-        return new Promise<Response>((r) =>
-          setTimeout(() => r(new Response('down', { status: 503 })), 2_000),
-        );
+      // The first, cart.created, is held and then fails: the erasure runs while it is on its way.
+      // It waits on a flag the test sets, not on a timer that a slow runner could outrun. (The
+      // short timers run in the cart's own context; a promise the test settled would never reach it.)
+      if (++calls === 1) {
+        while (!releaseFirst) await new Promise((r) => setTimeout(r, 10));
+        return new Response('down', { status: 503 });
+      }
       return new Response('ok');
     });
     await subscribe('all', ['*']);
@@ -361,6 +366,7 @@ describe('cart events', () => {
     await cart(id).eraseSubject(['bee@buyer.example']);
     // Erased before the slow delivery answered.
     expect(calls).toBe(1);
+    releaseFirst = true;
     await until(
       async () =>
         (await rows(id)).some((r) => r.event === 'cart.canceled' && r.status === 'delivered'),
@@ -370,10 +376,11 @@ describe('cart events', () => {
     expect((await rows(id)).map((r) => r.event)).toEqual(['cart.canceled']);
     // Nothing queued to send the old title again, and a stale retry sends nothing.
     expect(await queued(id)).toEqual([]);
-    const stale = received.find((r) => r.payload.event === 'cart.created')!.payload.data
+    const mine = () => received.filter((r) => r.payload.cartId === id);
+    const stale = mine().find((r) => r.payload.event === 'cart.created')!.payload.data
       .cart as CartSummary;
     await cart(id).emitWebhook({ event: 'cart.created', cart: stale, attempt: 1, erasure: 0 });
-    expect(received).toHaveLength(2);
+    expect(mine()).toHaveLength(2);
     expect((await rows(id)).every((r) => !r.payload.includes('Bee Buyer'))).toBe(true);
   });
 

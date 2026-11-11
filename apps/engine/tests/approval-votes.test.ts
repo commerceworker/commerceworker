@@ -58,6 +58,17 @@ const settled = (id: string) =>
     (s) => ['completed', 'declined', 'cancelled', 'failed'].includes(s.status),
     'a terminal status',
   );
+/**
+ * The order's D1 index row once `ok` holds. The agent reports a status first and writes the row
+ * after (`report` awaits `syncIndex`), so a read right after a snapshot shows the wait or the end
+ * can still see the row from before it.
+ */
+const indexRow = (orderId: string, ok: (r: typeof orders.$inferSelect) => boolean) =>
+  until(async () => {
+    const r = await db().select().from(orders).where(eq(orders.id, orderId)).get();
+    return r && ok(r) ? r : false;
+  }, 'the order’s index row');
+
 const waitingApproval = (id: string) =>
   waitingOn(id, (s) => s.waits.some((w) => w.kind === 'approval'), 'the approval');
 
@@ -246,9 +257,9 @@ describe('a quorum of company approvers', () => {
       assignee: 'ops',
     });
     // `waiting_for` names the approvers, not the assignee label.
-    expect((await db().select().from(orders).where(eq(orders.id, orderId)).get())?.waitingFor).toBe(
-      'approvers:company:approver',
-    );
+    expect(
+      (await indexRow(orderId, (r) => r.waitingFor === 'approvers:company:approver')).waitingFor,
+    ).toBe('approvers:company:approver');
 
     const first = await decide(orderId, 'appr', 'approved', alice, { onBehalfOf: c.ann });
     expect(first).toEqual({ ok: true, outcome: 'recorded', tally: '1 of 2' });
@@ -480,7 +491,7 @@ describe('an approval with the default fields', () => {
       assignee: 'ops',
     });
     // `waiting_for` is still the assignee.
-    expect((await db().select().from(orders).where(eq(orders.id, orderId)).get())?.waitingFor).toBe(
+    expect((await indexRow(orderId, (r) => r.waitingFor === 'person:ops')).waitingFor).toBe(
       'person:ops',
     );
     expect(await decide(orderId, 'appr', 'approved', { id: 'usr_plain' })).toEqual({
@@ -585,7 +596,7 @@ describe('every staff approver', () => {
     const wait = (await waitingApproval(orderId)).waits.find((w) => w.kind === 'approval')!;
     expect([...wait.approval!.eligible!].sort()).toEqual(staff.map((p) => p.id).sort());
     // `person:` stays the wait's label: the approvers are staff.
-    expect((await db().select().from(orders).where(eq(orders.id, orderId)).get())?.waitingFor).toBe(
+    expect((await indexRow(orderId, (r) => r.waitingFor === 'person:ops')).waitingFor).toBe(
       'person:ops',
     );
     for (const [i, p] of staff.entries()) {
