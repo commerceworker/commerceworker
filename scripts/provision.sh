@@ -377,7 +377,37 @@ if [ -n "$logpush_xtrace" ]; then set -x; fi
 
 # The GitHub environment the deploy job runs in, and its secrets. A secret already set is left
 # alone; the setup code is generated and kept in .secrets/<id>/ (gitignored) for the first admin.
-gh api --method PUT "repos/{owner}/{repo}/environments/$ENVIRONMENT" >/dev/null
+#
+# Only main may deploy to the environment, and so read its secrets: a workflow on any other branch
+# would hold every one. A PUT replaces the environment's protection rules, so the environment is
+# read first: one already limited to its own branches is left as it is, and otherwise the PUT
+# carries the wait timer, the required reviewers and the self-review setting it already has.
+# github-environment:begin
+environment="repos/{owner}/{repo}/environments/$ENVIRONMENT"
+if current=$(gh api "$environment" 2>&1); then
+  :
+elif grep -q 'HTTP 404' <<<"$current"; then
+  current='{}'
+else
+  # Not "it doesn't exist": a token without the scope reads nothing, and a PUT would then drop
+  # reviewers it couldn't see.
+  echo "Could not read the GitHub environment $ENVIRONMENT (needs a token with admin access): $current" >&2
+  exit 1
+fi
+if [ "$(jq -r '.deployment_branch_policy.custom_branch_policies // false' <<<"$current")" != true ]; then
+  jq '{
+    wait_timer: ([.protection_rules[]? | select(.type == "wait_timer") | .wait_timer] | first // 0),
+    prevent_self_review: ([.protection_rules[]? | select(.type == "required_reviewers") | .prevent_self_review] | first // false),
+    reviewers: [.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]? | {type: .type, id: .reviewer.id}],
+    deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}
+  }' <<<"$current" | gh api --method PUT "$environment" --input - >/dev/null
+  echo "Limited $ENVIRONMENT to its own branch policies"
+fi
+if ! gh api "$environment/deployment-branch-policies" | jq -e '.branch_policies[]? | select(.name == "main" and (.type // "branch") == "branch")' >/dev/null; then
+  gh api --method POST "$environment/deployment-branch-policies" -f name=main -f type=branch >/dev/null
+  echo "Allowed main to deploy to $ENVIRONMENT"
+fi
+# github-environment:end
 # The keys both Workers share: PRINCIPAL_KEY signs the requests the web Worker forwards and the
 # engine checks; DATA_KEY encrypts the secrets they store. CI sets them on both Workers and won't
 # deploy without them, so a deployment that already runs gets them here too. PASSWORD_PEPPER is
