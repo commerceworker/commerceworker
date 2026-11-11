@@ -14,8 +14,8 @@ colors:
   muted-foreground-dark: "oklch(0.708 0 0)"
   rule: "oklch(0.922 0 0)"
   rule-dark: "oklch(1 0 0 / 10%)"
-  link: "oklch(0.47 0.13 256)"
-  link-dark: "oklch(0.76 0.11 250)"
+  link: "oklch(0.47 0.105 235)"
+  link-dark: "oklch(0.76 0.1 238)"
   ok: "oklch(0.455 0.105 152)"
   ok-dark: "oklch(0.77 0.1 152)"
   wait: "oklch(0.49 0.115 62)"
@@ -173,8 +173,13 @@ tokens, not approximations.
 - **Card** is the app's panel ground: link cards, node cards' surroundings, code blocks, the run
   figure. **Muted** is the tonal step: inline code, the sidebar's current page.
 - **Rule** is every hairline. **Input** is the stronger line under table header rows.
-- **Link** (the one blue) is links and selection; focus is an ink outline. It is not a status colour here, and
-  notes do not use it.
+- **Link** (the one blue) is links and selection; focus is a brand outline. It is not a status colour here, and
+  notes do not use it. It is sky (hue 235 light, 238 dark), 24 degrees or more from the brand.
+- **Brand** (the cobalt, `oklch(0.45 0.19 262)` light, `oklch(0.72 0.13 262)` dark) fills Starlight's
+  accent slots (`--sl-color-accent*`) and the Scalar explorer's accent, from the generated theme.
+  Text in it holds 6.04:1 or more on paper, a card and muted in both themes
+  (`packages/design/tests/accent.test.ts`); it is never a button fill, and links stay the work blue. The favicon is the mark in the brand (`#0e49bc`,
+  `#77a4f6` where the browser is dark), and the focus outline is the brand rather than ink.
 
 ### The status ramp (the only hue)
 
@@ -317,7 +322,7 @@ Scalar under the app's top bar (48px, rule, wordmark with the mark), with its pa
 
 ### Browser surfaces
 
-Focus is a 2px ink outline offset 2px on every control; selection is the link at 24%;
+Focus is a 2px brand outline offset 2px on every control; selection is the link at 24%;
 the caret is link blue; scrollbars are thin, in the rule colour; link underlines sit 3px clear at
 40% of the link colour, full on hover; list markers are muted.
 

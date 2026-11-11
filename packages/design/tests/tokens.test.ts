@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { diagramColors, mermaidThemeJson } from '../src/mermaid';
 import { DARK_OVERRIDES, FONTS, LIGHT, palette, starlightThemeCss } from '../src/tokens';
+import { contrast, over, type Rgb, srgb } from './color';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 /** Both admins and the storefront author the Ledger tokens; each is held to the same set. */
@@ -64,41 +65,6 @@ describe('generated docs theme', () => {
     expect(read('../../../apps/docs/src/styles/theme.css')).toBe(starlightThemeCss());
   });
 });
-
-// WCAG contrast, from the tokens as the browser paints them: oklch to sRGB, an `x/N` fill
-// composited over what is beneath it in sRGB, then relative luminance.
-type Rgb = readonly [number, number, number];
-
-function srgb(color: string): Rgb {
-  const m = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(color);
-  if (!m) throw new Error(`Not an opaque oklch colour: ${color}`);
-  const [L, C, h] = [Number(m[1]), Number(m[2]), (Number(m[3]) * Math.PI) / 180];
-  const [a, b] = [C * Math.cos(h), C * Math.sin(h)];
-  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  const linear = [
-    4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
-    -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
-    -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s,
-  ];
-  return linear.map((x) => {
-    const c = Math.min(1, Math.max(0, x));
-    return c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
-  }) as unknown as Rgb;
-}
-
-const over = (top: Rgb, alpha: number, beneath: Rgb): Rgb =>
-  top.map((v, i) => v * alpha + beneath[i]! * (1 - alpha)) as unknown as Rgb;
-
-function contrast(x: Rgb, y: Rgb): number {
-  const lum = (c: Rgb) => {
-    const [r, g, b] = c.map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
-  };
-  const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p);
-  return (hi! + 0.05) / (lo! + 0.05);
-}
 
 /** The tints the shared Button's `destructive` variant paints, read from packages/ui. */
 function destructiveTints() {
@@ -171,7 +137,7 @@ describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
     const p = palette(scheme);
     const brand = srgb(p.brand);
     for (const ground of ['paper', 'card', 'muted', 'sidebar', 'sidebar-accent'] as const) {
-      it(`${scheme}: brand words (the AI tone) hold 4.5:1 on ${ground}`, () => {
+      it(`${scheme}: brand words hold 4.5:1 on ${ground}`, () => {
         expect(contrast(brand, srgb(p[ground]))).toBeGreaterThanOrEqual(4.5);
       });
       it(`${scheme}: the focus edge (ring) holds 3:1 on ${ground}`, () => {
@@ -181,11 +147,15 @@ describe('Ledger contrast: the brand accent (DESIGN.md Accent)', () => {
     it(`${scheme}: words and checks on a brand fill hold 4.5:1`, () => {
       expect(contrast(srgb(p['brand-foreground']), brand)).toBeGreaterThanOrEqual(4.5);
     });
-    // The AI stamp ("AI suggestion", an agent's run): brand words on the stamp's own brand tint.
+    // The AI stamp ("AI suggestion", an agent's run): `ai` words on the stamp's own `ai` tint.
+    const ai = srgb(p.ai);
     for (const ground of ['paper', 'card', 'muted', 'sidebar-accent'] as const) {
+      it(`${scheme}: the AI tone's words hold 4.5:1 on ${ground}`, () => {
+        expect(contrast(ai, srgb(p[ground]))).toBeGreaterThanOrEqual(4.5);
+      });
       it(`${scheme}: the AI stamp's words on its tint over ${ground} hold 4.5:1`, () => {
-        const fill = over(brand, stampTint, srgb(p[ground]));
-        expect(contrast(brand, fill)).toBeGreaterThanOrEqual(4.5);
+        const fill = over(ai, stampTint, srgb(p[ground]));
+        expect(contrast(ai, fill)).toBeGreaterThanOrEqual(4.5);
       });
     }
     // The chosen option card: a field's words, body and muted, on its brand tint.

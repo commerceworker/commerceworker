@@ -76,6 +76,8 @@ pre {
 }
 
 .brand {
+  /* The mark and the wordmark are the one place the page wears the brand cobalt. */
+  color: var(--brand);
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;

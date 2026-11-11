@@ -33,9 +33,9 @@ body {
   caret-color: var(--ol-link);
 }
 
-/* One focus ring for every control, as in app.css. */
+/* One focus ring for every control: the brand cobalt, as the app's `ring`. */
 :where(a, button, summary, select, input, [tabindex]):focus-visible {
-  outline: 2px solid var(--ol-ink);
+  outline: 2px solid var(--ol-brand);
   outline-offset: 2px;
   border-radius: 3px;
 }
