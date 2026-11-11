@@ -12,7 +12,7 @@ import {
   productAliases,
   renderForChannel,
 } from '@commerceworker/core/product';
-import { type CatalogConfig, publisher, typeResolver } from './config';
+import { type CatalogConfig, mediaOrigin, publisher, typeResolver } from './config';
 import type { ListingChange } from './listings';
 import { orderLines } from './orders';
 import { publisherOf, runOps, type WriteOp } from './publisher';
@@ -75,10 +75,16 @@ export async function publishKeys(
       const type = current && resolve(current.product.type, current.product.typeVersion);
       const pub =
         current && type
-          ? renderForChannel(current.product, type, channel, {
-              uid: current.uid,
-              createdAt: current.createdAt,
-            })
+          ? renderForChannel(
+              current.product,
+              type,
+              channel,
+              {
+                uid: current.uid,
+                createdAt: current.createdAt,
+              },
+              mediaOrigin(env),
+            )
           : { rendered: null, index: null };
 
       const nextLocales = pub.rendered?.map((r) => r.locale) ?? [];

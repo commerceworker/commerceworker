@@ -1955,6 +1955,38 @@ test("an EU deployment's content Durable Objects, bucket and database are in the
   assert.equal(shellVars(eu).JURISDICTION, 'eu');
 });
 
+test('the media scope an asset reference resolves in is rendered, defaulting to space-1 and main', () => {
+  const dflt = renderMedia(contentTemplate('media'), withContent);
+  assert.equal(dflt.vars.ASSET_REF_SPACE, 'space-1');
+  assert.equal(dflt.vars.ASSET_REF_ENV, 'main');
+  const own = toDeployment({
+    id: 'scoped',
+    ring: 'canary',
+    slot: 3,
+    content: true,
+    mediaScope: { space: 'shop', environment: 'live' },
+    contentD1Id: 'content-d1-scoped',
+    contentKvId: 'c'.repeat(32),
+  });
+  const c = renderMedia(contentTemplate('media'), own);
+  assert.equal(c.vars.ASSET_REF_SPACE, 'shop');
+  assert.equal(c.vars.ASSET_REF_ENV, 'live');
+  // Only the media Worker carries it.
+  assert.equal(renderApi(contentTemplate('api'), own).vars.ASSET_REF_SPACE, undefined);
+  // Refused without content, or when not a pair of ids.
+  const raw = { id: 'bad', ring: 'canary', slot: 4 };
+  assert.throws(
+    () => toDeployment({ ...raw, mediaScope: { space: 'a', environment: 'b' } }),
+    /mediaScope needs "content": true/,
+  );
+  for (const mediaScope of [{ space: 'a' }, { space: 'a/b', environment: 'main' }, 'main', null])
+    assert.throws(
+      () => toDeployment({ ...raw, content: true, mediaScope }),
+      /mediaScope must be/,
+      JSON.stringify(mediaScope),
+    );
+});
+
 test('the registry refuses two deployments on one host or one queue', () => {
   const dir = mkdtempSync(join(tmpdir(), 'registry-'));
   try {

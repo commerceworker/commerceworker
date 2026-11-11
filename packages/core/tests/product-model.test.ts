@@ -5,6 +5,7 @@ import {
   claimedAlias,
   mediaSrcProblem,
   productAliases,
+  resolveMediaSrc,
   validateProduct,
 } from '../src/product/validate';
 import { apparel, stored, tee, types, web } from './fixtures/product';
@@ -255,6 +256,39 @@ describe('product media sources', () => {
       withAssets,
     );
     expect(ok.ok).toBe(true);
+  });
+
+  it('resolves an asset reference to the media origin’s stable URL, and nothing else', () => {
+    const origin = 'https://media.shop.example';
+    expect(resolveMediaSrc('asset:ast_01-X', origin)).toBe(`${origin}/a/ast_01-X`);
+    expect(resolveMediaSrc('asset:ast_01-X', `${origin}/`)).toBe(`${origin}/a/ast_01-X`);
+    // Without the service, or for a URL or a malformed reference: as written.
+    expect(resolveMediaSrc('asset:ast_01-X')).toBe('asset:ast_01-X');
+    expect(resolveMediaSrc('https://cdn.example.com/a.jpg', origin)).toBe(
+      'https://cdn.example.com/a.jpg',
+    );
+    expect(resolveMediaSrc('asset:a/b', origin)).toBe('asset:a/b');
+  });
+
+  it('publishes a document and card with the resolved URL, from a stored reference', () => {
+    const product = tee({
+      media: [{ src: 'asset:ast_1' }],
+      variants: [
+        { sku: 'A', attributes: { size: 'S', color: 'red' }, media: [{ src: 'asset:ast_2' }] },
+      ],
+    });
+    const origin = 'https://media.shop.example';
+    const valid = validateProduct(product, types, withAssets);
+    if (!valid.ok) throw new Error(JSON.stringify(valid.issues));
+    const kept = { ...valid.data, version: 1, hash: 'h', updatedAt: 1 };
+    const { rendered } = renderForChannel(kept, apparel, web, { uid: 7, createdAt: 1 }, origin);
+    const doc = JSON.parse(rendered?.[0]?.doc ?? '{}');
+    expect(doc.media[0].src).toBe(`${origin}/a/ast_1`);
+    expect(doc.variants[0].media[0].src).toBe(`${origin}/a/ast_2`);
+    expect(JSON.parse(rendered?.[0]?.card ?? '{}').image.src).toBe(`${origin}/a/ast_1`);
+    // No origin: kept as written, and the document's shape is the same either way.
+    const plain = renderForChannel(kept, apparel, web, { uid: 7, createdAt: 1 });
+    expect(JSON.parse(plain.rendered?.[0]?.doc ?? '{}').media[0].src).toBe('asset:ast_1');
   });
 });
 

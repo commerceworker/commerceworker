@@ -239,6 +239,11 @@ export type Deployment = {
   cdnDomain?: string;
   /** The assets service's host. Only with `content`; defaults to `media.<domain>`. */
   mediaDomain?: string;
+  /**
+   * The content space and environment a product's `asset:<assetId>` reference resolves in (the
+   * media Worker's `/a/` route). Only with `content`; defaults to `space-1` and `main`.
+   */
+  mediaScope?: { space: string; environment: string };
   /** Appended to every resource name. Defaults to `-<id>`; app.commerceworker.com's own is `""`. */
   suffix: string;
   /** The GitHub environment holding this deployment's secrets. Defaults to `deploy-<id>`. */
@@ -484,6 +489,14 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   for (const k of Object.keys(CONTENT_HOSTS))
     if (raw[k] !== undefined && (typeof raw[k] !== 'string' || !HOST_RE.test(raw[k] as string)))
       throw new Error(`${file}: ${k} must be a host name`);
+  if (raw.mediaScope !== undefined) {
+    if (!content)
+      throw new Error(`${file}: mediaScope needs "content": true (the content stack is off)`);
+    const m = raw.mediaScope as Record<string, unknown> | null;
+    const ok = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
+    if (!m || typeof m !== 'object' || !ok(m.space) || !ok(m.environment))
+      throw new Error(`${file}: mediaScope must be { "space": "<id>", "environment": "<id>" }`);
+  }
   if (raw.contentD1Id !== undefined && (typeof raw.contentD1Id !== 'string' || !raw.contentD1Id))
     throw new Error(`${file}: contentD1Id must be the content database's id`);
   if (
@@ -751,6 +764,9 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     environment: typeof raw.environment === 'string' ? raw.environment : `deploy-${id}`,
     ...(raw.d1Id ? { d1Id: raw.d1Id as string } : {}),
     ...(raw.catalogKvId ? { catalogKvId: raw.catalogKvId as string } : {}),
+    ...(raw.mediaScope
+      ? { mediaScope: raw.mediaScope as NonNullable<Deployment['mediaScope']> }
+      : {}),
     ...(raw.contentD1Id ? { contentD1Id: raw.contentD1Id as string } : {}),
     ...(raw.contentKvId ? { contentKvId: raw.contentKvId as string } : {}),
     ...(raw.jurisdiction ? { jurisdiction: raw.jurisdiction as 'eu' | 'fedramp' } : {}),
@@ -1601,6 +1617,13 @@ export function renderApi(base: Config, d: Deployment): Config {
 export function renderMedia(base: Config, d: Deployment): Config {
   const c = contentCommon(base, d, 'media');
   c.routes = [{ pattern: contentHosts(d).media, custom_domain: true }];
+  // Where an `asset:` reference resolves; the base config carries the defaults.
+  if (d.mediaScope)
+    c.vars = {
+      ...c.vars,
+      ASSET_REF_SPACE: d.mediaScope.space,
+      ASSET_REF_ENV: d.mediaScope.environment,
+    };
   return c;
 }
 

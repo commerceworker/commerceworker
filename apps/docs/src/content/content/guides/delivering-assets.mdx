@@ -119,6 +119,24 @@ environment can't be reached through another environment's copy of it.
 />
 ```
 
+### A stable address for an asset
+
+A published URL names a version, so it changes when you replace the file. To put an image somewhere
+that shouldn't change (a product's `asset:<assetId>` image in the [product
+catalog](/guides/product-catalog/#product-media), a link in an email), use the asset's stable
+address:
+
+```
+https://media.{workspace}/a/{assetId}
+https://media.{workspace}/a/{assetId}/{variant}
+```
+
+It answers `302` to the asset's current published URL, with `Cache-Control: public, max-age=60`
+(less when the asset's rights end sooner), so a replaced or unpublished asset reaches readers
+within a minute. The variant is `o`, `w{width}` or `r-{name}`, as above; an unknown one is `400`,
+and a variant of a file that has none is `404`. An asset that doesn't exist, isn't published or has
+expired is `404`, the same answer for each. The `400` is never cached; the `404` is cached for 30 seconds.
+
 ### The transform endpoint (deprecated)
 
 `GET /delivery/{space}/{env}/assets/{id}/transform?w=800` is deprecated. It answers a permanent,

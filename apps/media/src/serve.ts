@@ -171,7 +171,10 @@ const plain = (status: number, body: string) =>
  * The gate entry for an asset: KV first, then a D1 replica when KV has none yet (an entry the
  * engine hasn't written, or one KV hasn't spread to this colo). Read only: a miss writes nothing.
  */
-async function gateFor(deps: MediaDeps, a: AssetMediaAddress): Promise<AssetGateEntry | null> {
+export async function gateFor(
+  deps: { readonly gate?: AssetGate; readonly store?: Pick<ContentStore, 'assets'> },
+  a: Pick<AssetMediaAddress, 'scope' | 'assetId'>,
+): Promise<AssetGateEntry | null> {
   const entry = await deps.gate?.get(a.scope, a.assetId);
   if (entry) return entry;
   const snapshot = await deps.store?.assets.getPublished(a.scope, a.assetId);

@@ -13,7 +13,9 @@
  * 2. serves a short-lived signed read (`/media/<key>?exp=…&sig=…`, Preview's drafts), uncached,
  *    when the signature and expiry hold. Never an upload, never a URL without
  *    an expiry; or
- * 3. serves a share link (`/s/<space>/<env>/<link>/<token>…`: its page, its files, its password
+ * 3. answers an asset reference (`/a/<assetId>[/<variant>]`, what a product's `asset:<assetId>`
+ *    publishes as) with a 302 to the asset's current published URL (asset-ref.ts); or
+ * 4. serves a share link (`/s/<space>/<env>/<link>/<token>…`: its page, its files, its password
  *    form), checking the link on every request (share.ts).
  *
  * Its queue consumer drains `commerceworker-media-purge`, rationed like delivery's.
@@ -26,6 +28,7 @@ import { type EdgeEnv, queueName } from '@commerceworker/platform/env';
 import type { PurgeMessage } from '@commerceworker/platform/messages';
 import { drain } from '@commerceworker/platform/purge';
 import { wireMedia } from '@commerceworker/platform/wire';
+import { parseAssetRefPath, serveAssetRef } from './asset-ref';
 import type { Media } from './media';
 import { canonicalMediaUrl, contentDisposition, singleByteRange } from './serve';
 import { handleShareRequest } from './share';
@@ -117,6 +120,21 @@ export default {
                 ),
             }
           : {}),
+      });
+      return withPublic(res);
+    }
+
+    const ref = parseAssetRefPath(url.pathname);
+    if (ref) {
+      const res = await serveAssetRef(url, ref, {
+        paths: wired.mediaPaths,
+        // The deployment's one media scope (registry `mediaScope`, rendered by the fleet).
+        scope: {
+          spaceId: env.ASSET_REF_SPACE || 'space-1',
+          environmentId: env.ASSET_REF_ENV || 'main',
+        },
+        ...(wired.assetGate ? { gate: wired.assetGate } : {}),
+        ...(wired.store ? { store: wired.store } : {}),
       });
       return withPublic(res);
     }

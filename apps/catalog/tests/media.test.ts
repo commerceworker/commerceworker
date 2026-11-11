@@ -84,14 +84,57 @@ describe('product media without the assets service', () => {
 });
 
 describe('product media on a deployment with the assets service', () => {
-  it('still takes only https URLs until an asset reference resolves to one shoppers can load', async () => {
+  it('still refuses a bare key and any other shape, and keeps external URLs as written', async () => {
     vars.MEDIA_ORIGIN = 'https://media.example.com';
-    for (const src of ['asset:ast_1', 'media/tee.jpg']) {
+    for (const src of ['media/tee.jpg', 'asset:', 'asset:a/b']) {
       const [r] = await api.putProducts([product({ media: [{ src }] })], { by });
-      expect(r?.status, src).not.toBe('created');
-      expect(r?.issues?.[0]?.message, src).toMatch(/absolute https URL/);
+      expect(r?.status, src).toBe('rejected');
     }
+    const [bare] = await api.putProducts([product({ media: [{ src: 'media/tee.jpg' }] })], { by });
+    expect(bare?.issues?.[0]?.message).toMatch(/asset:<assetId>/);
     const p = product({ media: [external[0] as never] });
     expect((await api.putProducts([p], { by }))[0]).toMatchObject({ status: 'created' });
+    await settle();
+    expect(await srcs(p.key)).toEqual([external[0]?.src]);
+  });
+
+  it('publishes an asset reference as the media origin’s stable URL, on the card and variant too', async () => {
+    vars.MEDIA_ORIGIN = 'https://media.example.com';
+    const p = product({
+      media: [{ src: 'asset:ast_01-X', alt: { en: 'Front' } }, external[1] as never],
+      variants: [
+        {
+          sku: `vv-${Date.now().toString(36)}`,
+          attributes: { size: 'S' },
+          media: [{ src: 'asset:ast_02' }],
+        },
+      ],
+    });
+    const [r] = await api.putProducts([p], { by });
+    expect(r).toMatchObject({ status: 'created' });
+    await settle();
+    const published = await doc(p.key);
+    // A reference becomes `/a/<id>` (the media Worker redirects it to the current file); an
+    // external URL beside it is untouched.
+    expect(await srcs(p.key)).toEqual(['https://media.example.com/a/ast_01-X', external[1]?.src]);
+    expect(published?.media).toMatchObject([{ alt: 'Front' }, {}]);
+    expect(JSON.stringify(published)).not.toContain('asset:');
+    expect(JSON.stringify(published)).toContain('https://media.example.com/a/ast_02');
+  });
+
+  it('ignores a trailing slash on the origin, and refuses the reference again without the service', async () => {
+    vars.MEDIA_ORIGIN = 'https://media.example.com/';
+    const p = product({ media: [{ src: 'asset:ast_9' }] });
+    expect((await api.putProducts([p], { by }))[0]).toMatchObject({ status: 'created' });
+    await settle();
+    expect(await srcs(p.key)).toEqual(['https://media.example.com/a/ast_9']);
+
+    delete vars.MEDIA_ORIGIN;
+    const [again] = await api.putProducts([product({ media: [{ src: 'asset:ast_9' }] })], { by });
+    expect(again?.status).toBe('rejected');
+    expect(again?.issues?.[0]).toMatchObject({
+      path: 'media.0.src',
+      message: expect.stringMatching(/assets service/),
+    });
   });
 });
