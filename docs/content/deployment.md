@@ -17,8 +17,7 @@ deployment, ring by ring. Nobody deploys from a workstation or an agent session.
 > below stay as background on the content stack's design.
 
 The code, `scripts/fleet.ts`, `scripts/provision.sh` and `deploy.yml` are in this repository, and so
-is the registry, `deployments/`. A fork that wants its registry elsewhere keeps it as described under
-[Provisioning](#provisioning-a-deployment).
+is the registry, `deployments/`.
 
 For bindings and vars, see [Configuration](./configuration.md); for what each worker does, see
 [Architecture](./architecture.md); for restore points, see
@@ -26,8 +25,7 @@ For bindings and vars, see [Configuration](./configuration.md); for what each wo
 
 ## The registry: `<id>.jsonc` files
 
-One file per deployment, in the directory `FLEET_REGISTRY` names (this repository ships none; a
-fork's own is `deployments/`, and `examples/fleet/example.jsonc` is a held starting point), parsed by `toDeployment` in `scripts/fleet.ts`:
+One file per deployment in `deployments/`, parsed by `toDeployment` in `scripts/fleet.ts`:
 
 | Field           | Meaning                                                                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -102,16 +100,8 @@ scheduled actions, asset expiry, retention, the reseal and the rest. Two things 
 
 ## Provisioning a deployment
 
-`FLEET_REGISTRY` names the registry directory for `scripts/fleet.ts`, `scripts/deploy.sh` and
-`scripts/provision.sh`; unset, they read `deployments/` in the checkout, and with neither they stop
-with "no deployment registry at ...". `FLEET_REPO` (`owner/name`) sets the GitHub repository
-`provision.sh` creates the environment and secrets on. The maintainers set both to their private
-fleet repository, so a customer's entry and secrets never land in a public one:
-
-    FLEET_REGISTRY=../fleet/deployments FLEET_REPO=commerceworker/fleet ./scripts/provision.sh <id>
-
-To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.jsonc` (or into your
-`FLEET_REGISTRY` directory) and edit it; it is held (`hold: true`) until you remove that.
+`scripts/fleet.ts` and `scripts/provision.sh` read the registry in `deployments/`, and
+`provision.sh` creates the deployment's GitHub environment and secrets on this repository.
 
 1. Add `<id>.jsonc` to the registry (`id`, `ring`, `slot`, optionally `domain`, `sso`, `email`).
 2. Run `./scripts/provision.sh <id>` (needs `wrangler login` and `gh auth login`; no token to
@@ -136,8 +126,8 @@ To start your own, copy `examples/fleet/example.jsonc` to `deployments/<id>.json
    - writes the first administrator's one-time setup code to `.secrets/<id>/setup-code`
      (gitignored) and sets it as `SETUP_TOKEN`.
 3. Add `CLOUDFLARE_API_TOKEN` (with the permissions in [The deploy token](#the-deploy-token))
-   and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not repository secrets of the fleet
-   repository, commit the registry file, and merge. CI deploys it in its ring.
+   and `CLOUDFLARE_ACCOUNT_ID` to the environment if they are not repository secrets, commit the
+   registry file, and merge. CI deploys it in its ring.
 4. Send the customer's first admin `https://<domain>/setup` and the setup code.
 
 Edge image transforms and the video streaming service are account features; their bindings need
@@ -216,9 +206,9 @@ then only the new).
 ### The deploy token
 
 `CLOUDFLARE_API_TOKEN` is an account-owned API token for the deployment's account. It needs
-exactly what `scripts/deploy.sh` does, and nothing `provision.sh` does (provisioning runs by hand
+exactly what `deploy.yml` does, and nothing `provision.sh` does (provisioning runs by hand
 under `wrangler login`). One token can serve every deployment on the account: hold it, with
-`CLOUDFLARE_ACCOUNT_ID`, as repository secrets of the fleet repository, and every deployment's
+`CLOUDFLARE_ACCOUNT_ID`, as repository secrets, and every deployment's
 environment uses them (a secret of the same name on an environment overrides them). Each
 deployment's zone goes on the token:
 
@@ -239,61 +229,19 @@ names the request.
 
 ## The pipeline
 
-`.github/workflows/ci.yml`:
+CI and the deploy are described in [Deploy](../deploy.md#ci), and the content stack's own deploy
+steps in [Deploy](../deploy.md#the-content-stack). In short: `.github/workflows/ci.yml` verifies
+every pull request and push to `main`, and once the repository variable `DEPLOY_ENABLED` is `true`
+it deploys every deployment in `deployments/`, ring by ring, through
+`.github/workflows/deploy.yml`. That one job deploys a deployment's content Workers beside its
+commerce Workers, smoke-tests them, and rolls back what it deployed if a step fails. A failed deploy
+is re-run from GitHub Actions, never from a workstation.
 
-- **verify** (every push and pull request): lint, type-check and build in one parallel turbo
-  run (the build is `wrangler deploy --dry-run` for engine, media, api and delivery), then the
-  tests on their own (including the engine's durable workflow runs in the local runtime with
-  `AI_MODE=mock`),
-  `pnpm test:fleet`, `pnpm test:toolkit`, and `pnpm audit --prod --audit-level high`.
-- **devices**: the web app's Playwright suite in WebKit (iPhone, iPad, desktop) and Chromium
-  against an offline dev server (`apps/studio/e2e`), in four jobs at once, each with its own server:
-  `devices (webkit)`, `devices (axe)`, `devices (cms)` and `devices (sign-in)`, split by `E2E_PART`
-  in `apps/studio/playwright.config.ts`. A job named `devices` sums them up as the required check.
-  They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on the
-  push a merge makes: the pull request already ran them. The `changes` job also skips them for a
-  pull request that only touches `docs/`, `apps/docs/`, `.claude/` or top-level Markdown.
-- **commits** (pull requests only): commitlint (`commitlint.config.ts`) over every commit the pull
-  request adds, which must follow Conventional Commits (`type(scope): subject`).
-- **release** (push to `main` only): needs only `verify`, so deploys do not wait for `devices`. It
-  dispatches `release.yml` in the private `commerceworker/fleet` repository with the commit sha, using
-  the repository secret `FLEET_DISPATCH_TOKEN` (a fine-grained token with Actions write on that
-  repository only). While the secret is unset the job succeeds and dispatches nothing, so a fork's
-  CI stays green and deploys nothing. In the fleet repository, `release.yml` refuses any commit
-  that is not on this repository's `main`, runs `fleet.ts matrix` against the registry, and calls
-  its `deploy.yml` ring by ring (staging → internal → canary → general, each waiting for the
-  previous to finish cleanly, `general` four at a time).
-
-A fork that runs its own fleet adds a `release` of its own (or ring jobs that call `deploy.yml` once
-per deployment from `fleet.ts matrix`, with `FLEET_REGISTRY` set).
-
-`.github/workflows/deploy.yml` checks out the commit and runs `scripts/deploy.sh <id>`, so the steps
-always come from the commit being shipped. Each step below is a titled group in the job's log, and a
-failure names the one it stopped at. The script refuses to run outside GitHub Actions unless
-`COMMERCEWORKER_DEPLOY=1`, and removes the deployment's secrets from its environment once they are
-written to files, so builds never see them. Per deployment:
-
-1. Render the config and collect each app's secrets.
-2. **Record a point-in-time recovery bookmark** (the restore point for this deploy).
-3. **Migrate the database**: `wrangler d1 migrations apply DB --remote`. Migrations run before
-   the new code, so they must be additive (expand).
-4. Deploy **engine** (it owns the stateful object and workflow classes the others bind), then
-   **media** (so it already verifies the URLs the api and delivery hand out), then **api**, then
-   **delivery**, then build and deploy **web**.
-5. Smoke test: `https://<domain>/health`, `/health/deep` (the database and the api over the
-   binding), `/login`, `https://api.<domain>/health` and `/openapi.json`,
-   `https://cdn.<domain>/health`, `https://media.<domain>/health`; an anonymous delivery read must
-   answer 401 and an unknown media URL 404.
-6. Latency check (warns only): `/login` 1.5 s, `/health/deep` 1.0 s, `cdn.<domain>/health` 0.3 s.
-7. On any failure after the engine shipped, **roll back in order**: engine first (the platform
-   refuses to roll a worker back past a stateful-object migration; if the engine can't go back,
-   nothing else is rolled back and a person decides), then media, api, delivery and web, each only
-   if it deployed. A first deploy has no earlier version and stays. Database migrations are not
-   rolled back.
-8. The deployment with `docs: true` then deploys and smoke-tests the docs site, rolling it back
-   alone on failure.
-
-All platform API calls retry up to three times; each step is idempotent.
+Planned, once customers exist ([Patterns](../patterns.md), P8): the registry and each customer's
+GitHub environment move to a private fleet repository, so a customer's entry and secrets never land
+in this one. CI's `verify` then hands that repository each passing `main` commit to release, its
+release refuses any commit that isn't on this repository's `main`, and a push to its registry ships
+a new or changed deployment on its own, with the newest `main` commit whose CI passed.
 
 ## Releasing the SDK
 
