@@ -14,6 +14,8 @@ const entries = [
   'rich-text',
   'edge',
   'management',
+  'commerce',
+  'commerce-webhooks',
   'react',
   'vue',
   'react-native',

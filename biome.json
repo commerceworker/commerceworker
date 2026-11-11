@@ -19,7 +19,8 @@
       "!packages/db/migrations/meta",
       "!packages/core/tests/fixtures/ucp",
       "!packages/docs-index/src/generated.ts",
-      "!packages/http/src/mcp/skills.generated.ts"
+      "!packages/http/src/mcp/skills.generated.ts",
+      "!packages/sdk/commerce/src/generated/operations.ts"
     ]
   },
   "formatter": {

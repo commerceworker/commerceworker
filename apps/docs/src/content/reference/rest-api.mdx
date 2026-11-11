@@ -35,6 +35,62 @@ and `Retry-After: 60`; wait that long and retry. The count is kept at each Cloud
 the requests arrive at, so it stops a runaway client rather than metering an exact number. A
 deployment can have different budgets; ask your CommerceWorker contact if an integration needs more.
 
+## SDK
+
+For TypeScript on a server, `@commerceworker/sdk/commerce` is a typed client for this API with no
+dependencies. It has one method per `operationId` (camel-cased: `list_orders` is `listOrders`), with
+request and response types taken from the OpenAPI document, and runs anywhere `fetch` does. Keep the
+token on the server.
+
+```ts
+import { createCommerceClient } from '@commerceworker/sdk/commerce';
+
+const commerce = createCommerceClient({
+  baseUrl: 'https://app.commerceworker.com',
+  token: apiToken, // an API token from the Team page
+});
+
+// An Idempotency-Key makes the order start once, however often this is retried.
+const { orderId } = await commerce.startOrder(
+  { flowId: 'checkout', input: { model: 'b2c', lines: [{ sku: 'A1', qty: 1 }] } },
+  { idempotencyKey: 'cart-42' },
+);
+
+// Cursor-paged lists are async iterators that fetch the next page as you read.
+for await (const quote of commerce.paginate('list_quotes', { status: 'sent' })) {
+  console.log(quote.id);
+}
+```
+
+A failure throws a `CommerceError`. A refusal is a `CommerceApiError` with its `status`, `kind`, the
+body's `error` and `issues`, a `requestId` for support, and for a `429` the seconds in `Retry-After`
+as `retryAfterSec`; `CommerceNotFoundError`, `CommerceConflictError` and the other subclasses cover
+`400`, `401`, `403`, `404`, `409`, `422` and `429`. A request that got no answer is a
+`CommerceConnectionError` (a `CommerceTimeoutError` past the `timeoutMs` option) with the original
+as `cause`. Test with `isCommerceError(error)` or `isCommerceApiError(error, 'not_found')` rather
+than `instanceof`, which fails if your app loads both the ES module and CommonJS builds.
+
+The client resends a request that failed with a `429`, a `5xx` or a connection error, up to
+`maxRetries` times (default 2; `0` turns it off), with exponential backoff and jitter or the
+`Retry-After` the server sent. It resends only reads, deletes and writes sent with an
+`idempotencyKey`. `call('start_order', input)` takes any operation by its `operationId`. A route
+whose response the explorer shows only as a description returns its result as `unknown`.
+
+To check a signed delivery from a [webhook subscription](#webhook-subscriptions), pass the raw body
+and the `X-CommerceWorker-Signature` header to `verifyCommerceWebhook` from
+`@commerceworker/sdk/commerce/webhooks`; it accepts the old and the new secret while one is rotated.
+
+```ts
+import { verifyCommerceWebhook } from '@commerceworker/sdk/commerce/webhooks';
+
+const check = await verifyCommerceWebhook(
+  rawBody,
+  request.headers.get('x-commerceworker-signature'),
+  [currentSecret, previousSecret],
+);
+if (!check.ok) return new Response(check.reason, { status: 400 });
+```
+
 ## Routes
 
 | Method | Path | Body | Response |

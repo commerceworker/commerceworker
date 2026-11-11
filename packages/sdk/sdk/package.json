@@ -1,7 +1,7 @@
 {
   "name": "@commerceworker/sdk",
   "version": "0.2.0",
-  "description": "The CommerceWorker SDK: read and render content in any framework, verify webhooks, manage spaces, generate types, and the `commerceworker` command. One package, import only what you use.",
+  "description": "The CommerceWorker SDK: read and render content in any framework, verify webhooks, manage spaces, run commerce orders and carts, generate types, and the `commerceworker` command. One package, import only what you use.",
   "keywords": [
     "commerceworker",
     "cms",
@@ -48,6 +48,14 @@
       "types": "./src/management.ts",
       "default": "./src/management.ts"
     },
+    "./commerce": {
+      "types": "./src/commerce.ts",
+      "default": "./src/commerce.ts"
+    },
+    "./commerce/webhooks": {
+      "types": "./src/commerce-webhooks.ts",
+      "default": "./src/commerce-webhooks.ts"
+    },
     "./react": {
       "types": "./src/react.ts",
       "default": "./src/react.ts"
@@ -93,6 +101,7 @@
   "devDependencies": {
     "@commerceworker/cli": "workspace:*",
     "@commerceworker/sdk-codegen": "workspace:*",
+    "@commerceworker/sdk-commerce": "workspace:*",
     "@commerceworker/sdk-core": "workspace:*",
     "@commerceworker/sdk-edge": "workspace:*",
     "@commerceworker/sdk-management": "workspace:*",
@@ -146,6 +155,16 @@
         "types": "./dist/management.d.ts",
         "import": "./dist/management.js",
         "require": "./dist/management.cjs"
+      },
+      "./commerce": {
+        "types": "./dist/commerce.d.ts",
+        "import": "./dist/commerce.js",
+        "require": "./dist/commerce.cjs"
+      },
+      "./commerce/webhooks": {
+        "types": "./dist/commerce-webhooks.d.ts",
+        "import": "./dist/commerce-webhooks.js",
+        "require": "./dist/commerce-webhooks.cjs"
       },
       "./react": {
         "types": "./dist/react.d.ts",
