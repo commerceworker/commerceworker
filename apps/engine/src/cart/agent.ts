@@ -64,13 +64,13 @@ import {
   storedCart,
 } from '@commerceworker/core';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
+import { quoteCheckout } from '../checkout/quote';
 import { loadFlowVersion } from '../flows';
 import { startOrderOnce } from '../orders';
 import { emitCart } from '../outbox';
 import { pluginStub } from '../plugin-host';
 import { callPlugin, mayUse } from '../plugins';
 import { forwardedGuest, forwardedPrincipal, livePrincipal, SESSION_ENDED } from '../principal';
-import { quoteCheckout } from '../ucp/quote';
 import { cartRecords, webhookOutbox } from '../wire';
 import { cartDraftExtra, cartSession } from './session';
 

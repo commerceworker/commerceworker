@@ -146,7 +146,7 @@ Workers back but not D1. So for a while the *old* Workers run against the *new* 
 ## Agentic checkout pricing
 
 **Rule.** UCP (`apps/engine/src/ucp/`) prices a session only with the checkout flow's own pricing
-nodes, taken by `quoteNodes` (`packages/core/src/checkout.ts`) and run in `apps/engine/src/ucp/quote.ts`.
+nodes, taken by `quoteNodes` (`packages/core/src/checkout.ts`) and run in `apps/engine/src/checkout/quote.ts`.
 
 **Why.** The PaymentIntent held at completion must be exactly the amount the flow's authorize node
 adopts. Any second pricing path disagrees with the flow sooner or later.

@@ -307,7 +307,7 @@ The choice is part of the published flow version, so a replay calls the same pro
   bound, doesn't provide the surface or returns a result the contract doesn't allow fails the node
   with a `NonRetryableError`; one that is bound but not answering, or returns `fail` with `retry`,
   throws an ordinary error, so the step retries.
-- Rates and tax also run while pricing a UCP checkout (`ucp/quote.ts` calls the same executors with
+- Rates and tax also run while pricing a UCP checkout (`checkout/quote.ts` calls the same executors with
   step key `quote#<nodeId>`, each provider call held to 10 seconds), so `quote`, `calculate` and
   `validate` must write nothing; the contract suite checks it. A provider's failure there (errors
   `provide` throws are tagged, `providerOfError`) becomes the issue "Shipping or tax could not be

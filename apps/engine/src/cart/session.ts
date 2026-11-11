@@ -5,7 +5,7 @@
  */
 
 import { BASE_CURRENCY, type Cart, type CheckoutSession } from '@commerceworker/core';
-import type { DraftExtra } from '../ucp/quote';
+import type { DraftExtra } from '../checkout/quote';
 
 export function cartSession(c: Cart): CheckoutSession {
   return {

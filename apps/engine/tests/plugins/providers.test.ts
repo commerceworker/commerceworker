@@ -18,10 +18,10 @@ import {
 } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { quoteCheckout } from '../../src/checkout/quote';
 import { compensateOrder } from '../../src/connectors';
 import { startOrder } from '../../src/orders';
 import { pluginUsage, registry } from '../../src/plugins';
-import { quoteCheckout } from '../../src/ucp/quote';
 import { commercePorts } from '../../src/wire';
 import { edge, node, settled } from '../plugin-helpers';
 

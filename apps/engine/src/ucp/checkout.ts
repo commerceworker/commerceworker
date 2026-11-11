@@ -1,34 +1,28 @@
 /**
- * The checkout and order operations, the same for REST (./rest.ts) and MCP (./mcp.ts). Each
- * returns an HTTP status and the UCP body; the transports only frame them.
+ * The checkout and order operations as UCP serves them, the same for REST (./rest.ts) and MCP
+ * (./mcp.ts). Each returns an HTTP status and the UCP body; the transports only frame them.
  *
- * Sessions live in D1 (`checkout_sessions`), the session JSON beside the fields queries use. Every
- * write compares the version it read, so an update racing a completion loses (409) instead of
- * changing a session that is being paid for. A session is priced again on every write, and once
- * more right before completing, by the checkout flow's own pricing nodes (./quote.ts).
+ * This is the UCP adapter over the engine's checkout (../checkout/): it names the caller (the
+ * platform, the `agent` channel, the `ucp:` idempotency prefix), says how the platform pays, and
+ * maps the outcomes (a lost race is a 409, a refusal an error body). Sessions, pricing and the
+ * completion sequence are the checkout's own.
  */
 
 import {
   CHECKOUT_TTL_MS,
-  type CheckoutIssue,
   type CheckoutPatch,
   type CheckoutSession,
   checkoutPatch,
   type FlowVersion,
   FULFILLMENT_CAPABILITY,
-  isExpired,
   isFinalCheckout,
   isOpenCheckout,
-  isPickup,
-  missingInfo,
   newId,
   ORDER_CAPABILITY,
   type OrderState,
-  openStatus,
   orderPermalink,
   type PlatformCaller,
   patchCheckout,
-  pickupLineIssues,
   protocolIssues,
   selectedInstrument,
   toUcpCheckout,
@@ -40,14 +34,14 @@ import {
   ucpError,
   ucpErrorResponse,
 } from '@commerceworker/core';
+import type { CheckoutCaller } from '../checkout/caller';
+import { completeSession } from '../checkout/complete';
+import { bump, current, refresh, save } from '../checkout/session';
 import { loadFlowVersion } from '../flows';
 import { orderAgent } from '../namespaces';
-import { startOrderOnce } from '../orders';
 import { checkoutSessions, paymentLedger, pricingStore, shippingStore } from '../wire';
 import { CHECKOUT_CURRENCY, paymentHandlers, ucpSettings } from './config';
-import { authorizeCheckout, releaseHold } from './payments';
-import { pickupCheck } from './pickup';
-import { quoteCheckout } from './quote';
+import { authorizeCheckout } from './payments';
 
 export type UcpResult = { status: number; body: unknown };
 
@@ -69,17 +63,13 @@ const gone = (content: string): UcpResult => ({
   ]),
 });
 
-const load = (env: Env, ownerId: string, id: string) => checkoutSessions(env).load(ownerId, id);
-
-/** Writes `next` over the version it was read at; false when someone wrote in between. */
-const save = (env: Env, next: CheckoutSession, readVersion: number) =>
-  checkoutSessions(env).save(next, readVersion);
-
-const bump = (s: CheckoutSession, changes: Partial<CheckoutSession>): CheckoutSession => ({
-  ...s,
-  ...changes,
-  version: s.version + 1,
-  updatedAt: Date.now(),
+/** The platform as the checkout knows a caller. */
+const callerOf = (ctx: UcpContext): CheckoutCaller => ({
+  ownerId: ctx.caller.id,
+  channel: 'agent',
+  idempotencyPrefix: 'ucp',
+  protocolIssues: (s) => protocolIssues(s, ctx.capabilities),
+  pickupStores: ctx.capabilities.has(FULFILLMENT_CAPABILITY),
 });
 
 const raced = () =>
@@ -87,47 +77,6 @@ const raced = () =>
 
 async function checkoutFlow(env: Env, settings: UcpSettings): Promise<FlowVersion | null> {
   return settings.checkoutFlowId ? loadFlowVersion(env, settings.checkoutFlowId) : null;
-}
-
-/** Prices the session and works out its issues and status (for a session that is open). */
-async function refresh(
-  env: Env,
-  flow: FlowVersion,
-  s: CheckoutSession,
-  ctx: UcpContext,
-  input?: UcpCheckoutInput,
-): Promise<CheckoutSession> {
-  const { quote, issues } = await quoteCheckout(env, flow, s);
-  const priced = { ...s, quote };
-  // The stores that could take the order are worked out once, here, and kept on the session for
-  // every response; a store the platform chose must be one of them.
-  const pickup = quote?.ships ? await pickupCheck(env, flow, priced) : null;
-  const pickupIssues: CheckoutIssue[] = [
-    ...(pickup?.problem && isPickup(s)
-      ? [
-          {
-            kind: 'error' as const,
-            code: 'pickup_unavailable',
-            content: pickup.problem,
-            path: '$.fulfillment',
-            severity: 'recoverable' as const,
-          },
-        ]
-      : []),
-    ...(isPickup(s) ? pickupLineIssues(input, priced) : []),
-  ];
-  const all: CheckoutIssue[] = [
-    ...issues,
-    ...pickupIssues,
-    ...missingInfo(priced),
-    ...protocolIssues(priced, ctx.capabilities),
-  ];
-  return {
-    ...priced,
-    pickupStores: ctx.capabilities.has(FULFILLMENT_CAPABILITY) ? (pickup?.stores ?? []) : [],
-    issues: all,
-    status: openStatus(all),
-  };
 }
 
 async function respond(
@@ -147,17 +96,6 @@ async function respond(
       ...(s.orderId ? { permalink: orderPermalink(conf, ctx.caller.origin, s.orderId) } : {}),
     }),
   };
-}
-
-/** The session, expired first if its time is up. */
-async function current(env: Env, ctx: UcpContext, id: string) {
-  const s = await load(env, ctx.caller.id, id);
-  if (!s || !isExpired(s, Date.now())) return s;
-  const expired = bump(s, {
-    status: 'canceled',
-    issues: [{ kind: 'info', code: 'expired', content: 'This checkout expired.' }],
-  });
-  return (await save(env, expired, s.version)) ? expired : load(env, ctx.caller.id, id);
 }
 
 export async function createCheckout(
@@ -191,7 +129,7 @@ export async function createCheckout(
     env,
     flow,
     patchCheckout(empty, checkoutPatch(input, undefined, ctx.capabilities)),
-    ctx,
+    callerOf(ctx),
     input,
   );
   // Nothing in it can be bought: there is no checkout to create.
@@ -208,7 +146,7 @@ export async function createCheckout(
 }
 
 export async function getCheckout(env: Env, ctx: UcpContext, id: string): Promise<UcpResult> {
-  const s = await current(env, ctx, id);
+  const s = await current(env, callerOf(ctx), id);
   return s ? respond(env, s, ctx) : gone('No such checkout.');
 }
 
@@ -224,7 +162,7 @@ export async function updateCheckout(
   id: string,
   input: UcpCheckoutInput,
 ): Promise<UcpResult> {
-  const s = await current(env, ctx, id);
+  const s = await current(env, callerOf(ctx), id);
   if (!s) return gone('No such checkout.');
   if (s.status === 'complete_in_progress')
     return respond(env, asIs(s, 'The checkout is being completed; it cannot change now.'), ctx);
@@ -234,13 +172,13 @@ export async function updateCheckout(
   const flow = await checkoutFlow(env, settings);
   if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
   const patch: CheckoutPatch = checkoutPatch(input, s, ctx.capabilities);
-  const next = await refresh(env, flow, bump(patchCheckout(s, patch), {}), ctx, input);
+  const next = await refresh(env, flow, bump(patchCheckout(s, patch), {}), callerOf(ctx), input);
   if (!(await save(env, next, s.version))) return raced();
   return respond(env, next, ctx, 200, settings);
 }
 
 export async function cancelCheckout(env: Env, ctx: UcpContext, id: string): Promise<UcpResult> {
-  const s = await current(env, ctx, id);
+  const s = await current(env, callerOf(ctx), id);
   if (!s) return gone('No such checkout.');
   if (!isOpenCheckout(s))
     return protocol(409, 'not_cancelable', `The checkout is ${s.status} and can't be canceled.`);
@@ -262,7 +200,7 @@ export async function completeCheckout(
       'invalid_request',
       `Complete needs payment.instruments: ${parsed.error.issues[0]?.message}`,
     );
-  const s = await current(env, ctx, id);
+  const s = await current(env, callerOf(ctx), id);
   if (!s) return gone('No such checkout.');
   if (s.status === 'completed' || s.status === 'complete_in_progress') return respond(env, s, ctx);
   if (s.status === 'canceled') return respond(env, asIs(s, 'The checkout was canceled.'), ctx);
@@ -270,125 +208,23 @@ export async function completeCheckout(
   const settings = await ucpSettings(env);
   const flow = await checkoutFlow(env, settings);
   if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
-  // Priced again now: the hold must be for what the flow will charge.
-  const fresh = await refresh(env, flow, s, ctx);
-  if (fresh.status !== 'ready_for_complete') {
-    const next = bump(fresh, {});
-    if (!(await save(env, next, s.version))) return raced();
-    return respond(env, next, ctx, 200, settings);
-  }
-
+  const caller: CheckoutCaller = {
+    ...callerOf(ctx),
+    meta: { ucp: { platformId: ctx.caller.id, checkoutId: s.id, origin: ctx.caller.origin } },
+  };
   const instrument = selectedInstrument(parsed.data);
   const handler = paymentHandlers(env).find((h) => h.id === instrument?.handler_id);
-  const failed = async (code: string, content: string) => {
-    const next = bump(fresh, {
-      status: 'ready_for_complete',
-      issues: [{ kind: 'error', code, content, path: '$.payment', severity: 'recoverable' }],
-    });
-    return (await save(env, next, s.version)) ? respond(env, next, ctx, 200, settings) : raced();
-  };
-  if (!instrument || !handler)
-    return failed(
-      'payment_failed',
-      'Select one instrument of a payment handler this checkout offers.',
-    );
-
-  // Claim the session: from here no update can change what is being paid for.
-  const claimed = bump(fresh, { status: 'complete_in_progress', issues: [] });
-  if (!(await save(env, claimed, s.version))) return raced();
-
-  let auth: Awaited<ReturnType<typeof authorizeCheckout>>;
-  try {
-    auth = await authorizeCheckout(env, claimed, handler.name, instrument);
-  } catch (err) {
-    // The processor failed, not the card: open the session again so the platform can retry.
-    await save(env, bump(claimed, { status: 'ready_for_complete' }), claimed.version);
-    throw err;
-  }
-  if (!auth.ok) {
-    const next = bump(claimed, {
-      status: 'ready_for_complete',
-      issues: [
-        {
-          kind: 'error',
-          code: auth.code,
-          content: auth.content,
-          path: '$.payment',
-          severity: 'recoverable',
-        },
-      ],
-    });
-    return (await save(env, next, claimed.version))
-      ? respond(env, next, ctx, 200, settings)
-      : raced();
-  }
-
-  const q = claimed.quote!;
-  const name = [claimed.buyer.firstName, claimed.buyer.lastName].filter(Boolean).join(' ');
-  const appliedCodes = (q.discounts?.applied ?? []).flatMap((a) =>
-    a.code === null ? [] : [a.code],
-  );
-  let orderId: string;
-  try {
-    const started = await startOrderOnce(env, {
-      flowId: flow.id,
-      version: flow.version,
-      idempotencyKey: `ucp:${claimed.id}`,
-      startedBy: ctx.caller.id,
-      input: {
-        model: flow.model,
-        channel: 'agent',
-        externalId: claimed.id,
-        title: `Checkout ${claimed.id}`,
-        currency: claimed.currency,
-        lines: q.lines.map((l) => ({ sku: l.sku, name: l.title, qty: l.qty })),
-        contact: {
-          email: claimed.buyer.email!,
-          ...(name ? { name } : {}),
-          ...(claimed.buyer.phone ? { phone: claimed.buyer.phone } : {}),
-        },
-        fulfillment: !q.ships
-          ? { method: 'digital' }
-          : isPickup(claimed)
-            ? { method: 'pickup', locationId: claimed.pickupLocationId! }
-            : { method: 'ship' },
-        ...((claimed.shippingOption ?? q.shippingOption)
-          ? { shippingOption: (claimed.shippingOption ?? q.shippingOption)! }
-          : {}),
-        ...(auth.payment ? { payment: auth.payment } : {}),
-        meta: {
-          // Only the codes the quote applied: the flow's discount step takes them off again, so
-          // the total it authorizes is the one that was held. A code the quote refused isn't
-          // handed on, or it could apply now and move the total off the hold. An automatic
-          // promotion has no code to hand on; the step applies it again by itself.
-          ...(appliedCodes.length ? { promoCodes: appliedCodes } : {}),
-          ...(claimed.shipTo ? { shipTo: claimed.shipTo } : {}),
-          ucp: { platformId: ctx.caller.id, checkoutId: claimed.id, origin: ctx.caller.origin },
-        },
-      },
-    });
-    if ('mismatch' in started)
-      throw new Error('An order already exists for this checkout with other details');
-    orderId = started.orderId;
-  } catch (err) {
-    if (auth.payment?.intentId) await releaseHold(env, auth.payment.intentId);
-    const next = bump(claimed, {
-      status: 'ready_for_complete',
-      issues: [
-        {
-          kind: 'error',
-          code: 'order_failed',
-          content: 'The order could not be placed; try again.',
-          severity: 'recoverable',
-        },
-      ],
-    });
-    await save(env, next, claimed.version);
-    throw err;
-  }
-  const done = bump(claimed, { status: 'completed', orderId, issues: [] });
-  if (!(await save(env, done, claimed.version))) return raced();
-  return respond(env, done, ctx, 200, settings);
+  const done = await completeSession(env, caller, flow, s, {
+    refusal:
+      instrument && handler
+        ? null
+        : {
+            code: 'payment_failed',
+            content: 'Select one instrument of a payment handler this checkout offers.',
+          },
+    authorize: (claimed) => authorizeCheckout(env, claimed, handler!.name, instrument!),
+  });
+  return done.kind === 'raced' ? raced() : respond(env, done.session, ctx, 200, settings);
 }
 
 // ── Orders ────────────────────────────────────────────────────────────────
