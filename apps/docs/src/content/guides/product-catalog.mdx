@@ -319,6 +319,38 @@ are ignored. Its `cursor` is a number, the previous answer's `next` (an offset b
 pages up to 1,000 results. On the first page, a query that is a
 SKU puts the product with that SKU first.
 
+### From JavaScript
+
+`@commerceworker/sdk/catalog` is a typed client for these routes. It needs no token, so it runs in
+a browser as well as on a server, and it asks for each page in the one form the catalog caches, so
+shoppers share cache entries.
+
+```ts
+import { createCatalogClient } from '@commerceworker/sdk/catalog';
+
+const catalog = createCatalogClient({
+  origin: 'https://catalog.your-domain.com',
+  channel: 'web',
+  locale: 'en',
+});
+
+const tee = await catalog.slug('blue-cotton-tee');
+const { products } = await catalog.products(['tee-1', 'hoodie-2']);
+const page = await catalog.listing('shirts', {
+  filters: { brand: ['acme'] },
+  ranges: { price: { max: 5000 } },
+  sort: 'price_asc',
+});
+for await (const results of catalog.searchPages('blue cott')) console.log(results.products);
+```
+
+There is one method per route above (`product`, `products`, `sku`, `slug`, `categories`, `listing`,
+`search`), and `listingPages` and `searchPages` follow `next` for you. A request the catalog would
+refuse (a bad key, a sort that isn't a sort, more than 100 keys) throws a `TypeError` before it is sent.
+Failures are `CatalogError`s, narrowed with `isCatalogApiError(error, 'not_found')` and
+`isCatalogConnectionError(error)`; a 429, a 5xx or a dropped connection is retried (`maxRetries`,
+2 by default), and `timeoutMs` bounds each attempt.
+
 ## Freshness
 
 Documents and listings are cached. A change appears within about a minute: published documents are

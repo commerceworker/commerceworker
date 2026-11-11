@@ -193,3 +193,4 @@
 ^(packages/core/src/b2b/quotes\.ts|packages/(db/src/quote-store|application/src/commerce/quotes|ports/src/commerce/quotes)\.ts|apps/engine/src/assistant/quotes\.ts)$	guides/quotes guides/price-books guides/purchase-orders reference/mcp reference/rest-api reference/expressions docs/data-model.md docs/b2b.md	prose
 ^packages/core/src/(lifecycle|lifecycles|credit|price-books|b2b/(companies|budgets|purchase-orders|quotes))\.ts$	reference/lifecycles	gen
 ^packages/sdk/commerce/(src|scripts)/	reference/rest-api docs/content/sdks.md	prose
+^(packages/sdk/catalog/(src|scripts)/|apps/delivery/src/catalog/routes\.ts$)	guides/product-catalog docs/content/sdks.md	prose

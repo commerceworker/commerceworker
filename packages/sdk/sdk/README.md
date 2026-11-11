@@ -32,6 +32,7 @@ const html = toHtml(article.fields.body, { entryHref: (t) => `/${t.fields?.slug}
 | `@commerceworker/sdk/inline-edit`  | Inline editing on previews                                                                         |
 | `@commerceworker/sdk/edge`         | A tiny Delivery client for edge functions and devices: one locale, flat fields                     |
 | `@commerceworker/sdk/management`   | The Management API client. Server only: a Management token never belongs in a bundle               |
+| `@commerceworker/sdk/catalog`      | The storefront catalog client: products, categories, faceted listings and search from the catalog's cached read edge. No token; safe in a browser |
 | `@commerceworker/sdk/commerce`     | The commerce API client: orders, carts, catalog, pricing and B2B, typed from the OpenAPI document. Server only |
 | `@commerceworker/sdk/commerce/webhooks` | `verifyCommerceWebhook` for signed commerce webhook deliveries                                  |
 | `@commerceworker/sdk/react`        | React hooks (`useEntry`, `useEntries`, `useAsset`, …) and `<Image>`. Needs `react`                 |

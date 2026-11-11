@@ -28,6 +28,7 @@ api serves, so give it the api host. The Delivery clients share a model (`Delive
 | Edge functions, constrained devices, single-locale, minimal payload | `@commerceworker/sdk/edge`         |
 | React Native apps with offline sync                                 | `@commerceworker/sdk/react-native` |
 | Programmatic authoring/publishing (writes)                          | `@commerceworker/sdk/management`   |
+| Storefront reads: products, categories, faceted listings, search     | `@commerceworker/sdk/catalog`      |
 | Commerce: orders, carts, catalog, pricing, B2B, webhook subscriptions | `@commerceworker/sdk/commerce`   |
 | Verifying a commerce webhook delivery                               | `@commerceworker/sdk/commerce/webhooks` |
 | Types for entry fields                                              | `@commerceworker/sdk/codegen`      |
@@ -594,6 +595,51 @@ A Delivery client (not preview) never sends one: Delivery is served from the cac
 and is eventually consistent after a publish (see [Consistency](./consistency.md)). The
 in-memory cache (`cacheTtlMs`) answers without asking the api, so a cached read does not see a
 later write; `clearCache()` after writing.
+
+## `@commerceworker/sdk/catalog` — the storefront catalog client
+
+Zero-dependency client for the catalog's public read edge (`catalog.<host>`, the `CatalogDelivery`
+entrypoint of `apps/delivery`). No token, safe in a browser or on a server. It covers exactly the
+routes in `apps/delivery/src/catalog/routes.ts` (product, batch, SKU, slug, categories, a faceted
+listing, search), one method each, plus `listingPages` and `searchPages` generators that follow
+`next` until it is `null`.
+
+```ts
+import { createCatalogClient } from '@commerceworker/sdk/catalog';
+
+const catalog = createCatalogClient({ origin: 'https://catalog.example.com', channel: 'web', locale: 'en' });
+const page = await catalog.listing('shirts', { filters: { brand: ['acme'] }, ranges: { price: { max: 5000 } } });
+for await (const p of catalog.searchPages('blue cott')) console.log(p.products);
+```
+
+- **Canonical urls.** The edge caches each request under `canonical(route)` and drops everything
+  else, so a client that spells a request differently still works but spreads one page over
+  several cache entries. `src/urls.ts` builds the canonical spelling itself (filters in name order,
+  values sorted and unique, the search query normalized, defaults omitted, `keys=a,b` with a raw
+  comma, a slug percent-encoded) and refuses with a `TypeError`, before sending, what the edge would
+  refuse. `test/parity.test.ts` imports the edge's own `parse` and `canonical` (tests only) and
+  checks every URL the client builds parses to the expected request and round-trips to itself, and
+  that `normalizeQuery` matches core's. A cursor is opaque: it is passed back as it came.
+- **Generated limits.** No constant is copied by hand. `scripts/generate.ts` reads `BATCH_MAX`,
+  `CODE`, `LOCALE`, `SLUG` (`@commerceworker/core/product/paths`), `QUERY_MAX`, `SEARCH_DEPTH`
+  (`/search`) and `PAGE`, `MAX_FILTERS`, `MAX_VALUES`, `SLUG_MAX`, `SORT`, `NUMBER` (the edge's
+  `routes.ts`, which exports them for this) and writes the committed `src/generated/limits.ts`.
+  `pnpm sdk:generate` regenerates it (with the commerce client's operations); `test/generated.test.ts`
+  runs `generate.ts --check` and fails when it is stale. Nothing under `src/` imports core or the
+  delivery app.
+- **Errors.** `CatalogError` is the base (`<Surface>Error` naming, as `CommerceError`): a non-2xx is
+  a `CatalogApiError` (`status`, `body`, `retryAfterSec`) with `CatalogBadRequestError`,
+  `CatalogNotFoundError` and `CatalogRateLimitError`; no answer is a `CatalogConnectionError`, past
+  `timeoutMs` a `CatalogTimeoutError`. Narrow with `isCatalogError`, `isCatalogApiError(e, kind?)` and
+  `isCatalogConnectionError` (a `Symbol.for` brand, so both builds agree). The commerce client's
+  error code is not shared: there is no common package that fits, and the two brands differ so one
+  client's guard never claims the other's errors.
+- **Retries.** Every request is a public GET, so every one is resent on a 429, a 5xx (a listing that
+  is rebuilding answers 503) or a connection error: `maxRetries` (default 2), exponential backoff
+  with full jitter, `Retry-After` honored up to a minute. A 400 or 404 is never retried. The client
+  sends no headers, so a browser makes no CORS preflight.
+- **Bundle.** `packages/sdk/sdk/test/catalog-bundle.test.ts` builds the entry and fails on zod,
+  `@commerceworker/core` or a `node:` import.
 
 ## `@commerceworker/sdk/commerce` — the commerce client
 

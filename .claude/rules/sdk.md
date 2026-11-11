@@ -7,7 +7,7 @@ paths:
 
 - These ship to customers' browsers, apps and Workers as one npm package, `@commerceworker/sdk`
   (`packages/sdk/sdk`), which bundles the private workspace packages (`@commerceworker/sdk-core`,
-  `sdk-web`, `sdk-vue`, `sdk-react-native`, `sdk-edge`, `sdk-management`, `sdk-commerce`, `sdk-codegen`,
+  `sdk-web`, `sdk-vue`, `sdk-react-native`, `sdk-edge`, `sdk-management`, `sdk-commerce`, `sdk-catalog`, `sdk-codegen`,
   `sdk-rich-text`) and the CLI, one subpath each. A new workspace SDK module adds a subpath there
   (`package.json` exports and publishConfig, `src/`, `tsup.config.ts`, `scripts/types.ts`, the
   subpath test). They import only
@@ -21,6 +21,9 @@ paths:
 - A new management route in `packages/http/src/api/routes` usually needs a matching
   `sdk-management` method and test. `sdk-commerce`'s operations are generated from the web app's
   OpenAPI document (`pnpm sdk:generate`, committed as `src/generated/operations.ts`); a REST change
-  regenerates it, and its drift test fails until you do.
+  regenerates it, and its drift test fails until you do. `sdk-catalog` builds the catalog edge's
+  canonical urls and generates its limits from core and `apps/delivery/src/catalog/routes.ts`
+  (`src/generated/limits.ts`, the same command); a change to a route or limit there regenerates it,
+  and `test/parity.test.ts` parses every URL it builds with the edge's own parser.
 - Docs: `apps/docs/src/content/content/guides/sdks.mdx` and `docs/sdks.md`; user-facing docs name the
   published import (`@commerceworker/sdk/react`), never a workspace package.

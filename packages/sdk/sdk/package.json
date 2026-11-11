@@ -1,7 +1,7 @@
 {
   "name": "@commerceworker/sdk",
   "version": "0.2.0",
-  "description": "The CommerceWorker SDK: read and render content in any framework, verify webhooks, manage spaces, run commerce orders and carts, generate types, and the `commerceworker` command. One package, import only what you use.",
+  "description": "The CommerceWorker SDK: read and render content in any framework, verify webhooks, manage spaces, run commerce orders and carts, read the storefront catalog, generate types, and the `commerceworker` command. One package, import only what you use.",
   "keywords": [
     "commerceworker",
     "cms",
@@ -47,6 +47,10 @@
     "./management": {
       "types": "./src/management.ts",
       "default": "./src/management.ts"
+    },
+    "./catalog": {
+      "types": "./src/catalog.ts",
+      "default": "./src/catalog.ts"
     },
     "./commerce": {
       "types": "./src/commerce.ts",
@@ -100,6 +104,7 @@
   },
   "devDependencies": {
     "@commerceworker/cli": "workspace:*",
+    "@commerceworker/sdk-catalog": "workspace:*",
     "@commerceworker/sdk-codegen": "workspace:*",
     "@commerceworker/sdk-commerce": "workspace:*",
     "@commerceworker/sdk-core": "workspace:*",
@@ -155,6 +160,11 @@
         "types": "./dist/management.d.ts",
         "import": "./dist/management.js",
         "require": "./dist/management.cjs"
+      },
+      "./catalog": {
+        "types": "./dist/catalog.d.ts",
+        "import": "./dist/catalog.js",
+        "require": "./dist/catalog.cjs"
       },
       "./commerce": {
         "types": "./dist/commerce.d.ts",
