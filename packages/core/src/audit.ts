@@ -11,6 +11,7 @@ import type { Principal } from './roles';
 export const BUSINESS_AUDIT_ACTIONS = {
   'order.started': 'Started an order',
   'order.cancelled': 'Cancelled an order',
+  'order.release_failed': 'Could not release what an ended order held',
   'order.event_delivered': 'Delivered an event',
   'approval.decided': 'Decided an approval',
   'cart.created': 'Opened a cart',

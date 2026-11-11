@@ -9,7 +9,8 @@ interprets every flow. One instance runs one order generation; its params are `O
 ## Run
 
 1. **`load-flow`** step: loads the pinned `FlowVersion` from D1 (`loadFlowVersion`). A missing
-   version throws `NonRetryableError`.
+   version throws `NonRetryableError` (the order then fails like any throw outside a node's step;
+   see [Failure paths](#failure-paths)).
 2. Builds the plan (`initPlan`) and the [run context](https://docs.commerceworker.com/reference/expressions/): `order`, `nodes: {}`,
    `vars` from params, `input` = `order.meta`, and `now` = the event's timestamp, not the wall
    clock, so it replays identically.
@@ -40,6 +41,8 @@ suffixed steps around their main one:
 | `${key}:until` | `control.wait` with `until` | Evaluates the timestamp once |
 | `${key}` (sleep) | `control.wait` | `step.sleep` or `step.sleepUntil` |
 | `${key}:emit` | nodes that emit, End, a thrown node | Outbound webhook delivery |
+| `run:failed`, `run:failed:emit` | none: only a run that fails | Reports the order failed durably, then `order.failed` unless an End node sent it ([Failure paths](#failure-paths)) |
+| `release:failed` | none: only an ended order whose release step failed for good | Timeline line and audit event; the order keeps its outcome |
 
 :::caution
 Step names are durable identity. Never rename a node id, or change how keys are built, in a way
@@ -123,6 +126,66 @@ Two kinds of report go to `OrderAgent.report` (types in `apps/engine/src/agent.t
 
 Report failures are logged and swallowed: the UI must never fail an order. See
 [OrderAgent](order-agent.md#reports).
+
+## Failure paths
+
+Three throws can reach `run()`, and each leaves the order `failed` with a reason and one
+`order.failed`. The OrderAgent starts watching the instance (`checkInstance`, which records the
+rollback) only when a report flips the order to `failed`, so a throw nobody reports leaves it running,
+waiting or queued for good.
+
+| Throw | Who reports it |
+|---|---|
+| An End node with outcome `failed` | The End step emits `order.failed`; `run` sends the `failed` snapshot, then throws |
+| A throw from a node's own step (retries exhausted) | `runNode`'s catch: the node `failed` and its timeline line; `run`'s catch then fails the order and sends `order.failed` with the node |
+| Anything else: `load-flow`, `load-plugins`, `load-account`, a wait's `:open`, `:until` or `:close` step, a loop's decision step, `continue_as_new`, or a node type with no executor | `run`'s catch, below |
+
+All three also go through `run`'s catch, which sends the `failed` status once more from a step, so
+the first two do not depend on a snapshot that is dropped when the agent is briefly unreachable.
+
+`run` wraps the whole body (`runOrder`) in a try/catch. A throw that neither of the first two paths
+reported is tagged on its way out (`blame`: the node's label) and reported by `failOrder`, then rethrown, so Workflows still runs the
+registered rollbacks. `failOrder` is up to two steps, `run:failed` (the `failed` status, the reason, the
+blamed node's `failed` status and a timeline line, unless that node's own step already sent them
+(`reportedNodes`, tracked per node because the first to reject a batch may be another one), sent from
+inside the step so a failed send retries
+rather than being dropped, as a plan snapshot would be) and `run:failed:emit` (`order.failed`,
+keyed `run:failed` like any emit; skipped only for an End node that failed the order, which sent its
+own). It is the one `order.failed` for every thrown failure (its outbox key is `run:failed`; it replaced
+the per-node `<key>:emit` a node's own throw used to send), so two nodes of a batch failing together,
+or one failing beside a wait that cannot open, still send one. Neither exists unless the run fails, so no published flow's step
+names change, and a replay returns both memoized results: one report, one delivery. The agent folds a
+repeated `failed` into no change. A throw before the first snapshot (the flow version is missing)
+reports with no plan; the stub is made before `load-flow`.
+
+A continue-as-new step is done once the next generation's instance exists: a failing `continuedAs`
+note to the agent is logged, not thrown. If the step still throws, `failOrder` first checks, in a
+step (`run:failed:continued`), whether the next generation's instance exists. Only a definite
+not-found counts as absent; any other error from the check retries the step. When it exists,
+`run` reports nothing and returns `{ continuedAs }` instead of rethrowing, so Workflows compensates
+none of this generation's steps under a live next one, and a continued order is never marked failed.
+
+An approval's `:open` step fails for good only when the node's approval fields don't read
+(`readApprovalSpec`, a flow that bypassed publish validation). A database or network error while
+resolving the approvers retries like any step.
+
+The release steps after an End (`<key>:void`, `<key>:budgets`, `credit:release`) keep retrying. One
+that fails for good never fails the order: its End node has already announced `order.completed`,
+`order.declined` or `order.cancelled`, and an error out of `run` would make Workflows roll back an
+order the buyer was told is done (refunding a capture, releasing its stock). The order keeps its
+outcome and the instance returns. Each release is tried on its own, and the failures are recorded in
+one step, `release:failed` (only on that path): a `rollback` timeline line ("Completed, but
+releasing its credit holds failed: ...") and an `order.release_failed` audit event, which staff see in the audit log. It names the order, the
+outcome and what failed (a release step has only counts in hand, not hold or payment ids), so staff
+look the order up for the holds. No `order.failed` is sent. The attention list
+(`OrderQueries.attention`, the assistant's `needs_attention`) is keyed on order status, so it
+does not list such an order; making it do so needs a column on the order index and a change to the
+port and both stores, which this change leaves out. What the order still holds is released by hand.
+
+When a batch's nodes run in parallel, the first to throw fails `run` and the instance errors while a
+sibling may still be inside its step. Workflows runs a rollback for that sibling too (the rollback
+for an in-flight step runs with no output) and cancels it; a node's compensation therefore works from
+the order id and step key, not from its output.
 
 ## Rollback
 

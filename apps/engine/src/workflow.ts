@@ -43,6 +43,7 @@ import {
   type PluginManifest,
   pluginOf,
   type RunContext,
+  readApprovalSpec,
   readyNodes,
   staticRegistry,
   truthy,
@@ -50,6 +51,7 @@ import {
 } from '@commerceworker/core';
 import { loadAccount } from './accounts';
 import type { Report } from './agent';
+import { recordAudit } from './audit';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
 import { EXECUTORS, type NodeResult, ROLLBACKS, scaled } from './nodes';
@@ -58,7 +60,7 @@ import { emit, orderSummary } from './outbox';
 import { voidAuthorizations } from './payments';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
 import { approvalPorts, balanceStore, budgetStore } from './wire';
-import { capReason, failureReason, plural } from './words';
+import { capReason, failureReason, orderReason, plural } from './words';
 
 export type OrderWorkflowParams = {
   orderId: string;
@@ -93,8 +95,151 @@ export const effectKey = (generation: number, stepKey: string) =>
 /** "goods.received" → "goods_received": where an event's payload lands in vars. */
 export const eventVar = (event: string) => event.replace(/[^a-zA-Z0-9]+/g, '_');
 
+/**
+ * What `run` knows about a throw by the time it reaches it. A node's own step and an End node
+ * that fails the order have already announced it (`announced`: the node `failed` and
+ * `order.failed`); anything else that throws (loading the flow, a wait's `:open` or `:close` step)
+ * is only tagged with what it was doing. Either way `run` then reports the order failed, durably.
+ */
+type RunFailure = {
+  /** Nodes whose own step threw and whose `failed` report and timeline line went out. */
+  reportedNodes: Set<string>;
+  /** An End node that fails the order sent `order.failed` itself. */
+  endAnnounced: boolean;
+  /** The next generation's instance id, once a continue-as-new step is under way. */
+  continuing?: string;
+  ctx?: RunContext;
+  where: WeakMap<object, { label: string; node?: FlowNode }>;
+};
+
+/** Notes what a throw was doing, for the reason the order fails with. The first note wins. */
+function blame(failure: RunFailure, err: unknown, label: string, node?: FlowNode) {
+  if (typeof err === 'object' && err !== null && !failure.where.has(err))
+    failure.where.set(err, { label, node });
+}
+
 export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> {
+  /**
+   * Whatever throws out of the run fails the order: a throw reaches the OrderAgent only as a
+   * report, and the agent starts watching the instance (to record its rollback) only once a report
+   * says the order failed. Workflows runs the registered rollbacks as the error leaves.
+   */
   override async run(event: Readonly<WorkflowEvent<OrderWorkflowParams>>, step: WorkflowStep) {
+    const failure: RunFailure = {
+      reportedNodes: new Set(),
+      endAnnounced: false,
+      where: new WeakMap(),
+    };
+    try {
+      return await this.runOrder(event, step, failure);
+    } catch (err) {
+      // The next generation is running: this one ends cleanly, so Workflows compensates nothing
+      // under it.
+      if ((await this.failOrder(step, event.payload, failure, err)) === 'continued')
+        return { continuedAs: event.payload.generation + 1 };
+      throw err;
+    }
+  }
+
+  /**
+   * Reports the order failed as one step (`run:failed`, which exists only on this path, so no
+   * published flow's step names change), then announces it unless a node's step or an End node
+   * already did. A step, not a bare report: the snapshots those two send are dropped if the agent
+   * is unreachable for the moment, and a step retries.
+   * Replay-safe: a replay returns both steps' memoized results, and the agent folds a repeated
+   * `failed` into no change.
+   */
+  private async failOrder(
+    step: WorkflowStep,
+    p: OrderWorkflowParams,
+    failure: RunFailure,
+    err: unknown,
+  ): Promise<'continued' | undefined> {
+    try {
+      // A throw from the continue step once the next generation exists (a retry that finds it, then
+      // fails on something after) is not the order's failure: that generation carries on. Only a
+      // definite not-found counts as absent; any other error from the check retries the step.
+      if (failure.continuing) {
+        const next = failure.continuing;
+        const exists = await step.do('run:failed:continued', async () => {
+          try {
+            await this.env.ORDER_WORKFLOW.get(next);
+            return true;
+          } catch (e) {
+            if (/not[_ ]found/i.test(e instanceof Error ? e.message : String(e))) return false;
+            throw e;
+          }
+        });
+        if (exists) return 'continued';
+      }
+      // A step's error comes back with its class name in front, which the order's reason leaves out.
+      const message = (err instanceof Error ? err.message : String(err)).replace(
+        /^NonRetryableError: /,
+        '',
+      );
+      const where = typeof err === 'object' && err !== null ? failure.where.get(err) : undefined;
+      // The blamed node's own step may not be the one that threw first; report it unless it did.
+      const nodeSent = where?.node ? failure.reportedNodes.has(where.node.id) : false;
+      const reason = where
+        ? failureReason(where.label, message)
+        : orderReason(message.split('\n')[0] ?? '');
+      const fx = effectKey(p.generation, 'run:failed');
+      const env = this.env;
+      await step.do(
+        'run:failed',
+        { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+        async () => {
+          await orderAgent(env, p.orderId).report({
+            generation: p.generation,
+            status: 'failed',
+            reason,
+            ...(!nodeSent && where?.node
+              ? {
+                  node: {
+                    id: where.node.id,
+                    status: 'failed' as const,
+                    error: message,
+                    endedAt: Date.now(),
+                  },
+                }
+              : {}),
+            ...(nodeSent || failure.endAnnounced
+              ? {}
+              : {
+                  log: {
+                    at: Date.now(),
+                    nodeId: where?.node?.id,
+                    kind: 'node' as const,
+                    message: where
+                      ? `${where.label} failed: ${message}`
+                      : `Order failed: ${message}`,
+                    key: fx,
+                  },
+                }),
+          });
+          return reason;
+        },
+      );
+      if (!failure.endAnnounced)
+        await emitStep(step, env, 'run:failed', fx, p.orderId, 'order.failed', {
+          order: orderSummary(failure.ctx?.order ?? p.order),
+          outcome: 'failed',
+          reason,
+          ...(where?.node
+            ? { node: { id: where.node.id, type: where.node.type, error: message } }
+            : {}),
+        });
+    } catch (reportErr) {
+      // Never mask the error that failed the run: Workflows still needs it to run the rollbacks.
+      console.warn('failure report gave up', reportErr);
+    }
+  }
+
+  private async runOrder(
+    event: Readonly<WorkflowEvent<OrderWorkflowParams>>,
+    step: WorkflowStep,
+    failure: RunFailure,
+  ) {
     const p = event.payload;
     const agent = orderAgent(this.env, p.orderId);
     const flow = JSON.parse(
@@ -136,6 +281,7 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
       ref: orderReference(p.order),
       ...account,
     };
+    failure.ctx = ctx;
     let seq = 0;
     const report = async (r: Omit<Report, 'seq' | 'generation'>, durable = false) => {
       // Non-durable reports (plan snapshots) are sequenced; durable ones are already exactly-once.
@@ -168,7 +314,12 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
 
       const [, ...outcomes] = await Promise.all([
         batchSnapshot,
-        ...nodes.map((n, i) => this.runNode(step, plan, ctx, n, keys[i]!, p, report, registry)),
+        ...nodes.map((n, i) =>
+          this.runNode(step, plan, ctx, n, keys[i]!, p, report, registry, failure).catch((err) => {
+            blame(failure, err, n.label, n);
+            throw err;
+          }),
+        ),
       ]);
 
       // Apply in graph order so the plan is identical on replay.
@@ -191,6 +342,7 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
       }
       // Continue only once the whole batch is applied, so its siblings' outputs carry over.
       if (continueKey && !end) {
+        failure.continuing = `${p.orderId}-g${p.generation + 1}`;
         await this.continueAsNew(step, p, ctx, continueKey);
         await snapshot('running');
         return { continuedAs: p.generation + 1 };
@@ -203,22 +355,92 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
     // Ending declined or cancelled isn't a failure, so no rollback runs: void any card hold the
     // order still has, rather than leave it open until the card network releases it. After the
     // whole batch, so a hold a sibling placed alongside the End node is voided too.
+    // A release that fails for good (after its step's retries) does not fail the order: its End node
+    // has already announced the outcome, and an error out of `run` would make Workflows roll back
+    // an order the buyer was told is done (refund a capture, release its stock). It is recorded
+    // instead, below, and the order keeps its outcome.
+    const problems: string[] = [];
+    const release = async (what: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (err) {
+        problems.push(
+          failureReason(`${what} failed`, err instanceof Error ? err.message : String(err)),
+        );
+      }
+    };
     if (end && (outcome === 'declined' || outcome === 'cancelled')) {
-      await this.voidOpenHolds(step, p, end.nodeId, end.key);
+      await release('voiding its card holds', () =>
+        this.voidOpenHolds(step, p, end!.nodeId, end!.key),
+      );
       // The same for the budgets: an order that never completes spent none of what it recorded.
       if (flow.nodes.some((n) => n.type === 'commerce.budget_check' && n.config?.commit === true))
-        await this.giveBackBudgetSpend(step, p, end.nodeId, end.key);
+        await release('giving back its budget spend', () =>
+          this.giveBackBudgetSpend(step, p, end!.nodeId, end!.key),
+        );
     }
     // Whatever the outcome but failed (a failed run's rollbacks give the credit back), an order
     // that ends holds no credit: an invoice already converted its hold, and any left over (a card
     // order, a decline after the check) goes back to the customer's limit.
-    if (outcome !== 'failed') await this.releaseCreditHolds(step, p, end?.nodeId ?? 'end');
+    if (outcome !== 'failed')
+      await release('releasing its credit holds', () =>
+        this.releaseCreditHolds(step, p, end?.nodeId ?? 'end'),
+      );
+    if (problems.length) await this.recordReleaseProblems(step, p, outcome, end?.nodeId, problems);
+    // An End node that fails the order announced it itself, in its own step.
+    if (outcome === 'failed') failure.endAnnounced = true;
     await snapshot(outcome, { reason });
     if (outcome === 'failed') {
       // Fails the instance; Workflows then runs every registered rollback in reverse order.
       throw new NonRetryableError(reason || 'Order failed');
     }
     return { outcome, total: ctx.order.total };
+  }
+
+  /**
+   * Records that releasing what an ended order held failed for good, as one step (`release:failed`,
+   * which exists only then). The order keeps its outcome, so the timeline line and the audit event
+   * are what staff see; the held credit or card hold is still there to release by hand. Replay-safe:
+   * the timeline line is keyed, and a replay returns the memoized step.
+   */
+  private async recordReleaseProblems(
+    step: WorkflowStep,
+    p: OrderWorkflowParams,
+    outcome: string,
+    nodeId: string | undefined,
+    problems: string[],
+  ) {
+    const env = this.env;
+    const message = capReason(
+      `${outcome[0]!.toUpperCase()}${outcome.slice(1)}, but ${problems.join('; ')}`,
+      400,
+    );
+    try {
+      await step.do(
+        'release:failed',
+        { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+        async () => {
+          await orderAgent(env, p.orderId).report({
+            generation: p.generation,
+            log: {
+              at: Date.now(),
+              nodeId,
+              kind: 'rollback',
+              message,
+              key: `${effectKey(p.generation, 'release')}:failed`,
+            },
+          });
+          await recordAudit(env, 'order.release_failed', {
+            actor: { kind: 'system', id: 'system:workflow', name: 'Order Flow' },
+            target: p.orderId,
+            detail: { outcome, problems },
+          });
+          return true;
+        },
+      );
+    } catch (err) {
+      console.warn('release failure report gave up', err);
+    }
   }
 
   /**
@@ -357,7 +579,13 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
       } catch (err) {
         if (!(await instanceExists(env, id))) throw err;
       }
-      await orderAgent(env, p.orderId).continuedAs(id, generation);
+      // The next generation is running now, so this step is done: a failing note to the agent must
+      // not fail the step (and with it the order). Generation g+1's first snapshot advances it.
+      try {
+        await orderAgent(env, p.orderId).continuedAs(id, generation);
+      } catch (err) {
+        console.warn('continuedAs failed', err);
+      }
       return id;
     });
   }
@@ -371,6 +599,7 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
     p: OrderWorkflowParams,
     report: (r: Omit<Report, 'seq' | 'generation'>, durable?: boolean) => Promise<void>,
     registry: NodeRegistry,
+    failure: RunFailure,
   ): Promise<Outcome> {
     const env = this.env;
     const agent = orderAgent(env, p.orderId);
@@ -404,11 +633,11 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
           // still one event: the agent sends it once the votes decide the step.
           let votePlan: Awaited<ReturnType<typeof planApproval>> | undefined;
           if (approval) {
-            try {
-              votePlan = await planApproval(approvalPorts(env), config, ctx.order);
-            } catch (err) {
-              throw new NonRetryableError(err instanceof Error ? err.message : String(err));
-            }
+            // The spec is the flow's own, so a spec that doesn't read never will; a failed read of
+            // who the approvers are is a database or network error, and retries.
+            const spec = readApprovalSpec(config);
+            if ('error' in spec) throw new NonRetryableError(spec.error);
+            votePlan = await planApproval(approvalPorts(env), config, ctx.order);
           }
           await agent.openWait({
             ...wait,
@@ -625,6 +854,8 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
       }
       return { kind: 'complete', result };
     } catch (err) {
+      // The node's own report; `run` then fails the order once, whichever node threw first.
+      failure.reportedNodes.add(node.id);
       const message = err instanceof Error ? err.message : String(err);
       await report(
         {
@@ -639,16 +870,6 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         },
         true,
       );
-      // The order's reason is a short summary; the full message stays on the step's run above.
-      const reason = failureReason(node.label, message);
-      await report({ status: 'failed', reason });
-      // A thrown node fails the instance without reaching an End node, so announce it here.
-      await emitStep(step, env, key, fx, p.orderId, 'order.failed', {
-        order: orderSummary(ctx.order),
-        outcome: 'failed',
-        reason,
-        node: { id: node.id, type: node.type, error: message },
-      });
       throw err;
     }
   }
