@@ -111,17 +111,22 @@ pipeline.
 
 ## Escrowing secrets
 
+Escrow is planned (ROADMAP P8) and not yet built: there is no `Escrow secrets` workflow and no
+`scripts/escrow-secrets.test.ts` yet. Until they land, `DATA_KEY`, `TOKEN_PEPPER` and
+`PASSWORD_PEPPER` have to be kept somewhere outside GitHub and Cloudflare by whoever sets them. The
+rest of this section is the intended design.
+
 GitHub and Cloudflare both hold secrets write-only, so nobody needs to have seen a value to escrow
-it: the `Escrow secrets` workflow reads them inside the deployment's GitHub environment and encrypts
-them to a key only the escrow holder has. Nothing from the repository runs beside the secrets, and
-the job fails if a required secret or `PASSWORD_PEPPER` is missing. It reaches only what the
-environment holds: a secret set by hand on a Worker is not escrowed.
+it: an `Escrow secrets` workflow would read them inside the deployment's GitHub environment and
+encrypt them to a key only the escrow holder has. Nothing from the repository would run beside the
+secrets, and the job would fail if a required secret or `PASSWORD_PEPPER` is missing. It reaches
+only what the environment holds: a secret set by hand on a Worker is not escrowed.
 
 The job must run in the repository that holds the environment, and only a branch the environment
 allows can read it (`provision.sh` limits each to `main`). Prefer a private repository: there the
 artifact and the environment's name aren't public. A fleet in its own repository doesn't copy the
 workflow; it calls this one, so the job runs there with that repository's environment, and the
-check that every deployed secret is escrowed (`scripts/escrow-secrets.test.ts`) keeps covering it:
+check that every deployed secret is escrowed (a planned `scripts/escrow-secrets.test.ts`) would keep covering it:
 
 ```yaml
 # <fleet repo>/.github/workflows/escrow-secrets.yml
@@ -139,9 +144,6 @@ jobs:
       environment: ${{ inputs.environment }}
     secrets: inherit # without it, the job sees none of the environment's secrets
 ```
-
-commerceworker's own fleet runs it from `commerceworker/fleet`; add `-R commerceworker/fleet` to the
-`gh` commands below.
 
 **Once, make the key** on the holder's machine, outside any checkout. Put the private half in a
 password manager outside GitHub and Cloudflare, delete the file, and pin the public half as

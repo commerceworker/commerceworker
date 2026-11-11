@@ -309,6 +309,8 @@ each file themselves (WebCrypto Ed25519), so they can also sign it wrongly, and 
 | (drafts.test.ts) revises | `pluginId` makes version 2, superseding 1 on approval; a non-`ai-` id is refused |
 | installs again after an uninstall | Two versions uploaded at once, both pending; two approvals racing leave exactly one version running |
 
+`scripts/toolchain.test.ts` (in `pnpm test:fleet`) holds the toolchain in line: every `engines.node` equals the root's and every published package has one; `.nvmrc` is at or above that floor; the `@types/node` catalog major is the floor's; every tsconfig extends `@commerceworker/typescript-config/*` (the two Astro apps extend Astro's) and sets no `target`, `module` or `moduleResolution`; no tsup or esbuild target is a Node below the floor; `biome.json`'s `$schema` is the catalog's Biome version; vitest is an exact pin; every vitest config using `@cloudflare/vitest-plugin` sets `fsModuleCache: false`; and every `worker-configuration.d.ts` names the lockfile's workerd version (the content Workers use `@cloudflare/workers-types` and have none). Each failure says which file to change.
+
 `scripts/fleet.test.ts` covers `pluginInstalls` (names and keys validated, rendered as
 `PLUGIN_PUBLISHERS`, absent when not set) and signs a bundle with `scripts/plugin-pack.ts` that
 core's `verifyBundleSignature` accepts. `packages/core/tests/plugins.test.ts` (`signed bundles`)

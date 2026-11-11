@@ -76,7 +76,8 @@ catalog:
   '@simplewebauthn/browser': 14.0.0
   '@simplewebauthn/server': 14.0.3
   '@types/json-logic-js': ^2.0.8
-  '@types/node': ^26.6.6
+  # Tracks the `engines.node` floor (scripts/toolchain.test.ts), not .nvmrc: newer types let code call APIs the floor lacks.
+  '@types/node': ^24
   '@xyflow/react': ^12.12.0
   astro: ^7.3.8
   esbuild: 0.28.2

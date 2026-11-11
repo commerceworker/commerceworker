@@ -231,6 +231,7 @@ if they differ) and generates the docs theme. After changing a token: change `to
   engine, web and docs, smoke-tests, and rolls the Workers back on failure (D1 stays migrated;
   `docs/deploy.md` "Restoring D1"). If a deploy job fails, re-run its failed jobs.
 - vitest is pinned to 5.0.5, and every workerd project sets `fsModuleCache: false`: since 5.0.4 the Workers pool shares one module cache, which parallel suites would otherwise read while another rewrites it.
+- Node, TypeScript and tool versions move together: `engines.node` is `>=24` everywhere (published packages carry it), `@types/node` follows that floor, tsconfigs extend `@commerceworker/typescript-config/*` and never set `target`, `module` or `moduleResolution`, `biome.json`'s `$schema` is the catalog's Biome version, and a `worker-configuration.d.ts` is regenerated with its app's `types` script when the lockfile's workerd moves. `scripts/toolchain.test.ts` holds all of it.
 - `@callable()` uses TC39 decorators; `apps/web/vite.config.ts` and `apps/engine/vitest.config.ts`
   include `agents/vite` so they're transformed.
 - After changing an app's `wrangler.jsonc`: `pnpm --filter @commerceworker/<app> types`.
