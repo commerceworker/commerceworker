@@ -228,13 +228,14 @@ jobs:
   # account is needed. The admin's suite is split four ways with Playwright's --shard, and the
   # storefront's runs beside it: each job has its own dev server, still running one test at a time
   # (playwright.config.ts), so splitting changes nothing a test sees.
-  # Pinned: the cached WebKit links the image's own libraries (ICU), and ubuntu-latest moving to
-  # 26.04 left it unable to start. Move it on purpose, once Playwright supports the new image.
+  # On ubuntu-latest (26.04) like every other job: Playwright 1.65 ships WebKit built for 26.04. The
+  # cache key below includes the Ubuntu release, so a build for one image is never loaded on another
+  # (an older WebKit linked 24.04's ICU and couldn't start on 26.04).
   device-tests:
     name: devices (${{ matrix.name }})
     needs: changes
     if: ${{ needs.changes.outputs.devices == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # Up to 15 minutes for the system libraries when the mirror is slow (5, then a 10 minute
     # retry), and the device tests' own 15: a slow mirror never eats the tests' time.
     timeout-minutes: 35

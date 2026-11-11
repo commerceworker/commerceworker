@@ -9,8 +9,9 @@ all work on your machine (the Catalog page and `/api/v1/catalog` included; the c
 
 ## Requirements
 
-- Node.js 22.18 or later (`.nvmrc`): the repo's scripts run `.ts` files directly, which needs Node's
-  built-in type stripping. pnpm's version is pinned in the root `package.json`.
+- Node.js 26, the current LTS (`.nvmrc`, which CI uses too); 24 is the oldest supported (`engines`,
+  as the CLI's). The repo's scripts run `.ts` files directly with Node's built-in type stripping.
+  pnpm's version is pinned in the root `package.json`.
 - `jq`, for the Claude Code hooks in `.claude/` (`brew install jq`). Without it they do nothing,
   including the guards that stop hand deploys, and `pnpm test:toolkit` fails.
 - A Cloudflare account, if you want live AI. Workers AI always calls your account, even in local dev.
