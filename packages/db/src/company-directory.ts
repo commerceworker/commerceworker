@@ -15,7 +15,7 @@ import type {
   CompanyScope,
   MemberWrite,
 } from '@commerceworker/ports/commerce';
-import { and, asc, count, eq, or, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, or, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { createDb } from './index';
 import { contains } from './match';
 import { companies, companyMembers, companyTeams, customers } from './schema';
@@ -23,6 +23,8 @@ import { companies, companyMembers, companyTeams, customers } from './schema';
 /** D1 binds at most 100 parameters a statement; a member row binds this many. */
 const MEMBER_PARAMS = 10;
 const MEMBER_CHUNK = Math.floor(100 / MEMBER_PARAMS) - 1;
+
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 const companyColumns = {
   customerId: companies.customerId,
@@ -121,6 +123,21 @@ export function d1CompanyDirectory(d1: D1Database): CompanyDirectory {
       return (await record()
         .where(and(eq(companies.customerId, customerId), bound(companies.customerId, scope)))
         .get()) as CompanyRecord | undefined;
+    },
+
+    async companiesById(scope, ids) {
+      const out: CompanyRecord[] = [];
+      // One bound parameter an id, and the scope's: stay under the limit.
+      for (let i = 0; i < ids.length; i += 90) {
+        const rows = await record().where(
+          and(
+            inArray(companies.customerId, ids.slice(i, i + 90)),
+            bound(companies.customerId, scope),
+          ),
+        );
+        out.push(...(rows as CompanyRecord[]));
+      }
+      return out.sort((a, b) => cmp(a.name, b.name) || cmp(a.customerId, b.customerId));
     },
 
     async ancestry(scope, customerId) {

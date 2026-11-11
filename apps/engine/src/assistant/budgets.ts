@@ -33,6 +33,14 @@ export async function readBudgets(env: Env, i: ToolInput<'list_budgets'>) {
   return rest;
 }
 
+/** A budget's ledger, held to the company the path or the call names: another company's reads empty. */
+export async function readBudgetSpend(env: Env, i: ToolInput<'list_budget_spend'>) {
+  const r = await uc.listBudgetSpend(ports(env), { companyId: i.companyId }, i);
+  if (!r.ok) throw new Refused(r.error);
+  const { ok: _, ...rest } = r;
+  return rest;
+}
+
 /** What a budget's status means for orders, in a card's words. */
 const STATUS_EFFECT: Record<BudgetStatus, string> = {
   active: 'Orders are held to it again',

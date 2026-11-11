@@ -16,6 +16,7 @@ import {
   BUDGET_PERIODS,
   BUDGET_STATUSES,
   budgetInput,
+  SPEND_PAGE,
 } from './b2b/budgets';
 import {
   COMPANY_ROLES,
@@ -49,6 +50,7 @@ import { pluginCasesSchema } from './plugins';
 import {
   MAX_CONTRACT_PRICES_PER_CALL,
   MAX_PRICE_BOOK_ENTRIES_PER_CALL,
+  PRICE_BOOK_PRIORITY_LIMIT,
   PRICE_BOOK_STATUSES,
 } from './price-books';
 import { BOARD_COLUMNS } from './product/api';
@@ -501,8 +503,8 @@ export const TOOL_INPUTS = {
     priority: z
       .number()
       .int()
-      .min(-1000)
-      .max(1000)
+      .min(-PRICE_BOOK_PRIORITY_LIMIT)
+      .max(PRICE_BOOK_PRIORITY_LIMIT)
       .optional()
       .describe('The higher wins when several assigned books price a line (default 0)'),
     startsAt: z
@@ -667,6 +669,18 @@ export const TOOL_INPUTS = {
       .max(BUDGET_PAGE.max)
       .optional()
       .describe(`Default ${BUDGET_PAGE.default}`),
+  }),
+  list_budget_spend: z.object({
+    companyId: z.string().max(100).describe('The business customer’s id'),
+    budgetId: z.string().max(100),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(SPEND_PAGE.max)
+      .optional()
+      .describe(`Default ${SPEND_PAGE.default}`),
   }),
   put_budget: budgetInput,
   set_budget_status: z.object({
@@ -1382,6 +1396,24 @@ export const TOOL_OUTPUTS = {
     total: z.number().describe('Every budget the filters match'),
     cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
   }),
+  list_budget_spend: row({
+    entries: z.array(
+      row({
+        id: z.string(),
+        orderId: z.string(),
+        amount: z
+          .number()
+          .describe(
+            'Base currency, as committed; a given-back commit keeps its amount and reads status reversed',
+          ),
+        windowStart: z.number().describe('The window it counts in (ms, UTC)'),
+        at: z.number().describe('When it was recorded (ms, UTC)'),
+        status: z.enum(['committed', 'reversed']),
+      }),
+    ),
+    total: z.number().describe('Every entry the budget has'),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
+  }),
   put_budget: actionOutput,
   set_budget_status: actionOutput,
   list_purchase_orders: row({
@@ -1496,6 +1528,7 @@ export const REST_OPERATION_TOOLS = [
   'set_credit_limit',
   'adjust_credit',
   'list_budgets',
+  'list_budget_spend',
   'put_budget',
   'set_budget_status',
   'list_purchase_orders',

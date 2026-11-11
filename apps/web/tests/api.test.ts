@@ -1427,6 +1427,22 @@ describe('operations REST runs as MCP does', () => {
       'list_budgets',
       { companyId: 'cus_1', status: 'active', teamId: 'team_1', limit: 5 },
     ]);
+    // The ledger is read the same way: the path names the company and the budget.
+    run.mockResolvedValueOnce({ ok: true, value: { entries: [], total: 0, cursor: null } });
+    expect(
+      (
+        await handleApi(
+          new Request(
+            'https://app.test/api/v1/companies/cus_1/budgets/bud_1/spend?limit=5&budgetId=bud_2',
+          ),
+          viewer,
+        )
+      ).status,
+    ).toBe(200);
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'list_budget_spend',
+      { companyId: 'cus_1', budgetId: 'bud_1', limit: 5 },
+    ]);
     // Reading is a viewer's; changing is an operator's.
     const before = run.mock.calls.length;
     expect(

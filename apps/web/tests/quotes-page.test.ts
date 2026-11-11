@@ -9,14 +9,7 @@ import {
   QuoteData,
 } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  filterQuery,
-  filtersFrom,
-  lineDiscount,
-  linesFrom,
-  QUOTE_TONE,
-  quoteMoves,
-} from '../app/lib/quotes';
+import { filterQuery, filtersFrom, linesFrom, QUOTE_TONE, quoteMoves } from '../app/lib/quotes';
 
 const data = new QuoteData();
 const store = new InMemoryQuoteStore(data);
@@ -152,12 +145,6 @@ describe('the draft form’s fields', () => {
     // A quote's price is what it is: a line with none is refused, unlike a PO's expected price.
     expect(linesFrom(form([['W-1', '', '1', '']]))).toMatch(/needs a price/);
     expect(linesFrom(form([['W-1', '', '1', '-3']]))).toMatch(/needs a price/);
-  });
-
-  it('shows what a line takes off its list price', () => {
-    expect(lineDiscount({ listPrice: 10, unitPrice: 7.5 })).toBe(25);
-    expect(lineDiscount({ listPrice: null, unitPrice: 7.5 })).toBeNull();
-    expect(lineDiscount({ listPrice: 10, unitPrice: 12 })).toBe(-20);
   });
 });
 

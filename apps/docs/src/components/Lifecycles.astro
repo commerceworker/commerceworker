@@ -1,0 +1,54 @@
+---
+/*
+ * Every status lifecycle, rendered from LIFECYCLES in @commerceworker/core: the states and the
+ * moves between them that a store applies as one compare-and-set, so this is the rule itself and
+ * not a copy of it.
+ */
+import { LIFECYCLES } from '@commerceworker/core';
+
+const words = (s: string) => s.replaceAll('_', ' ');
+---
+
+{
+  LIFECYCLES.map((l) => (
+    <section class="ol-node" id={l.id}>
+      <div class="ol-node-head">
+        <h2>{l.title}</h2>
+      </div>
+      <p>{l.about}</p>
+      <table>
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>Moves to</th>
+          </tr>
+        </thead>
+        <tbody>
+          {l.lifecycle.states.map((s) => (
+            <tr>
+              <td>
+                <code>{s}</code>
+                {l.labels && l.labels[s] !== undefined && l.labels[s] !== words(s) ? (
+                  <span> ({l.labels[s]})</span>
+                ) : null}
+                {s === l.start ? <span> · starts here</span> : null}
+              </td>
+              <td>
+                {l.lifecycle.terminal(s) ? (
+                  <em>Final</em>
+                ) : (
+                  l.lifecycle.next(s).map((to, i) => (
+                    <>
+                      {i > 0 ? ', ' : null}
+                      <code>{to}</code>
+                    </>
+                  ))
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ))
+}

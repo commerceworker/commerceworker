@@ -98,6 +98,11 @@ export interface CompanyDirectory {
   companies(scope: CompanyScope, query: CompanyQuery): Promise<CompanyPage<CompanyRecord>>;
   company(scope: CompanyScope, customerId: string): Promise<CompanyRecord | undefined>;
   /**
+   * The companies with these ids the scope can see, by name then id, in one read (the ids that
+   * name none are left out): for a page of rows that each name a company.
+   */
+  companiesById(scope: CompanyScope, ids: readonly string[]): Promise<CompanyRecord[]>;
+  /**
    * The ids above a company, nearest first, following `parentCompanyId` while the scope can see
    * each; empty for a company the scope can't see.
    */

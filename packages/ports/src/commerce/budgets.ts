@@ -116,6 +116,3 @@ export interface BudgetStore {
    */
   reverse(orderId: string, at: number): Promise<number>;
 }
-
-/** The key `spentIn` answers by: one budget in one window. */
-export const spendKey = (budgetId: string, windowStart: number) => `${budgetId}@${windowStart}`;

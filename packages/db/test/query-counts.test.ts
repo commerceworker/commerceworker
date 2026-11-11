@@ -289,6 +289,10 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     () => ports.companies.companies(ALL, { limit: 25, status: 'active', search: 'qc' }),
   ],
   ['companies: one company', () => ports.companies.company(ALL, id('co'))],
+  [
+    'companies: several by id',
+    () => ports.companies.companiesById(ALL, [id('co'), 'qc_other_company']),
+  ],
   ['companies: a company’s teams', () => ports.companies.teams(ALL, id('co'))],
   [
     'companies: a page of members',
@@ -466,7 +470,7 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     () =>
       Promise.all([
         ports.books.forCustomer({ all: true }, 'pc_twin_a', 'standard'),
-        ports.books.contractPrices('pc_twin_a'),
+        ports.books.contractPrices({ all: true }, 'pc_twin_a'),
       ]),
   ],
 ];

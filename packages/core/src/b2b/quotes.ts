@@ -220,6 +220,26 @@ export function quoteConvertProblem(
   return live ? null : 'The quote has expired.';
 }
 
+/** What a quote line takes off its list price, as a whole percentage; null with no list price. */
+export function quoteLineDiscount(l: Pick<QuoteLine, 'listPrice' | 'unitPrice'>): number | null {
+  if (!l.listPrice) return null;
+  return Math.round((1 - l.unitPrice / l.listPrice) * 100);
+}
+
+/**
+ * A quote's lines deepest discount from list first (then by SKU), each with its discount (0 with
+ * no list price), and how many are below list: what a card names first so the lines that matter
+ * most to what a company pays can't hide in a long quote.
+ */
+export function rankQuoteLines<L extends Pick<QuoteLine, 'sku' | 'listPrice' | 'unitPrice'>>(
+  lines: readonly L[],
+) {
+  const ranked = lines
+    .map((line) => ({ line, off: quoteLineDiscount(line) ?? 0 }))
+    .sort((a, b) => b.off - a.off || a.line.sku.localeCompare(b.line.sku));
+  return { ranked, below: ranked.filter((r) => r.off > 0).length };
+}
+
 /** A conversion to an order that was claimed (it names the start key) but whose order isn't recorded yet. */
 export const quoteOrderUnstarted = (q: Pick<Quote, 'convertedId'>) =>
   q.convertedId?.startsWith('quote:') === true;

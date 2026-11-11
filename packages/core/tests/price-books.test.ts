@@ -7,6 +7,7 @@ import {
   PRICE_BOOK_STATUSES,
   priceBookDatesProblem,
   priceBookEntryProblem,
+  priceBookHeadProblem,
   priceBookState,
 } from '../src/price-books';
 
@@ -72,6 +73,18 @@ describe('what a book is made of', () => {
     expect(normalizeBookCode('-leading')).toBeNull();
     expect(normalizeBookCode('a'.repeat(33))).toBeNull();
     expect(normalizeBookCode('a'.repeat(32))).toBe('a'.repeat(32));
+  });
+
+  it('keeps a priority a whole number within a thousand of zero, with the code and dates', () => {
+    expect(priceBookHeadProblem({ code: 'a', priority: 1000 }).problem).toBeNull();
+    expect(priceBookHeadProblem({ code: 'a', priority: -1000 }).problem).toBeNull();
+    expect(priceBookHeadProblem({ code: 'a' }).problem).toBeNull();
+    for (const priority of [1001, -1001, 1.5, Number.NaN])
+      expect(priceBookHeadProblem({ code: 'a', priority }).problem).toBe(
+        'A priority is a whole number from -1000 to 1000.',
+      );
+    // A bad code is named first.
+    expect(priceBookHeadProblem({ code: '', priority: 5000 }).problem).toMatch(/A code is/);
   });
 
   it('needs an end after the start', () => {

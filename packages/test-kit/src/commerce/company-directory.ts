@@ -109,6 +109,13 @@ export class InMemoryCompanyDirectory implements CompanyDirectory {
     return c && sees(scope, customerId) ? this.record(c) : undefined;
   }
 
+  async companiesById(scope: CompanyScope, ids: readonly string[]) {
+    return this.companyRows
+      .filter((c) => ids.includes(c.customerId) && sees(scope, c.customerId))
+      .flatMap((c) => this.record(c) ?? [])
+      .sort((a, b) => cmp(a.name, b.name) || cmp(a.customerId, b.customerId));
+  }
+
   async ancestry(scope: CompanyScope, customerId: string) {
     const out: string[] = [];
     let cur = this.companyRows.find((c) => c.customerId === customerId);

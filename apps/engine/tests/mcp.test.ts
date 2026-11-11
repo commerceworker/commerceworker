@@ -196,7 +196,7 @@ describe('MCP', () => {
       const listed = await rpc(viewer, 'tools/list', {}, revision);
       expect(listed.status, revision).toBe(200);
       expect((listed.body as { result: { tools: unknown[] } }).result.tools, revision).toHaveLength(
-        28,
+        29,
       );
     }
     // Per role, so per client: 2026-07-28 says how long a client may keep the list.
@@ -276,6 +276,7 @@ describe('MCP', () => {
       'get_product_sheet',
       'get_purchase_order',
       'get_quote',
+      'list_budget_spend',
       'list_budgets',
       'list_carts',
       'list_catalog_channels',
@@ -303,7 +304,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(91);
+    expect(operator).toHaveLength(92);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -418,7 +419,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(114);
+    expect(admin).toHaveLength(115);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -969,6 +970,10 @@ describe('MCP', () => {
         cursor: null,
         budgets: [{ id, name: 'Office', amount: 500, spent: 0, remaining: 500, status: 'active' }],
       });
+
+      // A fresh budget has no spend to list; the twin answers an empty ledger, not an error.
+      const ledger = await call(viewer, 'list_budget_spend', { companyId, budgetId: id });
+      expect(ledger.structuredContent).toEqual({ entries: [], total: 0, cursor: null });
 
       const archived = await confirm('set_budget_status', {
         companyId,

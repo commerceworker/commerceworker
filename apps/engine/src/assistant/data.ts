@@ -5,6 +5,7 @@
  * the audit trail names the person and the channel: "via assistant", "via MCP" or "via A2A".
  */
 
+import { plainPlan, tallyWith, voteRefusal, voterOf } from '@commerceworker/application/commerce';
 import {
   type ActionPreview,
   ASSISTANT_TOOLS,
@@ -44,13 +45,19 @@ import {
 } from '@commerceworker/core';
 import type { VoteResult } from '../agent';
 import { copilot, modelView } from '../ai';
-import { plainPlan, tallyWith, voteRefusal, voterOf } from '../approvals';
 import { recordAudit } from '../audit';
 import { assess, resolveImages } from '../clef';
 import { orderAgent } from '../namespaces';
 import { registry } from '../plugins';
 import { separationRefusal } from '../separation';
-import { flowStore, inventoryStore, orderQueries, orderRecords, pricingStore } from '../wire';
+import {
+  approvalPorts,
+  flowStore,
+  inventoryStore,
+  orderQueries,
+  orderRecords,
+  pricingStore,
+} from '../wire';
 import {
   previewDeleteWebhook,
   previewRevokeIntegration,
@@ -578,7 +585,7 @@ export async function previewAction<T extends ActionTool>(
         const votes = w && plan ? await orderRecords(env).votes(id, w.eventType) : [];
         const vote =
           w && plan
-            ? await voteRefusal(env, plan, votes, voter, o, i.onBehalfOf, i.decision)
+            ? await voteRefusal(approvalPorts(env), plan, votes, voter, o, i.onBehalfOf, i.decision)
             : undefined;
         const after = plan ? tallyWith(plan, votes, voter, i.decision) : undefined;
         const decides = after ? after.status !== 'pending' : true;

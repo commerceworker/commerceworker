@@ -10,13 +10,11 @@
  * expired just stops counting. The contract in @commerceworker/test-kit/commerce holds this and
  * the in-memory store to the same behaviour.
  */
-import { creditAvailable, money } from '@commerceworker/core';
+import { creditAdjustmentId, creditAvailable, creditHoldId, money } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import {
   type BalanceStore,
   balanceEntryId,
-  creditAdjustmentId,
-  creditHoldId,
   type LedgerEntry,
 } from '@commerceworker/ports/commerce';
 import { and, desc, eq, lte, sql } from 'drizzle-orm';

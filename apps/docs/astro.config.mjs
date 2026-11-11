@@ -117,6 +117,7 @@ export default defineConfig({
             { label: 'REST API', slug: 'reference/rest-api' },
             { label: 'Node catalog', slug: 'reference/nodes' },
             { label: 'Expressions and policy rules', slug: 'reference/expressions' },
+            { label: 'Status lifecycles', slug: 'reference/lifecycles' },
             { label: 'MCP server', slug: 'reference/mcp' },
             { label: 'A2A endpoint', slug: 'reference/a2a' },
             { label: 'Agentic checkout (UCP)', slug: 'reference/ucp' },

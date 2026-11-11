@@ -75,13 +75,6 @@ export interface CreditAdjustment {
   readonly by: string;
 }
 
-/** The id a hold gets: `hld_<orderId>_<stepKey>`, sanitized as a charge's is. */
-export const creditHoldId = (orderId: string, stepKey: string) =>
-  `hld_${orderId}_${stepKey}`.replace(/[^\w-]/g, '_');
-
-/** The id an adjustment gets. */
-export const creditAdjustmentId = (key: string) => `adj_${key}`.replace(/[^\w-]/g, '_');
-
 export interface BalanceCharge {
   readonly orderId: string;
   readonly stepKey: string;

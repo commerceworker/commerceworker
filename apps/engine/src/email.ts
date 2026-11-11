@@ -20,6 +20,7 @@ import {
   type IntakeAttachment,
   MAX_INTAKE_BYTES,
   parseMailboxes,
+  provisionalPoNumber,
   resolveSender,
   splitAddress,
 } from '@commerceworker/core';
@@ -111,7 +112,7 @@ export async function receiveEmail(
           purchaseOrder: {
             record: {
               source: 'email' as const,
-              poNumber: `EML-${(await fingerprintOf(messageId)).slice(0, 10).toUpperCase()}`,
+              poNumber: provisionalPoNumber(await fingerprintOf(messageId)),
             },
           },
         }

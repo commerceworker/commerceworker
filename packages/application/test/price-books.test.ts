@@ -16,6 +16,7 @@ import {
   priceOrder,
   putContractPrices,
   putPriceBookEntries,
+  readCustomerPricing,
   setPriceBookStatus,
 } from '../src/commerce';
 
@@ -341,7 +342,7 @@ describe('contract prices', () => {
   it('sets, replaces and removes them, and refuses an unknown customer or SKU', async () => {
     const p = ports();
     const put = (prices: { sku: string; price: number | null }[], customerId = 'pc_twin_b') =>
-      putContractPrices(p, { customerId, prices });
+      putContractPrices(p, { all: true }, { customerId, prices });
     expect(
       await put([
         { sku: 'PC-SKU-1', price: 6 },
@@ -362,7 +363,20 @@ describe('contract prices', () => {
       set: 1,
       removed: 1,
     });
-    expect(await p.books.contractPrices('pc_twin_b')).toEqual([{ sku: 'PC-SKU-1', price: 5 }]);
+    expect(await p.books.contractPrices({ all: true }, 'pc_twin_b')).toEqual([
+      { sku: 'PC-SKU-1', price: 5 },
+    ]);
+    // A company's scope can't write another's: it is as though that customer weren't there.
+    expect(
+      await putContractPrices(
+        p,
+        { companyId: 'pc_twin_a' },
+        { customerId: 'pc_twin_b', prices: [{ sku: 'PC-SKU-1', price: 1 }] },
+      ),
+    ).toEqual({ ok: false, error: 'No such customer.' });
+    expect(await p.books.contractPrices({ all: true }, 'pc_twin_b')).toEqual([
+      { sku: 'PC-SKU-1', price: 5 },
+    ]);
     expect(await put([{ sku: 'PC-SKU-1', price: 5 }], 'pc_nobody')).toEqual({
       ok: false,
       error: 'No such customer.',
@@ -514,5 +528,42 @@ describe('previewing a price', () => {
       ok: false,
       error: 'No such product: NOPE.',
     });
+  });
+});
+
+describe('a customer’s pricing', () => {
+  it('lists their books with their states and contract prices beside the list price, in their scope', async () => {
+    const p = ports();
+    await putContractPrices(
+      p,
+      { all: true },
+      {
+        customerId: 'pc_twin_b',
+        prices: [
+          { sku: 'PC-SKU-1', price: 5 },
+          { sku: 'PC-SKU-2', price: 7 },
+        ],
+      },
+    );
+    const mine = await readCustomerPricing(
+      p,
+      { companyId: 'pc_twin_b' },
+      { id: 'pc_twin_b', tier: 'standard' },
+      NOW,
+      1,
+    );
+    expect(mine.contractTotal).toBe(2);
+    expect(mine.contracts).toHaveLength(1);
+    expect(mine.contracts[0]).toMatchObject({ sku: 'PC-SKU-1', price: 5 });
+    expect(mine.contracts[0]?.listPrice).toEqual(expect.any(Number));
+    // Another company's scope reads none of it.
+    expect(
+      await readCustomerPricing(
+        p,
+        { companyId: 'pc_twin_a' },
+        { id: 'pc_twin_b', tier: 'standard' },
+        NOW,
+      ),
+    ).toEqual({ books: [], contracts: [], contractTotal: 0 });
   });
 });

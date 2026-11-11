@@ -3,6 +3,7 @@ import {
   createPoDraftInput,
   decodePoCursor,
   encodePoCursor,
+  invoicePoNumber,
   ORDER_STATUSES,
   PO_LIFECYCLE,
   PO_STATUSES,
@@ -15,6 +16,7 @@ import {
   poPath,
   poProgressOf,
   poTransitionFor,
+  provisionalPoNumber,
   updatePoDraftInput,
 } from '../src';
 
@@ -194,6 +196,13 @@ describe('the inputs and helpers', () => {
     expect(decodePoCursor(encodePoCursor(c))).toEqual(c);
     expect(decodePoCursor('not a cursor')).toBeUndefined();
     expect(decodePoCursor(btoa(JSON.stringify(['x', 1])))).toBeUndefined();
+  });
+
+  it('makes an emailed PO’s provisional number from the message and keeps it off the invoice', () => {
+    expect(provisionalPoNumber('abcdef0123456789')).toBe('EML-ABCDEF0123');
+    expect(invoicePoNumber({ source: 'email', poNumber: 'EML-ABCDEF0123' })).toBeNull();
+    expect(invoicePoNumber({ source: 'edi', poNumber: 'NW-1' })).toBe('NW-1');
+    expect(invoicePoNumber({ source: 'app', poNumber: 'PO-2' })).toBe('PO-2');
   });
 
   it('names an order’s PO from its id, and carries the number into its meta', () => {

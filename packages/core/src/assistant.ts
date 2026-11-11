@@ -144,6 +144,7 @@ export type AssistantTool =
   | 'set_credit_limit'
   | 'adjust_credit'
   | 'list_budgets'
+  | 'list_budget_spend'
   | 'put_budget'
   | 'set_budget_status'
   | 'list_purchase_orders'
@@ -855,6 +856,14 @@ export const ASSISTANT_TOOLS: Record<
     title: 'List a company’s budgets',
     description:
       'A company’s budgets a page at a time by name: amount, period, strict or advisory, team and status, each with what its current window has spent and what is left. Narrow by team or status; pass the cursor a page returned for the next.',
+  },
+  list_budget_spend: {
+    role: 'viewer',
+    confirm: false,
+    label: 'Listed a budget’s spend',
+    title: 'List a budget’s spend',
+    description:
+      'A budget’s spend ledger, newest first: each order’s commit with its amount and window, and whether it was since reversed. A reversal gives the spend back; the ledger never changes a row. Pass the cursor a page returned for the next.',
   },
   put_budget: {
     role: 'operator',

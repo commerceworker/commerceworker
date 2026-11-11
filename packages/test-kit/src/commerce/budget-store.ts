@@ -12,17 +12,17 @@ import {
   budgetSpendId,
   budgetsFor,
   money,
-} from '@commerceworker/core';
-import {
-  type BudgetPage,
-  type BudgetQuery,
-  type BudgetScope,
-  type BudgetStore,
-  type SpendCommit,
-  type SpendEntry,
-  type SpendQuery,
-  type SpendWindow,
   spendKey,
+} from '@commerceworker/core';
+import type {
+  BudgetPage,
+  BudgetQuery,
+  BudgetScope,
+  BudgetStore,
+  SpendCommit,
+  SpendEntry,
+  SpendQuery,
+  SpendWindow,
 } from '@commerceworker/ports/commerce';
 
 /** What a store holds, as a test seeds it. */

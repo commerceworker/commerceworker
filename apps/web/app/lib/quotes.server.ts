@@ -4,7 +4,7 @@
  * `expire_quote`, `convert_quote`), the same use-cases REST and MCP run. A staff page reads every
  * company's (`{ all: true }`).
  */
-import { getQuote, listQuotes } from '@commerceworker/application/commerce';
+import { getQuote, listQuotes, quoteConversionSettled } from '@commerceworker/application/commerce';
 import { type QuoteDetail, quoteState } from '@commerceworker/core';
 import type { QuoteScope } from '@commerceworker/ports/commerce';
 import type { QuoteFilters } from './quotes';
@@ -16,6 +16,7 @@ const ports = () => ({
   quotes: quoteStore(),
   companies: companyDirectory(),
   pricing: pricingStore(),
+  purchaseOrders: purchaseOrderStore(),
 });
 const ALL: QuoteScope = { all: true };
 
@@ -31,13 +32,13 @@ export async function quotePage(filters: QuoteFilters, cursor: string | undefine
   });
   if (!r.ok) return { quotes: [], total: 0, cursor: null, companies: {}, error: r.error };
   const ids = [...new Set(r.quotes.map((q) => q.companyId))];
-  const names = await Promise.all(ids.map((id) => companyDirectory().company(ALL, id)));
+  const names = await companyDirectory().companiesById(ALL, ids);
   return {
     // What each is now: a sent or accepted quote past its expiry reads as expired.
     quotes: r.quotes.map((q) => ({ ...q, state: quoteState(q, now) })),
     total: r.total,
     cursor: r.cursor,
-    companies: Object.fromEntries(names.flatMap((c) => (c ? [[c.customerId, c.name]] : []))),
+    companies: Object.fromEntries(names.map((c) => [c.customerId, c.name])),
     error: null,
   };
 }
@@ -56,13 +57,8 @@ export async function quoteDetail(id: string) {
     companyDirectory().company(ALL, quote.companyId),
     companyDirectory().members(ALL, { companyId: quote.companyId, status: 'active', limit: 100 }),
   ]);
-  // Converted for good: an order is recorded, or the PO draft exists. A claim that stopped halfway
-  // names the order's start key, or a draft that was never made.
-  const settled =
-    !!quote.convertedId &&
-    (quote.convertedTo === 'po'
-      ? !!(await purchaseOrderStore().get(ALL, quote.convertedId))
-      : !quote.convertedId.startsWith('quote:'));
+  // Converted for good: an order is recorded, or the PO draft exists.
+  const settled = await quoteConversionSettled(ports(), ALL, quote);
   return {
     quote,
     settled,

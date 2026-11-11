@@ -20,10 +20,12 @@ import {
   type PricePreviewLine,
   priceBookEntryProblem,
   priceBookHeadProblem,
+  priceBookState,
   resolvePrice,
 } from '@commerceworker/core';
 import type {
   CompanyDirectory,
+  CompanyScope,
   PriceBookStore,
   PricingStore,
 } from '@commerceworker/ports/commerce';
@@ -344,9 +346,11 @@ export type ContractPriceInput = { sku: string; price: number | null };
 /** What writing contract prices would do, for a card, and why it can't be done. */
 export async function planContractPrices(
   ports: BooksAndPricing,
+  scope: CompanyScope,
   input: { customerId: string; prices: readonly ContractPriceInput[] },
 ) {
-  const customer = await ports.pricing.customer(input.customerId);
+  const inScope = 'all' in scope || scope.companyId === input.customerId;
+  const customer = inScope ? await ports.pricing.customer(input.customerId) : undefined;
   const sets = input.prices.filter((p) => p.price !== null);
   const info = { customer, sets: sets.length, removes: input.prices.length - sets.length };
   if (!customer) return { ...info, problem: NO_CUSTOMER };
@@ -372,16 +376,17 @@ export async function planContractPrices(
 /** Sets, replaces and (with a null price) removes a customer's contract prices. */
 export async function putContractPrices(
   ports: BooksAndPricing,
+  scope: CompanyScope,
   input: { customerId: string; prices: readonly ContractPriceInput[] },
 ): Promise<{ ok: true; set: number; removed: number; audit: AuditDraft } | Fail> {
-  const plan = await planContractPrices(ports, input);
+  const plan = await planContractPrices(ports, scope, input);
   if (plan.problem) return { ok: false, error: plan.problem };
   const sets = input.prices.flatMap((p) =>
     p.price === null ? [] : [{ sku: p.sku, price: p.price }],
   );
   const removes = input.prices.filter((p) => p.price === null).map((p) => p.sku);
-  if (removes.length) await ports.books.removeContractPrices(input.customerId, removes);
-  if (sets.length) await ports.books.putContractPrices(input.customerId, sets);
+  if (removes.length) await ports.books.removeContractPrices(scope, input.customerId, removes);
+  if (sets.length) await ports.books.putContractPrices(scope, input.customerId, sets);
   return {
     ok: true,
     set: sets.length,
@@ -449,5 +454,31 @@ export async function previewPrice(
         bookId: 'bookId' in r.by ? (r.by.bookId ?? null) : null,
       };
     }),
+  };
+}
+
+/**
+ * A customer's price books (by id or through their tier, each with its state at `now`) and a
+ * page of their contract prices with the list price beside each, for the customer's page. The
+ * contract total counts them all.
+ */
+export async function readCustomerPricing(
+  ports: BooksAndPricing,
+  scope: CompanyScope,
+  customer: { id: string; tier: string },
+  now: number,
+  shown = 50,
+) {
+  const [assigned, contracts] = await Promise.all([
+    ports.books.forCustomer(scope, customer.id, customer.tier),
+    ports.books.contractPrices(scope, customer.id),
+  ]);
+  const page = contracts.slice(0, shown);
+  const products = page.length ? await ports.pricing.products(page.map((c) => c.sku)) : [];
+  const list = new Map(products.map((p) => [p.sku, p.price]));
+  return {
+    books: assigned.map((b) => ({ ...b, state: priceBookState(b, now) })),
+    contracts: page.map((c) => ({ ...c, listPrice: list.get(c.sku) ?? null })),
+    contractTotal: contracts.length,
   };
 }

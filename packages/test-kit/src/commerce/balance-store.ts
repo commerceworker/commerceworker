@@ -3,7 +3,7 @@
  * D1 store's guarded batches; the contract in ./balance-store-contract.ts holds the two to the same
  * behaviour.
  */
-import { creditAvailable, money } from '@commerceworker/core';
+import { creditAdjustmentId, creditAvailable, creditHoldId, money } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import {
   type BalanceCharge,
@@ -11,8 +11,6 @@ import {
   type BalanceStore,
   balanceEntryId,
   type CreditHold,
-  creditAdjustmentId,
-  creditHoldId,
   type LedgerEntry,
 } from '@commerceworker/ports/commerce';
 import { FixedClock } from '../fakes';

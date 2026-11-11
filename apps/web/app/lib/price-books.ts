@@ -29,14 +29,13 @@ export function priceBookFrom(f: FormData) {
   const name = s('name').slice(0, 120);
   if (!name) return 'Give the book a name.';
   const priority = s('priority') ? Number(s('priority')) : 0;
-  if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
-    return 'A priority is a whole number from -1000 to 1000.';
   const startsAt = s('startsAt') ? Date.parse(`${s('startsAt')}T00:00:00Z`) : null;
   // The last day counts, so the book ends when the next one starts.
   const endsAt = s('endsAt') ? Date.parse(`${s('endsAt')}T00:00:00Z`) + DAY : null;
   if (Number.isNaN(startsAt) || Number.isNaN(endsAt)) return 'A date is not a date.';
   const { code, problem } = priceBookHeadProblem({
     code: s('code'),
+    priority,
     startsAt: startsAt ?? undefined,
     endsAt: endsAt ?? undefined,
   });

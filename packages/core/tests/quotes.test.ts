@@ -12,6 +12,7 @@ import {
   quoteConvertProblem,
   quoteDraftProblem,
   quoteEditable,
+  quoteLineDiscount,
   quoteLineRule,
   quoteLive,
   quoteOrderUnstarted,
@@ -21,6 +22,7 @@ import {
   quoteSendProblem,
   quoteState,
   quoteTotal,
+  rankQuoteLines,
   updateQuoteInput,
 } from '../src';
 import { type PriceRule, type PriceSource, resolvePrice } from '../src/pricing';
@@ -273,5 +275,32 @@ describe('the quote inputs', () => {
       buyerId: null,
     });
     expect(updateQuoteInput.safeParse({ name: 'x' }).success).toBe(false);
+  });
+});
+
+describe('what a quote line takes off list', () => {
+  it('is a whole percentage, null with no list price, and negative above list', () => {
+    expect(quoteLineDiscount({ listPrice: 10, unitPrice: 7.5 })).toBe(25);
+    expect(quoteLineDiscount({ listPrice: null, unitPrice: 7.5 })).toBeNull();
+    expect(quoteLineDiscount({ listPrice: 10, unitPrice: 12 })).toBe(-20);
+  });
+
+  it('ranks the deepest discount first, then by SKU, and counts the lines below list', () => {
+    const { ranked, below } = rankQuoteLines([
+      { sku: 'B', listPrice: 10, unitPrice: 9 },
+      { sku: 'A', listPrice: 10, unitPrice: 9 },
+      { sku: 'C', listPrice: 10, unitPrice: 4 },
+      { sku: 'D', listPrice: null, unitPrice: 1 },
+      { sku: 'E', listPrice: 10, unitPrice: 11 },
+    ]);
+    expect(ranked.map((r) => [r.line.sku, r.off])).toEqual([
+      ['C', 60],
+      ['A', 10],
+      ['B', 10],
+      ['D', 0],
+      ['E', -10],
+    ]);
+    expect(below).toBe(3);
+    expect(rankQuoteLines([])).toEqual({ ranked: [], below: 0 });
   });
 });

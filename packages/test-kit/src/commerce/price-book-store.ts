@@ -145,19 +145,28 @@ export class InMemoryPriceBookStore implements PriceBookStore {
       .sort((a, b) => b.priority - a.priority || (a.code < b.code ? -1 : 1));
   }
 
-  async contractPrices(customerId: string): Promise<ContractPrice[]> {
+  async contractPrices(scope: CompanyScope, customerId: string): Promise<ContractPrice[]> {
+    if (!('all' in scope) && scope.companyId !== customerId) return [];
     return [...(this.data.contracts.get(customerId) ?? [])]
       .map(([sku, price]) => ({ sku, price }))
       .sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
   }
 
-  async putContractPrices(customerId: string, prices: readonly ContractPrice[]) {
+  async putContractPrices(
+    scope: CompanyScope,
+    customerId: string,
+    prices: readonly ContractPrice[],
+  ) {
+    if (!('all' in scope) && scope.companyId !== customerId) return false;
     const mine = this.data.contracts.get(customerId) ?? new Map<string, number>();
     for (const p of prices) mine.set(p.sku, p.price);
     this.data.contracts.set(customerId, mine);
+    return true;
   }
 
-  async removeContractPrices(customerId: string, skus: readonly string[]) {
+  async removeContractPrices(scope: CompanyScope, customerId: string, skus: readonly string[]) {
+    if (!('all' in scope) && scope.companyId !== customerId) return false;
     for (const sku of skus) this.data.contracts.get(customerId)?.delete(sku);
+    return true;
   }
 }

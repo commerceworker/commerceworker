@@ -634,6 +634,27 @@ describe('the budget tools over REST', () => {
       },
     });
 
+    // The ledger behind that spend, to a viewer: the commit, newest first.
+    expect(await run('list_budget_spend', { companyId: c.id, budgetId: id }, viewer)).toMatchObject(
+      {
+        ok: true,
+        value: {
+          total: 1,
+          cursor: null,
+          entries: [
+            { orderId: 'ord_rest', amount: 300, windowStart: window.start, status: 'committed' },
+          ],
+        },
+      },
+    );
+    // Another company's name reads nothing of this budget's ledger.
+    expect(
+      await run('list_budget_spend', { companyId: 'cus_nobody', budgetId: id }, viewer),
+    ).toMatchObject({ ok: true, value: { total: 0, entries: [] } });
+    expect(
+      await run('list_budget_spend', { companyId: c.id, budgetId: id, cursor: 'junk' }, viewer),
+    ).toEqual({ ok: false, error: 'That cursor isn’t one a page returned.' });
+
     // A change keeps the budget's company, team, period and start.
     expect(
       await run('put_budget', { companyId: c.id, budgetId: id, name: 'Office 2', amount: 900 }, op),

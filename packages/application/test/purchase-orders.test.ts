@@ -1,4 +1,4 @@
-import type { Company, CompanyMember } from '@commerceworker/core';
+import { type Company, type CompanyMember, provisionalPoNumber } from '@commerceworker/core';
 import {
   InMemoryCompanyDirectory,
   InMemoryPurchaseOrderStore,
@@ -10,10 +10,12 @@ import {
   getPurchaseOrder,
   listPurchaseOrders,
   type PoOrderDeps,
+  planPoStart,
   planSubmitPo,
   recordInboundPo,
   submitPo,
   syncPoFromOrder,
+  tieOrderToPo,
   updatePoDraft,
 } from '../src/commerce';
 
@@ -734,5 +736,101 @@ describe('listing purchase orders', () => {
       ok: true,
       total: 0,
     });
+  });
+});
+
+describe('starting an order from a PO', () => {
+  const submitted = async (ports: ReturnType<typeof setup>, orderId?: string) => {
+    const made = await createPoDraft(ports, ALL, draftInput(), nextId, NOW);
+    if (!made.ok) throw new Error(made.error);
+    const id = made.purchaseOrder.id;
+    if (orderId) await ports.purchaseOrders.linkOrder(ALL, id, orderId, NOW);
+    return id;
+  };
+  const order = (over: object = {}) => ({
+    orderId: 'ord_x',
+    companyId: 'acme',
+    currency: 'USD',
+    lines: [{ sku: 'WID-1', qty: 1 }],
+    ...over,
+  });
+
+  it('lets a PO with no order start its own company’s order, and no other’s', async () => {
+    const ports = setup();
+    const id = await submitted(ports);
+    expect(await planPoStart(ports, id, 'acme')).toEqual({ ok: true });
+    expect(await planPoStart(ports, id, 'globex')).toMatchObject({ ok: false, ordered: false });
+    expect(await planPoStart(ports, 'po_nope', 'acme')).toMatchObject({
+      ok: false,
+      ordered: false,
+    });
+    expect(await planPoStart(ports, id, undefined)).toMatchObject({ ok: false });
+  });
+
+  it('says a PO that has an order is ordered, for the engine to tell a replay from a refusal', async () => {
+    const ports = setup();
+    const id = await submitted(ports, 'ord_1');
+    expect(await planPoStart(ports, id, 'acme')).toEqual({
+      ok: false,
+      error: `Purchase order ${id} can't start this order`,
+      ordered: true,
+    });
+  });
+
+  it('ties a link to the PO, once, and refuses a PO that already has another order', async () => {
+    const ports = setup();
+    const id = await submitted(ports);
+    const tied = await tieOrderToPo(ports, { link: id }, order(), NOW);
+    expect(tied).toMatchObject({ ok: true, tied: { id, poNumber: 'PO-100' }, audit: null });
+    expect(await tieOrderToPo(ports, { link: id }, order(), NOW + 1)).toMatchObject({ ok: true });
+    expect(await tieOrderToPo(ports, { link: id }, order({ orderId: 'ord_y' }), NOW)).toEqual({
+      ok: false,
+      error: `Purchase order ${id} can't be tied to order ord_y`,
+    });
+  });
+
+  it('records an inbound PO once per order, and keeps an email’s provisional number off the invoice', async () => {
+    const ports = setup();
+    const edi = await tieOrderToPo(
+      ports,
+      { record: { source: 'edi', poNumber: 'NW-9' } },
+      order(),
+      NOW,
+    );
+    expect(edi).toMatchObject({
+      ok: true,
+      tied: { poNumber: 'NW-9' },
+      audit: { action: 'purchase_order.received' },
+      warning: null,
+    });
+    const again = await tieOrderToPo(
+      ports,
+      { record: { source: 'edi', poNumber: 'NW-9' } },
+      order(),
+      NOW + 1,
+    );
+    expect(again).toMatchObject({ ok: true, audit: null });
+    const mail = await tieOrderToPo(
+      ports,
+      { record: { source: 'email', poNumber: provisionalPoNumber('abcdef0123456789') } },
+      order({ orderId: 'ord_mail' }),
+      NOW,
+    );
+    expect(mail).toMatchObject({ ok: true, tied: { poNumber: null } });
+    expect(await ports.purchaseOrders.byOrder('ord_mail')).toMatchObject({
+      poNumber: 'EML-ABCDEF0123',
+    });
+  });
+
+  it('goes ahead without a PO it can’t record, and says why', async () => {
+    const ports = setup();
+    expect(
+      await tieOrderToPo(
+        ports,
+        { record: { source: 'edi', poNumber: 'X' } },
+        order({ companyId: undefined }),
+        NOW,
+      ),
+    ).toMatchObject({ ok: true, tied: undefined, warning: expect.stringMatching(/no customer/) });
   });
 });

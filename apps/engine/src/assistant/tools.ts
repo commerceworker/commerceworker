@@ -39,7 +39,7 @@ import {
 import { pluginStatuses, pluginUsage } from '../plugins';
 import { auditLog, integrationStore, ucpStore, webhookOutbox, workspaceStore } from '../wire';
 import { runCases } from './admin';
-import { readBudgets } from './budgets';
+import { readBudgetSpend, readBudgets } from './budgets';
 import { draftCartReply } from './cart-reply';
 import { changeCart, getCart, listCarts, openCart } from './carts';
 import { acceptProductDrafts, discardProductEdits, stageProductEdits } from './catalog';
@@ -371,6 +371,8 @@ export async function runTool<T extends AssistantTool>(
       return readPricePreview(env, input as ToolInput<'preview_price'>);
     case 'list_budgets':
       return readBudgets(env, input as ToolInput<'list_budgets'>);
+    case 'list_budget_spend':
+      return readBudgetSpend(env, input as ToolInput<'list_budget_spend'>);
     case 'list_purchase_orders':
       return readPurchaseOrders(env, input as ToolInput<'list_purchase_orders'>);
     case 'get_purchase_order':

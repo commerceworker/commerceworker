@@ -144,6 +144,19 @@ Left for later, and where a product decision is open:
 - Quotes are in subject export and erasure (notes and buyer blanked; name, status, expiry and prices stay) but not the retention sweep, and not on the customer page.
 - Price books and contract prices are unchanged. `preview_price` runs the same chain, so it shows a quote's price and names the quote.
 
+**S8 is built, and P5 is closed.** It adds no product behaviour; it holds P5 together.
+
+- **Scenario.** `apps/engine/tests/b2b-procurement.test.ts` runs the whole chain on real Workflows and the real templates: a company with a buyer and an approver, a price book and a contract price, a credit limit and a strict budget; a quote negotiated (revised once), accepted and converted to a PO draft; the draft submitted through `tpl-b2b-purchase-order`, over the approval threshold, so the company approver votes (a buyer's vote is refused); the order priced at the quote (and by contract and book where the quote doesn't reach), a credit hold and the budget's spend recorded, invoiced net 30 with the PO number, and the PO fulfilled. A second case has the approver reject: the hold is released, the spend reversed and the PO rejected.
+- **Hexagonal pass over S1 to S6**, and what it changed (behaviour and published step names are as they were):
+  - Voting moved out of the OrderAgent and the engine: `planApproval`, `castApprovalVote` and `voteRefusal` are use-cases in `packages/application/src/commerce/approvals.ts` over the order records, company directory and workspace ports, taking `now`. The agent sends the event and writes the timeline; the `:open` step calls `planApproval`.
+  - The budget spend ledger has its REST and MCP twin (`list_budget_spend`, `GET /companies/{companyId}/budgets/{budgetId}/spend`), read in the named company's scope.
+  - Contract prices are company-scoped: `contractPrices`, `putContractPrices` and `removeContractPrices` take a `CompanyScope` (a write outside it writes nothing and answers `false`), with a two-company case in the store contract. `PurchaseOrderStore.byOrder` takes none, on purpose: its caller is the engine itself, which holds an order id it started or an order's own PO, and no company-bound caller reaches it (`BalanceStore.account` and `ledger` are keyed by customer the same way). Revisit both with company-bound tokens (D11).
+  - What a PO start needs is decided in application and core, not the engine: `planPoStart` (a submitted PO may start the order that names it) and `tieOrderToPo` (link or record, and the number the invoice carries, `invoicePoNumber`), and `provisionalPoNumber` for an emailed PO. The engine keeps the audit and the log.
+  - Smaller: the credit hold, credit adjustment and spend-window key helpers are core's (not ports'); the customer page's pricing is an application read (`readCustomerPricing`); the purchase orders and quotes pages read their companies' names in one `companiesById` statement (snapshotted) instead of one per row; a price book's priority range is `priceBookHeadProblem`'s.
+- **Quotes re-check** (S7): the discount a line takes off list and the deepest-first ranking a confirm card uses are core's (`quoteLineDiscount`, `rankQuoteLines`), not the engine's and the page's own; whether a conversion is complete is `quoteConversionSettled` in application, used by the convert plan and the quote page alike.
+- **Lifecycle reference.** `LIFECYCLES` (`packages/core/src/lifecycles.ts`) lists every `defineLifecycle`, a test fails for one that isn't listed, and the docs render each from it (`reference/lifecycles`), so a move is never copied by hand. The guides link to it instead of repeating the moves.
+- **Not done, by design.** Nothing here was deployed or migrated.
+
 | Slice | Scope | Depends on |
 |---|---|---|
 | S1 Companies (built) | `companies` (1:1 with a business customer), teams (a tree), members (fixed company roles, an optional per-member order limit), the buyer on an order, creating and editing customers. Lifecycles: company `pending → active ⇄ suspended → closed` (or `rejected`), member `invited → active ⇄ inactive → removed`. `validateOrder` declines orders from inactive companies or buyers. JSON Logic gains `company.*` and `buyer.*` | none |
@@ -153,7 +166,7 @@ Left for later, and where a product decision is open:
 | S5 Approvals (built) | `control.approval` gains approvers (`staff:<role>`, `company:<role>`, team, members) and a mode (`any`, `all`, `majority`, `quorum`). Votes are recorded once, and the OrderAgent resumes the wait only once the vote is decided, so the Workflow and its step names are unchanged. Thresholds are flow logic over `company.*`. No route approves outside the flow | S1 |
 | S6 Purchase orders (built) | Buyer PO records with editable drafts. Submitting starts an order on a B2B PO flow, and the PO's status follows the order. Inbound EDI and email POs create records too (punchout's is a follow-up) | S1, S3, S4, S5 |
 | S7 Quotes (built) | Negotiated, versioned quotes. A `quote` price source with the highest priority, valid only while accepted, unexpired, for its company and within its quantities. Quote to PO draft, or straight to an order | S1, S2, S6 |
-| S8 Close | A B2B scenario and docs run, `patterns.md` and `port-map.md` updated, a `hexagonal-guardian` pass, a generated lifecycle reference | all |
+| S8 Close (built) | A B2B scenario and docs run, `patterns.md` and `port-map.md` updated, a `hexagonal-guardian` pass, a generated lifecycle reference | all |
 
 ### S2 notes
 
@@ -212,24 +225,34 @@ currency), neither yet confirmed by the product owner.
 After S1 there are three parallel streams: S2; S3; and S4 followed by S5. S6 follows S3, S4 and
 S5, and S7 follows S2 and S6.
 
-## Decisions
+## Decisions, and what is still open
 
-Recommended defaults, built on where a slice needs them. The product owner confirms or changes
-each.
+Everything P5 built stands on a default, and none has been confirmed by the product owner. Each is one place in the code (named in its slice's notes above), so changing a default is a change there and not a rewrite. This is the one list to take to the owner.
 
-| # | Decision | Default | Blocks |
+| # | Question | What is built (the default) | Where it lives |
 |---|---|---|---|
-| D1 | Is a company a new entity above customers, or is the business customer the company? | The business customer is the company (1:1 `companies` plus members), so nothing keyed by `customer_id` moves | S1 |
-| D2 | When several price books apply, does priority or price win? | The highest-priority assigned book wins, then the lowest price within it | S2 |
-| D3 | Who decides company approvals before buyers can sign in? | Staff record a member's vote (`onBehalfOf`, audited) | S5 |
-| D4 | Are approval rules data tables or flow logic? | Flow logic | S5 |
-| D5 | Is enforcement blocking or advisory? | Credit blocks, with a hold. Budgets are per budget, advisory by default | S3, S4 |
-| D6 | What counts as a purchase order? | Buyer POs and inbound EDI, email and punchout POs. `generate_po` stays the supplier document | S6 |
-| D7 | Does a quote go to an order directly? | Through a PO draft when the company uses POs | S7 |
-| D8 | What currency are books, quotes and budgets in? | The base currency | S2, S4, S7 |
-| D9 | Are company roles fixed or custom? | Fixed: `buyer`, `approver`, `company_admin` | S1 |
-| D10 | What is cut from P5? | Projects and jobs, requisition lists, approval groups | none |
-| D11 | Do company-bound API tokens come in P5? | Not in P5; ports take `scope`, so they can be added later | none |
+| D1 | Is a company a new entity above customers, or is the business customer the company? | The business customer is the company, 1:1 | `hasCompany`, `COMPANY_CUSTOMER_KIND`, `companies` |
+| D2 | Priority or price when several books apply? | The highest-priority assigned book, then the lowest price in it | `resolvePrice`, `bookInForce` |
+| D3 | Who decides company approvals and answers quotes before buyers can sign in? | Staff record a member's vote and a company's accept and decline (`onBehalfOf`, audited) | the `decide` RPC, `approval_votes.voter_kind` and `on_behalf_by`, `accept_quote` |
+| D4 | Approval rules as data tables or flow logic? | Flow logic: the node's `approvers`, `mode`, `quorum`, `majorityPercent`, and thresholds over `order.baseTotal`, `company.*` and `buyer.*` | `b2b/approvals.ts`, `B2B_PO_APPROVAL_OVER` (`5000` in the base currency, in the template) |
+| D5 | Blocking or advisory enforcement? | Credit blocks with a hold; each budget is strict or advisory, advisory unless chosen | `commerce.credit_check`, `commerce.budget_check` |
+| D6 | What counts as a purchase order? | Buyer POs and inbound EDI, email and punchout POs are records; `commerce.generate_po` stays the supplier document | `PO_SOURCES`, `recordInboundPo`, `PurchaseOrderStart` |
+| D7 | Does a quote go to an order directly? | Through a PO draft when the company uses POs, else straight to an order | `quoteConversion`, `planConvertQuote` |
+| D8 | What currency are books, quotes and budgets in? | The base currency | no currency column |
+| D9 | Are company roles fixed or custom? | Fixed: `buyer`, `approver`, `company_admin`, not ordered | `COMPANY_ROLES` |
+| D10 | What is cut from P5? | Projects and jobs, requisition lists, approval groups | not built |
+| D11 | Company-bound API tokens? | Not in P5; every read takes a `scope` so they can be added | `CompanyScope` and the other scopes |
+
+Per-slice items that are a product call, left as the notes above built them:
+
+- **Members (S1).** A member's order limit is data a flow can read (`buyer.orderLimit`); nothing enforces it, since a limit that approves rather than declines is a flow's rule (D4). A removed member's email can be added again.
+- **Price books (S2).** A suspended or closed company's assigned books still price (pricing isn't access control; `validateOrder` declines the order). An agentic checkout's buyer has no customer, so no assigned book applies.
+- **Credit (S3).** Credit routes are customer-scoped. An over-limit order a person approves proceeds with no hold. A new business customer's limit is zero.
+- **Budgets (S4).** No manual adjustment (nobody gives spend back by hand), budgets are per company and team only, and approving an over-budget order is flow logic. A strict budget declines only a flow that uses the company's budgets.
+- **Approvals (S5).** Company roles aren't ordered (`company:approver` is not `company_admin`); an approval with nobody who can vote waits for its timeout and escalates; separation also stops a member voting on an order they placed, when the setting is on; the inbox filters (`?company=`, `?approver=`) aren't an API, and company approvals aren't decided inline from the inbox or its batch.
+- **Purchase orders (S6).** Punchout POs aren't recorded; an emailed PO keeps its provisional number and no lines until a later change amends it from the extract node; a PO has no total; punchout and inbound POs follow whatever flow `ORDER_ROUTES` sends them to (the default B2B order flow unless routed to `tpl-b2b-purchase-order`); POs are in subject export and erasure but not the retention sweep.
+- **Quotes (S7).** A quote's price applies to every order of the company while it is accepted and unexpired, and its quantity is a ceiling per order line, not drawn down across orders. "The company uses POs" is "has any PO record" (a company setting would be exact). No `under_review` state and no counter-offer thread. A sent quote that lapses stays `sent` in storage until a move is tried (no sweep). A PO draft that came from a quote and was cancelled leaves the quote converted. Quotes are in subject export and erasure but not the retention sweep, and not on the customer page.
+- **Access.** Company-member access to credit, POs, quotes and approvals waits on D11.
 
 ## Lifted from v1, and fixed
 

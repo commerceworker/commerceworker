@@ -233,14 +233,17 @@ export function d1PriceBookStore(d1: D1Database): PriceBookStore {
       return rows.map((r) => bookOf(r.book));
     },
 
-    contractPrices: (customerId) =>
-      db
+    async contractPrices(scope, customerId) {
+      if (!('all' in scope) && scope.companyId !== customerId) return [];
+      return db
         .select({ sku: contractPrices.sku, price: contractPrices.price })
         .from(contractPrices)
         .where(eq(contractPrices.customerId, customerId))
-        .orderBy(asc(contractPrices.sku)),
+        .orderBy(asc(contractPrices.sku));
+    },
 
-    async putContractPrices(customerId, prices) {
+    async putContractPrices(scope, customerId, prices) {
+      if (!('all' in scope) && scope.companyId !== customerId) return false;
       await run(
         chunk(prices, CONTRACTS_PER_STATEMENT).map((rows) =>
           db
@@ -252,9 +255,11 @@ export function d1PriceBookStore(d1: D1Database): PriceBookStore {
             }),
         ),
       );
+      return true;
     },
 
-    async removeContractPrices(customerId, skus) {
+    async removeContractPrices(scope, customerId, skus) {
+      if (!('all' in scope) && scope.companyId !== customerId) return false;
       await run(
         chunk(skus, KEYS_PER_DELETE).map((part) =>
           db
@@ -264,6 +269,7 @@ export function d1PriceBookStore(d1: D1Database): PriceBookStore {
             ),
         ),
       );
+      return true;
     },
   };
 }

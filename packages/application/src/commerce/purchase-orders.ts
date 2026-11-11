@@ -14,6 +14,7 @@ import {
   createPoDraftInput,
   decodePoCursor,
   encodePoCursor,
+  invoicePoNumber,
   normalizePoNumber,
   type OrderInputDraft,
   PO_FLOW_ID,
@@ -29,6 +30,7 @@ import {
   type PurchaseOrderDetail,
   type PurchaseOrderLine,
   type PurchaseOrderRow,
+  type PurchaseOrderStart,
   poDraftProblem,
   poEditable,
   poIdForOrder,
@@ -711,4 +713,80 @@ function shipToOf(raw: unknown): PoShipTo | null {
     ...(text('line2') ? { line2: text('line2') as string } : {}),
     ...(text('region') ? { region: text('region') as string } : {}),
   };
+}
+
+/**
+ * Whether a submitted PO can start the order that names it (`link`), judged before the order
+ * exists so a PO that can't be this order's leaves nothing behind. It can when it is found, is the
+ * order's company's and has no order yet. One that already has an order is `ordered`: the engine
+ * answers a replay of the request that started it, and refuses any other.
+ */
+export async function planPoStart(
+  ports: Pick<PurchaseOrderPorts, 'purchaseOrders'>,
+  link: string,
+  customerId: string | undefined,
+): Promise<{ ok: true } | { ok: false; error: string; ordered: boolean }> {
+  const po = await ports.purchaseOrders.get(ALL, link);
+  if (po && po.companyId === customerId && !po.orderId) return { ok: true };
+  return {
+    ok: false,
+    error: `Purchase order ${link} can't start this order`,
+    ordered: !!po?.orderId,
+  };
+}
+
+/**
+ * Ties an order to the PO its start names, and says what the order carries of it
+ * (`meta.purchaseOrderId` and the invoice's reference). A `link` ties the order a submitted PO
+ * starts, and fails when it can't be this PO's: its progress must never reach another's. A `record`
+ * writes the PO an inbound order is (EDI, email), once per order; an order whose PO can't be
+ * recorded (no company, a number the company already holds) goes ahead without one and says why in
+ * `warning`. Safe to repeat.
+ */
+export async function tieOrderToPo(
+  ports: PurchaseOrderPorts,
+  want: PurchaseOrderStart,
+  order: {
+    orderId: string;
+    companyId: string | undefined;
+    currency: string;
+    lines: Parameters<typeof recordInboundPo>[1]['lines'];
+    shipTo?: unknown;
+    buyerId?: string | undefined;
+  },
+  now: number,
+): Promise<
+  | {
+      ok: true;
+      tied: { id: string; poNumber: string | null } | undefined;
+      audit: AuditDraft | null;
+      warning: string | null;
+    }
+  | Refused
+> {
+  let audit: AuditDraft | null = null;
+  let warning: string | null = null;
+  if ('link' in want) {
+    if (!(await ports.purchaseOrders.linkOrder(ALL, want.link, order.orderId, now)))
+      return refuse(`Purchase order ${want.link} can't be tied to order ${order.orderId}`);
+  } else {
+    const r = await recordInboundPo(
+      ports,
+      {
+        orderId: order.orderId,
+        companyId: order.companyId,
+        poNumber: want.record.poNumber,
+        source: want.record.source,
+        currency: order.currency,
+        lines: order.lines,
+        shipTo: order.shipTo,
+        buyerId: order.buyerId,
+      },
+      now,
+    );
+    if (!r.ok) warning = r.error;
+    else audit = r.audit;
+  }
+  const po = await ports.purchaseOrders.byOrder(order.orderId);
+  return { ok: true, tied: po && { id: po.id, poNumber: invoicePoNumber(po) }, audit, warning };
 }

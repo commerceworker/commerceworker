@@ -45,6 +45,7 @@
   "companies: a page": { "statements": 2, "roundTrips": 1 },
   "companies: a page by status and search": { "statements": 2, "roundTrips": 1 },
   "companies: one company": { "statements": 1, "roundTrips": 1 },
+  "companies: several by id": { "statements": 1, "roundTrips": 1 },
   "companies: a company’s teams": { "statements": 1, "roundTrips": 1 },
   "companies: a page of members": { "statements": 2, "roundTrips": 1 },
   "companies: one member": { "statements": 1, "roundTrips": 1 },
