@@ -1,7 +1,38 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+  // CI keeps turbo's cache between runs (.github/workflows/ci.yml), so a task's hash has to name
+  // everything its result depends on: a cached pass is replayed without running the task. A hash
+  // covers the package's own tracked files, the lockfile entries of its dependencies, its declared
+  // env vars and the hashes of the tasks it depends on. Everything else is declared here or in the
+  // package's own turbo.json, and scripts/turbo-cache.test.ts proves each declaration by changing
+  // the file and watching the task's hash move.
+  //
+  // Files every package's tasks read, none of them inside a package: the lockfile and workspace
+  // file (every dependency version, the catalog), .npmrc and .nvmrc (how it installs and runs),
+  // Biome's config (every lint) and the shared tsconfig (every check-types and build).
+  "globalDependencies": [
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    ".npmrc",
+    ".nvmrc",
+    "biome.json",
+    "packages/typescript-config/**"
+  ],
+  // Env vars: strict mode (the default) hands a task only turbo's allowlist (PATH, HOME, CI, ...),
+  // so a variable set in a shell or a workflow never reaches a task and can't change its result.
+  // Declare one as `env` on its task the day a task needs it, and add a case to the test.
   "tasks": {
+    // A task no package defines. It chains through every workspace dependency, so a task that
+    // depends on `^transit` is hashed with the files of its whole dependency closure, not only
+    // its direct dependencies'. A package's turbo.json depends on `<pkg>#transit` for a package it
+    // reads without depending on it (a Worker a Vite config bundles, a plugin a suite loads).
+    // It also depends on the package's own `generate`, so a generated embed's sources (docs/content
+    // for docs-index, the skills for http) reach everything that compiles it in, however far away:
+    // `^generate` alone reaches only direct dependencies.
+    "transit": { "dependsOn": ["^transit", "generate"] },
+
     // Writes the gitignored embeds (packages/docs-index/src/generated.ts from docs/*.md,
     // packages/http/src/mcp/skills.generated.ts from packages/http/skills/**) and the themes the
     // design packages generate from their tokens. Never committed; every task that compiles,
@@ -15,28 +46,46 @@
       ]
     },
     "build": {
-      "dependsOn": ["^build", "^generate", "generate"],
+      "dependsOn": ["^build", "^generate", "generate", "^transit"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["build/**", "dist/**"]
     },
     // The docs site's type check and build both run astro sync (and its OpenAPI generator); side by
     // side they collide, so the build follows its own type check.
     "@commerceworker/docs#build": {
-      "dependsOn": ["^build", "^generate", "generate", "check-types"],
+      "dependsOn": [
+        "^build",
+        "^generate",
+        "generate",
+        "^transit",
+        "@commerceworker/web#transit",
+        "check-types"
+      ],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["build/**", "dist/**"]
+    },
+    // src/pages/openapi.json.ts renders the web app's OpenAPI document (apps/web/app/lib/openapi.ts),
+    // which the docs site reads by path, not as a dependency.
+    "@commerceworker/docs#check-types": {
+      "dependsOn": [
+        "^check-types",
+        "^generate",
+        "generate",
+        "^transit",
+        "@commerceworker/web#transit"
+      ]
     },
     "lint": {
       "dependsOn": ["^lint"]
     },
     // Only the embeds, on purpose: a failing dependency's own tests must not silently skip a
-    // package's tests.
+    // package's tests. `^transit` runs nothing; it only puts the dependency closure in the hash.
     "test": {
-      "dependsOn": ["^generate", "generate"],
+      "dependsOn": ["^generate", "generate", "^transit"],
       "outputs": []
     },
     "check-types": {
-      "dependsOn": ["^check-types", "^generate", "generate"]
+      "dependsOn": ["^check-types", "^generate", "generate", "^transit"]
     },
     "dev": {
       "dependsOn": ["^generate", "generate"],

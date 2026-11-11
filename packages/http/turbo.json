@@ -7,7 +7,7 @@
       "inputs": ["scripts/generate-skills.ts", "skills/**"],
       "outputs": ["src/mcp/skills.generated.ts"]
     },
-    // test/api/cli.test.ts applies the example model in the repo's skills/ as written.
+    // test/api/cli.test.ts applies the field reference in the repo's skills/ as written.
     "test": {
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**"]
     }

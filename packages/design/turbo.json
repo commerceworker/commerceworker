@@ -2,13 +2,18 @@
   "$schema": "https://turborepo.dev/schema.json",
   "extends": ["//"],
   "tasks": {
-    // The token tests compare this package with the web app's app.css and the docs' generated
-    // theme, so a change to either must re-run them rather than replay a cached pass.
+    // tests/tokens.test.ts holds the tokens to both admins' and the storefront's app.css, the
+    // studio's status component, the UI components and the docs site's styles, none of them in
+    // this package. The themes it generates are gitignored, so they stay out of the hash.
     "test": {
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/web/app/app.css",
-        "$TURBO_ROOT$/apps/docs/src/styles/theme.css"
+        "$TURBO_ROOT$/apps/studio/app/app.css",
+        "$TURBO_ROOT$/apps/storefront/app/app.css",
+        "$TURBO_ROOT$/apps/studio/app/components/status.tsx",
+        "$TURBO_ROOT$/apps/docs/src/**",
+        "$TURBO_ROOT$/packages/ui/src/**"
       ]
     }
   }

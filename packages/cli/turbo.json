@@ -8,7 +8,7 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/skills/**",
-        "$TURBO_ROOT$/apps/docs/src/content/content/**",
+        "$TURBO_ROOT$/apps/docs/src/content/**",
         "$TURBO_ROOT$/packages/sdk/*/src/**"
       ]
     }
