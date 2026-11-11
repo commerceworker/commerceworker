@@ -95,6 +95,15 @@ const WEBHOOK_RETRIES = 5;
 /** Statuses an order ends in without having been fulfilled. */
 const UNFULFILLED: readonly OrderStatus[] = ['cancelled', 'declined', 'failed', 'rolled_back'];
 
+/**
+ * How long a state broadcast waits for the next one to join it. The Workflow reports a node in
+ * several calls a few milliseconds apart (its plan snapshot, its start and end, its timeline
+ * lines); each persists at once, but the sockets get the newest state once per window.
+ */
+const BROADCAST_COALESCE_MS = 100;
+/** The tail of a state frame, as the SDK serializes it (`{ state, type }`). */
+const STATE_FRAME_END = '"type":"cf_agent_state"}';
+
 /** What an A2A watcher cares about: the order's status and what it waits on. */
 const watchKey = (s: State) => `${s.status}|${s.waits.map((w) => w.eventType).join(',')}`;
 
@@ -104,6 +113,49 @@ export class OrderAgent extends Agent<Env, State> {
   /** Browsers may read and call methods, never write state directly. */
   override validateStateChange(_next: State, source: Connection | 'server') {
     if (source !== 'server') throw new Error('Order state is read-only');
+  }
+
+  /** The newest state frame the SDK handed to `broadcast` that no socket has received yet. */
+  private held: { msg: string; without?: string[]; urgentKey: string } | null = null;
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
+  /** What the sockets last saw of the status and waits, which are never held back. */
+  private sentKey = '';
+  /** Timeline lines written since the last frame went out; the frame carries only a tail. */
+  private unsent = 0;
+
+  /**
+   * Coalesces state frames: each frame is the whole synced state, so only the newest of a burst
+   * needs to go. A status change, a wait opened, closed or voted on, a terminal status and a burst
+   * of timeline lines that could outgrow the frame's tail go out at once, so an approver or a
+   * cancel never waits on the window. Anything else follows within `BROADCAST_COALESCE_MS`.
+   */
+  override broadcast(msg: string | ArrayBuffer | ArrayBufferView, without?: string[]) {
+    if (typeof msg !== 'string' || !msg.endsWith(STATE_FRAME_END)) {
+      // Keep other messages in order with the state before them.
+      this.flushBroadcast();
+      return super.broadcast(msg, without);
+    }
+    const s = this.state;
+    const urgentKey = `${s.status}|${JSON.stringify(s.waits)}`;
+    this.held = { msg, without, urgentKey };
+    if (
+      TERMINAL_ORDER_STATUSES.includes(s.status) ||
+      urgentKey !== this.sentKey ||
+      this.unsent >= TIMELINE_BROADCAST / 2
+    )
+      return this.flushBroadcast();
+    this.heldTimer ??= setTimeout(() => this.flushBroadcast(), BROADCAST_COALESCE_MS);
+  }
+
+  private flushBroadcast() {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = null;
+    const h = this.held;
+    if (!h) return;
+    this.held = null;
+    this.sentKey = h.urgentKey;
+    this.unsent = 0;
+    super.broadcast(h.msg, h.without);
   }
 
   private patch(p: Partial<State>) {
@@ -140,6 +192,7 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   private appendTimeline(e: TimelineEntry) {
+    this.unsent++;
     // A keyed entry replaces its earlier row and moves to the end, as the broadcast tail does.
     this
       .sql`INSERT OR REPLACE INTO order_timeline (key, entry) VALUES (${e.key ?? null}, ${JSON.stringify(e)})`;
