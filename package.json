@@ -28,6 +28,8 @@
     "deploy": "pnpm --filter @commerceworker/catalog run deploy && pnpm --filter @commerceworker/delivery run deploy:catalog && pnpm --filter @commerceworker/engine run deploy && pnpm --filter @commerceworker/storefront run deploy && pnpm --filter @commerceworker/web run deploy",
     "test:fleet": "node --test scripts/*.test.ts",
     "test:toolkit": ".claude/scripts/toolkit-check.sh && .claude/hooks/tests/docs-hooks.test.sh && .claude/hooks/tests/guard-hooks.test.sh",
+    "sdk:pack": "node scripts/sdk-packages.ts pack",
+    "sdk:check": "node scripts/sdk-packages.ts check",
     "plugin:pack": "node scripts/plugin-pack.ts",
     "plugin:check": "node scripts/plugin-check.ts",
     "punchout:smoke": "node scripts/punchout-smoke.ts",

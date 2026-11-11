@@ -170,7 +170,7 @@
 ^packages/sdk/[a-z-]+/src/	content/guides/sdks docs/content/sdks.md	prose
 ^packages/sdk/(core|react-native)/src/image\.ts$|^packages/sdk/(web|vue)/src/index\.ts$	content/guides/delivering-assets packages/sdk/core/README.md	prose
 ^packages/cli/src/	content/guides/cli docs/content/developer-tooling.md packages/cli/README.md	prose
-^packages/cli/src/(commands|run)\.ts$	content/guides/agent-skills skills/building-on-contentworker/SKILL.md skills/modeling-content-with-contentworker/SKILL.md skills/migrating-to-contentworker/SKILL.md	prose
+^packages/cli/src/(commands|run)\.ts$	content/guides/agent-skills skills/building-on-commerceworker/SKILL.md skills/modeling-content-with-commerceworker/SKILL.md skills/migrating-to-commerceworker/SKILL.md	prose
 ^skills/	content/guides/agent-skills docs/content/developer-tooling.md	prose
 ^apps/studio/app/routes\.ts$	docs/content/admin-ui.md	prose
 ^packages/seed/src/	content/start/getting-started docs/content/development.md	prose

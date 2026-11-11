@@ -139,7 +139,7 @@ The docs site runs on its own: `pnpm docs:dev`.
 pnpm check-types && pnpm test && pnpm lint
 
 # The SDK as npm sees it: pack @commerceworker/sdk, then load and type-check every subpath
-node scripts/sdk-packages.ts pack && node scripts/sdk-packages.ts check
+pnpm sdk:pack && pnpm sdk:check
 
 # One package
 pnpm --filter @commerceworker/application test
