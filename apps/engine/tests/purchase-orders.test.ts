@@ -279,6 +279,10 @@ describe('following an order that needs approval', () => {
     expect((await reaches(poId, 'fulfilled')).status).toBe('fulfilled');
     watching = false;
     await watcher;
+    // The watcher's last poll can land just before the PO reached `fulfilled`, which this test has
+    // already seen through `reaches`, so record the final status once it has stopped.
+    const last = (await pos().get(ALL, poId))?.status;
+    if (last && seen.at(-1) !== last) seen.push(last);
     // Forward only, through the approval wait and the votes' outcome to the end. (`approved` and
     // `ordered` follow each other in one report, so a poll may or may not catch them.)
     const order: PoStatus[] = ['submitted', 'pending_approval', 'approved', 'ordered', 'fulfilled'];

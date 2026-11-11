@@ -614,9 +614,14 @@ describe('webhook receivers’ acknowledgements', () => {
       'GE*2*1~',
       'IEA*1*000000001~',
     ].join('');
-    engine.startOrderOnce
-      .mockResolvedValueOnce({ orderId: 'ord_1' })
-      .mockResolvedValueOnce({ orderId: 'ord_2', replayed: true });
+    // The route starts the POs at once and each awaits a real digest first, so they reach the
+    // engine in either order: answer by idempotency key, never by call order.
+    engine.startOrderOnce.mockImplementation(
+      async ({ idempotencyKey }: { idempotencyKey: string }) =>
+        idempotencyKey === 'order:edi:SENDERID:PO-1'
+          ? { orderId: 'ord_1' }
+          : { orderId: 'ord_2', replayed: true },
+    );
     const res = await handleApi(
       new Request('https://app.test/api/v1/channels/edi/850', {
         method: 'POST',

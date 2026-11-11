@@ -28,16 +28,22 @@ afterEach(() => {
   log = new InMemoryAuditLog();
   failing = false;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe('the audit trail', () => {
   it('seals each event onto the one before, with who, where and the detail', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    // listAudit newest-first sorts on the event's millisecond; two events in the same
+    // millisecond tie, so each gets its own clock reading.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_700_000_000_000);
     await audit(request, 'team.user_added', {
       actor: ada,
       target: 'ann@example.com',
       detail: { role: 'viewer' },
     });
+    vi.setSystemTime(1_700_000_001_000);
     await audit(request, 'flow.published', { actor: ada, target: 'f_web' });
     const [first, second] = log.events;
     expect(second?.prevHash).toBe(first?.hash);
