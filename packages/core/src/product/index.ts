@@ -4,6 +4,7 @@
  * the docs; kept out of the root export so the rest of CommerceWorker doesn't bundle it.
  */
 export * from './api';
+export * from './api-schemas';
 export * from './content';
 export * from './feed';
 export * from './inputs';

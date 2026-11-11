@@ -107,81 +107,33 @@ describe('OpenAPI operations', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  // The hand-written routes whose success response is still only a description. The SDK types
-  // their result `unknown`. This list may only shrink: type a route's response and delete it here.
-  const UNTYPED = [
-    'add_ucp_platform',
-    'cancel_catalog_feed',
-    'cancel_order',
-    'create_integration',
-    'create_webhook_subscription',
-    'decide_approval',
-    'delete_catalog_categories',
-    'delete_catalog_channel',
-    'delete_catalog_products',
-    'delete_catalog_type',
-    'delete_webhook_subscription',
-    'deliver_order_event',
-    'disable_plugin',
-    'discard_catalog_drafts',
-    'discard_catalog_edits',
-    'draft_catalog_product',
-    'erase_data_subject',
-    'export_data_subject',
-    'get_catalog_board',
-    'get_catalog_board_column',
-    'get_catalog_feed',
-    'get_catalog_product',
-    'get_catalog_product_sheet',
-    'get_order_state',
-    'get_plugin_usage',
-    'get_ucp',
-    'import_catalog_feed',
-    'list_audit_events',
-    'list_carts',
-    'list_catalog_feeds',
-    'list_flows',
-    'list_integrations',
-    'list_orders',
-    'list_plugins',
-    'list_webhook_deliveries',
-    'list_webhook_subscriptions',
-    'publish_catalog_edits',
-    'put_catalog_products',
-    'rebuild_catalog_gaps',
-    'receive_edi_850',
-    'receive_inbound_order',
-    'receive_order_event',
-    'receive_shopify_order',
-    'receive_stripe_webhook',
-    'reindex_catalog',
-    'resolve_catalog_alias',
-    'revoke_integration',
-    'revoke_ucp_platform',
-    'rotate_integration_secret',
-    'rotate_webhook_subscription_secret',
-    'save_catalog_drafts',
-    'stage_catalog_edits',
-    'submit_cart',
-    'upload_plugin',
-    'verify_audit_chain',
-  ];
-
   const typed = (op: Op) =>
     ['200', '201', '202'].some((c) => op.responses[c]?.content?.['application/json']?.schema);
 
-  it('gives every operation a typed success response, except the listed untyped routes', () => {
+  it('gives every operation a typed success response', () => {
     const untyped = operations.filter(({ op }) => !typed(op)).map(({ op }) => op.operationId);
-    expect(untyped.sort()).toEqual([...UNTYPED].sort());
+    expect(untyped).toEqual([]);
   });
 
-  it('keeps no stale entry in the untyped list', () => {
-    const byId = new Map(operations.map(({ op }) => [op.operationId, op]));
-    for (const id of UNTYPED) {
-      const op = byId.get(id);
-      expect(op, `${id} is not an operation`).toBeDefined();
-      expect(typed(op as Op), `${id} is typed now: remove it from UNTYPED`).toBe(false);
-    }
+  it('names every response schema it points to, and every component is used', () => {
+    const names = Object.keys(json.components.schemas);
+    const refs = new Set<string>();
+    const walk = (v: unknown) => {
+      if (Array.isArray(v)) return v.forEach(walk);
+      if (!v || typeof v !== 'object') return;
+      for (const [k, x] of Object.entries(v)) {
+        // A request body's own `#/$defs` (a product's recursive values) are not components.
+        if (k === '$ref' && typeof x === 'string') {
+          if (x.startsWith('#/components/schemas/'))
+            refs.add(x.slice('#/components/schemas/'.length));
+        } else walk(x);
+      }
+    };
+    walk(json.paths);
+    walk(json.components);
+    walk(json.webhooks);
+    for (const name of refs) expect(names, `${name} is not a component`).toContain(name);
+    for (const name of names) expect(refs.has(name), `${name} is never referenced`).toBe(true);
   });
 
   it('names a REST operation by its tool', () => {
@@ -229,9 +181,14 @@ describe('OpenAPI operations', () => {
       );
       for (const code of codes.filter((c) => /^4/.test(c))) {
         const schema = op.responses[code]?.content?.['application/json']?.schema;
-        // Erasure's refusal names the orders in the way, not an `error`.
+        // Erasure's refusal names the orders in the way, with its own schema; a signed event the order
+        // won't wait for, and a Stripe event to retry, answer with their result.
         if (route === '/api/v1/data-subjects/erase' && code === '409')
-          expect(schema).toHaveProperty('required', ['ok', 'reason', 'orders']);
+          expect(schema).toEqual({ $ref: '#/components/schemas/ErasureRefused' });
+        else if (route === '/api/v1/webhooks/events' && code === '409')
+          expect(schema).toEqual({ $ref: '#/components/schemas/SendEventResult' });
+        else if (route === '/api/v1/webhooks/stripe' && code === '409')
+          expect(schema).toEqual({ $ref: '#/components/schemas/PaymentEventResult' });
         else expect(schema, `${method} ${route} ${code}`).toEqual({ $ref: errorRef });
       }
     }

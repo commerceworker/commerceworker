@@ -185,8 +185,11 @@ explorer) are generated from the zod schemas the handlers validate with
 row, an entry of `OPERATION_IDS` for a hand-written route (`withOperationIds` refuses a route
 without one). A `REST_OPERATIONS` row's `200` is the JSON Schema of `TOOL_OUTPUTS[tool]`
 (`runRestOperation` returns the tool's value as it stands, which MCP sends as structured content);
-a few hand-written routes use core's zod schemas (product types, channels, categories, UCP
-settings), the rest keep prose. Event payloads are capped at 32 KiB
+every hand-written route's response is a zod schema in core, beside the type it describes
+(`api-schemas.ts`, `product/api-schemas.ts`, `webhook-schemas.ts`, `plugins.ts`…), named in `COMPONENTS` in
+`openapi.ts` so the document `$ref`s it and the generated SDK has a type for it (a test fails an
+operation with no typed `2xx`). `packages/core/tests/response-schemas.test.ts` holds each schema to its
+type, and the `rest-responses.test.ts` of web, engine and catalog to what they really answer. Event payloads are capped at 32 KiB
 (`MAX_EVENT_PAYLOAD_BYTES`, `packages/core/src/api.ts`); the OrderAgent's `deliver`, `decide` and
 `cancel` enforce the same bounds on the live socket as the REST schemas do.
 

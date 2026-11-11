@@ -195,7 +195,7 @@ export type AddUcpPlatformInput = {
   profileUrl: string;
 };
 
-export type AddUcpPlatformResult = unknown;
+export type AddUcpPlatformResult = UcpPlatformKey;
 
 /** Adjust a customer’s balance (Admin) (request) */
 export type AdjustCreditInput = {
@@ -310,7 +310,7 @@ export type CancelCatalogFeedInput = {
   id: string;
 };
 
-export type CancelCatalogFeedResult = unknown;
+export type CancelCatalogFeedResult = FeedResponse;
 
 /** Cancel an order and release everything it holds (request) */
 export type CancelOrderInput = {
@@ -318,7 +318,7 @@ export type CancelOrderInput = {
   reason?: string;
 };
 
-export type CancelOrderResult = unknown;
+export type CancelOrderResult = CancelResult;
 
 /** Cancel a purchase order (Operator) (request) */
 export type CancelPoInput = {
@@ -498,7 +498,7 @@ export type CreateIntegrationInput = {
   channel?: "web" | "mobile" | "pos" | "marketplace" | "email" | "edi" | "api" | "manual" | "schedule" | "agent" | null;
 };
 
-export type CreateIntegrationResult = unknown;
+export type CreateIntegrationResult = IntegrationSecret;
 
 /** Create a purchase order draft (Operator) (request) */
 export type CreatePoDraftInput = {
@@ -721,7 +721,7 @@ export type CreateWebhookSubscriptionInput = {
   events?: ("*" | "order.paid" | "order.invoiced" | "order.shipped" | "order.ready_for_pickup" | "order.delivered" | "order.refunded" | "order.payout_scheduled" | "order.completed" | "order.declined" | "order.cancelled" | "order.failed" | "cart.created" | "cart.submitted" | "cart.returned" | "cart.canceled" | "cart.expired")[];
 };
 
-export type CreateWebhookSubscriptionResult = unknown;
+export type CreateWebhookSubscriptionResult = SubscriptionSecret;
 
 /** Approve or reject an approval node (cast a vote) (request) */
 export type DecideApprovalInput = {
@@ -733,7 +733,7 @@ export type DecideApprovalInput = {
   onBehalfOf?: string;
 };
 
-export type DecideApprovalResult = unknown;
+export type DecideApprovalResult = DecisionResult;
 
 /** Decide several approvals (Approver) (request) */
 export type DecideApprovalsInput = {
@@ -799,14 +799,14 @@ export type DeleteCatalogCategoriesInput = {
   codes: string[];
 };
 
-export type DeleteCatalogCategoriesResult = unknown;
+export type DeleteCatalogCategoriesResult = CategoriesDeleted;
 
 /** Delete a channel and take down everything it published (admin) (request) */
 export type DeleteCatalogChannelInput = {
   code: string;
 };
 
-export type DeleteCatalogChannelResult = unknown;
+export type DeleteCatalogChannelResult = ChannelDeleted;
 
 /** Delete catalog products (operator) (request) */
 export type DeleteCatalogProductsInput = {
@@ -814,21 +814,21 @@ export type DeleteCatalogProductsInput = {
   urgent?: boolean;
 };
 
-export type DeleteCatalogProductsResult = unknown;
+export type DeleteCatalogProductsResult = WriteResults;
 
 /** Delete a product type, every version (operator) (request) */
 export type DeleteCatalogTypeInput = {
   code: string;
 };
 
-export type DeleteCatalogTypeResult = unknown;
+export type DeleteCatalogTypeResult = TypeDeleted;
 
 /** Delete a subscription (admin) (request) */
 export type DeleteWebhookSubscriptionInput = {
   id: string;
 };
 
-export type DeleteWebhookSubscriptionResult = unknown;
+export type DeleteWebhookSubscriptionResult = Ok;
 
 /** Deliver a business event to the node waiting for it (request) */
 export type DeliverOrderEventInput = {
@@ -837,14 +837,14 @@ export type DeliverOrderEventInput = {
   payload?: { [key: string]: unknown };
 };
 
-export type DeliverOrderEventResult = unknown;
+export type DeliverOrderEventResult = SendEventResult;
 
 /** Turn off a plugin installed from a file (admin) (request) */
 export type DisablePluginInput = {
   id: string;
 };
 
-export type DisablePluginResult = unknown;
+export type DisablePluginResult = PluginDisabled;
 
 /** Drop assistant drafts (operator) (request) */
 export type DiscardCatalogDraftsInput = {
@@ -862,7 +862,7 @@ export type DiscardCatalogDraftsInput = {
   })[];
 };
 
-export type DiscardCatalogDraftsResult = unknown;
+export type DiscardCatalogDraftsResult = Discarded;
 
 /** Drop staged edits (operator) (request) */
 export type DiscardCatalogEditsInput = {
@@ -880,7 +880,7 @@ export type DiscardCatalogEditsInput = {
   })[];
 };
 
-export type DiscardCatalogEditsResult = unknown;
+export type DiscardCatalogEditsResult = Discarded;
 
 /** Have the assistant draft a product's missing text (operator) (request) */
 export type DraftCatalogProductInput = {
@@ -897,7 +897,7 @@ export type DraftCatalogProductInput = {
   instruction?: string;
 };
 
-export type DraftCatalogProductResult = unknown;
+export type DraftCatalogProductResult = ProductDraftResult;
 
 /** Draft a business-rule plugin (Admin) (request) */
 export type DraftPluginInput = {
@@ -942,7 +942,7 @@ export type EraseDataSubjectInput = {
   email: string;
 };
 
-export type EraseDataSubjectResult = unknown;
+export type EraseDataSubjectResult = ErasureProgress;
 
 /** Expire a quote (Operator) (request) */
 export type ExpireQuoteInput = {
@@ -969,7 +969,7 @@ export type ExportDataSubjectInput = {
   email: string;
 };
 
-export type ExportDataSubjectResult = unknown;
+export type ExportDataSubjectResult = SubjectExport;
 
 /** Find products (Viewer) (request) */
 export type FindProductsInput = {
@@ -1002,7 +1002,7 @@ export type GetCartResult = {
 /** The product editor's board (request) */
 export type GetCatalogBoardInput = { [key: string]: unknown };
 
-export type GetCatalogBoardResult = unknown;
+export type GetCatalogBoardResult = BoardResponse;
 
 /** One board column's products, in key order (request) */
 export type GetCatalogBoardColumnInput = {
@@ -1012,28 +1012,28 @@ export type GetCatalogBoardColumnInput = {
   limit?: number;
 };
 
-export type GetCatalogBoardColumnResult = unknown;
+export type GetCatalogBoardColumnResult = BoardPage;
 
 /** A feed's progress and result (request) */
 export type GetCatalogFeedInput = {
   id: string;
 };
 
-export type GetCatalogFeedResult = unknown;
+export type GetCatalogFeedResult = FeedResponse;
 
 /** A stored catalog product (request) */
 export type GetCatalogProductInput = {
   key: string;
 };
 
-export type GetCatalogProductResult = unknown;
+export type GetCatalogProductResult = ProductResponse;
 
 /** A product's editor sheet (request) */
 export type GetCatalogProductSheetInput = {
   key: string;
 };
 
-export type GetCatalogProductSheetResult = unknown;
+export type GetCatalogProductSheetResult = SheetResponse;
 
 /** Get a company (Operator) (request) */
 export type GetCompanyInput = {
@@ -1121,14 +1121,14 @@ export type GetOrderStateInput = {
   id: string;
 };
 
-export type GetOrderStateResult = unknown;
+export type GetOrderStateResult = OrderState;
 
 /** What uses a plugin: check this is empty before removing it (admin) (request) */
 export type GetPluginUsageInput = {
   id: string;
 };
 
-export type GetPluginUsageResult = unknown;
+export type GetPluginUsageResult = PluginUsage;
 
 /** Get a price book (Viewer) (request) */
 export type GetPriceBookInput = {
@@ -1252,7 +1252,7 @@ export type GetQuoteResult = {
 /** Agentic checkout: its settings and the AI shopping platforms let in (admin) (request) */
 export type GetUcpInput = { [key: string]: unknown };
 
-export type GetUcpResult = unknown;
+export type GetUcpResult = UcpAdmin;
 
 /** Import a feed file (operator) (request) */
 export type ImportCatalogFeedInput = {
@@ -1262,7 +1262,7 @@ export type ImportCatalogFeedInput = {
   name?: string;
 };
 
-export type ImportCatalogFeedResult = unknown;
+export type ImportCatalogFeedResult = FeedResponse;
 
 /** Audit log, newest first; or with `after`, oldest first for export (admin) (request) */
 export type ListAuditEventsInput = {
@@ -1272,7 +1272,7 @@ export type ListAuditEventsInput = {
   limit?: number;
 };
 
-export type ListAuditEventsResult = unknown;
+export type ListAuditEventsResult = AuditEvents;
 
 /** List a budget’s spend (Viewer) (request) */
 export type ListBudgetSpendInput = {
@@ -1352,7 +1352,7 @@ export type ListCartsInput = {
   limit?: number;
 };
 
-export type ListCartsResult = unknown;
+export type ListCartsResult = CartRows;
 
 /** Catalog categories (request) */
 export type ListCatalogCategoriesInput = { [key: string]: unknown };
@@ -1385,7 +1385,7 @@ export type ListCatalogFeedsInput = {
   limit?: number;
 };
 
-export type ListCatalogFeedsResult = unknown;
+export type ListCatalogFeedsResult = FeedList;
 
 /** Product types, latest version of each (request) */
 export type ListCatalogTypesInput = { [key: string]: unknown };
@@ -1481,7 +1481,7 @@ export type ListCompanyMembersResult = {
 /** List flows (request) */
 export type ListFlowsInput = { [key: string]: unknown };
 
-export type ListFlowsResult = unknown;
+export type ListFlowsResult = FlowList;
 
 /** List exchange rates (Operator) (request) */
 export type ListFxRatesInput = { [key: string]: unknown };
@@ -1504,7 +1504,7 @@ export type ListFxRatesResult = {
 /** List integrations, the signing keys for external systems (admin) (request) */
 export type ListIntegrationsInput = { [key: string]: unknown };
 
-export type ListIntegrationsResult = unknown;
+export type ListIntegrationsResult = Integrations;
 
 /** List orders (request) */
 export type ListOrdersInput = {
@@ -1516,12 +1516,12 @@ export type ListOrdersInput = {
   cursor?: string;
 };
 
-export type ListOrdersResult = unknown;
+export type ListOrdersResult = OrderPage;
 
 /** The installed plugins, with their node types, the events they receive and whether they answer (admin) (request) */
 export type ListPluginsInput = { [key: string]: unknown };
 
-export type ListPluginsResult = unknown;
+export type ListPluginsResult = PluginList;
 
 /** List price books (Viewer) (request) */
 export type ListPriceBooksInput = {
@@ -1670,12 +1670,12 @@ export type ListWebhookDeliveriesInput = {
   id: string;
 };
 
-export type ListWebhookDeliveriesResult = unknown;
+export type ListWebhookDeliveriesResult = Deliveries;
 
 /** List webhook subscriptions (admin) (request) */
 export type ListWebhookSubscriptionsInput = { [key: string]: unknown };
 
-export type ListWebhookSubscriptionsResult = unknown;
+export type ListWebhookSubscriptionsResult = Subscriptions;
 
 /** Needs attention (Viewer) (request) */
 export type NeedsAttentionInput = { [key: string]: unknown };
@@ -1761,7 +1761,7 @@ export type PublishCatalogEditsInput = {
   urgent?: boolean;
 };
 
-export type PublishCatalogEditsResult = unknown;
+export type PublishCatalogEditsResult = PublishResults;
 
 /** Publish a flow (Operator) (request) */
 export type PublishFlowInput = {
@@ -1920,7 +1920,7 @@ export type PutCatalogProductsInput = {
 
 export type PutCatalogProductsInputSchema0 = string | number | boolean | null | PutCatalogProductsInputSchema0[] | { [key: string]: PutCatalogProductsInputSchema0 };
 
-export type PutCatalogProductsResult = unknown;
+export type PutCatalogProductsResult = WriteResults;
 
 /** Add a product type, or its next version (operator) (request) */
 export type PutCatalogTypeInput = {
@@ -2094,7 +2094,7 @@ export type PutPriceBookEntriesResult = {
 /** Recount every product's content gaps (admin) (request) */
 export type RebuildCatalogGapsInput = { [key: string]: unknown };
 
-export type RebuildCatalogGapsResult = unknown;
+export type RebuildCatalogGapsResult = GapsRebuilt;
 
 /** EDI X12 850 purchase orders (operator) (request) */
 export type ReceiveEdi850Input = {
@@ -2102,12 +2102,12 @@ export type ReceiveEdi850Input = {
   contentType?: "application/edi-x12" | "text/plain";
 };
 
-export type ReceiveEdi850Result = unknown;
+export type ReceiveEdi850Result = EdiInterchangeResult;
 
 /** Republish every product (admin) (request) */
 export type ReindexCatalogInput = { [key: string]: unknown };
 
-export type ReindexCatalogResult = unknown;
+export type ReindexCatalogResult = Reindexed;
 
 /** Remove a company member (Operator) (request) */
 export type RemoveCompanyMemberInput = {
@@ -2135,7 +2135,7 @@ export type ResolveCatalogAliasInput = {
   alias: string;
 };
 
-export type ResolveCatalogAliasResult = unknown;
+export type ResolveCatalogAliasResult = AliasResponse;
 
 /** Restart an order (Operator) (request) */
 export type RestartOrderInput = {
@@ -2215,7 +2215,7 @@ export type RevokeIntegrationInput = {
   id: string;
 };
 
-export type RevokeIntegrationResult = unknown;
+export type RevokeIntegrationResult = Ok;
 
 /** Revoke a tax exemption certificate (Operator) (request) */
 export type RevokeTaxCertificateInput = {
@@ -2243,21 +2243,21 @@ export type RevokeUcpPlatformInput = {
   id: string;
 };
 
-export type RevokeUcpPlatformResult = unknown;
+export type RevokeUcpPlatformResult = Ok;
 
 /** Rotate an integration secret (admin) (request) */
 export type RotateIntegrationSecretInput = {
   id: string;
 };
 
-export type RotateIntegrationSecretResult = unknown;
+export type RotateIntegrationSecretResult = IntegrationSecret;
 
 /** Rotate a subscription signing secret (admin) (request) */
 export type RotateWebhookSubscriptionSecretInput = {
   id: string;
 };
 
-export type RotateWebhookSubscriptionSecretResult = unknown;
+export type RotateWebhookSubscriptionSecretResult = SubscriptionSecret;
 
 /** Run the stock review (Operator) (request) */
 export type RunStockReviewInput = { [key: string]: unknown };
@@ -2295,7 +2295,7 @@ export type SaveCatalogDraftsInput = {
   })[];
 };
 
-export type SaveCatalogDraftsResult = unknown;
+export type SaveCatalogDraftsResult = EditResults;
 
 /** Send a quote (Operator) (request) */
 export type SendQuoteInput = {
@@ -2501,7 +2501,7 @@ export type StageCatalogEditsInput = {
   })[];
 };
 
-export type StageCatalogEditsResult = unknown;
+export type StageCatalogEditsResult = EditResults;
 
 /** Start an order (request) */
 export type StartOrderInput = {
@@ -2553,7 +2553,7 @@ export type SubmitCartInput = {
   cartVersion?: number;
 };
 
-export type SubmitCartResult = unknown;
+export type SubmitCartResult = CartSubmitted;
 
 /** Submit a purchase order (Operator) (request) */
 export type SubmitPoInput = {
@@ -2767,14 +2767,14 @@ export type UploadPluginInput = {
   signature: string;
 };
 
-export type UploadPluginResult = unknown;
+export type UploadPluginResult = PluginInstallView;
 
 /** Check the audit log's hash chain (admin) (request) */
 export type VerifyAuditChainInput = {
   after?: number;
 };
 
-export type VerifyAuditChainResult = unknown;
+export type VerifyAuditChainResult = AuditChainCheck;
 
 /** Verify a tax exemption certificate (Operator) (request) */
 export type VerifyTaxCertificateInput = {
@@ -2801,6 +2801,12 @@ export type VerifyTaxCertificateResult = {
 export type WhoamiInput = { [key: string]: unknown };
 
 export type WhoamiResult = Whoami;
+
+export type UcpPlatformKey = {
+  platform: UcpPlatform;
+  /** The platform’s API key. It is shown only once */
+  key: string;
+};
 
 export type Cart = {
   id: string;
@@ -2843,9 +2849,346 @@ export type Cart = {
   version: number;
 };
 
+export type FeedResponse = {
+  feed: FeedStatus;
+};
+
+export type CancelResult = {
+  ok: true;
+};
+
+export type IntegrationSecret = {
+  integration: IntegrationView;
+  /** The signing secret, `whsec_…`. It is shown only once */
+  secret: string;
+};
+
+export type SubscriptionSecret = {
+  subscription: SubscriptionView;
+  /** The signing secret, `whsec_…`. It is shown only once */
+  secret: string;
+};
+
+export type DecisionResult = {
+  ok: true;
+  /** `recorded` when more votes are needed and the order still waits, else `approved` or `rejected` */
+  outcome: "recorded" | "approved" | "rejected";
+  /** The approvals so far of those needed, like "1 of 2" */
+  tally: string;
+};
+
+export type CategoriesDeleted = {
+  ok: true;
+  /** The codes of the categories removed */
+  deleted: string[];
+};
+
+export type ChannelDeleted = {
+  ok: true;
+  code: string;
+  /** How many published documents were taken down */
+  unpublished: number;
+};
+
+export type WriteResults = {
+  results: WriteResult[];
+};
+
+export type TypeDeleted = {
+  ok: true;
+  code: string;
+  /** How many versions were removed */
+  versions: number;
+};
+
+export type Ok = {
+  ok: true;
+};
+
+export type SendEventResult = {
+  /** A step that was waiting took it */
+  delivered: boolean;
+  /** No step waits for it yet; the order holds it until one does */
+  held?: true;
+  /** A resend of one already given to a step */
+  duplicate?: true;
+  /** The step that took it */
+  nodeId?: string;
+};
+
+export type PluginDisabled = {
+  id: string;
+  status: "disabled";
+};
+
+export type Discarded = {
+  /** How many were dropped */
+  discarded: number;
+};
+
+export type ProductDraftResult = {
+  key: string;
+  /** The product’s title, in the first locale it has one */
+  title: string;
+  drafted: {
+    ref: FieldRef;
+    value: string;
+  }[];
+  refused: {
+    ref: FieldRef;
+    issues: string[];
+  }[];
+  /** Gaps left for another request */
+  more: number;
+  /** The model that wrote them; null for the offline heuristic */
+  model: string | null;
+};
+
+export type ErasureProgress = {
+  ok: true;
+  /** False when more orders are left: call again to continue */
+  done: boolean;
+  orders: number;
+  customers: number;
+  documents: number;
+  messages: number;
+  inboundEmails: number;
+  carts: number;
+  taxCertificates: number;
+  addresses: number;
+  companyMembers: number;
+  purchaseOrders: number;
+  quotes: number;
+  /** The address is also a team member’s; remove them on the team page */
+  teamMember: boolean;
+};
+
+export type SubjectExport = {
+  email: string;
+  /** Epoch ms */
+  exportedAt: number;
+  customers: { [key: string]: unknown }[];
+  /** Up to 500; `truncated` says when there were more */
+  orders: { [key: string]: unknown }[];
+  messages: { [key: string]: unknown }[];
+  inboundEmails: { [key: string]: unknown }[];
+  documents: {
+    key: string;
+    kind: string;
+    contentType: string;
+    createdAt: number;
+  }[];
+  /** Agentic checkout sessions they were the buyer of */
+  checkouts: { [key: string]: unknown }[];
+  /** External carts they were the buyer of, and their accounts’ staff carts that hold a ship-to */
+  carts: { [key: string]: unknown }[];
+  /** Each file’s key, not the file */
+  taxCertificates: { [key: string]: unknown }[];
+  addresses: { [key: string]: unknown }[];
+  companies: { [key: string]: unknown }[];
+  companyMembers: { [key: string]: unknown }[];
+  purchaseOrders: { [key: string]: unknown }[];
+  quotes: { [key: string]: unknown }[];
+  /** There were more orders than one export holds */
+  truncated: boolean;
+  /** The address also belongs to a person on your team */
+  teamMember: boolean;
+};
+
+export type BoardResponse = {
+  board: BoardSummary;
+};
+
+export type BoardPage = {
+  items: BoardCard[];
+  /** Pass it back for the next page; null on the last */
+  cursor: string | null;
+};
+
+export type ProductResponse = {
+  product: Product;
+};
+
+export type SheetResponse = {
+  sheet: ProductSheet;
+};
+
+export type OrderState = {
+  orderId: string | null;
+  status: "queued" | "running" | "waiting" | "completed" | "declined" | "cancelled" | "failed" | "rolled_back";
+  order: Order | null;
+  /** The flow version the order is pinned to */
+  flow: FlowVersion | null;
+  /** Each node’s run, by node id */
+  nodes: { [key: string]: NodeRun };
+  edges: { [key: string]: "pending" | "active" | "inactive" };
+  waits: PendingWait[];
+  vars: { [key: string]: unknown };
+  timeline: TimelineEntry[];
+  /** The Workflow instance currently driving the order */
+  instanceId: string | null;
+  /** 1 for the first run; increments on each continue-as-new */
+  generation: number;
+  rollback: {
+    outcome: "complete" | "failed";
+    error: string | null;
+  } | null;
+  /** Why it was cancelled or failed */
+  reason?: string;
+  updatedAt: number;
+  /** The sequence of the last Workflow report the agent applied. It rises with each, within a `generation` (a new one restarts it), so of two states of an order the higher `seq` of the same `generation` is the newer: drop an update whose `seq` is lower */
+  seq?: number;
+};
+
+export type PluginUsage = {
+  /** Published flows that use its nodes or name it as a provider */
+  flows: {
+    id: string;
+    version: number;
+  }[];
+  /** Running orders on a flow version that does */
+  orders: {
+    id: string;
+    flowId: string;
+    version: number;
+  }[];
+  /** Shipping labels it could not void yet, retried daily */
+  labels: {
+    id: string;
+    orderId: string;
+  }[];
+};
+
+export type UcpAdmin = {
+  settings: UcpSettings;
+  platforms: UcpPlatform[];
+};
+
+export type AuditEvents = {
+  events: AuditEvent[];
+};
+
+export type CartRows = {
+  carts: CartRow[];
+};
+
+export type FeedList = {
+  feeds: FeedStatus[];
+};
+
+export type FlowList = {
+  flows: FlowSummary[];
+};
+
+export type Integrations = {
+  integrations: IntegrationView[];
+};
+
+export type OrderPage = {
+  orders: OrderRow[];
+  /** Pass it as `cursor` for the next page; null on the last page */
+  nextCursor: string | null;
+};
+
+export type PluginList = {
+  plugins: PluginSummary[];
+};
+
+export type Deliveries = {
+  deliveries: DeliveryRecord[];
+};
+
+export type Subscriptions = {
+  subscriptions: SubscriptionView[];
+};
+
+export type PublishResults = {
+  /** Send it again to get this answer without publishing twice */
+  requestId: string;
+  results: PublishResult[];
+};
+
+export type GapsRebuilt = {
+  /** How many products were read */
+  products: number;
+};
+
+export type EdiInterchangeResult = {
+  /** The ISA sender id */
+  sender: string;
+  results: EdiResult[];
+  /** The X12 997 text */
+  functionalAck: string;
+};
+
+export type Reindexed = {
+  /** How many products were queued for republishing */
+  queued: number;
+};
+
+export type AliasResponse = {
+  /** The key of the product that holds the alias */
+  key: string;
+};
+
+export type EditResults = {
+  results: EditResult[];
+};
+
 export type StartOrderResult = {
   orderId: string;
+  /** True when the Idempotency-Key had started this order */
   replayed?: boolean;
+};
+
+export type CartSubmitted = {
+  orderId: string;
+  cartId: string;
+};
+
+export type PluginInstallView = {
+  id: string;
+  /** The bundle’s SHA-256 */
+  sha: string;
+  version: string;
+  publisher: string;
+  status: "pending" | "active" | "disabled" | "superseded" | "uninstalled";
+  personalDataGranted: boolean;
+  uploadedBy: string;
+  uploadedAt: number;
+  approvedBy: string | null;
+  approvedAt: number | null;
+  /** The manifest it was signed with */
+  manifest: PluginManifest;
+  /** Never a value: whether each declared secret is set */
+  secrets: {
+    name: string;
+    set: boolean;
+  }[];
+  /** An assistant draft’s: what the admin asked for */
+  request: string | null;
+  /** An assistant draft’s test cases */
+  cases: PluginCaseResult[] | null;
+  /** An assistant draft’s rule code, to review */
+  code: string | null;
+};
+
+export type AuditChainCheck = {
+  ok: true;
+  checked: number;
+  /** The last event checked */
+  last: {
+    seq: number;
+    hash: string;
+  } | null;
+  /** Pass it as `after` to continue; absent when the whole chain was checked */
+  next?: number;
+} | {
+  ok: false;
+  checked: number;
+  /** The `seq` of the first event that fails */
+  brokenAt: number;
+  reason: string;
 };
 
 export type Whoami = {
@@ -2866,6 +3209,717 @@ export type Whoami = {
     label?: string;
   } & { [key: string]: unknown };
 } & { [key: string]: unknown };
+
+export type UcpPlatform = {
+  id: string;
+  name: string;
+  /** The UCP profile the platform must name in `UCP-Agent` */
+  profileUrl: string;
+  /** The key’s first characters, to tell keys apart */
+  keyPrefix: string;
+  createdAt: number;
+  createdBy: string | null;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+};
+
+export type FeedStatus = {
+  id: string;
+  name: string;
+  format: "csv" | "ndjson";
+  state: "queued" | "splitting" | "applying" | "done" | "failed" | "cancelled";
+  by: string;
+  createdAt: number;
+  finishedAt?: number;
+  /** Rows read from the file */
+  rows: number;
+  /** Parts the rows were split into */
+  parts: number;
+  /** Parts applied so far */
+  partsDone: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  rejected: number;
+  /** The first rejected rows, with why */
+  errors: {
+    row: number;
+    key?: string;
+    message: string;
+  }[];
+  /** Why the feed failed as a whole, when `state` is `failed` */
+  failure?: string;
+  /** Who cancelled it, when `state` is `cancelled` */
+  cancelledBy?: string;
+};
+
+export type IntegrationView = {
+  id: string;
+  name: string;
+  /** The events it may deliver; `*` is any */
+  events: string[];
+  /** Whether it may start orders */
+  startOrders: boolean;
+  /** The flows an order may name; `*` is any */
+  flows: string[];
+  /** The one channel it may reach, if any */
+  channel: "web" | "mobile" | "pos" | "marketplace" | "email" | "edi" | "api" | "manual" | "schedule" | "agent" | null;
+  /** Epoch ms */
+  createdAt: number;
+  createdBy: string | null;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+  /** When the secret before a rotation stops working; null when none is */
+  previousExpiresAt: number | null;
+};
+
+export type SubscriptionView = {
+  id: string;
+  url: string;
+  /** The events it takes; `*` is every one */
+  events: string[];
+  active: boolean;
+  /** Epoch ms */
+  createdAt: number;
+  /** When the secret before a rotation stops signing; null when none is */
+  previousExpiresAt: number | null;
+};
+
+export type WriteResult = {
+  key: string;
+  status: "created" | "updated" | "unchanged" | "deleted" | "rejected";
+  version?: number;
+  /** Why it was `rejected` */
+  issues?: Issue[];
+};
+
+export type FieldRef = {
+  field: "title" | "description" | "slug" | "status" | "attribute" | "mediaAlt";
+  /** `attribute` only: the attribute’s code */
+  code?: string;
+  /** `mediaAlt` only: the image’s src */
+  src?: string;
+  /** Every field but `status`, e.g. fr-CA */
+  locale?: string;
+};
+
+export type BoardSummary = {
+  /** Products in each column */
+  columns: { [key: string]: number };
+  /** Products in the Gaps column by group; each product counts once */
+  gapGroups: { [key: string]: number };
+  /** Gaps of each kind, and how many products have one */
+  gapsByKind: { [key: string]: {
+    gaps: number;
+    products: number;
+  } };
+  /** The most recent finished feed */
+  lastFeed: FeedStatus | null;
+  /** A feed still running */
+  runningFeed: FeedStatus | null;
+  /** False until every product stored before the gap index existed has been counted */
+  indexBuilt: boolean;
+};
+
+export type BoardCard = {
+  key: string;
+  /** The product’s title in any locale, the rejected row’s, or the key */
+  title: string;
+  column: "gaps" | "drafted" | "staged" | "published";
+  /** Its gaps by kind */
+  kinds: { [key: string]: number };
+  rejection: Rejection | null;
+  /** The locales it lacks text in, sorted */
+  locales: string[];
+  /** Edits staged for it, in any column */
+  staged: number;
+  /** Assistant drafts waiting for review, in any column */
+  drafts: number;
+  /** Why its staged edits did not publish last time */
+  failure: string | null;
+  /** When it joined this column */
+  at: number;
+};
+
+export type Product = {
+  key: string;
+  status: "draft" | "active" | "archived";
+  title: { [key: string]: string };
+  slug?: { [key: string]: string };
+  description?: { [key: string]: string };
+  brand?: string;
+  categories: string[];
+  primaryCategory?: string;
+  media: {
+    src: string;
+    alt?: { [key: string]: string };
+    width?: number;
+    height?: number;
+    focus?: [number, number];
+  }[];
+  attributes: { [key: string]: Json };
+  variants: ({
+    sku: string;
+    status: "draft" | "active" | "archived";
+    gtin?: string;
+    mpn?: string;
+    attributes: { [key: string]: Json };
+    prices?: { [key: string]: {
+      amount: number;
+      currency: string;
+    } };
+    media?: {
+      src: string;
+      alt?: { [key: string]: string };
+      width?: number;
+      height?: number;
+      focus?: [number, number];
+    }[];
+    weightKg?: number;
+    dimensionsCm?: {
+      length: number;
+      width: number;
+      height: number;
+    };
+  })[];
+  channels: { [key: string]: {
+    visible: boolean;
+    price?: {
+      amount: number;
+      currency: string;
+    };
+    compareAt?: {
+      amount: number;
+      currency: string;
+    };
+  } };
+  extra?: { [key: string]: Json };
+  type: string;
+  typeVersion: number;
+  version: number;
+  hash: string;
+  updatedAt: number;
+};
+
+export type ProductSheet = {
+  product: Product;
+  feed: ProductData;
+  overrides: FieldOverride[];
+  staged: StagedEdit[];
+  drafts: Draft[];
+  gaps: Gap[];
+  rejection: Rejection | null;
+  /** Newest first */
+  revisions: Revision[];
+};
+
+export type Order = {
+  model: "b2b" | "b2c" | "d2c" | "marketplace" | "subscription" | "procurement" | "replenishment";
+  channel: "web" | "mobile" | "pos" | "marketplace" | "email" | "edi" | "api" | "manual" | "schedule" | "agent";
+  externalId?: string;
+  title?: string;
+  customerId?: string;
+  currency: string;
+  lines: {
+    sku: string;
+    name?: string;
+    qty: number;
+    unitPrice?: number;
+    sellerId?: string;
+    locationId?: string;
+  }[];
+  contact?: {
+    email: string;
+    name?: string;
+    phone?: string;
+  };
+  fulfillment?: {
+    method: "ship" | "pickup" | "carry_out" | "digital";
+    locationId?: string;
+  };
+  shippingOption?: string;
+  payment?: {
+    provider: "stripe" | "external";
+    intentId?: string;
+    paymentMethodId?: string;
+    stripeCustomerId?: string;
+    reference?: string;
+  };
+  documentText?: string;
+  documentKey?: string;
+  meta: { [key: string]: unknown };
+  id: string;
+  /** Epoch ms */
+  createdAt: number;
+  /** Sum of the priced lines */
+  subtotal: number;
+  /** Shipping charged by a shipping-rate node; 0 when none ran */
+  shipping: number;
+  /** Tax on the subtotal, plus shipping when the tax node taxes it */
+  tax: number;
+  /** subtotal + shipping + tax */
+  total: number;
+  /** The rate the tax node applied */
+  taxRate?: number;
+  /** Whether the tax node taxed shipping */
+  taxShipping?: boolean;
+  /** Units of the order currency per one unit of the base currency, fixed when priced */
+  fxRate?: number;
+  /** total in the base currency */
+  baseTotal?: number;
+};
+
+export type FlowVersion = {
+  nodes: {
+    id: string;
+    type: string;
+    label: string;
+    config: { [key: string]: unknown };
+    position: {
+      x: number;
+      y: number;
+    };
+    retries?: number;
+    timeout?: string;
+  }[];
+  edges: ({
+    id: string;
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  })[];
+  id: string;
+  name: string;
+  description: string;
+  model: "b2b" | "b2c" | "d2c" | "marketplace" | "subscription" | "procurement" | "replenishment";
+  channels: ("web" | "mobile" | "pos" | "marketplace" | "email" | "edi" | "api" | "manual" | "schedule" | "agent")[];
+  version: number;
+  /** Epoch ms */
+  publishedAt: number;
+};
+
+export type NodeRun = {
+  status: "pending" | "running" | "waiting" | "succeeded" | "failed" | "skipped" | "rolled_back";
+  /** How many times the node has started */
+  runs: number;
+  /** One line for the node card, e.g. "Reserved 3 lines" */
+  summary?: string;
+  output?: unknown;
+  error?: string;
+  /** The output branches it chose */
+  branches?: string[];
+  startedAt?: number;
+  endedAt?: number;
+};
+
+export type PendingWait = {
+  nodeId: string;
+  /** The Workflow event type that resumes this wait */
+  eventType: string;
+  kind: "approval" | "event";
+  title: string;
+  /** For event waits, the business event name */
+  event?: string;
+  amount?: number;
+  assignee?: string;
+  /** For approval waits: who may vote and how many votes decide it */
+  approval?: {
+    /** The approvers as the flow wrote them */
+    approvers: string;
+    mode: "any" | "all" | "majority" | "quorum";
+    quorum?: number;
+    majorityPercent?: number;
+    companyId?: string;
+    /** The ids who may vote; null when any staff with the role may */
+    eligible: string[] | null;
+  };
+  deadline?: number;
+  since: number;
+};
+
+export type TimelineEntry = {
+  at: number;
+  nodeId?: string;
+  kind: "node" | "order" | "event" | "approval" | "ai" | "rollback" | "chat";
+  message: string;
+  data?: unknown;
+  /** Dedupe key: a repeat with the same key replaces */
+  key?: string;
+};
+
+export type UcpSettings = {
+  checkoutFlowId: string | null;
+  links: {
+    type: string;
+    url: string;
+    title?: string;
+  }[];
+  orderUrl: string | null;
+};
+
+export type AuditEvent = {
+  id: string;
+  /** Epoch ms */
+  at: number;
+  /** e.g. `order.started` */
+  action: string;
+  /** Who acted: an email, or a machine’s name */
+  actor: string | null;
+  actorId: string | null;
+  actorKind: string | null;
+  target: string | null;
+  detail: { [key: string]: unknown } | null;
+  ip: string | null;
+  /** Its place in the hash chain */
+  seq: number | null;
+  prevHash: string | null;
+  hash: string | null;
+};
+
+export type CartRow = {
+  id: string;
+  title: string;
+  status: "open" | "locked" | "submitted" | "returned" | "canceled";
+  /** The flow that prices it and runs its order */
+  flowId: string;
+  customerId: string | null;
+  /** The order submitting it started */
+  orderId: string | null;
+  createdBy: string;
+  /** Epoch ms */
+  createdAt: number;
+  /** Epoch ms */
+  updatedAt: number;
+};
+
+export type FlowSummary = {
+  id: string;
+  name: string;
+  description: string;
+  model: "b2b" | "b2c" | "d2c" | "marketplace" | "subscription" | "procurement" | "replenishment";
+  channels: ("web" | "mobile" | "pos" | "marketplace" | "email" | "edi" | "api" | "manual" | "schedule" | "agent")[];
+  /** Null while it has never been published */
+  publishedVersion: number | null;
+  /** Published, and the draft has changed since */
+  hasUnpublishedChanges: boolean;
+  /** Epoch ms */
+  updatedAt: number;
+  nodeCount: number;
+};
+
+export type OrderRow = {
+  id: string;
+  model: "b2b" | "b2c" | "d2c" | "marketplace" | "subscription" | "procurement" | "replenishment";
+  channel: "web" | "mobile" | "pos" | "marketplace" | "email" | "edi" | "api" | "manual" | "schedule" | "agent";
+  /** The order’s id in the channel it came from */
+  externalId: string | null;
+  contactEmail: string | null;
+  status: "queued" | "running" | "waiting" | "completed" | "declined" | "cancelled" | "failed" | "rolled_back";
+  title: string;
+  flowId: string;
+  flowVersion: number;
+  /** Null for a recorded order that has no run */
+  instanceId: string | null;
+  generation: number;
+  customerId: string | null;
+  currency: string;
+  total: number;
+  waitingOn: string | null;
+  /** The steps holding its open waits, joined with · */
+  waitingAt: string | null;
+  waitingSince: number | null;
+  /** When the soonest open wait times out */
+  waitingDue: number | null;
+  /** What the open waits are on: `person:<role>`, `event:<name>` or `timer` */
+  waitingFor: string | null;
+  /** The steps it failed or stopped at */
+  stoppedAt: string | null;
+  reason: string | null;
+  createdAt: number;
+  updatedAt: number;
+  /** The `Idempotency-Key` that started it, if the caller sent one */
+  idempotencyKey: string | null;
+  /** Units of its currency per unit of the base currency when it started */
+  fxRate: number;
+  startedBy: string | null;
+  erasedAt: number | null;
+};
+
+export type PluginSummary = {
+  id: string;
+  /** `worker` (its own Worker) or `sandboxed` (loaded by the engine) */
+  runtime: "worker" | "sandboxed";
+  /** `deployment` (installed with the workspace) or `installed` (from a file, by an admin) */
+  source: "deployment" | "installed";
+  /** Null for a plugin whose manifest was refused */
+  name: string | null;
+  /** Null for a plugin whose manifest was refused */
+  version: string | null;
+  /** The node types it adds */
+  nodes: string[];
+  /** The outbound events it receives */
+  events: string[];
+  /** What it can do behind built-in nodes (shipping.rates, shipping.labels, tax, address) */
+  provides: ("shipping.rates" | "shipping.labels" | "tax" | "address")[];
+  /** Whether it answered just now */
+  healthy: boolean;
+  /** Why it did not */
+  error?: string;
+};
+
+export type DeliveryRecord = {
+  id: string;
+  subscriptionId: string;
+  /** The order (or cart) the event is about */
+  orderId: string;
+  event: string;
+  /** The `OrderEvent` or `CartEvent` that was sent */
+  payload: unknown;
+  /** `pending`, `delivered` or `failed` */
+  status: string;
+  attempts: number;
+  /** The receiver’s last HTTP status */
+  responseStatus: number | null;
+  lastError: string | null;
+  createdAt: number;
+  deliveredAt: number | null;
+};
+
+export type PublishResult = {
+  key: string;
+  status: "published" | "failed" | "unchanged";
+  version?: number;
+  /** Why it failed; the edits stay staged */
+  issues?: string[];
+};
+
+export type EdiResult = {
+  /** The transaction set control number */
+  control: string;
+  poNumber?: string;
+  /** The HTTP status an order of its own would have answered */
+  status: number;
+  orderId?: string;
+  flowId?: string;
+  replayed?: boolean;
+  /** Why it could not be taken */
+  error?: string;
+};
+
+export type EditResult = {
+  key: string;
+  ref: FieldRef;
+  ok: true;
+} | {
+  key: string;
+  ref: FieldRef;
+  ok: false;
+  issues: string[];
+};
+
+export type PluginManifest = {
+  apiVersion: 1;
+  id: string;
+  name: string;
+  version: string;
+  nodes: ({
+    type: string;
+    category: "commerce" | "control" | "ai";
+    label: string;
+    description: string;
+    icon: string;
+    fields: ({
+      key: string;
+      label: string;
+      kind: "text" | "textarea" | "number" | "boolean" | "select" | "duration" | "logic" | "json" | "list";
+      hint?: string;
+      required?: boolean;
+      options?: string[];
+      default?: unknown;
+      jsonSchema?: { [key: string]: unknown };
+    })[];
+    outputs: string[];
+    rollback?: boolean;
+    retries?: number;
+  })[];
+  events: ("*" | "order.paid" | "order.invoiced" | "order.shipped" | "order.ready_for_pickup" | "order.delivered" | "order.refunded" | "order.payout_scheduled" | "order.completed" | "order.declined" | "order.cancelled" | "order.failed" | "cart.created" | "cart.submitted" | "cart.returned" | "cart.canceled" | "cart.expired")[];
+  nav: {
+    label: string;
+    path: string;
+    icon: string;
+  }[];
+  publicPaths: string[];
+  requires: string[];
+  pageRole: "viewer" | "approver" | "operator" | "admin";
+  personalData: "redact" | "send";
+  secrets: {
+    name: string;
+    description?: string;
+    optional?: boolean;
+    inject?: {
+      host: string;
+      header: string;
+      format: string;
+    };
+    expose?: boolean;
+  }[];
+  provides: ("shipping.rates" | "shipping.labels" | "tax" | "address")[];
+  capabilities: ("carts:external" | "orders:start" | "orders:cancel")[];
+  egress: string[];
+  limits: {
+    cpuMs?: number;
+    subRequests?: number;
+  };
+};
+
+export type PluginCaseResult = {
+  name: string;
+  node: string;
+  order: { [key: string]: unknown };
+  config: { [key: string]: unknown };
+  expect: {
+    branch: string;
+    vars?: { [key: string]: unknown };
+  };
+  pass: boolean;
+  got: {
+    /** The branch taken, or null when the rule failed */
+    branch: string | null;
+    vars?: { [key: string]: unknown };
+    error?: string;
+  };
+};
+
+export type Issue = {
+  path: string;
+  message: string;
+};
+
+export type Rejection = {
+  /** The feed it came from; absent for an API write */
+  feed?: string;
+  /** Its row in the feed file */
+  row?: number;
+  issues: Issue[];
+  at: number;
+};
+
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+export type ProductData = {
+  key: string;
+  status: "draft" | "active" | "archived";
+  title: { [key: string]: string };
+  slug?: { [key: string]: string };
+  description?: { [key: string]: string };
+  brand?: string;
+  categories: string[];
+  primaryCategory?: string;
+  media: {
+    src: string;
+    alt?: { [key: string]: string };
+    width?: number;
+    height?: number;
+    focus?: [number, number];
+  }[];
+  attributes: { [key: string]: Json };
+  variants: ({
+    sku: string;
+    status: "draft" | "active" | "archived";
+    gtin?: string;
+    mpn?: string;
+    attributes: { [key: string]: Json };
+    prices?: { [key: string]: {
+      amount: number;
+      currency: string;
+    } };
+    media?: {
+      src: string;
+      alt?: { [key: string]: string };
+      width?: number;
+      height?: number;
+      focus?: [number, number];
+    }[];
+    weightKg?: number;
+    dimensionsCm?: {
+      length: number;
+      width: number;
+      height: number;
+    };
+  })[];
+  channels: { [key: string]: {
+    visible: boolean;
+    price?: {
+      amount: number;
+      currency: string;
+    };
+    compareAt?: {
+      amount: number;
+      currency: string;
+    };
+  } };
+  extra?: { [key: string]: Json };
+  type: string;
+  typeVersion: number;
+};
+
+export type FieldOverride = {
+  ref: FieldRef;
+  value: string | null;
+  /** The feed value it was made against */
+  base: string | null;
+  /** The feed’s value now */
+  feed: string | null;
+  /** The feed changed the value since the override was made */
+  conflict: boolean;
+  source: "person" | "assistant";
+  by: string;
+  at: number;
+};
+
+export type StagedEdit = {
+  ref: FieldRef;
+  op: "set" | "clear";
+  value: string | null;
+  /** The value the person saw when they staged it */
+  seen: string | null;
+  source: "person" | "assistant";
+  by: string;
+  at: number;
+  /** Why it did not publish last time */
+  failure: string | null;
+};
+
+export type Draft = {
+  ref: FieldRef;
+  value: string;
+  /** The live value it was drafted against */
+  seen: string | null;
+  /** The field’s live value has changed since it was drafted */
+  stale: boolean;
+  model: string | null;
+  /** Who asked for it */
+  by: string;
+  at: number;
+};
+
+export type Gap = {
+  kind: "missing_title" | "missing_description" | "missing_attribute" | "missing_alt" | "missing_required" | "rejected" | "conflict";
+  field: string;
+  locale: string;
+  channel: string;
+};
+
+export type Revision = {
+  ref: FieldRef;
+  op: "set" | "clear";
+  value: string | null;
+  previous: string | null;
+  source: "person" | "assistant";
+  by: string;
+  at: number;
+};
 
 export type OperationId = keyof typeof OPERATIONS;
 

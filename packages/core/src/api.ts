@@ -77,6 +77,12 @@ export type OrderState = {
   /** Reason when cancelled or failed. */
   reason?: string;
   updatedAt: number;
+  /**
+   * The sequence of the last Workflow report the agent applied: it rises with each, within a
+   * `generation` (a new one restarts it), so a reader holding two states of an order can tell the
+   * newer. The agent always sends it.
+   */
+  seq?: number;
 };
 
 export const EMPTY_ORDER_STATE: OrderState = {

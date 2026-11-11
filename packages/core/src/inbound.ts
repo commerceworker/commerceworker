@@ -106,3 +106,37 @@ export function toStartRequest(o: InboundOrder, flowId: string): StartOrderOnceI
     ...(vars ? { vars } : {}),
   };
 }
+
+/**
+ * What an inbound order answers once it is taken: the order, the flow routed to when it just
+ * started, and `replayed` when the same channel and id had already started it.
+ */
+export const inboundOrderResultSchema = z.object({
+  orderId: z.string(),
+  replayed: z.boolean().optional().describe('True when this channel and id had already started it'),
+  flowId: z.string().optional().describe('The flow it started on; absent on a replay'),
+});
+
+/** What a Shopify topic other than `orders/create` is answered with. */
+export const ignoredTopicSchema = z.object({
+  ignored: z.literal(true),
+  topic: z.string().nullable().describe('The `X-Shopify-Topic` it sent'),
+});
+
+/** One purchase order of an X12 interchange: what became of it. */
+export const ediResultSchema = z.object({
+  control: z.string().describe('The transaction set control number'),
+  poNumber: z.string().optional(),
+  status: z.number().int().describe('The HTTP status an order of its own would have answered'),
+  orderId: z.string().optional(),
+  flowId: z.string().optional(),
+  replayed: z.boolean().optional(),
+  error: z.string().optional().describe('Why it could not be taken'),
+});
+
+/** `POST /api/v1/channels/edi/850`: each PO's outcome and the 997 to send back. */
+export const ediInterchangeResultSchema = z.object({
+  sender: z.string().describe('The ISA sender id'),
+  results: z.array(ediResultSchema),
+  functionalAck: z.string().describe('The X12 997 text'),
+});

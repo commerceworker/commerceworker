@@ -148,6 +148,24 @@ const shipToSchema = z.object({
   country: shipToField('country'),
 });
 
+/** A staff cart as `GET /api/v1/carts` lists it; `GET /api/v1/carts/{id}` has the rest. */
+export const cartRowSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.enum(CART_STATUSES),
+  flowId: z.string().describe('The flow that prices it and runs its order'),
+  customerId: z.string().nullable(),
+  orderId: z.string().nullable().describe('The order submitting it started'),
+  createdBy: z.string(),
+  createdAt: z.number().int().describe('Epoch ms'),
+  updatedAt: z.number().int().describe('Epoch ms'),
+});
+
+export const cartRowsSchema = z.object({ carts: z.array(cartRowSchema) });
+
+/** A cart submitted as an order (`POST /api/v1/carts/{id}/submit`). */
+export const cartSubmittedSchema = z.object({ orderId: z.string(), cartId: z.string() });
+
 /**
  * A `CartOp` as a caller outside the cart's page sends it (the REST API, MCP, the assistant).
  * Shapes and bounds only; `applyCartOp` decides whether the cart takes it.

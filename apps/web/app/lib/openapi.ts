@@ -5,27 +5,78 @@
 
 import {
   ASSISTANT_TOOLS,
-  BASE_CURRENCY,
+  auditChainCheckSchema,
+  auditEventSchema,
+  auditEventsSchema,
   CART_EVENTS,
   CART_STATUSES,
+  cancelResultSchema,
   cartOpSchema,
+  cartRowSchema,
+  cartRowsSchema,
+  cartSubmittedSchema,
+  decisionResultSchema,
+  deliveriesSchema,
+  deliveryRecordSchema,
+  ediInterchangeResultSchema,
+  ediResultSchema,
+  erasureDoneSchema,
+  erasureRefusalSchema,
+  errorSchema,
+  flowListSchema,
+  flowSummarySchema,
+  flowVersionSchema,
+  ignoredTopicSchema,
+  inboundOrderResultSchema,
   inboundOrderSchema,
+  integrationSecretSchema,
+  integrationsSchema,
+  integrationViewSchema,
   isCartEvent,
+  nodeRunSchema,
   ORDER_CHANNELS,
   ORDER_EVENTS,
   ORDER_MODELS,
   ORDER_STATUSES,
   OUTBOUND_EVENTS,
-  orderInputSchema,
+  okSchema,
+  orderPageSchema,
+  orderRowSchema,
+  orderSchema,
+  orderStateSchema,
+  paymentEventResultSchema,
+  pendingWaitSchema,
   pluginBundleFileSchema,
+  pluginCaseResultSchema,
+  pluginDisabledSchema,
+  pluginInstallViewSchema,
+  pluginListSchema,
+  pluginManifestSchema,
+  pluginSummarySchema,
+  pluginUsageSchema,
   ROLE_LABELS,
+  sendEventResultSchema,
+  startOrderResultSchema,
   startOrderSchema,
+  subjectExportSchema,
+  subscriptionSecretSchema,
+  subscriptionsSchema,
+  subscriptionViewSchema,
   TOOL_OUTPUTS,
+  timelineEntrySchema,
+  ucpAdminSchema,
+  ucpPlatformKeySchema,
+  ucpPlatformSchema,
   ucpSettingsSchema,
   whoamiOutput,
 } from '@commerceworker/core';
 import {
+  aliasResponseSchema,
   BOARD_COLUMNS,
+  boardCardSchema,
+  boardPageSchema,
+  boardResponseSchema,
+  boardSummarySchema,
   catalogCategoriesDeleteInput,
   catalogCategoriesInput,
   catalogChannelInput,
@@ -37,10 +88,40 @@ import {
   catalogProductsInput,
   catalogPublishInput,
   catalogTypeInput,
+  categoriesDeletedSchema,
   categorySchema,
+  channelDeletedSchema,
   channelSchema,
+  discardedSchema,
+  draftSchema,
+  editResultSchema,
+  editResultsSchema,
+  feedResponseSchema,
+  feedStatusSchema,
+  feedsResponseSchema,
+  fieldOverrideSchema,
+  fieldRefSchema,
   GAP_KINDS,
+  gapSchema,
+  gapsRebuiltSchema,
+  issueSchema,
+  jsonSchema,
+  productDataSchema,
+  productDraftResultSchema,
+  productResponseSchema,
+  productSchema,
+  productSheetSchema,
   productTypeSchema,
+  publishResultSchema,
+  publishResultsSchema,
+  reindexedSchema,
+  rejectionSchema,
+  revisionSchema,
+  sheetResponseSchema,
+  stagedEditSchema,
+  typeDeletedSchema,
+  writeResultSchema,
+  writeResultsSchema,
 } from '@commerceworker/core/product';
 import { z } from 'zod';
 import {
@@ -76,6 +157,115 @@ const okJson = (description: string, s: z.ZodType | Record<string, unknown>) => 
   },
 });
 const errorRef = '#/components/schemas/Error';
+
+/**
+ * The response schemas, by the name each takes in `components.schemas`. They are the zod schemas
+ * of `@commerceworker/core` (next to the types they describe), so a route's documented response
+ * is what its handler's types say; a schema one names inside another becomes a `$ref` to it.
+ */
+const COMPONENTS = {
+  Json: jsonSchema,
+  Order: orderSchema,
+  FlowVersion: flowVersionSchema,
+  FlowSummary: flowSummarySchema,
+  FlowList: flowListSchema,
+  OrderRow: orderRowSchema,
+  OrderPage: orderPageSchema,
+  NodeRun: nodeRunSchema,
+  PendingWait: pendingWaitSchema,
+  TimelineEntry: timelineEntrySchema,
+  OrderState: orderStateSchema,
+  StartOrderResult: startOrderResultSchema,
+  SendEventResult: sendEventResultSchema,
+  DecisionResult: decisionResultSchema,
+  CancelResult: cancelResultSchema,
+  CartRow: cartRowSchema,
+  CartRows: cartRowsSchema,
+  CartSubmitted: cartSubmittedSchema,
+  PaymentEventResult: paymentEventResultSchema,
+  InboundOrderResult: inboundOrderResultSchema,
+  IgnoredTopic: ignoredTopicSchema,
+  EdiResult: ediResultSchema,
+  EdiInterchangeResult: ediInterchangeResultSchema,
+  AuditEvent: auditEventSchema,
+  AuditEvents: auditEventsSchema,
+  AuditChainCheck: auditChainCheckSchema,
+  Issue: issueSchema,
+  WriteResult: writeResultSchema,
+  WriteResults: writeResultsSchema,
+  Product: productSchema,
+  ProductData: productDataSchema,
+  ProductResponse: productResponseSchema,
+  AliasResponse: aliasResponseSchema,
+  FeedStatus: feedStatusSchema,
+  FeedResponse: feedResponseSchema,
+  FeedList: feedsResponseSchema,
+  Rejection: rejectionSchema,
+  BoardCard: boardCardSchema,
+  BoardPage: boardPageSchema,
+  BoardSummary: boardSummarySchema,
+  BoardResponse: boardResponseSchema,
+  Gap: gapSchema,
+  FieldRef: fieldRefSchema,
+  StagedEdit: stagedEditSchema,
+  Draft: draftSchema,
+  FieldOverride: fieldOverrideSchema,
+  Revision: revisionSchema,
+  ProductSheet: productSheetSchema,
+  SheetResponse: sheetResponseSchema,
+  EditResult: editResultSchema,
+  EditResults: editResultsSchema,
+  PublishResult: publishResultSchema,
+  PublishResults: publishResultsSchema,
+  Discarded: discardedSchema,
+  TypeDeleted: typeDeletedSchema,
+  ChannelDeleted: channelDeletedSchema,
+  CategoriesDeleted: categoriesDeletedSchema,
+  GapsRebuilt: gapsRebuiltSchema,
+  Reindexed: reindexedSchema,
+  ProductDraftResult: productDraftResultSchema,
+  SubjectExport: subjectExportSchema,
+  ErasureProgress: erasureDoneSchema,
+  ErasureRefused: erasureRefusalSchema,
+  Error: errorSchema,
+  SubscriptionView: subscriptionViewSchema,
+  Subscriptions: subscriptionsSchema,
+  SubscriptionSecret: subscriptionSecretSchema,
+  DeliveryRecord: deliveryRecordSchema,
+  Deliveries: deliveriesSchema,
+  IntegrationView: integrationViewSchema,
+  Integrations: integrationsSchema,
+  IntegrationSecret: integrationSecretSchema,
+  Ok: okSchema,
+  PluginSummary: pluginSummarySchema,
+  PluginList: pluginListSchema,
+  PluginManifest: pluginManifestSchema,
+  PluginCaseResult: pluginCaseResultSchema,
+  PluginInstallView: pluginInstallViewSchema,
+  PluginDisabled: pluginDisabledSchema,
+  PluginUsage: pluginUsageSchema,
+  UcpPlatform: ucpPlatformSchema,
+  UcpSettings: ucpSettingsSchema,
+  UcpAdmin: ucpAdminSchema,
+  UcpPlatformKey: ucpPlatformKeySchema,
+} as const;
+
+type Component = keyof typeof COMPONENTS;
+const ref = (name: Component) => `#/components/schemas/${name}`;
+
+/** The registered schemas as JSON Schema, each naming the others it uses by `$ref`. */
+function componentSchemas() {
+  const registry = z.registry<{ id: string }>();
+  for (const [id, s] of Object.entries(COMPONENTS)) registry.add(s, { id });
+  const { schemas } = z.toJSONSchema(registry, {
+    io: 'output',
+    unrepresentable: 'any',
+    uri: (id) => `#/components/schemas/${id}`,
+  });
+  return Object.fromEntries(
+    Object.entries(schemas).map(([id, { $schema: _s, $id: _i, ...rest }]) => [id, rest]),
+  );
+}
 // Every route that takes a bearer token can refuse these; a route lists a status of its own
 // (409, 422…) beside them, after the spread, to say more.
 const errors = {
@@ -178,42 +368,6 @@ function cartSchema() {
       'quote',
       'quoteCurrent',
       'version',
-    ],
-  };
-}
-
-/** An order as the engine holds it: its input plus the totals the pricing nodes compute. */
-function orderSchema() {
-  const input = z.toJSONSchema(orderInputSchema, { io: 'output', unrepresentable: 'any' }) as {
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
-  const amount = (description: string) => ({ type: 'number', description });
-  return {
-    type: 'object',
-    properties: {
-      id: { type: 'string' },
-      createdAt: { type: 'integer', description: 'Epoch ms' },
-      ...input.properties,
-      subtotal: amount('Sum of the priced lines'),
-      shipping: amount('Shipping charged by a shipping-rate node; 0 when none ran'),
-      tax: amount('Tax on the subtotal, plus shipping when the tax node taxes it'),
-      total: amount('subtotal + shipping + tax'),
-      taxRate: amount('The rate the tax node applied'),
-      taxShipping: { type: 'boolean', description: 'Whether the tax node taxed shipping' },
-      fxRate: amount(`Units of the order currency per one ${BASE_CURRENCY}, fixed when priced`),
-      baseTotal: amount(`total in ${BASE_CURRENCY}`),
-    },
-    required: [
-      ...new Set([
-        'id',
-        'createdAt',
-        ...(input.required ?? []),
-        'subtotal',
-        'shipping',
-        'tax',
-        'total',
-      ]),
     ],
   };
 }
@@ -387,7 +541,10 @@ export function openApiDocument(serverUrl: string) {
         },
       },
       '/api/v1/flows': {
-        get: { summary: 'List flows', responses: { '200': ok('Flows'), ...errors } },
+        get: {
+          summary: 'List flows',
+          responses: { '200': ok('Flows', ref('FlowList')), ...errors },
+        },
       },
       '/api/v1/orders': {
         get: {
@@ -410,7 +567,7 @@ export function openApiDocument(serverUrl: string) {
             },
           ],
           responses: {
-            '200': ok('{ orders, nextCursor }: newest first; nextCursor is null on the last page'),
+            '200': ok('Newest first; nextCursor is null on the last page', ref('OrderPage')),
             ...errors,
           },
         },
@@ -427,11 +584,8 @@ export function openApiDocument(serverUrl: string) {
           ],
           requestBody: body(startOrderSchema),
           responses: {
-            '201': ok('Started', '#/components/schemas/StartOrderResult'),
-            '200': ok(
-              'Replayed: the key already created this order',
-              '#/components/schemas/StartOrderResult',
-            ),
+            '201': ok('Started', ref('StartOrderResult')),
+            '200': ok('Replayed: the key already created this order', ref('StartOrderResult')),
             '422': ok(
               'The Idempotency-Key was already used with a different request',
               '#/components/schemas/Error',
@@ -445,7 +599,10 @@ export function openApiDocument(serverUrl: string) {
           summary: 'Live order state from its agent',
           parameters: [orderId],
           responses: {
-            '200': ok('Order state: `status`, `nodes`, `waits`, `vars`, and `order` (an Order)'),
+            '200': ok(
+              'Order state: `status`, `nodes`, `waits`, `vars`, and `order` (an Order)',
+              ref('OrderState'),
+            ),
             ...errors,
           },
         },
@@ -456,8 +613,13 @@ export function openApiDocument(serverUrl: string) {
           parameters: [orderId],
           requestBody: body(orderEventInput),
           responses: {
+            '422': ok(
+              'The payload sets a field the delivery records itself, or is a return or claim to record on the order page',
+              errorRef,
+            ),
             '200': ok(
-              '{ delivered, held?, nodeId? }; with nothing waiting yet, held is true when the order holds it until a step of its flow waits for it, and delivered is false when it won’t',
+              'Where the event went. With nothing waiting yet, `held` is true when the order holds it until a step of its flow waits for it, and `delivered` is false when it won’t',
+              ref('SendEventResult'),
             ),
             ...errors,
           },
@@ -474,7 +636,8 @@ export function openApiDocument(serverUrl: string) {
           responses: {
             ...errors,
             '200': ok(
-              '{ ok, outcome, tally }: outcome is `recorded` when more votes are needed and the order still waits, else `approved` or `rejected`; tally is the approvals so far of those needed, like "1 of 2"',
+              'The vote counted: `outcome` is `recorded` when more votes are needed and the order still waits, else `approved` or `rejected`; `tally` is the approvals so far of those needed, like "1 of 2"',
+              ref('DecisionResult'),
             ),
             '403': ok(
               'The caller lacks the approver role, or started this order and the workspace separates approvals',
@@ -493,7 +656,7 @@ export function openApiDocument(serverUrl: string) {
           parameters: [orderId],
           requestBody: body(cancelInput),
           responses: {
-            '200': ok('Cancelled'),
+            '200': ok('Cancelled', ref('CancelResult')),
             '409': ok('The order has already finished', '#/components/schemas/Error'),
             ...errors,
           },
@@ -511,9 +674,7 @@ export function openApiDocument(serverUrl: string) {
             },
           ],
           responses: {
-            '200': ok(
-              '{ carts: [{ id, title, status, flowId, customerId, orderId, createdBy, createdAt, updatedAt }] }',
-            ),
+            '200': ok('Staff carts, most recently changed first', ref('CartRows')),
             ...errors,
           },
         },
@@ -593,7 +754,7 @@ export function openApiDocument(serverUrl: string) {
             content: { 'application/json': { schema: schema(submitCartInput) } },
           },
           responses: {
-            '201': ok('{ orderId, cartId }'),
+            '201': ok('The order the cart became', ref('CartSubmitted')),
             '409': ok('Not ready (see `notReady`), or already ended', '#/components/schemas/Error'),
             '412': ok(
               'The cart changed since the version given; read it again',
@@ -630,12 +791,20 @@ export function openApiDocument(serverUrl: string) {
           ],
           requestBody: body(eventSchema),
           responses: {
-            '200': ok('Delivered'),
-            '202': ok('Held on the order until a step of its flow waits for it; no need to resend'),
+            '200': ok('Delivered', ref('SendEventResult')),
+            '202': ok(
+              'Held on the order until a step of its flow waits for it; no need to resend',
+              ref('SendEventResult'),
+            ),
             '403': ok('The integration’s scope doesn’t allow the request', errorRef),
+            '422': ok(
+              'The payload sets a field the delivery records itself, or is a return or claim to record on the order page',
+              errorRef,
+            ),
+            // Not an error body: what the order answered, `delivered: false`.
             '409': ok(
               'The order won’t wait for this event (its flow has no such step, or it already holds as many as it can); retry later',
-              errorRef,
+              ref('SendEventResult'),
             ),
             ...signedErrors,
           },
@@ -656,12 +825,17 @@ export function openApiDocument(serverUrl: string) {
           },
           responses: {
             ...signedErrors,
-            '200': ok('Handled, already handled, or ignored (`{ outcome }`)'),
+            '200': ok(
+              'Handled, already handled, or ignored (`outcome`)',
+              ref('PaymentEventResult'),
+            ),
             '400': ok('Bad signature, or not a Stripe event', '#/components/schemas/Error'),
+            // Not an error body: the engine's answer, `outcome: retry`.
             '409': ok(
               'The order is not waiting for this payment yet; Stripe delivers it again later',
-              errorRef,
+              ref('PaymentEventResult'),
             ),
+            '500': ok('The engine failed; Stripe delivers it again later', errorRef),
             '503': ok('Stripe webhooks are not configured', '#/components/schemas/Error'),
           },
         },
@@ -687,10 +861,18 @@ export function openApiDocument(serverUrl: string) {
           },
           responses: {
             ...signedErrors,
-            '200': ok(
-              'Already received, or a topic other than orders/create (`{ ignored: true }`)',
-            ),
-            '201': ok('Order started'),
+            '200': {
+              description:
+                'Already received (the order), or a topic other than orders/create (`{ ignored: true }`)',
+              content: {
+                'application/json': {
+                  schema: {
+                    oneOf: [{ $ref: ref('InboundOrderResult') }, { $ref: ref('IgnoredTopic') }],
+                  },
+                },
+              },
+            },
+            '201': ok('Order started', ref('InboundOrderResult')),
             '400': ok('Not JSON, or a line item without a SKU', '#/components/schemas/Error'),
             '409': ok('The routed flow is not published', '#/components/schemas/Error'),
             '422': ok(
@@ -716,7 +898,8 @@ export function openApiDocument(serverUrl: string) {
           responses: {
             ...errors,
             '200': ok(
-              '`{ sender, results: [{ control, poNumber?, status, orderId?, flowId?, replayed?, error? }], functionalAck }`, where `functionalAck` is the X12 997 text',
+              'The outcome per transaction, and `functionalAck`, the X12 997 text',
+              ref('EdiInterchangeResult'),
             ),
             '400': ok('Not a valid X12 interchange', '#/components/schemas/Error'),
             '403': ok(
@@ -742,8 +925,8 @@ export function openApiDocument(serverUrl: string) {
           ],
           requestBody: body(inboundOrderSchema),
           responses: {
-            '200': ok('Already received; the existing order'),
-            '201': ok('Order started'),
+            '200': ok('Already received; the existing order', ref('InboundOrderResult')),
+            '201': ok('Order started', ref('InboundOrderResult')),
             '409': ok('The routed flow is not published', errorRef),
             '422': ok(
               'This channel and externalId were already received with different contents',
@@ -779,7 +962,7 @@ export function openApiDocument(serverUrl: string) {
             },
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } },
           ],
-          responses: { '200': ok('{ events }'), ...errors },
+          responses: { '200': ok('The events', ref('AuditEvents')), ...errors },
         },
       },
       '/api/v1/audit-events/verify': {
@@ -795,7 +978,13 @@ export function openApiDocument(serverUrl: string) {
               schema: { type: 'integer', minimum: 1 },
             },
           ],
-          responses: { '200': ok('{ ok, checked, last?, next?, brokenAt?, reason? }'), ...errors },
+          responses: {
+            '200': ok(
+              'Whether the chain holds; `ok: false` names the first event that fails',
+              ref('AuditChainCheck'),
+            ),
+            ...errors,
+          },
         },
       },
       '/api/v1/catalog/products': {
@@ -804,21 +993,21 @@ export function openApiDocument(serverUrl: string) {
           description:
             "Validated against each product's type; an unchanged product writes nothing. Each result is `created`, `updated`, `unchanged` or `rejected` (with `issues`). Published documents follow within a minute; `urgent` purges cached copies sooner (purges are rationed, so keep it for takedowns and corrections).",
           requestBody: body(catalogProductsInput),
-          responses: { '200': ok('{ results: [{ key, status, version?, issues? }] }'), ...errors },
+          responses: { '200': ok('What each product write did', ref('WriteResults')), ...errors },
         },
       },
       '/api/v1/catalog/products/{key}': {
         get: {
           summary: 'A stored catalog product',
           parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: { '200': ok('{ product }'), ...errors },
+          responses: { '200': ok('The product', ref('ProductResponse')), ...errors },
         },
       },
       '/api/v1/catalog/products/delete': {
         post: {
           summary: 'Delete catalog products (operator)',
           requestBody: body(catalogDeleteInput),
-          responses: { '200': ok('{ results }'), ...errors },
+          responses: { '200': ok('What each delete did', ref('WriteResults')), ...errors },
         },
       },
       '/api/v1/catalog/aliases/{alias}': {
@@ -826,7 +1015,7 @@ export function openApiDocument(serverUrl: string) {
           summary:
             'The product holding a SKU, GTIN (any length: a UPC finds its EAN) or slug (`sku:ABC`, `gtin:…`, `slug:en:…`)',
           parameters: [{ name: 'alias', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: { '200': ok('{ key }'), ...errors },
+          responses: { '200': ok('The product key', ref('AliasResponse')), ...errors },
         },
       },
       '/api/v1/catalog/types': {
@@ -856,7 +1045,7 @@ export function openApiDocument(serverUrl: string) {
             'Refused with 409 while any product uses the type: delete or move them first.',
           parameters: [{ name: 'code', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': ok('{ ok, code, versions }'),
+            '200': ok('Deleted', ref('TypeDeleted')),
             '409': ok('Products use it', '#/components/schemas/Error'),
             ...errors,
           },
@@ -868,7 +1057,7 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Removes the channel and unpublishes its product documents, SKU and slug lookups, listing cards, category listings, search entries and category trees. Products keep their data for the channel, so adding it again and reindexing brings it back.',
           parameters: [{ name: 'code', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: { '200': ok('{ ok, code, unpublished }'), ...errors },
+          responses: { '200': ok('Deleted', ref('ChannelDeleted')), ...errors },
         },
       },
       '/api/v1/catalog/categories/delete': {
@@ -878,7 +1067,7 @@ export function openApiDocument(serverUrl: string) {
             'Refused with 409 while a category has children not being deleted with it, or has products filed in it.',
           requestBody: body(catalogCategoriesDeleteInput),
           responses: {
-            '200': ok('{ ok, deleted }'),
+            '200': ok('Deleted', ref('CategoriesDeleted')),
             '409': ok('Still in use', '#/components/schemas/Error'),
             ...errors,
           },
@@ -926,7 +1115,7 @@ export function openApiDocument(serverUrl: string) {
           parameters: [
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
           ],
-          responses: { '200': ok('{ feeds }'), ...errors },
+          responses: { '200': ok('The feeds', ref('FeedList')), ...errors },
         },
         post: {
           summary: 'Import a feed file (operator)',
@@ -948,14 +1137,14 @@ export function openApiDocument(serverUrl: string) {
               'application/x-ndjson': { schema: { type: 'string' } },
             },
           },
-          responses: { '202': ok('{ feed }'), ...errors },
+          responses: { '202': ok('The feed, stored and queued', ref('FeedResponse')), ...errors },
         },
       },
       '/api/v1/catalog/feeds/{id}': {
         get: {
           summary: "A feed's progress and result",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: { '200': ok('{ feed }'), ...errors },
+          responses: { '200': ok('The feed', ref('FeedResponse')), ...errors },
         },
       },
       '/api/v1/catalog/feeds/{id}/cancel': {
@@ -964,7 +1153,7 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Stops a feed that is queued, splitting or applying: no more of its file is read. Parts already handed to the catalog still apply, so some products may have been written. Answers 409 when the feed has already finished.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: { '200': ok('{ feed }'), ...errors },
+          responses: { '200': ok('The feed, cancelled', ref('FeedResponse')), ...errors },
         },
       },
       '/api/v1/catalog/board': {
@@ -973,9 +1162,7 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Products per column (`gaps`, `drafted`, `staged`, `published` in the last day), gaps and products per gap kind, the latest finished feed and one still running. `indexBuilt` is false until every product stored before the gap index existed has been counted, which the catalog does on its own shortly after it is updated, and while a channel change is being recounted.',
           responses: {
-            '200': ok(
-              '{ board: { columns, gapGroups, gapsByKind, lastFeed, runningFeed, indexBuilt } }',
-            ),
+            '200': ok('The board', ref('BoardResponse')),
             ...errors,
           },
         },
@@ -1005,9 +1192,7 @@ export function openApiDocument(serverUrl: string) {
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
           ],
           responses: {
-            '200': ok(
-              '{ items: [{ key, title, column, kinds, rejection, staged, drafts, failure, at }], cursor }',
-            ),
+            '200': ok('One page of cards; `cursor` is null on the last', ref('BoardPage')),
             ...errors,
           },
         },
@@ -1019,9 +1204,7 @@ export function openApiDocument(serverUrl: string) {
             'The product as it is live and as the last feed sent it, its overrides (each with the feed value it was made against, the feed value now and whether they conflict), staged edits, assistant drafts (stale once the field changed), gaps, the last refused feed row and the last 50 published changes.',
           parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
-            '200': ok(
-              '{ sheet: { product, feed, overrides, staged, drafts, gaps, rejection, revisions } }',
-            ),
+            '200': ok('The sheet', ref('SheetResponse')),
             ...errors,
           },
         },
@@ -1034,9 +1217,7 @@ export function openApiDocument(serverUrl: string) {
           parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: body(catalogDraftContentInput),
           responses: {
-            '200': ok(
-              '{ key, title, drafted: [{ ref, value }], refused: [{ ref, issues }], more, model }',
-            ),
+            '200': ok('What was drafted, and what was refused', ref('ProductDraftResult')),
             '422': ok(
               "Nothing to draft, the assistant allowance is spent or the model couldn't answer",
               '#/components/schemas/Error',
@@ -1051,14 +1232,14 @@ export function openApiDocument(serverUrl: string) {
           description:
             "Content only: title, description, slug, a product's localized text attributes and media alt text per locale, and status. `set` with a value (null removes the feed's value in that locale), or `clear` to show the feed's value again. Each is checked against the product as it is live and answered per edit; nothing goes live until it is published. Staging a field replaces its earlier staged edit and its draft; send `source: assistant` when accepting a draft.",
           requestBody: body(catalogEditsInput),
-          responses: { '200': ok('{ results: [{ key, ref, ok, issues? }] }'), ...errors },
+          responses: { '200': ok('What each edit did', ref('EditResults')), ...errors },
         },
       },
       '/api/v1/catalog/edits/discard': {
         post: {
           summary: 'Drop staged edits (operator)',
           requestBody: body(catalogDiscardInput),
-          responses: { '200': ok('{ discarded }'), ...errors },
+          responses: { '200': ok('How many were dropped', ref('Discarded')), ...errors },
         },
       },
       '/api/v1/catalog/edits/publish': {
@@ -1068,7 +1249,7 @@ export function openApiDocument(serverUrl: string) {
             'Each product publishes all its staged edits or none. One is refused, keeping its edits staged with why, when a value it changes was changed since it was staged, an edit no longer fits, or a slug it sets belongs to another product. An edit stays over later feed imports; when a feed changes the value under it, the product shows a conflict. Send the same `requestId` again to get the first answer without publishing twice (one is made when you send none, and returned).',
           requestBody: body(catalogPublishInput),
           responses: {
-            '200': ok('{ requestId, results: [{ key, status, version?, issues? }] }'),
+            '200': ok('What publishing did with each product', ref('PublishResults')),
             ...errors,
           },
         },
@@ -1079,14 +1260,14 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Drafts are text for one field and locale, checked like an edit but never staged or published until a person stages them. Status is not drafted.',
           requestBody: body(catalogDraftsInput),
-          responses: { '200': ok('{ results: [{ key, ref, ok, issues? }] }'), ...errors },
+          responses: { '200': ok('What each draft did', ref('EditResults')), ...errors },
         },
       },
       '/api/v1/catalog/drafts/discard': {
         post: {
           summary: 'Drop assistant drafts (operator)',
           requestBody: body(catalogDiscardInput),
-          responses: { '200': ok('{ discarded }'), ...errors },
+          responses: { '200': ok('How many were dropped', ref('Discarded')), ...errors },
         },
       },
       '/api/v1/catalog/gaps/rebuild': {
@@ -1094,7 +1275,7 @@ export function openApiDocument(serverUrl: string) {
           summary: "Recount every product's content gaps (admin)",
           description:
             'Reads every product. Products stored before the gap index existed and channel changes are recounted on their own; this recounts now.',
-          responses: { '200': ok('{ products }'), ...errors },
+          responses: { '200': ok('How many products were read', ref('GapsRebuilt')), ...errors },
         },
       },
       '/api/v1/catalog/reindex': {
@@ -1102,7 +1283,7 @@ export function openApiDocument(serverUrl: string) {
           summary: 'Republish every product (admin)',
           description:
             'After a channel or document change. Answers with how many products were queued.',
-          responses: { '202': ok('{ queued }'), ...errors },
+          responses: { '202': ok('How many products were queued', ref('Reindexed')), ...errors },
         },
       },
       '/api/v1/data-subjects/export': {
@@ -1112,9 +1293,7 @@ export function openApiDocument(serverUrl: string) {
             'Their customer accounts, their orders (as a customer, as a guest buyer, or as the sender of an order email) with contact details, lines and metadata, the messages sent to them, their intake log entries, the documents on their orders and their accounts’ tax exemption certificates. Up to 500 orders; `truncated` says when there were more. `teamMember` says the address also belongs to a person on your team.',
           requestBody: body(dataSubjectInput),
           responses: {
-            '200': ok(
-              'A JSON file: { email, customers, orders, messages, inboundEmails, documents, carts, taxCertificates, addresses, truncated, teamMember }',
-            ),
+            '200': ok('A JSON file of everything held about them', ref('SubjectExport')),
             ...errors,
           },
         },
@@ -1127,24 +1306,10 @@ export function openApiDocument(serverUrl: string) {
           requestBody: body(dataSubjectInput),
           responses: {
             '200': ok(
-              '{ ok, done, orders, customers, documents, messages, inboundEmails, carts, taxCertificates, addresses, teamMember }',
+              'What this pass removed; repeat while `done` is false',
+              ref('ErasureProgress'),
             ),
-            '409': {
-              description: 'Refused while the person has orders still running',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      ok: { const: false },
-                      reason: { const: 'active_orders' },
-                      orders: { type: 'array', items: { type: 'string' } },
-                    },
-                    required: ['ok', 'reason', 'orders'],
-                  },
-                },
-              },
-            },
+            '409': ok('Refused while the person has orders still running', ref('ErasureRefused')),
             ...errors,
           },
         },
@@ -1152,20 +1317,23 @@ export function openApiDocument(serverUrl: string) {
       '/api/v1/webhook-subscriptions': {
         get: {
           summary: 'List webhook subscriptions (admin)',
-          responses: { '200': ok('Subscriptions'), ...errors },
+          responses: { '200': ok('Subscriptions', ref('Subscriptions')), ...errors },
         },
         post: {
           summary: 'Subscribe a URL to order events (admin)',
           description: 'The response carries the signing secret. It is shown only once.',
           requestBody: body(subscriptionInput),
-          responses: { '201': ok('{ subscription, secret }'), ...errors },
+          responses: {
+            '201': ok('The subscription and its secret', ref('SubscriptionSecret')),
+            ...errors,
+          },
         },
       },
       '/api/v1/webhook-subscriptions/{id}': {
         delete: {
           summary: 'Delete a subscription (admin)',
           parameters: [orderId],
-          responses: { '200': ok('Deleted'), ...errors },
+          responses: { '200': ok('Deleted', ref('Ok')), ...errors },
         },
       },
       '/api/v1/webhook-subscriptions/{id}/rotate': {
@@ -1174,27 +1342,36 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Returns a new secret, shown once. For 24 hours each delivery carries a signature from the previous secret as well, so the receiver can switch without rejecting any.',
           parameters: [orderId],
-          responses: { '200': ok('{ subscription, secret }'), ...errors },
+          responses: {
+            '200': ok('The subscription and its new secret', ref('SubscriptionSecret')),
+            ...errors,
+          },
         },
       },
       '/api/v1/webhook-subscriptions/{id}/deliveries': {
         get: {
           summary: 'Recent deliveries, newest first (admin)',
           parameters: [orderId],
-          responses: { '200': ok('Deliveries'), ...errors },
+          responses: { '200': ok('Deliveries', ref('Deliveries')), ...errors },
         },
       },
       '/api/v1/integrations': {
         get: {
           summary: 'List integrations, the signing keys for external systems (admin)',
-          responses: { '200': ok('Integrations, without their secrets'), ...errors },
+          responses: {
+            '200': ok('Integrations, without their secrets', ref('Integrations')),
+            ...errors,
+          },
         },
         post: {
           summary: 'Create an integration (admin)',
           description:
             'The scope says what its signed webhooks may do: `events` it may deliver, whether it may `startOrders`, the `flows` an order may name and the one `channel` it may reach. The response carries the signing secret. It is shown only once.',
           requestBody: body(integrationInput),
-          responses: { '201': ok('{ integration, secret }'), ...errors },
+          responses: {
+            '201': ok('The integration and its secret', ref('IntegrationSecret')),
+            ...errors,
+          },
         },
       },
       '/api/v1/integrations/{id}/rotate': {
@@ -1203,7 +1380,10 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Returns a new secret, shown once. The previous secret keeps working for 24 hours, so the sender can switch without a gap.',
           parameters: [orderId],
-          responses: { '200': ok('{ integration, secret }'), ...errors },
+          responses: {
+            '200': ok('The integration and its new secret', ref('IntegrationSecret')),
+            ...errors,
+          },
         },
       },
       '/api/v1/integrations/{id}': {
@@ -1211,7 +1391,7 @@ export function openApiDocument(serverUrl: string) {
           summary: 'Revoke an integration (admin)',
           description: 'Both its secrets stop working at once.',
           parameters: [orderId],
-          responses: { '200': ok('Revoked'), ...errors },
+          responses: { '200': ok('Revoked', ref('Ok')), ...errors },
         },
       },
       '/api/v1/plugins': {
@@ -1220,7 +1400,8 @@ export function openApiDocument(serverUrl: string) {
             'The installed plugins, with their node types, the events they receive and whether they answer (admin)',
           responses: {
             '200': ok(
-              '{ plugins: [{ id, runtime, source, name, version, nodes, events, provides, healthy, error? }] }: runtime is worker (its own Worker) or sandboxed (loaded by the engine); source is deployment (installed with the workspace) or installed (from a file, by an admin); name and version are null for a plugin whose manifest was refused; provides lists what it can do behind built-in nodes (shipping.rates, shipping.labels, tax, address)',
+              'Each plugin: `runtime` is worker (its own Worker) or sandboxed (loaded by the engine); `source` is deployment (installed with the workspace) or installed (from a file, by an admin); `name` and `version` are null for a plugin whose manifest was refused; `provides` lists what it can do behind built-in nodes',
+              ref('PluginList'),
             ),
             ...errors,
           },
@@ -1232,7 +1413,8 @@ export function openApiDocument(serverUrl: string) {
           requestBody: body(pluginBundleFileSchema),
           responses: {
             '201': ok(
-              '{ id, sha, version, publisher, status: "pending", manifest, secrets: [{ name, set }] }: what it asks for, to review',
+              'The upload, `status` pending: what it asks for, to review',
+              ref('PluginInstallView'),
             ),
             '413': ok('Larger than a plugin file may be', '#/components/schemas/Error'),
             ...errors,
@@ -1245,7 +1427,7 @@ export function openApiDocument(serverUrl: string) {
           description:
             'Its steps stop running at once and flows that use it can no longer be published. Turn it back on from the Plugins page.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: { '200': ok('{ id, status: "disabled" }'), ...errors },
+          responses: { '200': ok('Turned off', ref('PluginDisabled')), ...errors },
         },
       },
       '/api/v1/plugins/{id}/usage': {
@@ -1254,7 +1436,8 @@ export function openApiDocument(serverUrl: string) {
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': ok(
-              "{ flows: [{ id, version }], orders: [{ id, flowId, version }], labels: [{ id, orderId }] }: published flows that use its nodes or name it as a provider, running orders on them, and shipping labels it couldn't void yet (retried daily)",
+              "Published flows that use its nodes or name it as a provider, running orders on them, and shipping labels it couldn't void yet (retried daily)",
+              ref('PluginUsage'),
             ),
             ...errors,
           },
@@ -1263,7 +1446,10 @@ export function openApiDocument(serverUrl: string) {
       '/api/v1/ucp': {
         get: {
           summary: 'Agentic checkout: its settings and the AI shopping platforms let in (admin)',
-          responses: { '200': ok('{ settings, platforms }, without their keys'), ...errors },
+          responses: {
+            '200': ok('The settings and the platforms, without their keys', ref('UcpAdmin')),
+            ...errors,
+          },
         },
       },
       '/api/v1/ucp/settings': {
@@ -1285,7 +1471,7 @@ export function openApiDocument(serverUrl: string) {
           description:
             'The platform calls with the returned API key and names `profileUrl` in its `UCP-Agent` header. The key is shown only once.',
           requestBody: body(platformInput),
-          responses: { '201': ok('{ platform, key }'), ...errors },
+          responses: { '201': ok('The platform and its key', ref('UcpPlatformKey')), ...errors },
         },
       },
       '/api/v1/ucp/platforms/{id}': {
@@ -1293,7 +1479,7 @@ export function openApiDocument(serverUrl: string) {
           summary: 'Revoke an AI shopping platform (admin)',
           description: 'Its key stops working at once, and its orders stop sending it events.',
           parameters: [orderId],
-          responses: { '200': ok('Revoked'), ...errors },
+          responses: { '200': ok('Revoked', ref('Ok')), ...errors },
         },
       },
     }),
@@ -1329,26 +1515,9 @@ export function openApiDocument(serverUrl: string) {
         },
       },
       schemas: {
-        Error: {
-          type: 'object',
-          properties: {
-            error: { type: 'string' },
-            issues: {
-              type: 'array',
-              items: {},
-              description: 'What was wrong, when the refusal has several things to say',
-            },
-          },
-          required: ['error'],
-        },
         Whoami: output(whoamiOutput),
-        Order: orderSchema(),
         Cart: cartSchema(),
-        StartOrderResult: {
-          type: 'object',
-          properties: { orderId: { type: 'string' }, replayed: { type: 'boolean' } },
-          required: ['orderId'],
-        },
+        ...componentSchemas(),
         OrderEvent: {
           type: 'object',
           properties: {

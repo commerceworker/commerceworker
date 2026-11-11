@@ -105,6 +105,7 @@
 ^packages/core/package\.json$	docs/architecture.md	prose
 ^apps/web/app/lib/catalog-api\.server\.ts$	guides/product-catalog reference/rest-api guides/team-and-roles docs/architecture.md docs/configuration.md docs/testing.md	prose
 ^packages/core/src/audit\.ts$	guides/team-and-roles reference/rest-api	prose
+^packages/core/src/((api|audit|erasure|integration|webhook|order)-schemas|product/api-schemas)\.ts$	reference/rest-api docs/architecture.md docs/testing.md packages/sdk/commerce/src/generated/operations.ts	prose
 ^(packages/core/src/(plugins|plugin-ui|credentials)|apps/engine/src/(plugins|plugin-host)|apps/web/app/lib/(plugins\.server|plugin-view|nodes)|apps/web/app/routes/plugin-page)\.tsx?$	docs/plugins.md docs/architecture.md docs/configuration.md docs/data-model.md	prose
 ^plugins/	docs/plugins.md docs/testing.md	prose
 ^packages/plugin-sdk/	docs/plugins.md docs/testing.md docs/architecture.md	prose

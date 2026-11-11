@@ -82,6 +82,7 @@ import {
   inboundFingerprint,
   inboundOrderSchema,
   operationCall,
+  orderListItem,
   PLUGIN_BUNDLE_MAX_BYTES,
   PLUGIN_ID_RE,
   type Principal,
@@ -303,7 +304,7 @@ export async function handleApi(request: Request, caller: Caller): Promise<Respo
         );
         const last = page.at(-1);
         return json({
-          orders: page,
+          orders: page.map(orderListItem),
           nextCursor: page.length === limit && last ? encodeCursor(last) : null,
         });
       }

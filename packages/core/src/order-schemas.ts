@@ -5,7 +5,13 @@
  */
 
 import { z } from 'zod';
-import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, PAYMENT_PROVIDERS } from './types';
+import {
+  FULFILLMENT_METHODS,
+  ORDER_CHANNELS,
+  ORDER_MODELS,
+  ORDER_STATUSES,
+  PAYMENT_PROVIDERS,
+} from './types';
 
 export const flowNodeSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/, 'Node ids are 1–40 letters, digits, _ or -'),
@@ -126,4 +132,109 @@ export const startOrderSchema = z.object({
   version: z.number().int().positive().optional(),
   input: orderInputSchema,
   vars: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** An order as the engine holds it: its input plus the totals the pricing nodes compute. */
+export const orderSchema = orderInputSchema.extend({
+  id: z.string(),
+  createdAt: z.number().int().describe('Epoch ms'),
+  subtotal: z.number().describe('Sum of the priced lines'),
+  shipping: z.number().describe('Shipping charged by a shipping-rate node; 0 when none ran'),
+  tax: z.number().describe('Tax on the subtotal, plus shipping when the tax node taxes it'),
+  total: z.number().describe('subtotal + shipping + tax'),
+  taxRate: z.number().optional().describe('The rate the tax node applied'),
+  taxShipping: z.boolean().optional().describe('Whether the tax node taxed shipping'),
+  fxRate: z
+    .number()
+    .optional()
+    .describe('Units of the order currency per one unit of the base currency, fixed when priced'),
+  baseTotal: z.number().optional().describe('total in the base currency'),
+});
+
+/** A flow as the flows list shows it (`GET /api/v1/flows`). */
+export const flowSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  model: z.enum(ORDER_MODELS),
+  channels: z.array(z.enum(ORDER_CHANNELS)),
+  publishedVersion: z.number().int().nullable().describe('Null while it has never been published'),
+  hasUnpublishedChanges: z.boolean().describe('Published, and the draft has changed since'),
+  updatedAt: z.number().int().describe('Epoch ms'),
+  nodeCount: z.number().int(),
+});
+
+/** A published, immutable flow snapshot: what an order pins. */
+export const flowVersionSchema = flowGraphSchema.extend({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  model: z.enum(ORDER_MODELS),
+  /** Channels this flow is meant for. */
+  channels: z.array(z.enum(ORDER_CHANNELS)),
+  version: z.number().int(),
+  publishedAt: z.number().int().describe('Epoch ms'),
+});
+
+export const flowListSchema = z.object({ flows: z.array(flowSummarySchema) });
+
+/** An order as the orders list shows it (`GET /api/v1/orders`): its index row, less the index's bookkeeping. */
+export const orderRowSchema = z.object({
+  id: z.string(),
+  model: z.enum(ORDER_MODELS),
+  channel: z.enum(ORDER_CHANNELS),
+  externalId: z.string().nullable().describe('The order’s id in the channel it came from'),
+  contactEmail: z.string().nullable(),
+  status: z.enum(ORDER_STATUSES),
+  title: z.string(),
+  flowId: z.string(),
+  flowVersion: z.number().int(),
+  instanceId: z.string().nullable().describe('Null for a recorded order that has no run'),
+  generation: z.number().int(),
+  customerId: z.string().nullable(),
+  currency: z.string(),
+  total: z.number(),
+  waitingOn: z.string().nullable(),
+  waitingAt: z.string().nullable().describe('The steps holding its open waits, joined with ·'),
+  waitingSince: z.number().int().nullable(),
+  waitingDue: z.number().int().nullable().describe('When the soonest open wait times out'),
+  waitingFor: z
+    .string()
+    .nullable()
+    .describe('What the open waits are on: `person:<role>`, `event:<name>` or `timer`'),
+  stoppedAt: z.string().nullable().describe('The steps it failed or stopped at'),
+  reason: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  idempotencyKey: z
+    .string()
+    .nullable()
+    .describe('The `Idempotency-Key` that started it, if the caller sent one'),
+  fxRate: z
+    .number()
+    .describe('Units of its currency per unit of the base currency when it started'),
+  startedBy: z.string().nullable(),
+  erasedAt: z.number().int().nullable(),
+});
+
+/**
+ * An order's index row as the orders list answers it: the index's own bookkeeping (the fingerprint
+ * an idempotent start is matched by, whether an address is awaited) is not the caller's.
+ */
+export const orderListItem = <
+  T extends { idempotencyFingerprint: unknown; addressPending: unknown },
+>(
+  row: T,
+): Omit<T, 'idempotencyFingerprint' | 'addressPending'> => {
+  const { idempotencyFingerprint: _f, addressPending: _a, ...item } = row;
+  return item;
+};
+
+/** A page of orders, newest first. */
+export const orderPageSchema = z.object({
+  orders: z.array(orderRowSchema),
+  nextCursor: z
+    .string()
+    .nullable()
+    .describe('Pass it as `cursor` for the next page; null on the last page'),
 });

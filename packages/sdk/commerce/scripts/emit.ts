@@ -34,14 +34,8 @@ export interface OpenApiLike {
   components?: { schemas?: Record<string, Schema> };
 }
 
-/** Untyped results that still page: the OpenAPI document gives them a description, not a schema. */
-const UNTYPED_PAGES: Record<string, { param: string; items: string; next: string }> = {
-  list_orders: { param: 'cursor', items: 'orders', next: 'nextCursor' },
-  get_catalog_board_column: { param: 'cursor', items: 'items', next: 'cursor' },
-};
-
 const PAGE_PARAMS = ['cursor'];
-const PAGE_NEXT = ['cursor'];
+const PAGE_NEXT = ['cursor', 'nextCursor'];
 const METHODS = ['get', 'post', 'delete'];
 const SUCCESS = ['200', '201', '202'];
 
@@ -293,8 +287,6 @@ function pagination(o: Op, ctx: Ctx) {
   const props = (o.inputSchema.properties ?? {}) as Record<string, unknown>;
   const param = PAGE_PARAMS.find((p) => p in props);
   if (!param) return null;
-  const typed = UNTYPED_PAGES[o.id];
-  if (typed) return typed;
   const result = resolve(o.resultSchema, ctx);
   const out = (result?.properties ?? {}) as Record<string, Schema>;
   const next = PAGE_NEXT.find((n) => n in out);
