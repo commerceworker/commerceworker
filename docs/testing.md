@@ -634,8 +634,13 @@ to answer again and loads the page once more; a test the crash catches mid-actio
 submit) gets one retry locally, and Playwright lists it as flaky rather than passed. On CI the
 suite runs one test at a time with two retries, split four ways with Playwright's `--shard` into
 the jobs `devices (web 1/4)` to `devices (web 4/4)`, each with its own dev server (so no test shares
-a server it didn't before), beside `devices (storefront)`. A job named `devices` passes when all of
-them did. They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on
+a server it didn't before), beside `devices (storefront)`. Each job runs in Playwright's own
+container image for Ubuntu 26.04 (`mcr.microsoft.com/playwright:v<version>-resolute`, pinned by
+digest), which carries WebKit and its system libraries, so nothing is installed from apt; the tag
+must be the catalog's `@playwright/test` version (`scripts/playwright-image.test.ts`, in
+`pnpm test:fleet`, fails otherwise), so a Playwright bump moves the image's tag and digest in the
+same pull request. A job named `devices` passes when all of them did. In the merge queue they run
+too, unless the group only touches docs. They run on pull requests, nightly on `main` and by hand (`gh workflow run ci.yml`), not on
 the push a merge makes, since the pull request already ran them; a pull request that only touches
 `docs/`, `apps/docs/`, `apps/marketing/`, `.claude/` or top-level Markdown skips them (the `changes`
 job decides). A failing job keeps its traces as the `device-test-traces-<job>` artifact (open one
