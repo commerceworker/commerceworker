@@ -255,10 +255,30 @@ bundles the private workspace SDKs (`packages/sdk/*`) and the CLI (`packages/cli
   project, loads every subpath (ESM and CJS), type-checks every subpath against the shipped `.d.ts`
   files and runs `commerceworker help`. That is what a user installs: `pnpm pack` applies
   `publishConfig` (exports and bin pointing at `dist/`) and rewrites `catalog:` versions.
-- Releasing is not wired yet: a tag-triggered release workflow with npm trusted publishing (OIDC,
-  no stored token) and a provenance attestation is a later P7 slice. `node scripts/sdk-packages.ts
-  publish` already skips a version npm has. Before the first release an owner of the npm org
-  publishes once by hand, since npm can name a trusted publisher only for a package that exists.
+- Release workflow (`.github/workflows/sdk-release.yml`): pushing a tag `sdk-v<version>` checks that
+  the tag equals `packages/sdk/sdk/package.json`'s version, then lints, type-checks and tests the
+  SDK and everything it bundles (`turbo --filter='@commerceworker/sdk...'`), runs `pnpm sdk:pack`
+  and `pnpm sdk:check`, and runs `node scripts/sdk-packages.ts publish --provenance`, which
+  publishes with `--access public` and skips a version npm already has (so a re-run is safe). It
+  runs in the `npm` GitHub environment, only in `commerceworker/commerceworker`, one release at a
+  time, with `contents: read` and `id-token: write`; there is no stored token, since npm trusts
+  the job's OIDC identity and attaches a provenance attestation. Run it from the Actions tab
+  (`workflow_dispatch`) to rehearse: `dry-run` defaults to true, which does everything but publish.
+
+To release: bump `version` in `packages/sdk/sdk/package.json`, merge that to `main`, then tag the
+merge commit and push the tag (`git tag sdk-v<version> && git push origin sdk-v<version>`). The
+`npm` environment's reviewers approve the run, and the version appears on npm with its provenance.
+
+One-time setup, by the npm org's owner, before the first release:
+
+1. Create the `@commerceworker` organization on npmjs.com.
+2. Publish the first version by hand (`pnpm sdk:pack`, then `npm publish` of the tarball with
+   `--access public`), because npm can configure a trusted publisher only for a package that exists.
+3. On the package's settings, add the trusted publisher: GitHub Actions, organization
+   `commerceworker`, repository `commerceworker`, workflow `sdk-release.yml`, environment `npm`.
+4. In the repository's Settings, Environments, create `npm` with required reviewers.
+
+Until then the workflow can run as a dry run but cannot publish.
 
 ## Migrations
 

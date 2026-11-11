@@ -1,0 +1,89 @@
+name: Release the SDK
+
+# Publishes @commerceworker/sdk (packages/sdk/sdk: every SDK and the `commerceworker` CLI in one
+# package) to npm when a tag `sdk-v<version>` is pushed: bump its version, merge, then tag. A
+# version already on npm is skipped, so a re-run is safe. Run it by hand to rehearse: a manual run
+# defaults to a dry run, which does everything but publish.
+#
+# npm trusted publishing: no token is stored. On npmjs.com the package's "Trusted publisher" names
+# GitHub Actions, org `commerceworker`, repo `commerceworker`, workflow `sdk-release.yml` and
+# environment `npm`; the job's OIDC token is the credential, and the publish carries a provenance
+# attestation. The one-time setup is in docs/content/deployment.md ("Releasing the SDK").
+on:
+  push:
+    tags: ['sdk-v*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Check and pack, but don't publish
+        type: boolean
+        default: true
+
+# The default GITHUB_TOKEN only needs to read the repository; the job adds id-token for npm.
+permissions:
+  contents: read
+
+# One release at a time, and a release that has started is never cancelled halfway through.
+concurrency:
+  group: sdk-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Forks have neither the npm environment nor a trusted publisher; don't even start there.
+    if: ${{ github.repository == 'commerceworker/commerceworker' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The setup action's pieces (.github/actions/setup), apart so npm can be upgraded before
+      # anything runs: trusted publishing needs a newer npm than Node ships.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          # No pnpm store cache: a job that publishes must not restore what another run wrote.
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - name: npm with trusted publishing
+        # The latest npm, unpinned on purpose: trusted publishing needs a recent one.
+        run: npm install -g npm@latest # zizmor: ignore[adhoc-packages]
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: The tag matches the SDK's version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          version=$(node -p "require('./packages/sdk/sdk/package.json').version")
+          if [ "$REF_TYPE" = tag ]; then
+            if [ "$REF_NAME" != "sdk-v${version}" ]; then
+              echo "::error::tag ${REF_NAME} is not sdk-v${version}: packages/sdk/sdk/package.json says ${version}. Bump the version and merge, then tag the merge commit sdk-v<version>."
+              exit 1
+            fi
+          elif [ "$DRY_RUN" = true ]; then
+            echo "::notice::dry run from ${REF_NAME}, not a tag: version ${version} is not compared with a tag"
+          else
+            echo "::error::a release runs from an sdk-v<version> tag, not from ${REF_NAME}"
+            exit 1
+          fi
+
+      # The SDK and everything it bundles (the workspace SDKs and the CLI).
+      - name: Lint, type-check and test the SDK and what it bundles
+        run: pnpm exec turbo run lint check-types test --filter='@commerceworker/sdk...'
+
+      - name: Pack, then load and type-check every subpath from the tarball
+        run: pnpm sdk:pack && pnpm sdk:check
+
+      # A manual run defaults to a dry run; a tag push always publishes.
+      - name: Publish (skips versions already on npm)
+        if: ${{ github.event_name == 'push' || !inputs.dry-run }}
+        run: node scripts/sdk-packages.ts publish --provenance
