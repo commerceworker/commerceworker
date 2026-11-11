@@ -68,7 +68,12 @@ roles an app can be granted). It finds the authorization server from
 `/.well-known/oauth-protected-resource/mcp`. It registers with dynamic client registration at
 `/oauth/register` or with a Client ID Metadata Document (an `https` `client_id`), sends the person
 to `/oauth/authorize` (authorization code with PKCE, `S256`, required of every client, including
-one that registered with a secret) and exchanges the code at `/oauth/token`. A refresh token works
+one that registered with a secret) and exchanges the code at `/oauth/token`. The consent page honours
+`max_age` and `prompt=login` on the authorization request: a person who signed in longer ago than
+`max_age` seconds, or whom the app asked to sign in again, is asked to sign in again before they
+approve. A request without a PKCE challenge is sent back to the app with `error=invalid_request`.
+An app ends its own connection with an RFC 7009 revocation: `POST /oauth/token` with `token` (and
+`token_type_hint`, `client_id`) and no `grant_type`; a refresh token ends the whole connection. A refresh token works
 once: each refresh returns a new one. Retrying the old one within a minute (an answer that never
 arrived) still works; presenting it again later revokes the connection, since only a copy would.
 
@@ -466,11 +471,17 @@ tokens 30 days.
   `/.well-known/oauth-protected-resource/<path>`.
 - **Role cap.** A grant is never higher than the role of the person who approved it, and the
   consent page offers no more. Pick the lowest role the client needs.
-- **Checked on every request.** CommerceWorker re-reads the person each time. A disabled or deleted
+- **Checked on every request.** CommerceWorker re-reads the person each time, and that the connection
+  still exists: disconnecting an app (or a revocation by the app itself) stops its access token
+  within about a minute, though the token has not yet expired. A disabled or deleted
   person's grants stop working at once. The role is the lower of the one granted and the
   person's current role, so demoting someone narrows the apps they connected. A person whose role
   must use two-factor sign-in and hasn't set it up, or who is still on a temporary password, gets
   `403`.
+- **Registration is limited.** An app registering itself may name up to 10 return addresses, and
+  its `client_uri`, `logo_uri`, `policy_uri` and `tos_uri`, when given, must be `https` URLs. A
+  `software_statement` is refused (`invalid_software_statement`): CommerceWorker verifies no
+  registrar's signature, so it won't take claims on trust.
 - **Credentials stay at the edge.** CommerceWorker resolves the caller before the request reaches the
   tools; `Authorization` and cookies go no further, and the model never sees a token.
 - **Origin.** A request whose `Origin` is not an `http` or `https` origin is refused with `403`.

@@ -26,6 +26,15 @@ export const EMBED_HEADER = 'x-commerceworker-embed';
  */
 export const TURNSTILE_HEADER = 'x-commerceworker-turnstile';
 
+/**
+ * Carried from the consent page's `headers` (routes/oauth-authorize.tsx): the return address the
+ * provider already checked against the client's registration. Chromium holds a redirect after a
+ * form post to the page's `form-action`, so without it the answer to Connect or Cancel (a `303`
+ * to the client) is blocked. `pageHeaders` adds that address's origin to this page's `form-action`
+ * and drops the header.
+ */
+export const CONSENT_HEADER = 'x-commerceworker-consent';
+
 /** Where Turnstile's script and challenge frame come from. */
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 
@@ -51,11 +60,31 @@ function httpsSource(v: unknown, keepPath: boolean): string | null {
   }
   if (u.protocol !== 'https:' || u.username || u.password) return null;
   // The URL parser accepts these in a host; a source can't hold them.
-  if (/[^\x21-\x7e]|[;,']/.test(u.origin)) return null;
+  if (/[^\x21-\x7e]|[;,'*]/.test(u.origin)) return null;
   if (!keepPath) return u.origin;
   return (
     u.origin + u.pathname.replace(/[;,']/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
   );
+}
+
+/**
+ * A client's return address as a `form-action` source: an https origin, or a loopback origin over
+ * http (RFC 8252 §7.3: a native app listening on 127.0.0.1 or localhost). Only an origin: a
+ * redirect is matched without its path. Null for anything else, an IPv6 literal included, which a
+ * source expression has no way to write.
+ */
+export function redirectSource(v: string | null): string | null {
+  if (!v) return null;
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    return null;
+  }
+  if (u.hostname.includes('*')) return null;
+  if (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1'))
+    return u.username || u.password ? null : u.origin;
+  return httpsSource(v, false);
 }
 
 const sources = (vs: unknown, keepPath: boolean) => [
@@ -94,10 +123,14 @@ export function parseEmbed(raw: string | null): EmbedPolicy | null {
 export function contentSecurityPolicy(
   nonce: string,
   embed?: EmbedPolicy | null,
-  opts: { turnstile?: boolean } = {},
+  opts: { turnstile?: boolean; redirect?: string | null } = {},
 ): string {
   const ancestors = embed?.frameAncestors.length ? embed.frameAncestors.join(' ') : "'none'";
-  const actions = ["'self'", ...(embed?.formAction ?? [])].join(' ');
+  const actions = [
+    "'self'",
+    ...(embed?.formAction ?? []),
+    ...(opts.redirect ? [opts.redirect] : []),
+  ].join(' ');
   const turnstile = opts.turnstile ? ` ${TURNSTILE_ORIGIN}` : '';
   return [
     "default-src 'self'",
@@ -115,19 +148,23 @@ export function contentSecurityPolicy(
 }
 
 /** Headers a route passes to entry.server.tsx and no response may carry. */
-const INTERNAL_HEADERS = [EMBED_HEADER, TURNSTILE_HEADER];
+const INTERNAL_HEADERS = [EMBED_HEADER, TURNSTILE_HEADER, CONSENT_HEADER];
 
 /**
- * A page's headers as sent: the route's `EMBED_HEADER` and `TURNSTILE_HEADER` folded into its
+ * A page's headers as sent: the route's `EMBED_HEADER`, `TURNSTILE_HEADER` and `CONSENT_HEADER` folded into its
  * Content-Security-Policy when there is a `nonce`, and removed either way (a HEAD answer, or the
  * dev server, which sets no policy).
  */
 export function pageHeaders(headers: Headers, nonce?: string): Headers {
   const embed = parseEmbed(headers.get(EMBED_HEADER));
   const turnstile = headers.has(TURNSTILE_HEADER);
+  const redirect = redirectSource(headers.get(CONSENT_HEADER));
   for (const h of INTERNAL_HEADERS) headers.delete(h);
   if (nonce)
-    headers.set('Content-Security-Policy', contentSecurityPolicy(nonce, embed, { turnstile }));
+    headers.set(
+      'Content-Security-Policy',
+      contentSecurityPolicy(nonce, embed, { turnstile, redirect }),
+    );
   return headers;
 }
 

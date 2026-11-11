@@ -480,12 +480,14 @@ export interface EngineRpc {
    * Forgets every A2A push config a person (or token) registered, and what is still queued for
    * them, when their connected apps end: a client that can no longer call /a2a stops hearing too.
    * `grants` names the apps (each app's A2A caller is its own, `a2aCaller`); without it, only
-   * what the person or token registered outside any app.
+   * what the person or token registered outside any app. With `grantsOnly` and `grants`, only
+   * those apps': an app ending its own access doesn't end the person's own push configs.
    */
   dropA2aPushes(
     kind: 'user' | 'token',
     id: string,
     grants?: readonly string[],
+    grantsOnly?: boolean,
   ): Promise<{ configs: number }>;
 }
 

@@ -55,6 +55,8 @@ export const AUDIT_ACTIONS = {
   'oauth.device.deny': 'Denied a sign-in from a terminal',
   'oauth.app_disconnected': 'Disconnected an app',
   'oauth.refresh_reused': 'Revoked an app: its old refresh token was used again',
+  'oauth.grant.revoke': 'An app ended its own access',
+  'oauth.refused': 'Turned away an app’s token request',
   'integration.created': 'Created an integration key',
   'integration.rotated': 'Rotated an integration key',
   'ucp.platform_added': 'Let in an AI shopping platform',

@@ -213,6 +213,35 @@ describe('A2A', () => {
     ).toHaveLength(0);
   });
 
+  it('drops only an app’s push configs when grantsOnly, leaving the person’s own', async () => {
+    const fetching = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response('nope', { status: 500 }));
+    onTestFinished(() => fetching.mockRestore());
+    const me = person('viewer', 'grants-only@example.com');
+    const push = (url: string) => ({
+      configuration: {
+        taskPushNotificationConfig: { url, authentication: { scheme: 'Bearer', credentials: 's' } },
+      },
+    });
+    const app = { ...me, grant: 'grant_g', client: 'client_g' };
+    const own = await call(me, 'SendMessage', {
+      ...message([{ data: { skill: 'list_flows' } }]),
+      ...push('https://hooks.example/own'),
+    });
+    await call(app, 'SendMessage', {
+      ...message([{ data: { skill: 'list_flows' } }]),
+      ...push('https://hooks.example/app'),
+    });
+    const ownTask = (own.result!.task as Json).id as string;
+    const { EngineApi } = await import('../src/api');
+    const api = new EngineApi({ waitUntil: () => {} } as never, env);
+    expect(await api.dropA2aPushes('user', me.id, ['grant_g'], true)).toEqual({ configs: 1 });
+    expect(
+      (await call(me, 'ListTaskPushNotificationConfigs', { taskId: ownTask })).result?.configs,
+    ).toHaveLength(1);
+  });
+
   it('places an order once per message id and follows it to its approval', async () => {
     await fastWorkflows();
     const op = person('operator', 'opal@example.com');

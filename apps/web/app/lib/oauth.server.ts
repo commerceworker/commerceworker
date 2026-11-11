@@ -17,10 +17,12 @@
  */
 
 import { env } from 'cloudflare:workers';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   insufficientScope,
   OAuthAuthorizationServer,
   OAuthError,
+  type OAuthErrorInternal,
   type OAuthHelpers,
   type OAuthResourceAuth,
   OAuthResourceServer,
@@ -119,7 +121,145 @@ function authorizationServer(origin: string) {
     accessTokenTTL: 3600,
     refreshTokenTTL: 30 * 86_400,
     clientIdMetadataDocumentEnabled: true,
+    clientRegistrationCallback: ({ clientMetadata }) => registrationRefusal(clientMetadata),
+    onError: ({ code, status, internal }) => noteRefusal(code, status, internal),
   });
+}
+
+/** Return addresses one registration may name (the device grant's own is not counted). */
+export const MAX_REDIRECT_URIS = 10;
+
+/** The metadata URLs RFC 7591 §2 defines, which a consent page shows or links. */
+const METADATA_URLS = ['client_uri', 'logo_uri', 'policy_uri', 'tos_uri'] as const;
+
+/**
+ * Open registration (RFC 7591) takes whatever a client says about itself, so what it says is held
+ * to a policy before it is stored: a handful of return addresses, no `software_statement`, and web
+ * addresses only over https. A `software_statement` is a signed claim a registrar vouches for the
+ * client with; this server trusts no registrar, so it never reads one (RFC 7591 §3.2.2 has the
+ * error for it) rather than store claims it can't check. Undefined when registration may go on.
+ */
+function registrationRefusal(meta: Record<string, unknown>) {
+  if (meta.software_statement !== undefined)
+    return {
+      code: 'invalid_software_statement',
+      description: 'This server does not accept software statements.',
+    };
+  const redirects = Array.isArray(meta.redirect_uris)
+    ? meta.redirect_uris.filter((u) => u !== DEVICE_REDIRECT)
+    : [];
+  if (redirects.length > MAX_REDIRECT_URIS)
+    return {
+      code: 'invalid_redirect_uri',
+      description: `Register at most ${MAX_REDIRECT_URIS} redirect URIs.`,
+    };
+  if (redirects.some((u) => typeof u !== 'string' || /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*\*/i.test(u)))
+    return {
+      code: 'invalid_redirect_uri',
+      description: 'A redirect URI host can’t hold a wildcard.',
+    };
+  for (const name of METADATA_URLS) {
+    const value = meta[name];
+    if (value === undefined) continue;
+    let url: URL | null = null;
+    try {
+      url = typeof value === 'string' ? new URL(value) : null;
+    } catch {}
+    if (url?.protocol !== 'https:' || url.username || url.password)
+      return { description: `${name} must be an https URL.` };
+  }
+}
+
+type Refusal = { code: string; status: number; category: string; reason: string };
+/** What the provider turned away during one request, noted by its `onError` as it happens. */
+const refused = new AsyncLocalStorage<Refusal[]>();
+
+/** Refusals worth a person's attention: someone holds a credential that isn't theirs or isn't current. */
+const AUDITED_REASONS = new Set([
+  'code_replayed',
+  'code_verifier_mismatch',
+  'code_mismatch',
+  'refresh_token_mismatch',
+  'client_mismatch',
+]);
+
+function noteRefusal(code: string, status: number, internal: OAuthErrorInternal | undefined) {
+  const refusal = {
+    code,
+    status,
+    category: internal?.category ?? 'unknown',
+    reason: internal?.reason ?? 'unknown',
+  };
+  const seen = refused.getStore();
+  // Not at the token endpoint (registration, discovery): there is no client to name, so it's logged.
+  if (seen) seen.push(refusal);
+  else console.warn(JSON.stringify({ type: 'oauth_refused', ...refusal }));
+}
+
+/** How long one refusal reason, for one client, is audited once; the rest are counted into the next. */
+export const REFUSAL_WINDOW_MS = 10 * 60_000;
+const MAX_TRACKED_REFUSALS = 500;
+const tracked = new Map<string, { since: number; count: number }>();
+
+/** The client a token request names: in its body, or as the user of Basic credentials. */
+function tokenClient(request: Request, body: URLSearchParams): string | null {
+  const basic = /^Basic[\t ]+(\S+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+  if (basic) {
+    try {
+      const id = decodeURIComponent(atob(basic).split(':')[0] ?? '');
+      if (id) return id;
+    } catch {}
+  }
+  return body.get('client_id');
+}
+
+/**
+ * Runs a token request, then reports what the provider turned away in it. The provider's reasons
+ * are finer than its answer (`refresh_token_mismatch`, `code_replayed`): they are logged, and the
+ * ones that mean a credential in the wrong hands are audited, per client, once per window with the
+ * number seen since the last, so a client hammering the endpoint can't fill the trail. The
+ * reasons carry no token; the client is one the provider found and authenticated, since those
+ * checks come first.
+ */
+async function reportRefusals(request: Request, run: () => Promise<Response>): Promise<Response> {
+  // Read first: the provider consumes the request's body.
+  const body = new URLSearchParams(
+    await request
+      .clone()
+      .text()
+      .catch(() => ''),
+  );
+  const seen: Refusal[] = [];
+  const res = await refused.run(seen, run);
+  if (!seen.length) return res;
+  const client = tokenClient(request, body);
+  const now = Date.now();
+  for (const r of seen) {
+    console.warn(JSON.stringify({ type: 'oauth_refused', client, ...r }));
+    if (!client || !AUDITED_REASONS.has(r.reason)) continue;
+    const key = `${client}\n${r.reason}`;
+    const entry = tracked.get(key);
+    if (entry && now - entry.since < REFUSAL_WINDOW_MS) {
+      entry.count++;
+      continue;
+    }
+    if (!entry && tracked.size >= MAX_TRACKED_REFUSALS) {
+      for (const [k, v] of tracked) if (now - v.since >= REFUSAL_WINDOW_MS) tracked.delete(k);
+      // Still full: every client is in its window, so this one is only logged.
+      if (tracked.size >= MAX_TRACKED_REFUSALS) continue;
+    }
+    tracked.set(key, { since: now, count: 0 });
+    await audit(request, 'oauth.refused', {
+      target: client,
+      detail: {
+        reason: r.reason,
+        category: r.category,
+        code: r.code,
+        count: 1 + (entry?.count ?? 0),
+      },
+    });
+  }
+  return res;
 }
 
 const spentKey = (hash: string) => `cmw_spent:${hash}`;
@@ -151,7 +291,7 @@ async function refreshReuse(request: Request): Promise<Response | null> {
   const grant = await env.OAUTH_KV.get<{
     refreshTokenId?: string;
     previousRefreshTokenId?: string;
-  }>(`grant:${userId}:${grantId}`, 'json');
+  }>(grantKey(userId, grantId), 'json');
   if (grant?.refreshTokenId === hash) {
     // The current token, being traded now: from here on it is spent.
     const spent: Spent = { userId, grantId, at: Date.now() };
@@ -175,6 +315,44 @@ async function refreshReuse(request: Request): Promise<Response | null> {
   );
 }
 
+/**
+ * A client revoking its own token (RFC 7009): a POST to the token endpoint with a `token` and no
+ * `grant_type`, which the provider answers itself (a refresh token ends its whole grant; an access
+ * token only itself). What the provider can't do is what the Account page's Disconnect does, so
+ * when the grant is gone afterwards, an A2A app's push configs go with it and the trail says the
+ * app ended it. A client the provider didn't authenticate, or a token that isn't its own, leaves
+ * the grant standing and nothing is dropped or logged.
+ */
+async function clientRevocation(
+  request: Request,
+  revoke: () => Promise<Response>,
+): Promise<Response> {
+  if (request.method !== 'POST') return revoke();
+  const body = new URLSearchParams(await request.clone().text());
+  const token = body.get('token');
+  const [userId, grantId] = token?.split(':') ?? [];
+  // The provider's own test (an empty grant_type is a revocation too).
+  if (body.get('grant_type') || !token || !userId || !grantId) return revoke();
+  const key = grantKey(userId, grantId);
+  const before = await env.OAUTH_KV.get<{ clientId?: string; metadata?: { app?: unknown } }>(
+    key,
+    'json',
+  );
+  const res = await revoke();
+  if (before && res.ok && (await env.OAUTH_KV.get(key)) === null) {
+    // Only this app's: the person's own push configs are theirs, not the app's.
+    await engine().dropA2aPushes('user', userId, [grantId], true);
+    await audit(request, 'oauth.grant.revoke', {
+      target: String(before.metadata?.app ?? before.clientId ?? grantId),
+      detail: { via: 'client', userId, grant: grantId, clientId: before.clientId },
+    });
+  }
+  return res;
+}
+
+/** The provider's record of a grant (`grant:<user>:<grant>`); a grant that is gone has none. */
+const grantKey = (userId: string, grantId: string) => `grant:${userId}:${grantId}`;
+
 /** Tokens this authorization server issued look like `<user>:<grant>:<secret>`. */
 const issuedToken = (token: string) => token.split(':').length === 3;
 
@@ -183,6 +361,11 @@ export const hasIssuedToken = (request: Request) => {
   const token = /^Bearer[\t ]+([^\s,]+)$/i.exec(request.headers.get('authorization') ?? '')?.[1];
   return token !== undefined && issuedToken(token);
 };
+
+async function grantExists(env: Env, token: string): Promise<boolean> {
+  const [userId, grantId] = token.split(':');
+  return !!userId && !!grantId && (await env.OAUTH_KV.get(grantKey(userId, grantId))) !== null;
+}
 
 type ResourceHandler = ConstructorParameters<typeof OAuthResourceServer<Env, Props>>[0]['handler'];
 
@@ -203,7 +386,14 @@ function resourceServer(
       scopes_supported: GRANTABLE_ROLES,
     },
     validateToken: (env, request) => async (res, token) => {
-      if (issuedToken(token)) return as.validateToken<Props>(res, token, env);
+      if (issuedToken(token)) {
+        const validated = await as.validateToken<Props>(res, token, env);
+        // The provider revokes a grant by deleting its tokens by listing them, and a listing can
+        // miss one (KV lists are eventually consistent), so a revoked app's access token would
+        // work until it expires. The grant's own record is a single read: no record, no access.
+        if (validated && !(await grantExists(env, token))) return null;
+        return validated;
+      }
       // The REST API takes `cmw_live_` tokens in its own router, never through here.
       if (path === API_PATH) return null;
       let caller: Caller | null;
@@ -302,12 +492,14 @@ export async function oauthFetch(
       await markDeviceClient(((await res.clone().json()) as { client_id: string }).client_id);
     return res;
   }
-  if (url.pathname === '/oauth/token') {
-    const reused = await refreshReuse(request);
-    if (reused) return reused;
-    const device = await deviceToken(request, (r) => as.fetch(r, env, ctx));
-    if (device) return device;
-  }
+  if (url.pathname === '/oauth/token')
+    return reportRefusals(request, async () => {
+      const reused = await refreshReuse(request);
+      if (reused) return reused;
+      const device = await deviceToken(request, (r) => as.fetch(r, env, ctx));
+      if (device) return device;
+      return clientRevocation(request, () => as.fetch(request, env, ctx));
+    });
   if (url.pathname === '/.well-known/oauth-authorization-server')
     return withDeviceMetadata(await as.fetch(request, env, ctx), url.origin);
   const path = url.pathname.startsWith(`${PROTECTED_RESOURCE}/`)
@@ -601,6 +793,22 @@ const unauthorized = (origin: string, error = 'Unauthorized') =>
 /** The authorization server's helpers, for the consent page and the Account page. */
 export function oauthApi(request: Request): OAuthHelpers {
   return rolesFor(new URL(request.url).origin).as.getOAuthApi(env);
+}
+
+/**
+ * Every grant a person has, however many pages the provider lists them in (a page holds up to
+ * a thousand): the Account page shows them all and can end any.
+ */
+export async function userGrants(request: Request, userId: string) {
+  const oauth = oauthApi(request);
+  const items: Awaited<ReturnType<OAuthHelpers['listUserGrants']>>['items'] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await oauth.listUserGrants(userId, cursor ? { cursor } : undefined);
+    items.push(...page.items);
+    cursor = page.cursor;
+  } while (cursor);
+  return items;
 }
 
 /** A browser Origin, when there is one, must at least be a real web origin. */

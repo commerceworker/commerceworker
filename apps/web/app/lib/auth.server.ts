@@ -103,6 +103,22 @@ export async function sessionId(request: Request): Promise<string | undefined> {
 }
 
 /**
+ * When this request's person last proved who they were: the session's start, or the later time
+ * they signed in again at the identity provider on it (a step-up). Null when it isn't a person's
+ * session. The consent page holds an app's `max_age` and `prompt=login` to it.
+ */
+export async function authenticatedAt(request: Request, by: Principal): Promise<number | null> {
+  const sid = by.kind === 'user' ? await sessionId(request) : undefined;
+  if (!sid) return null;
+  const [rows, session] = await Promise.all([
+    authStore().sessionsOf(by.id, Date.now()),
+    authStore().session(sid),
+  ]);
+  const started = rows.find((r) => r.tokenHash === sid)?.createdAt;
+  return started === undefined ? null : Math.max(started, session?.reauthAt ?? 0);
+}
+
+/**
  * A browser caller. `twoFactorDue` marks a person whose role must use two-factor sign-in but who
  * hasn't set it up; `passwordChangeDue`, one still on a password an admin set. Until they put it
  * right, they may only use their Account page.

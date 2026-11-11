@@ -63,7 +63,22 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    the approver's own. The device grant (`/oauth/device_authorization`, `oauth-device.server.ts`) is
    the same grant minted on approval: only clients registered for it, never a URL client id (no borrowed
    publisher name), the person types the code even from a link, and its return address
-   (`DEVICE_REDIRECT`) is refused by the consent page.
+   (`DEVICE_REDIRECT`) is refused by the consent page. Check that a change keeps the OAuth 2.1 and
+   security-BCP hardening (`docs/architecture.md`, "OAuth conformance"; `oauth-bcp.test.ts`):
+   - an issued token is honoured only while its grant's own record exists (`validateToken`'s
+     `grantExists`), so a revoked grant stops at once at all three resources, not when the token expires;
+   - a client's RFC 7009 revocation at `/oauth/token` drops the app's A2A push configs and audits
+     `oauth.grant.revoke` (`via: 'client'`);
+   - the consent answer is a `303`, and only the consent page's `form-action` names the validated return
+     origin (`CONSENT_HEADER`), never another page's, never an unvalidated URI;
+   - `max_age` and `prompt=login` are honoured from the raw URL before any consent is begun, and the
+     request the person returns to no longer carries them;
+   - registration refuses a `software_statement` (nothing verifies one), more than ten return addresses
+     and a non-https `client_uri`, `logo_uri`, `policy_uri` or `tos_uri`;
+   - the provider's internal refusal reasons are audited per client and window (`reportRefusals`), never
+     with a token, so a client can't flood the trail;
+   - PKCE is required of every client, and a missing challenge on a validated request redirects with
+     `invalid_request` and `iss`.
 4. **Roles are checked on live data.** `atLeast(role, min)`; viewer < approver < operator < admin.
    Separation of duties (`ownOrderRefusal`) applies when the workspace setting is on. MCP and
    assistant actions preview first and run only with a single-use `cfm_` confirmation code bound

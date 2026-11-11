@@ -40,6 +40,10 @@ page, which offers the REST API like the other two, and grants a role no higher 
 (never `admin`, so a grant can't reach the admin routes). Discovery starts at the `401` an
 unauthenticated request gets: its `WWW-Authenticate` points at
 `/.well-known/oauth-protected-resource/api/v1`. Access tokens last one hour and refresh tokens 30 days.
+Disconnecting an app, or the app revoking its own token (RFC 7009: `POST /oauth/token` with `token`
+and no `grant_type`; a refresh token ends the whole grant), stops its access token within about a
+minute, though it has not expired. On the authorization request, the consent page honours
+`max_age` and `prompt=login` by asking the person to sign in again first.
 
 The app acts as the person who approved it, at the lower of the role granted and their role now; a
 disabled or deleted person's grants stop working at once. It is not that person, though: what a

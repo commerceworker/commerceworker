@@ -41,7 +41,7 @@ import { Passkeys } from '~/components/passkeys';
 import { audit } from '~/lib/audit.server';
 import { requireUser, sessionId, Throttled } from '~/lib/auth.server';
 import { engine } from '~/lib/env.server';
-import { oauthApi } from '~/lib/oauth.server';
+import { oauthApi, userGrants } from '~/lib/oauth.server';
 import { listPasskeys } from '~/lib/passkeys.server';
 import { usesPassword } from '~/lib/sso.server';
 import {
@@ -74,11 +74,11 @@ export async function loader({ request }: Route.LoaderArgs) {
   const [sessions, twoFactor, grants, passkeys, password] = await Promise.all([
     ownSessions(me, await sessionId(request)),
     twoFactorStatus(me),
-    oauthApi(request).listUserGrants(me.id),
+    userGrants(request, me.id),
     me.kind === 'user' ? listPasskeys(me.id) : [],
     me.kind === 'user' ? usesPassword(me.id) : true,
   ]);
-  const apps = grants.items.map((g) => ({
+  const apps = grants.map((g) => ({
     id: g.id,
     name: String(g.metadata?.app ?? g.clientId),
     // Recorded when the app connected; older grants have neither.
@@ -109,7 +109,7 @@ export async function action({ request }: Route.ActionArgs) {
       }
       case 'disconnect-app': {
         const oauth = oauthApi(request);
-        const grant = (await oauth.listUserGrants(me.id)).items.find((g) => g.id === str('ref'));
+        const grant = (await userGrants(request, me.id)).find((g) => g.id === str('ref'));
         if (!grant) throw new TeamError('That app is no longer connected.');
         await oauth.revokeGrant(grant.id, me.id);
         // An A2A app's push configs go with it.
