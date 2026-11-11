@@ -640,3 +640,54 @@ describe('0073_purchase_orders', () => {
     await line(1).run();
   });
 });
+
+describe('0074_quotes', () => {
+  it('adds the tables and the quote source beside what is there, versions unique per negotiation', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0074_');
+    await applyD1Migrations(db, applied);
+    const sources = () =>
+      db.prepare('SELECT id, priority, stop_processing FROM price_sources ORDER BY priority').all();
+    const had = (await sources()).results;
+    await applyD1Migrations(db, [next]);
+
+    // The chain keeps its sources and gains the quote source ahead of them all, which stops it.
+    expect((await sources()).results).toEqual([
+      { id: 'quote', priority: 5, stop_processing: 1 },
+      ...had,
+    ]);
+    for (const table of ['quotes', 'quote_lines'])
+      expect(await db.prepare(`SELECT count(*) AS n FROM ${table}`).first()).toEqual({ n: 0 });
+
+    const quote = (id: string, root: string, version: number) =>
+      db
+        .prepare(
+          `INSERT INTO quotes (id, root_id, version, company_id, name, created_at, updated_at)
+           VALUES (?, ?, ?, 'q_biz', 'Spring', 1, 1)`,
+        )
+        .bind(id, root, version);
+    await quote('qt_1', 'qt_1', 1).run();
+    expect(
+      await db
+        .prepare('SELECT status, expires_at, converted_id, buyer_id FROM quotes WHERE id = ?')
+        .bind('qt_1')
+        .first(),
+    ).toEqual({ status: 'draft', expires_at: null, converted_id: null, buyer_id: null });
+
+    // A version is a negotiation's once; the next revision and another negotiation are free.
+    await expect(quote('qt_dup', 'qt_1', 1).run()).rejects.toThrow(/UNIQUE/);
+    await quote('qt_2', 'qt_1', 2).run();
+    await quote('qt_3', 'qt_3', 1).run();
+
+    // A line sits once at its position in its quote.
+    const line = (position: number) =>
+      db
+        .prepare(
+          `INSERT INTO quote_lines (quote_id, position, sku, qty, unit_price) VALUES ('qt_1', ?, 'WID-100', 5, 9.5)`,
+        )
+        .bind(position);
+    await line(0).run();
+    await expect(line(0).run()).rejects.toThrow(/UNIQUE|PRIMARY/);
+    await line(1).run();
+  });
+});

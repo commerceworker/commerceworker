@@ -67,6 +67,13 @@ describe('data subject requests', () => {
       notes: 'Call Charles on arrival',
       poNumber: 'A-1',
     });
+    expect(x.quotes.map((q) => q.id).sort()).toEqual(['sc2_qt_acct', 'sc2_qt_ada']);
+    // Who in the team drafted it isn't the subject's to be given.
+    expect(x.quotes.every((q) => !('createdBy' in q))).toBe(true);
+    expect(x.quotes.find((q) => q.id === 'sc2_qt_acct')).toMatchObject({
+      notes: 'Charles wants net 60',
+      name: 'Spring deal',
+    });
     expect(x.inboundEmails.every((r) => !('r2Key' in r))).toBe(true);
   });
 
@@ -100,6 +107,8 @@ describe('data subject requests', () => {
       companyMembers: 2,
       // Her company's PO and the one she placed.
       purchaseOrders: 2,
+      // Her company's quote and the one for her.
+      quotes: 2,
     });
     // Their words are gone from them; the number and status stay.
     const after = (await p.subjects.rows(await p.subjects.subject('grace@example.com'), []))
@@ -109,6 +118,14 @@ describe('data subject requests', () => {
       buyerId: null,
       poNumber: 'G-1',
       status: 'fulfilled',
+    });
+    const quotesAfter = (await p.subjects.rows(await p.subjects.subject('grace@example.com'), []))
+      .quotes;
+    expect(quotesAfter.find((q) => q.id === 'sc2_qt_ada')).toMatchObject({
+      notes: null,
+      buyerId: null,
+      name: 'Autumn deal',
+      status: 'sent',
     });
     expect(deleted).toContain('orders/sc2_o_acct/');
     expect(deleted).toContain('inbound/sc2_in_2.eml');

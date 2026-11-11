@@ -12,6 +12,8 @@ import {
   type PriceRule,
   type PriceSource,
   type Promotion,
+  quoteLineRule,
+  quoteLive,
 } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import type {
@@ -22,6 +24,7 @@ import type {
   Redemption,
 } from '@commerceworker/ports/commerce';
 import { PriceBookData, sortedEntries } from './price-book-store';
+import { QuoteData } from './quote-store';
 
 /** What a pricing store holds, as a test seeds it. */
 export interface PricingFixture {
@@ -50,6 +53,8 @@ export class InMemoryPricingStore implements PricingStore {
     private readonly fixture: PricingFixture,
     private readonly clock: Clock,
     data: PriceBookData = new PriceBookData(),
+    /** Quotes, from an `InMemoryQuoteStore` over the same `QuoteData`: the accepted ones price. */
+    private readonly quotes: QuoteData = new QuoteData(),
   ) {
     this.data = data;
     for (const c of fixture.contractPrices ?? []) {
@@ -258,11 +263,22 @@ export class InMemoryPricingStore implements PricingStore {
             }),
           ),
       );
+    // The company's accepted quotes that haven't expired: one entry a line.
+    const quoted = customerId
+      ? [...this.quotes.rows.values()]
+          .filter(({ quote }) => quote.companyId === customerId && quoteLive(quote, at))
+          .flatMap(({ quote, lines }) =>
+            lines.flatMap((l, i) =>
+              !wanted || wanted.has(l.sku) ? [quoteLineRule(quote, i, l)] : [],
+            ),
+          )
+      : [];
     return {
       sources,
       rules: [
         ...(this.fixture.priceRules ?? []),
         ...entries,
+        ...quoted,
         ...contracts.map(
           ([sku, price]): PriceRule => ({
             id: `contract_${customerId}_${sku}`,

@@ -1,0 +1,111 @@
+---
+title: Quotes
+description: Negotiated prices for a company, versioned as they are agreed; an accepted quote prices the company's orders ahead of every other price until it expires, and becomes a purchase order draft or an order.
+---
+
+A quote is a set of prices agreed with a [company](/guides/companies/) for a stretch of time. It has
+a name, lines (a SKU, **the most the buyer may order at that price**, and the negotiated unit price),
+the member it is for, notes and an expiry day. Prices are in the base currency, `USD`, like
+[price books](/guides/price-books/) and budgets; an order in another currency converts them at its
+rate.
+
+A quote is not a [cart's](/guides/carts/) pricing snapshot. A cart's quote is what a cart would
+cost now; a negotiated quote is a record of its own that outlives any order.
+
+## Lifecycle
+
+| From | Can become |
+|---|---|
+| `draft` | `sent`, `declined` (withdrawn) |
+| `sent` | `accepted`, `declined`, `expired`, `superseded` (by a revision) |
+| `accepted` | `expired` (ended early) |
+| `declined`, `expired` | `superseded` (by a revision) |
+| `superseded` | nothing: it is final |
+
+**Only a draft can be edited.** A sent quote is read-only; to change it, **revise** it. A revision
+starts the next version as a new draft with the same lines, and the version it came from becomes
+`superseded`, which is read-only for good. The quote page names every version of the negotiation,
+and the list shows each negotiation once, at its latest version. An accepted quote is a deal: it is
+not revised, only ended (`expire_quote`) so a new one can be made.
+
+A sent or accepted quote past its expiry reads as **expired** without anything having to run.
+Accepting a quote that has lapsed refuses and records the lapse. Each move is made only from the
+status it was read in, so an accept and a decline sent at the same moment have one winner, and two
+revisions of one quote make one new version.
+
+Staff record the company's answer: **Record acceptance** and **Decline** on the quote's page, or
+`accept_quote` and `decline_quote`. Both are audited with who recorded them.
+
+## Drafting and sending
+
+A draft needs at least one line, **one line per SKU** (a quote prices a SKU once, so a smaller order
+can't pick up a deeper tier's price), SKUs that are products, and an active company. The buyer, when
+named, must be an active member of the company. These are checked when the draft is saved and again
+when it is sent. Each line keeps the list price it was written against, so the quote can show what
+it takes off.
+
+Sending needs an **expiry day**: the last day (UTC) the prices count, through the end of that day.
+The day has to be ahead. A quote has no price until it is accepted.
+
+Operators draft and edit quotes on the **Quotes** page (`/quotes`), where each draft opens in an
+editor that works on a phone. The list is newest first and narrows by status, company and a part of
+the name. Drafting, editing and revising ask for no confirmation, since a draft prices nothing;
+sending, accepting, declining, ending and converting do.
+
+## Pricing from an accepted quote
+
+While a quote is **accepted and before it expires**, its lines are the company's prices. The
+[pricing chain](/reference/expressions/#pricing-chain) has a `quote` source ahead of every other
+(price books, contract prices, volume tiers) and it stops the chain, so a negotiated price is the
+price even when another source is cheaper. A line prices from a quote when:
+
+- the order is from the quote's company (an agentic checkout buyer has no customer, so no quote),
+- the line's SKU is on the quote and its quantity is **at most** the quantity on the quote line, and
+- the node's **Contract pricing** option is on (as for contract prices).
+
+An order for more than the quoted quantity is priced as if there were no quote, and a quote that
+isn't accepted, has expired or was ended prices nothing. Where several accepted quotes price the same
+SKU, the lowest price wins. The quote applies to **every** order of the company while it is in force,
+not only the order made from it, and the quantity on a line is a ceiling per order line, not a total
+the company draws down. The price node's output names the quote that priced a line.
+
+An order already priced keeps its price; ending a quote doesn't reprice it.
+
+## Converting a quote
+
+An accepted quote that hasn't expired is converted once, to one of two things:
+
+- **A purchase order draft**, when the company uses [purchase orders](/guides/purchase-orders/) (it
+  has any). The draft names the quote, carries its lines with the quoted prices as the buyer's
+  expected ones, and takes a PO number you give (`poNumber`) or one made from the quote. It starts
+  nothing: submitting it runs the PO flow, whose price node reads the quote, so the order is priced
+  at the quote and still goes through credit, budgets and approvals.
+- **An order**, for any other company, on the B2B order flow (or the flow you name). The order's lines
+  carry no price, so the quote is what prices it.
+
+`to` overrides the choice. Converting again returns what the first conversion made and makes
+nothing new, however often it is asked and however many callers ask at once. The quote stays
+accepted, so its price keeps applying until it expires.
+
+## API and assistant
+
+| Tool | Role | Confirms | REST |
+|---|---|---|---|
+| `list_quotes` | viewer | no | `GET /api/v1/quotes` |
+| `get_quote` | viewer | no | `GET /api/v1/quotes/:quoteId` |
+| `create_quote` | operator | no | `POST /api/v1/quotes` |
+| `update_quote` | operator | no | `POST /api/v1/quotes/:quoteId/update` |
+| `revise_quote` | operator | no | `POST /api/v1/quotes/:quoteId/revise` |
+| `send_quote` | operator | yes | `POST /api/v1/quotes/:quoteId/send` |
+| `accept_quote` | operator | yes | `POST /api/v1/quotes/:quoteId/accept` |
+| `decline_quote` | operator | yes | `POST /api/v1/quotes/:quoteId/decline` |
+| `expire_quote` | operator | yes | `POST /api/v1/quotes/:quoteId/expire` |
+| `convert_quote` | operator | yes | `POST /api/v1/quotes/:quoteId/convert` |
+
+The list takes `companyId`, `status`, `rootId` (every version of one negotiation, superseded ones
+included), `search` (part of the name), `cursor` and `limit` (25 by default, at most 100), and
+answers `quotes`, `total` and the next `cursor`. A quote read by id carries its `lines` and its
+`versions`. The two transports run the same code; see the [MCP](/reference/mcp/#quotes) and
+[REST](/reference/rest-api/) references. Each move writes an audit entry (`quote.created`,
+`quote.updated`, `quote.sent`, `quote.accepted`, `quote.declined`, `quote.expired`, `quote.revised`,
+`quote.converted`).

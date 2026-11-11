@@ -222,6 +222,7 @@ export const EXECUTORS: Record<string, Exec> = {
     const { lines, fxRate: fx, totals: t, priced } = result;
     const bySource = (k: string) => priced.filter((x) => x.by === k).length;
     const notes = [
+      ['quote', 'quote'],
       ['contract', 'contract'],
       ['price_book', 'price book'],
       ['volume', 'volume'],

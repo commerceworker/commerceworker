@@ -111,6 +111,8 @@ export async function exportDataSubject(
     companies: held.companies,
     companyMembers: held.companyMembers,
     purchaseOrders: held.purchaseOrders,
+    // Who in the team made a quote is theirs, not the subject's.
+    quotes: held.quotes.map(({ createdBy: _by, ...q }) => q),
     truncated: rows.length > EXPORT_MAX,
     teamMember: s.teamMember,
   };
@@ -153,6 +155,7 @@ export async function eraseDataSubject(
     addresses: 0,
     companyMembers: 0,
     purchaseOrders: 0,
+    quotes: 0,
     teamMember: s.teamMember,
   };
 
@@ -190,6 +193,7 @@ export async function eraseDataSubject(
   result.messages += unlinked.messages;
   // Their companies' POs, and those their member rows placed, before those rows are blanked.
   result.purchaseOrders = await ports.subjects.erasePurchaseOrders(s);
+  result.quotes = await ports.subjects.eraseQuotes(s);
   for (const c of s.accounts) {
     // Their tax certificates go whole, files and rows: a certificate names the business and its
     // registration, and no order needs it once the orders it exempted are written.

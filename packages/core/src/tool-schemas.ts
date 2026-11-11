@@ -33,6 +33,13 @@ import {
   PO_STATUSES,
   updatePoDraftInput,
 } from './b2b/purchase-orders';
+import {
+  createQuoteInput,
+  QUOTE_CONVERSION_TARGETS,
+  QUOTE_PAGE,
+  QUOTE_STATUSES,
+  updateQuoteInput,
+} from './b2b/quotes';
 import { CART_STATUSES, cartOpSchema, MAX_CART_TITLE, normalizePromoCode } from './cart';
 import { CREDIT_ENTRY_KINDS, MAX_CREDIT_ADJUSTMENT } from './credit';
 import { FX_SOURCES } from './fx';
@@ -699,6 +706,58 @@ export const TOOL_INPUTS = {
     poId: z.string().min(1).max(100),
     reason: z.string().trim().min(1).max(500).optional().describe('Kept on the order’s timeline'),
   }),
+  list_quotes: z.object({
+    companyId: z.string().max(100).optional().describe('Only this company’s quotes'),
+    status: z.enum(QUOTE_STATUSES).optional(),
+    rootId: z
+      .string()
+      .max(100)
+      .optional()
+      .describe('Every version of the negotiation whose first version has this id'),
+    search: z.string().max(100).optional().describe('Part of the quote’s name'),
+    cursor: z.string().max(500).optional().describe('The `cursor` a page returned'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(QUOTE_PAGE.max)
+      .optional()
+      .describe(`Default ${QUOTE_PAGE.default}`),
+  }),
+  get_quote: z.object({ quoteId: z.string().min(1).max(100) }),
+  create_quote: createQuoteInput,
+  update_quote: updateQuoteInput,
+  send_quote: z.object({ quoteId: z.string().min(1).max(100) }),
+  accept_quote: z.object({
+    quoteId: z.string().min(1).max(100),
+    note: z.string().trim().min(1).max(500).optional().describe('Who accepted, and how'),
+  }),
+  decline_quote: z.object({
+    quoteId: z.string().min(1).max(100),
+    reason: z.string().trim().min(1).max(500).optional(),
+  }),
+  revise_quote: z.object({ quoteId: z.string().min(1).max(100) }),
+  expire_quote: z.object({ quoteId: z.string().min(1).max(100) }),
+  convert_quote: z.object({
+    quoteId: z.string().min(1).max(100),
+    to: z
+      .enum(QUOTE_CONVERSION_TARGETS)
+      .optional()
+      .describe('po or order; defaults to po when the company has purchase orders, else order'),
+    poNumber: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe('The PO number for a PO draft; defaults to one made from the quote'),
+    flowId: z
+      .string()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('For an order: the flow to run it on; defaults to the B2B order flow'),
+  }),
   set_member_role: z.object({ userId: z.string().max(60), role: z.enum(ROLES) }),
   set_approval_separation: z.object({ on: z.boolean() }),
   set_assistant_routing: z.object({ on: z.boolean() }),
@@ -835,6 +894,41 @@ const purchaseOrderOutput = row({
   updatedAt: z.number(),
   lineCount: z.number().optional(),
   lines: z.array(poLineOutput).optional(),
+});
+
+const quoteLineOutput = row({
+  sku: z.string(),
+  name: z.string().nullable(),
+  qty: z.number().describe('The most a buyer may order at this price'),
+  listPrice: z.number().nullable().describe('List price when the line was written'),
+  unitPrice: z.number().describe('The negotiated unit price, base currency'),
+});
+const quoteOutput = row({
+  id: z.string(),
+  rootId: z.string().describe('The first version’s id, shared by every version'),
+  version: z.number(),
+  companyId: z.string(),
+  buyerId: z.string().nullable(),
+  name: z.string(),
+  status: z.enum(QUOTE_STATUSES),
+  expiresAt: z.number().nullable().describe('Ms; the prices stop counting at this instant'),
+  notes: z.string().nullable(),
+  convertedTo: z.enum(QUOTE_CONVERSION_TARGETS).nullable(),
+  convertedId: z.string().nullable().describe('The PO draft or order the quote became'),
+  convertedAt: z.number().nullable(),
+  sentAt: z.number().nullable(),
+  decidedAt: z.number().nullable(),
+  createdBy: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  total: z.number().describe('Its lines’ quantities at their prices'),
+  lineCount: z.number().optional(),
+  lines: z.array(quoteLineOutput).optional(),
+  versions: z
+    .array(row({ id: z.string(), version: z.number(), status: z.enum(QUOTE_STATUSES) }))
+    .optional()
+    .describe('Every version of the negotiation, oldest first'),
+  href: z.string(),
 });
 
 const feedOutput = row({
@@ -1308,6 +1402,32 @@ export const TOOL_OUTPUTS = {
   }),
   submit_po: actionOutput,
   cancel_po: actionOutput,
+  list_quotes: row({
+    quotes: z.array(quoteOutput),
+    total: z.number().describe('Every quote the filters match'),
+    cursor: z.string().nullable().describe('Pass it back for the next page; null at the end'),
+  }),
+  get_quote: row({ quote: quoteOutput }),
+  create_quote: row({
+    done: z.string().describe('What happened'),
+    href: z.string(),
+    quote: quoteOutput,
+  }),
+  update_quote: row({
+    done: z.string().describe('What happened'),
+    href: z.string(),
+    quote: quoteOutput,
+  }),
+  revise_quote: row({
+    done: z.string().describe('What happened'),
+    href: z.string(),
+    quote: quoteOutput,
+  }),
+  send_quote: actionOutput,
+  accept_quote: actionOutput,
+  decline_quote: actionOutput,
+  expire_quote: actionOutput,
+  convert_quote: actionOutput,
   set_promotion_status: actionOutput,
   verify_tax_certificate: actionOutput,
   revoke_tax_certificate: actionOutput,
@@ -1384,6 +1504,16 @@ export const REST_OPERATION_TOOLS = [
   'update_po_draft',
   'submit_po',
   'cancel_po',
+  'list_quotes',
+  'get_quote',
+  'create_quote',
+  'update_quote',
+  'send_quote',
+  'accept_quote',
+  'decline_quote',
+  'revise_quote',
+  'expire_quote',
+  'convert_quote',
   'run_stock_review',
   'find_products',
   'assess_order',

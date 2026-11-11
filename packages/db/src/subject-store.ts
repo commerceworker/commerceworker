@@ -37,6 +37,7 @@ import {
   messages,
   orders,
   purchaseOrders,
+  quotes,
   taxCertificates,
   users,
   webhookDeliveries,
@@ -140,6 +141,8 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         memberRows,
         accountPos,
         memberPos,
+        accountQuotes,
+        memberQuotes,
       ] = await Promise.all([
         inRuns(orderIds, (r) => d.select().from(messages).where(where(messages.orderId)(r))),
         d.select().from(messages).where(lower(messages.recipient, s.email)),
@@ -161,6 +164,12 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
           .from(purchaseOrders)
           .where(sql`${purchaseOrders.buyerId} in ${memberIds(s.email)}`)
           .limit(500),
+        inRuns(accountIds, (r) => d.select().from(quotes).where(where(quotes.companyId)(r))),
+        d
+          .select()
+          .from(quotes)
+          .where(sql`${quotes.buyerId} in ${memberIds(s.email)}`)
+          .limit(500),
       ]);
       return {
         messages: [...new Map([...msgs, ...sentTo].map((m) => [m.id, m])).values()],
@@ -176,6 +185,7 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         companies: accountCompanies,
         companyMembers: memberRows,
         purchaseOrders: [...new Map([...accountPos, ...memberPos].map((p) => [p.id, p])).values()],
+        quotes: [...new Map([...accountQuotes, ...memberQuotes].map((q) => [q.id, q])).values()],
       };
     },
 
@@ -354,6 +364,26 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
       ];
       const done = await d1.batch(statements);
       // A PO of both kinds is blanked by the first statement, which nulls the buyer the second reads.
+      return done.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
+    },
+
+    async eraseQuotes(s) {
+      // The notes and the buyer go; the name, status, expiry and lines stay.
+      const blank = 'UPDATE quotes SET notes = NULL, buyer_id = NULL';
+      const statements = [
+        ...chunks(s.accounts.map((c) => c.id)).map((ids) =>
+          d1
+            .prepare(`${blank} WHERE company_id IN (${ids.map(() => '?').join(', ')})`)
+            .bind(...ids),
+        ),
+        d1
+          .prepare(
+            `${blank} WHERE buyer_id IN (SELECT id FROM company_members WHERE lower(email) = ?)`,
+          )
+          .bind(s.email),
+      ];
+      const done = await d1.batch(statements);
+      // A quote of both kinds is blanked by the first statement, which nulls the buyer the second reads.
       return done.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
     },
 

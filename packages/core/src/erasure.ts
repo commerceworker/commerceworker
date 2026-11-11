@@ -151,6 +151,11 @@ export type ErasureResult =
        * their accounts' companies and those their member rows placed. Number, status and lines stay.
        */
       purchaseOrders: number;
+      /**
+       * Quotes whose notes and buyer were blanked: those of their accounts' companies and those
+       * for their member rows. Name, status, version, expiry and lines (amounts) stay.
+       */
+      quotes: number;
       /** The address is also a team member's; remove them on the team page. */
       teamMember: boolean;
     }
@@ -181,6 +186,8 @@ export type SubjectExport = {
   companyMembers: Record<string, unknown>[];
   /** Purchase orders of their accounts' companies and those their member rows placed. */
   purchaseOrders: Record<string, unknown>[];
+  /** Quotes of their accounts' companies and those for their member rows. */
+  quotes: Record<string, unknown>[];
   /** True when there were more orders than one export holds. */
   truncated: boolean;
   teamMember: boolean;

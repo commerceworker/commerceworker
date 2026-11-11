@@ -169,7 +169,7 @@ export const NODE_SPECS = [
     category: 'commerce',
     label: 'Price lines',
     description:
-      'Prices each line through the pricing chain (price books, contract prices, volume tiers, then list price) and computes the subtotal.',
+      'Prices each line through the pricing chain (an accepted quote, price books, contract prices, volume tiers, then list price) and computes the subtotal.',
     icon: 'Tags',
     fields: [
       {
@@ -177,7 +177,7 @@ export const NODE_SPECS = [
         label: 'Contract pricing',
         kind: 'boolean',
         default: true,
-        hint: 'Use negotiated prices when the customer has any',
+        hint: 'Use negotiated prices and accepted quotes when the customer has any',
       },
       {
         key: 'usePriceRules',

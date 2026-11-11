@@ -14,6 +14,7 @@ import {
   type PriceSourceKind,
   type Promotion,
   parseBxgyRule,
+  quoteLineRule,
 } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
 import type { PricingStore, Redemption } from '@commerceworker/ports/commerce';
@@ -31,6 +32,8 @@ import {
   products,
   promotionRedemptions,
   promotions,
+  quoteLines,
+  quotes,
 } from './schema';
 
 type PromotionRow = typeof promotions.$inferSelect;
@@ -94,7 +97,21 @@ type RuleRead = {
   rule: RuleRow;
   book: { id: string | null; name: string | null; priority: number | null } | null;
 };
-type ContractRow = typeof contractPrices.$inferSelect;
+/**
+ * A contract price, or a line of an accepted quote (`quoteId` set, with the quote's name, the line's
+ * position, the most it covers and when the quote expires): both are the customer's agreed prices
+ * per SKU, read by one statement.
+ */
+type ContractRow = {
+  customerId: string;
+  sku: string;
+  price: number;
+  quoteId: string | null;
+  quoteName: string | null;
+  position: number | null;
+  maxQty: number | null;
+  expiresAt: number | null;
+};
 
 /** The price chain from its rows: contract prices become the contract source's entries. */
 function chainOf(
@@ -124,14 +141,26 @@ function chainOf(
         }),
       ),
       ...contracts.map(
-        (c): PriceRule => ({
-          id: `contract_${c.customerId}_${c.sku}`,
-          source: 'contract',
-          name: 'Contract price',
-          sku: c.sku,
-          customerId: c.customerId,
-          price: c.price,
-        }),
+        (c): PriceRule =>
+          c.quoteId
+            ? quoteLineRule(
+                {
+                  id: c.quoteId,
+                  name: c.quoteName ?? '',
+                  companyId: c.customerId,
+                  expiresAt: c.expiresAt,
+                },
+                c.position ?? 0,
+                { sku: c.sku, qty: c.maxQty ?? 0, unitPrice: c.price },
+              )
+            : {
+                id: `contract_${c.customerId}_${c.sku}`,
+                source: 'contract',
+                name: 'Contract price',
+                sku: c.sku,
+                customerId: c.customerId,
+                price: c.price,
+              },
       ),
     ],
     tier: customer?.tier ?? null,
@@ -196,18 +225,61 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
   };
 
   /**
+   * The customer's agreed prices, in one statement: their contract prices, and the lines of the
+   * company's accepted quotes that haven't expired at `at` (a quote's SKUs are the order's when
+   * `skus` fits one statement; a longer order reads all of them). The quote source's entries are
+   * these rows, so the statement count of a pricing read is what it was before quotes.
+   */
+  const agreedReads = (customerId: string | undefined, at: number, skus?: readonly string[]) => {
+    const none = <T>() => sql<T | null>`null`;
+    const contracts = db
+      .select({
+        customerId: contractPrices.customerId,
+        sku: contractPrices.sku,
+        price: contractPrices.price,
+        quoteId: none<string>().as('quote_id'),
+        quoteName: none<string>().as('quote_name'),
+        position: none<number>().as('position'),
+        maxQty: none<number>().as('max_qty'),
+        expiresAt: none<number>().as('expires_at'),
+      })
+      .from(contractPrices)
+      .where(eq(contractPrices.customerId, customerId ?? ''));
+    const wanted = skus && skus.length <= SKUS_PER_QUERY ? [...new Set(skus)] : undefined;
+    const quoted = db
+      .select({
+        customerId: quotes.companyId,
+        sku: quoteLines.sku,
+        price: quoteLines.unitPrice,
+        quoteId: sql<string | null>`${quotes.id}`,
+        quoteName: sql<string | null>`${quotes.name}`,
+        position: sql<number | null>`${quoteLines.position}`,
+        maxQty: sql<number | null>`${quoteLines.qty}`,
+        expiresAt: sql<number | null>`${quotes.expiresAt}`,
+      })
+      .from(quoteLines)
+      .innerJoin(quotes, eq(quotes.id, quoteLines.quoteId))
+      .where(
+        and(
+          eq(quotes.companyId, customerId ?? ''),
+          eq(quotes.status, 'accepted'),
+          gt(quotes.expiresAt, at),
+          wanted?.length ? inArray(quoteLines.sku, wanted) : undefined,
+        ),
+      );
+    return contracts.unionAll(quoted);
+  };
+
+  /**
    * The price chain's reads, as one batch's statements: sources, rules (`ruleReads`), the
-   * customer's contract prices and their tier. With no customer, the contract and tier reads
-   * match nothing (a customer id is never empty), so the batch keeps its shape.
+   * customer's agreed prices (`agreedReads`) and their tier. With no customer, the agreed and tier
+   * reads match nothing (a customer id is never empty), so the batch keeps its shape.
    */
   const chainReads = (customerId: string | undefined, at: number, skus?: readonly string[]) =>
     [
       db.select().from(priceSources).where(eq(priceSources.active, true)),
       ...ruleReads(customerId, at, skus),
-      db
-        .select()
-        .from(contractPrices)
-        .where(eq(contractPrices.customerId, customerId ?? '')),
+      agreedReads(customerId, at, skus),
       db
         .select({ tier: customers.tier })
         .from(customers)

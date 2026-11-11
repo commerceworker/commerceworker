@@ -128,6 +128,18 @@ import {
   runPriceBookStatus,
 } from './price-books';
 import { previewCancelPo, previewSubmitPo, runCancelPo, runSubmitPo } from './purchase-orders';
+import {
+  previewAcceptQuote,
+  previewConvertQuote,
+  previewDeclineQuote,
+  previewExpireQuote,
+  previewSendQuote,
+  runAcceptQuote,
+  runConvertQuote,
+  runDeclineQuote,
+  runExpireQuote,
+  runSendQuote,
+} from './quotes';
 
 export class Refused extends Error {}
 
@@ -514,6 +526,11 @@ export type ActionInput = {
   set_budget_status: ToolInput<'set_budget_status'>;
   submit_po: ToolInput<'submit_po'>;
   cancel_po: ToolInput<'cancel_po'>;
+  send_quote: ToolInput<'send_quote'>;
+  accept_quote: ToolInput<'accept_quote'>;
+  decline_quote: ToolInput<'decline_quote'>;
+  expire_quote: ToolInput<'expire_quote'>;
+  convert_quote: ToolInput<'convert_quote'>;
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
@@ -830,6 +847,16 @@ export async function previewAction<T extends ActionTool>(
         return await previewSubmitPo(env, input as ActionInput['submit_po'], roleBlock);
       case 'cancel_po':
         return await previewCancelPo(env, input as ActionInput['cancel_po'], roleBlock);
+      case 'send_quote':
+        return await previewSendQuote(env, input as ActionInput['send_quote'], roleBlock);
+      case 'accept_quote':
+        return await previewAcceptQuote(env, input as ActionInput['accept_quote'], roleBlock);
+      case 'decline_quote':
+        return await previewDeclineQuote(env, input as ActionInput['decline_quote'], roleBlock);
+      case 'expire_quote':
+        return await previewExpireQuote(env, input as ActionInput['expire_quote'], roleBlock);
+      case 'convert_quote':
+        return await previewConvertQuote(env, input as ActionInput['convert_quote'], roleBlock);
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -1193,6 +1220,16 @@ export async function runAction<T extends ActionTool>(
       return runSubmitPo(env, p, input as ActionInput['submit_po'], trail);
     case 'cancel_po':
       return runCancelPo(env, p, input as ActionInput['cancel_po'], trail);
+    case 'send_quote':
+      return runSendQuote(env, p, input as ActionInput['send_quote'], trail, confirmed);
+    case 'accept_quote':
+      return runAcceptQuote(env, p, input as ActionInput['accept_quote'], trail);
+    case 'decline_quote':
+      return runDeclineQuote(env, p, input as ActionInput['decline_quote'], trail);
+    case 'expire_quote':
+      return runExpireQuote(env, p, input as ActionInput['expire_quote'], trail);
+    case 'convert_quote':
+      return runConvertQuote(env, p, input as ActionInput['convert_quote'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

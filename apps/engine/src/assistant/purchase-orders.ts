@@ -18,7 +18,7 @@ import { recordAudit } from '../audit';
 import { ensureTemplates } from '../flows';
 import { orderAgent } from '../namespaces';
 import { startOrderOnce } from '../orders';
-import { companyDirectory, purchaseOrderStore } from '../wire';
+import { companyDirectory, purchaseOrderStore, quoteStore } from '../wire';
 import { money, Refused } from './data';
 
 type Trail = Record<string, unknown>;
@@ -27,6 +27,7 @@ const ALL = { all: true } as const;
 const ports = (env: Env) => ({
   purchaseOrders: purchaseOrderStore(env),
   companies: companyDirectory(env),
+  quotes: quoteStore(env),
 });
 
 /** A PO's page, and where a card sends the person. */

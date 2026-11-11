@@ -7,6 +7,7 @@ import {
   splitBySeller,
   syncPoFromOrder,
 } from '@commerceworker/application/commerce';
+import type { Quote } from '@commerceworker/core';
 import {
   FULFILLMENT_FIXTURE,
   INVENTORY_FIXTURE,
@@ -39,6 +40,7 @@ import { d1PaymentLedger } from '../src/payment-ledger';
 import { d1PriceBookStore } from '../src/price-book-store';
 import { d1PricingStore } from '../src/pricing-store';
 import { d1PurchaseOrderStore } from '../src/purchase-order-store';
+import { d1QuoteStore } from '../src/quote-store';
 import { d1ShippingStore } from '../src/shipping-store';
 import committed from './query-counts.json';
 import { seedFulfillment, seedInventory, seedMarketplace, seedPricing } from './seeds';
@@ -90,10 +92,36 @@ function stores(d1: D1Database) {
     companies: d1CompanyDirectory(d1),
     budgets: d1BudgetStore(d1),
     purchaseOrders: d1PurchaseOrderStore(d1),
+    quotes: d1QuoteStore(d1),
   };
 }
 
 const ALL = { all: true } as const;
+
+/** A quote as the requests write it. */
+const quote = (quoteId: string, rootId: string): Quote => ({
+  id: quoteId,
+  rootId,
+  version: 1,
+  companyId: id('co'),
+  buyerId: null,
+  name: 'Query count quote',
+  status: 'draft',
+  expiresAt: null,
+  notes: null,
+  convertedTo: null,
+  convertedId: null,
+  convertedAt: null,
+  sentAt: null,
+  decidedAt: null,
+  createdBy: null,
+  createdAt: now,
+  updatedAt: now,
+});
+const QUOTE_LINES = [
+  { sku: 'A', name: null, qty: 1, listPrice: null, unitPrice: 1 },
+  { sku: 'B', name: null, qty: 2, listPrice: 3, unitPrice: 2 },
+];
 
 const priced = [
   { sku: 'PC-SKU-1', qty: 2 },
@@ -370,6 +398,55 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     () => ports.purchaseOrders.linkOrder(ALL, id('po-new'), id('po-order'), now),
   ],
   [
+    'commerce.price: price 2 lines with an accepted quote',
+    () =>
+      priceOrder(
+        ports,
+        { lines: priced, currency: 'USD', customerId: 'pc_twin_b', model: 'b2b' },
+        chain,
+      ),
+  ],
+  [
+    'quotes: a page',
+    () => ports.quotes.list(ALL, { companyId: id('co'), status: 'sent' }, { limit: 25 }),
+  ],
+  ['quotes: one quote and its lines', () => ports.quotes.get(ALL, id('qt'))],
+  ['quotes: a negotiation’s versions', () => ports.quotes.versions(ALL, id('qt'))],
+  [
+    'quotes: draft with two lines',
+    () => ports.quotes.create(quote(id('qt-new'), id('qt-new')), QUOTE_LINES),
+  ],
+  [
+    'quotes: edit a draft’s header and lines',
+    () =>
+      ports.quotes.updateDraft(
+        ALL,
+        id('qt-new'),
+        {
+          name: 'Edited',
+          lines: [{ sku: 'C', name: null, qty: 3, listPrice: null, unitPrice: 2 }],
+        },
+        now,
+      ),
+  ],
+  ['quotes: send a draft', () => ports.quotes.transition(ALL, id('qt-new'), 'draft', 'sent', now)],
+  [
+    'quotes: revise into the next version',
+    () =>
+      ports.quotes.revise(
+        ALL,
+        id('qt-new'),
+        'sent',
+        { ...quote(id('qt-next'), id('qt-new')), version: 2 },
+        QUOTE_LINES,
+        now,
+      ),
+  ],
+  [
+    'quotes: record the conversion',
+    () => ports.quotes.markConverted(ALL, id('qt-priced'), 'po', id('qt-po'), now),
+  ],
+  [
     'OrderAgent: an order’s progress into its PO (one move)',
     () => syncPoFromOrder(ports, id('po-order'), 'awaiting_approval', now),
   ],
@@ -446,6 +523,15 @@ describe('commerce D1 query counts', () => {
       DB.prepare(
         `INSERT INTO price_rules (id, source_id, name, sku, min_qty, price, created_at, book_id) VALUES (?1, 'price_book', 'x', 'PC-SKU-1', 1, 7, 0, ?2)`,
       ).bind(id('entry'), id('book')),
+    ]);
+    // An accepted quote of a pricing customer with no contract: pricing it reads the quote's lines.
+    await DB.batch([
+      DB.prepare(
+        `INSERT INTO quotes (id, root_id, company_id, name, status, expires_at, created_at, updated_at) VALUES (?1, ?1, 'pc_twin_b', 'Query count deal', 'accepted', ?2, 0, 0)`,
+      ).bind(id('qt-priced'), now + 86_400_000),
+      DB.prepare(
+        `INSERT INTO quote_lines (quote_id, position, sku, qty, unit_price) VALUES (?1, 0, 'PC-SKU-1', 5, 4)`,
+      ).bind(id('qt-priced')),
     ]);
     const budgets = d1BudgetStore(DB);
     const budget = (name: string, enforcement: 'strict' | 'advisory') => ({

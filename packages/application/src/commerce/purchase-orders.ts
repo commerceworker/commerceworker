@@ -36,6 +36,7 @@ import {
   poOrderMeta,
   poPath,
   poTransitionFor,
+  quoteLive,
   type UpdatePoDraftInput,
   updatePoDraftInput,
 } from '@commerceworker/core';
@@ -44,12 +45,15 @@ import type {
   PurchaseOrderPatch,
   PurchaseOrderScope,
   PurchaseOrderStore,
+  QuoteStore,
 } from '@commerceworker/ports/commerce';
 import type { AuditDraft } from './audit-trail';
 
 export type PurchaseOrderPorts = {
   readonly purchaseOrders: PurchaseOrderStore;
   readonly companies: CompanyDirectory;
+  /** Where a PO's quote is read, when it names one: submitting checks the quote is still in force. */
+  readonly quotes?: Pick<QuoteStore, 'get'>;
 };
 
 const ALL: PurchaseOrderScope = { all: true };
@@ -370,17 +374,37 @@ export type PoSubmitPlan = {
   repeat: boolean;
 };
 
+/**
+ * Why a draft made from a quote can't go to its order: the quote isn't in force any more (ended,
+ * expired), so the order wouldn't be priced at it and the buyer would pay something else than what
+ * the draft's lines say. The PO's `quoteId` can be cleared with `update_po_draft` to submit it
+ * anyway, as an ordinary PO. A quote that can't be found is the caller's free-text reference.
+ */
+async function quoteProblem(
+  ports: PurchaseOrderPorts,
+  scope: PurchaseOrderScope,
+  po: Pick<PurchaseOrder, 'poNumber' | 'quoteId'>,
+  now: number,
+): Promise<string | null> {
+  if (!po.quoteId || !ports.quotes) return null;
+  const q = await ports.quotes.get(scope, po.quoteId);
+  if (!q || quoteLive(q, now)) return null;
+  return `${po.poNumber} was made from quote ${q.name}, which is no longer in force (${q.status}${q.status === 'accepted' ? ', expired' : ''}): its order wouldn’t be priced at the quote. Clear the quote from the draft to submit it as an ordinary purchase order.`;
+}
+
 /** What submitting a PO would do, or why not. */
 export async function planSubmitPo(
   ports: PurchaseOrderPorts,
   scope: PurchaseOrderScope,
   input: { poId: string; flowId?: string | undefined },
+  now: number = Date.now(),
 ): Promise<PoSubmitPlan | Refused> {
   const po = await ports.purchaseOrders.get(scope, input.poId);
   if (!po) return refuse(NO_SUCH_PO);
   const flowId = input.flowId ?? PO_FLOW_ID;
   if (po.status === 'draft') {
-    const problem = await draftProblem(ports, scope, po, po.id);
+    const problem =
+      (await draftProblem(ports, scope, po, po.id)) ?? (await quoteProblem(ports, scope, po, now));
     return problem ? refuse(problem) : { ok: true, po, flowId, repeat: false };
   }
   // Submitted and not yet started, or started: both are a repeat. One that ended, or never was an
@@ -397,7 +421,7 @@ export async function submitPo(
   deps: PoOrderDeps,
   now: number,
 ): Promise<PoChange<{ purchaseOrder: PurchaseOrderDetail; orderId: string }>> {
-  const plan = await planSubmitPo(ports, scope, input);
+  const plan = await planSubmitPo(ports, scope, input, now);
   if (!plan.ok) return plan;
   let po = plan.po;
   let changed = false;

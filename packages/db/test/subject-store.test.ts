@@ -18,6 +18,7 @@ import {
   messages,
   orders,
   purchaseOrders,
+  quotes,
   taxCertificates,
   users,
 } from '../src/schema';
@@ -40,6 +41,7 @@ async function seed(f: SubjectFixture) {
     [companies, companies.customerId],
     [companyMembers, companyMembers.id],
     [purchaseOrders, purchaseOrders.id],
+    [quotes, quotes.id],
     [checkoutSessions, checkoutSessions.id],
     [carts, carts.id],
   ] as const)
@@ -109,6 +111,8 @@ async function seed(f: SubjectFixture) {
       createdAt: 0,
       updatedAt: 0,
     });
+  for (const q of f.quotes ?? [])
+    await db.insert(quotes).values({ ...q, rootId: q.id, createdAt: 0, updatedAt: 0 });
   for (const c of f.checkouts ?? [])
     await db.insert(checkoutSessions).values({
       id: c.id,

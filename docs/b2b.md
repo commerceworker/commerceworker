@@ -116,7 +116,33 @@ Left for later:
 - A PO has no total: the flow prices the order, and the order page has it.
 - Company-member access to POs waits for company-bound tokens (D11).
 - POs are in subject export and erasure but not the retention sweep (an erased order's PO keeps its words until the person is erased).
-- `quote_id` is S7's.
+- `quote_id` is set by S7's conversion: a quote's PO draft names the quote.
+
+**S7 is built**, on the defaults of D7 (an accepted quote becomes a PO draft when the company uses POs, and goes straight to an order otherwise) and D8 (quote prices are in the base currency), neither yet confirmed by the product owner. What depends on a default stays in one place: D7 is `quoteConversion` (`packages/core/src/b2b/quotes.ts`) and the question it is asked (`planConvertQuote`: does the company have any PO, in any status), and D8 is that a quote has no currency column and its lines convert at an order's rate like a book's. Beyond the plan:
+
+- **Statuses.** `draft`, `sent`, `accepted`, `declined`, `expired` and `superseded`: v1's, minus `under_review` (a counter-offer is a new version) and `converted` (a conversion is a link on an accepted quote, `converted_to` and `converted_id`, because an accepted quote keeps pricing until it expires, so it can't leave `accepted`). A draft can be withdrawn through `declined`. Staff record the company's accept and decline (audited with who did it) until buyers can sign in, as D3 does for approvals. Migration `0074`.
+- **Versions.** Revising a sent, declined or expired quote inserts the next version as a draft with the same lines (and the same expiry while it is still ahead) and supersedes the old one in one batch, so two racing revisions make one version and a repeat returns it. An accepted quote can't be revised: it is a deal, and ending it first (`expire_quote`) lets a new one start. Superseded versions are read-only for good, and the list shows each negotiation once unless a status or a negotiation is asked for.
+- **The `quote` price source.** A source of its own, priority 5 and stopping the chain, ahead of price books (10), contract prices (20) and volume tiers (30). An accepted quote's lines for the order's customer, unexpired at the order's `now`, are its entries: the SKU up to the line's quantity (a new `maxQty` on `PriceRule`), until the quote's expiry. It is read in the same statement as the contract prices (a union), so a pricing read's statement count is unchanged. It follows the price node's `useContracts` option. A quote prices a SKU once (a second line for it is refused), so a smaller order can't pick up a deeper tier's price.
+- **Conversion.** Idempotent and raced safely: a PO draft's id is derived from the quote (`po_<quote id>`) and an order's start key is `quote:<quote id>` (reserved in `RESERVED_ORDER_KEY_PREFIXES`, so a REST caller can't use it). The quote claims its result first with a guarded update on still being accepted (`markConverted`), so a quote ended meanwhile starts and makes nothing, then the draft is made or the order started, and an order's id replaces its key on the quote (`settleConversion`). A cancelled draft is refused, never handed back. A conversion that stopped halfway finishes on the next call. The draft takes a PO number given or made from the quote, and its lines carry the quoted prices as the buyer's expected ones. An order started from a quote carries no line prices, so the quote is what prices it.
+- **Lapsed and half-done.**
+  - An accepted quote past its expiry reads as expired and can be revised: the revision records the lapse (`accepted` to `expired`) first. It can also be ended.
+  - A conversion that stalled after its claim (the order never started, or the PO draft never made) is finished by asking again, and Convert stays on the page for it; a PO retry may give another `poNumber`.
+  - An order's start resumes on the flow its first try named, with no `flowId` needed (the engine reads it from the order under the key `quote:<id>`).
+  - A claimed order start is refused once the quote isn't live, since the order wouldn't be priced at it. Convert's preview says so.
+  - Only the call that made the claim (or finished a stalled one) reports the change and writes `quote.converted`; a racing call, and one that finds the order already recorded, is answered as a repeat (`changed: false`), so `convert_quote` is idempotent.
+- **PO drafts from a quote.** `submit_po` refuses a draft whose quote is found and no longer in force (ended or expired), with the reason and the way out: clear the quote from the draft with `update_po_draft` (`quoteId: null`) to submit it as an ordinary PO, priced as any other. A `quoteId` that names no quote is a free-text reference and isn't checked.
+- **Confirm cards.** Send, accept and convert list the company, version, expiry, total and the lines with the quantity each price covers, deepest discount first (up to 25 lines, then how many are below list and the deepest discount), so a quote with one line far below list can't hide it. A send confirm is held to the draft the card showed (`bound`, the draft's fingerprint) and refuses if it was edited since. Accept re-checks the company and products as send does.
+- **Roles.** Reads are a viewer's; every write is an operator's, with confirm cards on send, accept, decline, end and convert, none in `PERSON_CONFIRMS_TOOLS` (as S6's).
+
+Left for later, and where a product decision is open:
+
+- A quote's price applies to every order of the company while it is accepted and unexpired, not only the order made from it, and the quantity on a line is a ceiling per order line, not an amount drawn down across orders. Tying a price to the order that names the quote, or drawing quantities down, is the decision to make (a ledger like the budgets', or an order-scoped source).
+- "The company uses POs" is "has any PO record". A company setting would be more exact.
+- No `under_review` state and no comments or counter-offer thread between buyer and staff; the company's answer is recorded by staff. A buyer-facing view waits for company-bound tokens (D11).
+- A sent quote that lapses stays `sent` in storage until a move is tried on it (it reads, and prices, as expired); there is no sweep.
+- A PO draft that came from a quote and was then cancelled leaves the quote converted: converting again is refused (end the quote and revise it for a new one).
+- Quotes are in subject export and erasure (notes and buyer blanked; name, status, expiry and prices stay) but not the retention sweep, and not on the customer page.
+- Price books and contract prices are unchanged. `preview_price` runs the same chain, so it shows a quote's price and names the quote.
 
 | Slice | Scope | Depends on |
 |---|---|---|
@@ -126,7 +152,7 @@ Left for later:
 | S4 Budgets (built) | Per company and team, per calendar period, `strict` or `advisory`. Spend is a ledger keyed by order and step and summed per window, never a mutable counter. Reversed on rollback | S1 |
 | S5 Approvals (built) | `control.approval` gains approvers (`staff:<role>`, `company:<role>`, team, members) and a mode (`any`, `all`, `majority`, `quorum`). Votes are recorded once, and the OrderAgent resumes the wait only once the vote is decided, so the Workflow and its step names are unchanged. Thresholds are flow logic over `company.*`. No route approves outside the flow | S1 |
 | S6 Purchase orders (built) | Buyer PO records with editable drafts. Submitting starts an order on a B2B PO flow, and the PO's status follows the order. Inbound EDI and email POs create records too (punchout's is a follow-up) | S1, S3, S4, S5 |
-| S7 Quotes | Negotiated, versioned quotes. A `quote` price source with the highest priority, valid only while accepted, unexpired, for its company and within its quantities. Quote to PO draft, or straight to an order | S1, S2, S6 |
+| S7 Quotes (built) | Negotiated, versioned quotes. A `quote` price source with the highest priority, valid only while accepted, unexpired, for its company and within its quantities. Quote to PO draft, or straight to an order | S1, S2, S6 |
 | S8 Close | A B2B scenario and docs run, `patterns.md` and `port-map.md` updated, a `hexagonal-guardian` pass, a generated lifecycle reference | all |
 
 ### S2 notes
