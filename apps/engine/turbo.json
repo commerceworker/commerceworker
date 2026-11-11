@@ -1,0 +1,19 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // vitest.config.ts bundles the example, fixture-carrier and punchout plugins and applies
+    // their migrations, the punchout suite reads that plugin's fixtures, and
+    // tests/docs-sample-run.test.ts replays the docs site's recorded runs. The engine depends on
+    // none of those packages.
+    "test": {
+      "dependsOn": [
+        "$TURBO_EXTENDS$",
+        "@commerceworker/plugin-example#transit",
+        "@commerceworker/plugin-fixture-carrier#transit",
+        "@commerceworker/plugin-punchout#transit"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/docs/src/data/runs/**"]
+    }
+  }
+}

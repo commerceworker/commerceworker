@@ -4,11 +4,17 @@ description: >-
   store cached by lockfile, and the workspace's dependencies from the frozen lockfile. Every job
   that runs workspace code checks out the repository first, then uses this.
 
+outputs:
+  node-version:
+    description: The Node version installed (for cache keys)
+    value: ${{ steps.node.outputs.node-version }}
+
 runs:
   using: composite
   steps:
     - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+    - id: node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version-file: .nvmrc
         cache: pnpm

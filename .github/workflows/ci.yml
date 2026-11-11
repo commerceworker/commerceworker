@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue tests each queued pull request on top of main and the ones ahead of it, then
+  # merges it, so nobody brings a branch up to date by hand. Every required check runs here too.
+  merge_group:
   # Nightly on main, for the device tests: the push a merge makes skips them (the pull request
   # already ran them), so this catches anything two merges broke together. Run it by hand too.
   schedule:
@@ -23,16 +26,39 @@ permissions:
   contents: read
 
 jobs:
+  # Turbo's task cache is kept between runs, so a package no change touched replays its lint, type
+  # check, build and tests. A hit skips the task, so it is only as good as the task's hash: turbo.json
+  # and the packages' own turbo.json name every file a task reads from outside its package, and
+  # scripts/turbo-cache.test.ts proves each by changing the file and watching the hash move. Even
+  # so, only a pull request and the merge queue read the cache: a push to main (which gates every
+  # deploy), the nightly and the manual run do every task from scratch, so a hash we forgot to widen
+  # can't turn into a deployed commit. Every run saves what it ran (turbo caches only tasks that
+  # passed), a failed one too, so a re-run starts from what already passed. The key holds the job,
+  # the runner OS, Node and the lockfile (in turbo's global hash, so another lockfile's entries
+  # could never hit) and the commit, since an entry can't be overwritten; the restore key takes the
+  # newest entry for the same job and lockfile, from main or the same pull request.
+
   # Lint, types and build, and the checks that aren't vitest. Every step runs even when an earlier
   # one fails, so a red build reports all of its problems in one go.
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TURBO_CACHE_DIR: .turbo/cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
+      - id: setup
+        uses: ./.github/actions/setup
+      - name: Restore the turbo cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-checks-${{ runner.os }}-node${{ steps.setup.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-checks-${{ runner.os }}-node${{ steps.setup.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Lint
         if: ${{ !cancelled() }}
@@ -62,12 +88,19 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm audit --prod --audit-level high
 
+      - name: Save the turbo cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-checks-${{ runner.os }}-node${{ steps.setup.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+
   # `pnpm test`, split across three runners so the slowest packages don't queue behind each other:
   # the engine on its own, the content stack's three slowest, and every other package. `rest`
   # excludes exactly the packages the named shards run, so a new package is always tested.
   # Includes the engine's end-to-end Workflow runs in workerd (Durable Objects, Workflows, D1, R2)
-  # with AI_MODE=mock: no network or Cloudflare account needed. Nothing is cached between runs: a
-  # test task's hash doesn't cover its dependencies' source, so a cached pass could hide a break.
+  # with AI_MODE=mock: no network or Cloudflare account needed. Each shard keeps its own turbo
+  # cache (see above).
   test:
     name: test (${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -76,11 +109,22 @@ jobs:
       fail-fast: false
       matrix:
         shard: [engine, content, rest]
+    env:
+      TURBO_CACHE_DIR: .turbo/cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
+      - id: setup
+        uses: ./.github/actions/setup
+      - name: Restore the turbo cache
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-test-${{ matrix.shard }}-${{ runner.os }}-node${{ steps.setup.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-test-${{ matrix.shard }}-${{ runner.os }}-node${{ steps.setup.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-
       - name: Test
         env:
           SHARD: ${{ matrix.shard }}
@@ -98,6 +142,12 @@ jobs:
             *) echo "::error::unknown test shard $SHARD"; exit 1 ;;
           esac
           pnpm exec turbo run test "${filters[@]}"
+      - name: Save the turbo cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-test-${{ matrix.shard }}-${{ runner.os }}-node${{ steps.setup.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
   # The check a merge waits for, and what plan (so every deploy) needs: all of the above passed.
   verify:
@@ -136,9 +186,11 @@ jobs:
           advanced-security: false
 
   # Every commit a pull request adds follows Conventional Commits (commitlint.config.ts). Only the
-  # PR's own range is checked, so commits from before the rule aren't held to it.
+  # PR's own range is checked, so commits from before the rule aren't held to it. In the merge queue
+  # it checks the group's range, whose only new commits besides the PRs' are the queue's merge
+  # commits, which commitlint ignores.
   commits:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -150,8 +202,8 @@ jobs:
 
       - name: Lint commit messages
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
   # The SDK as npm serves it: packed, installed into an empty project, every subpath loaded as ESM
@@ -171,7 +223,7 @@ jobs:
       - name: Did the SDK's inputs change?
         id: changed
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = 0000000000000000000000000000000000000000 ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -188,10 +240,12 @@ jobs:
       - name: Check
         if: steps.changed.outputs.run == 'true'
         run: pnpm sdk:check
-  # Whether the device tests need to run: always, except for a pull request that touches only
-  # docs (docs/, apps/docs/), the marketing site (apps/marketing/), the Claude Code toolkit
-  # (.claude/) or top-level Markdown, none of which the web app or the storefront serves. A rename
-  # counts its old path too. Not on a push to main: the pull request already ran them.
+
+  # Whether the device tests need to run: always, except for a pull request or merge-queue group
+  # that touches only docs (docs/, apps/docs/), the marketing site (apps/marketing/), the Claude
+  # Code toolkit (.claude/) or top-level Markdown, none of which the web app or the storefront
+  # serves. A rename counts its old path too. Not on a push to main: the pull request already ran
+  # them.
   changes:
     if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-latest
@@ -206,16 +260,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        # The pull request API lists at most 3,000 files and the compare API (the queue's group
+        # against main) at most 300; at either limit the list may be cut short, so run everything.
         run: |
-          if [ "$EVENT" != pull_request ]; then
-            echo "devices=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
-            --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files"
+          case "$EVENT" in
+            pull_request)
+              limit=3000
+              gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+                --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files" ;;
+            merge_group)
+              limit=300
+              gh api "repos/$GITHUB_REPOSITORY/compare/$BASE_SHA...$HEAD_SHA" \
+                --jq '.files[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files" ;;
+            *)
+              echo "devices=true" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+          esac
           count=$(wc -l < "$RUNNER_TEMP/files")
-          # The API lists at most 3,000 files; past that, run everything.
-          if [ "$count" -ge 3000 ] || grep -qvE '^(docs/|apps/docs/|apps/marketing/|\.claude/|[^/]+\.md$)' "$RUNNER_TEMP/files"; then
+          if [ "$count" -eq 0 ] || [ "$count" -ge "$limit" ] || grep -qvE '^(docs/|apps/docs/|apps/marketing/|\.claude/|[^/]+\.md$)' "$RUNNER_TEMP/files"; then
             echo "devices=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::Only docs, marketing, toolkit or Markdown changed ($count files): device tests skipped"
@@ -228,17 +292,22 @@ jobs:
   # account is needed. The admin's suite is split four ways with Playwright's --shard, and the
   # storefront's runs beside it: each job has its own dev server, still running one test at a time
   # (playwright.config.ts), so splitting changes nothing a test sees.
-  # On ubuntu-latest (26.04) like every other job: Playwright 1.65 ships WebKit built for 26.04. The
-  # cache key below includes the Ubuntu release, so a build for one image is never loaded on another
-  # (an older WebKit linked 24.04's ICU and couldn't start on 26.04).
+  # The jobs run in Playwright's own image for Ubuntu 26.04 (the release ubuntu-latest runs), which
+  # carries the browsers and their system libraries. Installing those from the runner's apt mirror
+  # took 28-78 seconds a job and, when the mirror was slow, whole runs. The tag must be the
+  # Playwright version in the catalog: scripts/playwright-image.test.ts fails CI when they differ, so
+  # a Playwright bump (Dependabot) moves the tag and digest here in the same pull request.
   device-tests:
     name: devices (${{ matrix.name }})
     needs: changes
     if: ${{ needs.changes.outputs.devices == 'true' }}
     runs-on: ubuntu-latest
-    # Up to 15 minutes for the system libraries when the mirror is slow (5, then a 10 minute
-    # retry), and the device tests' own 15: a slow mirror never eats the tests' time.
-    timeout-minutes: 35
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.0-resolute@sha256:4d70b558dbaff71611b2f3e7a32aa2b4d42cfc892078ad368cb7ea229c2ffd1f
+      # Chromium's recommended setting; harmless for WebKit, and the browser can't run out of
+      # shared memory.
+      options: --ipc=host
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -253,47 +322,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      # The browser download is cached by Playwright version and Ubuntu release (a build for one
-      # release can't load another's system libraries), so it is fetched only on a miss. The
-      # system libraries come from apt, which the runner's Ubuntu mirror sometimes serves very
-      # slowly (two runs spent all 25 minutes there, and one spent 13 on both attempts, leaving the
-      # tests too little), so that step has its own short timeout and one retry, and the tests
-      # have their own budget after it.
-      - name: Resolve the Playwright version
-        id: playwright
-        # `pnpm exec` can print more than Playwright's one line, and a line without `key=` breaks
-        # $GITHUB_OUTPUT: take the first version number and fail if there is none.
-        run: |
-          version=$(pnpm --filter @commerceworker/web exec playwright --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
-      - name: Cache WebKit
-        id: webkit
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-webkit-${{ steps.playwright.outputs.os }}-${{ steps.playwright.outputs.version }}
-      - name: Download WebKit
-        if: ${{ steps.webkit.outputs.cache-hit != 'true' }}
-        timeout-minutes: 5
-        run: pnpm --filter @commerceworker/web exec playwright install webkit
-      - name: Install WebKit system dependencies
-        id: deps
-        continue-on-error: true
-        timeout-minutes: 5
-        run: pnpm --filter @commerceworker/web exec playwright install-deps webkit
-      # A timed-out first attempt kills pnpm but can leave its apt-get running with the dpkg lock
-      # held; wait for it to finish (it often completes the install) before trying again.
-      - name: Install WebKit system dependencies (retry)
-        if: ${{ steps.deps.outcome == 'failure' }}
-        timeout-minutes: 10
-        run: |
-          while pgrep -x apt-get >/dev/null || pgrep -x dpkg >/dev/null; do
-            echo "Waiting for the first attempt's apt-get to release the dpkg lock"
-            sleep 5
-          done
-          pnpm --filter @commerceworker/web exec playwright install-deps webkit
       - name: Device tests
         timeout-minutes: 15
         env:

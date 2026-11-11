@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // vite.config.ts (built, and type-checked with the app) imports plugin-sdk's sandbox bundler
+    // by path and reads the engine's and catalog's wrangler.jsonc for its dev-only auxiliary
+    // Workers.
+    "build": {
+      "dependsOn": ["$TURBO_EXTENDS$", "@commerceworker/plugin-sdk#transit"],
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/apps/engine/wrangler.jsonc",
+        "$TURBO_ROOT$/apps/catalog/wrangler.jsonc"
+      ]
+    },
+    "check-types": {
+      "dependsOn": ["$TURBO_EXTENDS$", "@commerceworker/plugin-sdk#transit"]
+    }
+  }
+}

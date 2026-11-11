@@ -1,0 +1,18 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // Unless COMMERCEWORKER_STUDIO_WRANGLER_CONFIG names a fleet config (never under turbo, which
+    // passes no such variable), vite.config.ts builds the api, pipeline, media and delivery Workers
+    // as auxiliary Workers, so the build reads all four and everything they depend on.
+    "build": {
+      "dependsOn": [
+        "$TURBO_EXTENDS$",
+        "@commerceworker/api#transit",
+        "@commerceworker/pipeline#transit",
+        "@commerceworker/media#transit",
+        "@commerceworker/delivery#transit"
+      ]
+    }
+  }
+}

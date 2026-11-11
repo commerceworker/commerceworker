@@ -1,0 +1,10 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // vitest.config.ts applies the commerce D1 migrations in packages/db.
+    "test": {
+      "dependsOn": ["$TURBO_EXTENDS$", "@commerceworker/db#transit"]
+    }
+  }
+}

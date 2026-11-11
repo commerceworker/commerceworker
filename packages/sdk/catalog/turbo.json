@@ -1,0 +1,11 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // test/parity.test.ts holds the client to the catalog edge's routes in apps/delivery, which
+    // this package doesn't depend on.
+    "test": {
+      "dependsOn": ["$TURBO_EXTENDS$", "@commerceworker/delivery#transit"]
+    }
+  }
+}
