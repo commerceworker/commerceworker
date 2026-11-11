@@ -31,11 +31,15 @@ const waitingOn = (id: string, pred: (s: OrderState) => boolean, what: string) =
     const s = await state(id);
     return pred(s) ? s : false;
   }, what);
+// A failed order reports `failed` first and `rolled_back` once Workflows has run (and the agent has
+// heard of) every compensation, so `failed` only counts as settled when `rollback` has been recorded.
 const settled = (id: string) =>
   waitingOn(
     id,
-    (s) => ['completed', 'declined', 'cancelled', 'failed', 'rolled_back'].includes(s.status),
-    'a terminal status',
+    (s) =>
+      ['completed', 'declined', 'cancelled', 'rolled_back'].includes(s.status) ||
+      (s.status === 'failed' && s.rollback != null),
+    'a terminal status and, for a failed order, its rollback',
   );
 const waiting = (id: string) =>
   waitingOn(id, (s) => s.waits.some((w) => w.event === 'go'), 'the go event');
