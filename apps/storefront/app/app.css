@@ -115,6 +115,7 @@
   --radius-4xl: calc(var(--radius) * 2.6);
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
+  --color-brand-subtle: var(--brand-subtle);
 }
 
 :root {
@@ -144,7 +145,7 @@
   /* Links and live work. Focus is the preset's grey ring on fields and buttons, set dark enough that
      its edge holds 3:1 on white and on muted fills (the preset's 0.708 doesn't); ink for the
      page-wide outline. */
-  --link: oklch(0.47 0.13 256);
+  --link: oklch(0.47 0.105 235);
   --ring: var(--brand);
 
   --ok: oklch(0.455 0.105 152);
@@ -153,7 +154,7 @@
   --bad: oklch(0.5 0.185 28);
   --undo: oklch(0.485 0.135 42);
   --idle: oklch(0.48 0 0);
-  --ai: var(--brand);
+  --ai: oklch(0.49 0.16 310);
 
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
@@ -188,9 +189,11 @@
   --edge-idle: oklch(0.88 0 0);
 
   color-scheme: light;
-  /* The brand accent: focus rings and AI provenance; never a button fill. */
-  --brand: oklch(0.49 0.16 310);
+  /* The brand accent: Ledger's CommerceWorker cobalt (hue 262; the link blue is 235, ai violet 310). Focus rings
+     and the mark; never a button fill. `brand-subtle` is its tint. Contrast is tested in packages/design. */
+  --brand: oklch(0.45 0.19 262);
   --brand-foreground: oklch(0.985 0 0);
+  --brand-subtle: oklch(0.955 0.02 262);
 }
 
 :root[data-theme="dark"] {
@@ -209,7 +212,7 @@
   --destructive: oklch(0.78 0.12 22.216);
   --rule: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --link: oklch(0.76 0.11 250);
+  --link: oklch(0.76 0.1 238);
 
   --ok: oklch(0.77 0.1 152);
   --wait: oklch(0.8 0.12 75);
@@ -238,8 +241,10 @@
   --edge-idle: oklch(0.269 0 0);
 
   color-scheme: dark;
-  --brand: oklch(0.75 0.09 305);
+  --brand: oklch(0.72 0.13 262);
   --brand-foreground: oklch(0.145 0 0);
+  --brand-subtle: oklch(0.27 0.06 262);
+  --ai: oklch(0.75 0.09 305);
 }
 
 /* Motion (see the @theme block above for the easings). Its own block: the palette `:root` above is

@@ -480,9 +480,9 @@ function AppSidebar({
             title={`${expanded ? 'Collapse' : 'Expand'} the sidebar (${shortcut})`}
             className="hit-area"
           >
-            <Mark className="size-5" />
+            <Mark className="size-5 text-brand" />
           </SidebarTrigger>
-          <span className="truncate font-semibold text-base tracking-title transition-opacity duration-(--motion-instant) @max-[8rem]:opacity-0">
+          <span className="truncate font-semibold text-base text-brand tracking-title transition-opacity duration-(--motion-instant) @max-[8rem]:opacity-0">
             CommerceWorker
           </span>
         </div>
@@ -691,8 +691,8 @@ function ShellFrame() {
               )}
               aria-label="CommerceWorker overview"
             >
-              <Mark className="size-5" />
-              <span className="hidden sm:inline">CommerceWorker</span>
+              <Mark className="size-5 text-brand" />
+              <span className="hidden text-brand sm:inline">CommerceWorker</span>
             </Link>
             <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
               {showNav ? <AssistantToggle /> : null}

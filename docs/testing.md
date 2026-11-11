@@ -488,6 +488,8 @@ pnpm --filter @commerceworker/db test:query-counts:update
 generated `apps/docs/src/styles/theme.css` is stale. Fix it by mirroring the `app.css` change in
 `tokens.ts` and running `pnpm sync:theme`.
 
+`packages/design/tests/accent.test.ts` holds the CommerceWorker accent (`brand`, `brand-foreground`, `brand-subtle`, `ring`) to WCAG 2.2 AA in both themes (text on the accent and the accent as text on every ground at 4.5:1, the focus ring at 3:1, and its text on its tint), keeps it inside sRGB, and holds its hue 20 degrees or more from the link, every status and the AI violet. `tests/color.ts` is the OKLCH-to-sRGB and luminance implementation `tokens.test.ts` shares.
+
 ## Web
 
 `apps/web/tests/`:

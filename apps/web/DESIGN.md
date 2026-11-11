@@ -10,21 +10,27 @@ colors:
   muted-foreground: "oklch(0.52 0 0)"
   rule: "oklch(0.922 0 0)"
   input: "oklch(0.922 0 0)"
-  ring: "oklch(0.556 0 0)"
-  link: "oklch(0.47 0.13 256)"
+  ring: "oklch(0.45 0.19 262)"
+  link: "oklch(0.47 0.105 235)"
   destructive: "oklch(0.577 0.245 27.325)"
   ok: "oklch(0.455 0.105 152)"
   wait: "oklch(0.49 0.115 62)"
   bad: "oklch(0.5 0.185 28)"
   undo: "oklch(0.485 0.135 42)"
   idle: "oklch(0.48 0 0)"
+  brand: "oklch(0.45 0.19 262)"
+  brand-foreground: "oklch(0.985 0 0)"
+  brand-subtle: "oklch(0.955 0.02 262)"
   ai: "oklch(0.49 0.16 310)"
   paper-dark: "oklch(0.145 0 0)"
   card-dark: "oklch(0.205 0 0)"
   ink-dark: "oklch(0.985 0 0)"
   muted-dark: "oklch(0.269 0 0)"
   muted-foreground-dark: "oklch(0.708 0 0)"
-  link-dark: "oklch(0.76 0.11 250)"
+  link-dark: "oklch(0.76 0.1 238)"
+  brand-dark: "oklch(0.72 0.13 262)"
+  brand-subtle-dark: "oklch(0.27 0.06 262)"
+  ai-dark: "oklch(0.75 0.09 305)"
 typography:
   title:
     fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif"
@@ -113,14 +119,23 @@ that mean one thing each. The tokens live in `apps/web/app/app.css`, are mirrore
 
 ## Colors
 
-Neutral greys with no tint carry everything; colour is reserved for one blue and for status.
+Neutral greys with no tint carry everything; colour is reserved for the brand cobalt, one sky blue and for status.
 
 ### Primary
 - **Ink** (`primary`, near-black): primary buttons, the New order button, the active tab's rule. Ink
-  is the brand; there is no accent colour behind it.
+  stays every button's fill; the brand's cobalt is the mark and the focus edge, never a button.
+
+### Accent
+- **Brand** (`brand`, cobalt, hue 262): CommerceWorker's accent. In this app it is the shell's mark
+  and wordmark (the sidebar's and the top bar's `text-brand`), the focus edge
+  (`ring`), a checked checkbox, switch or radio, the active tab's rule and a selected table row's
+  tint; `brand-subtle` is its tint for a chosen chip. Never a button fill: primary stays ink. Its
+  words hold 4.5:1 (6.04:1 to 7.91:1) and its edge 3:1 on paper, cards, muted fills and the sidebar,
+  in both themes; the full table is in `apps/studio/DESIGN.md`, and `packages/design/tests/accent.test.ts`
+  holds every figure.
 
 ### Secondary
-- **Work blue** (`link`): links, live work (`run`), the slow-page bar and the caret. Never a fill
+- **Work blue** (`link`, hue 235): links, live work (`run`), the slow-page bar and the caret. Never a fill
   for a button.
 
 ### Neutral
@@ -130,12 +145,12 @@ Neutral greys with no tint carry everything; colour is reserved for one blue and
 - **Muted text** (`muted-foreground`): secondary text and captions. Set to hold 4.5:1 on paper,
   on muted and on a tile.
 - **Rule** and **Input** (`rule`, `input`): hairlines, and the edge and faint fill of fields.
-- **Ring** (`ring`): the focus edge on fields and buttons, dark enough to hold 3:1 on paper and on
-  muted fills. The page-wide focus outline is ink.
+- **Ring** (`ring`): the brand cobalt, as the focus edge on fields and buttons; it holds 3:1 on paper
+  and on muted fills. The page-wide focus outline is ink.
 
 ### Status
 `ok` succeeded, `wait` waits on a person or event, `bad` failed, `undo` rolled back, `idle` ended
-otherwise or not started, `ai` a model's work, `run` (the work blue) running. Each badge, dot and
+otherwise or not started, `ai` a model's work (violet, its own hue apart from the cobalt brand), `run` (the work blue) running. Each badge, dot and
 chart series for a status uses its token through `var()`, so it switches with the theme.
 
 ### Named Rules

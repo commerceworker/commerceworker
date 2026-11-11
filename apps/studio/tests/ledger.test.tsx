@@ -140,13 +140,12 @@ describe('Ledger tokens in app.css', () => {
 
   it('defines every status token in light and dark', () => {
     const [light, dark] = css.split(':root[data-theme="dark"]');
-    for (const t of ['ok', 'wait', 'bad', 'undo', 'idle', 'brand']) {
+    for (const t of ['ok', 'wait', 'bad', 'undo', 'idle', 'brand', 'brand-subtle', 'ai']) {
       expect(light).toMatch(new RegExp(`--${t}: oklch`));
       expect(dark).toMatch(new RegExp(`--${t}: oklch`));
     }
-    // Run is the work blue in both themes; a model's work is the brand, and so is focus.
+    // Run is the work blue in both themes; a model's work is its own violet (not the brand), and focus is the brand.
     expect(light).toContain('--run: var(--link);');
-    expect(light).toContain('--ai: var(--brand);');
     expect(light).toContain('--ring: var(--brand);');
   });
 });
