@@ -16,7 +16,7 @@ const state = '.wrangler/e2e';
  * Device tests: the web app in WebKit on an iPhone and an iPad, both ways up, plus a desktop, against
  * the dev server running offline (COMMERCEWORKER_E2E in vite.config.ts) on a fresh database with the demo
  * seed. They check what unit tests can't: layout at each size, the safe areas, touch targets and the
- * on-screen keyboard. See docs/testing.md.
+ * on-screen keyboard. See docs/testing.md. One more project runs the consent page in Chromium.
  */
 export default defineConfig({
   testDir: 'e2e',
@@ -40,6 +40,9 @@ export default defineConfig({
     { name: 'ipad', use: { ...devices['iPad (gen 7)'] } },
     { name: 'ipad-landscape', use: { ...devices['iPad Pro 11 landscape'] } },
     { name: 'desktop', use: { ...devices['Desktop Safari'] } },
+    // The one spec that needs Chromium (its form-action on a redirect), apart from the device
+    // tests above: they run only `e2e/`, and this project only `e2e-chromium/`.
+    { name: 'chromium-consent', testDir: 'e2e-chromium', use: { ...devices['Desktop Chrome'] } },
   ],
   webServer: {
     command: [

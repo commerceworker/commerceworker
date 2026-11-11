@@ -188,10 +188,15 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
     return copilot(this.env, req);
   }
 
-  async dropA2aPushes(kind: 'user' | 'token', id: string, grants: readonly string[] = []) {
+  async dropA2aPushes(
+    kind: 'user' | 'token',
+    id: string,
+    grants: readonly string[] = [],
+    grantsOnly = false,
+  ) {
     let configs = 0;
     for (const name of [
-      a2aCaller({ kind, id }),
+      ...(grantsOnly && grants.length ? [] : [a2aCaller({ kind, id })]),
       ...grants.map((grant) => a2aCaller({ kind, id, grant })),
     ])
       configs += await a2aAgent(this.env, name).dropPushes();

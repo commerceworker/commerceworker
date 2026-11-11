@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ANY_HTTPS_FRAMER,
+  CONSENT_HEADER,
   contentSecurityPolicy,
+  pageHeaders,
   parseEmbed,
+  redirectSource,
   TURNSTILE_ORIGIN,
   withSecurityHeaders,
 } from '../src/csp';
@@ -30,6 +33,46 @@ describe('page CSP', () => {
     expect(directive(csp, 'frame-ancestors')).toBe("frame-ancestors 'none'");
     expect(directive(csp, 'form-action')).toBe("form-action 'self'");
     expect(directive(csp, 'connect-src')).toBe("connect-src 'self'");
+  });
+
+  it('lets the consent page post to the client’s return origin, and no other page', () => {
+    const consent = pageHeaders(
+      new Headers({ [CONSENT_HEADER]: 'https://client.test/cb?x=1' }),
+      'n',
+    );
+    expect(directive(consent.get('content-security-policy') ?? '', 'form-action')).toBe(
+      "form-action 'self' https://client.test",
+    );
+    // The note is for the entry, never sent.
+    expect(consent.has(CONSENT_HEADER)).toBe(false);
+    expect(
+      directive(
+        pageHeaders(new Headers(), 'n').get('content-security-policy') ?? '',
+        'form-action',
+      ),
+    ).toBe("form-action 'self'");
+    // Only an origin, whatever the path holds.
+    expect(redirectSource('https://client.test/a;b,c')).toBe('https://client.test');
+  });
+
+  it('takes a loopback return over http (RFC 8252), and no other http, scheme or credentials', () => {
+    expect(redirectSource('http://127.0.0.1:53211/cb')).toBe('http://127.0.0.1:53211');
+    expect(redirectSource('http://localhost:8976/callback')).toBe('http://localhost:8976');
+    for (const refused of [
+      'http://client.test/cb',
+      'http://[::1]:8976/cb',
+      'com.example.app:/oauth',
+      'javascript:alert(1)',
+      'https://user:pw@client.test/cb',
+      'https://*/cb',
+      'https://*.x.test/cb',
+      'http://user:pw@127.0.0.1/cb',
+      "https://x.example; script-src 'unsafe-inline'",
+      'not a url',
+      '',
+      null,
+    ])
+      expect(redirectSource(refused), String(refused)).toBeNull();
   });
 
   it('lets an external cart be framed by its origins and post its return to its URL', () => {
@@ -111,5 +154,13 @@ describe('page CSP', () => {
     );
     expect(closed.headers.get('x-frame-options')).toBe('DENY');
     expect(withSecurityHeaders(new Response(''), url).headers.get('x-frame-options')).toBe('DENY');
+  });
+
+  it('never lets a route’s notes to the entry reach the browser, a .data answer included', () => {
+    const res = withSecurityHeaders(
+      new Response('', { headers: { [CONSENT_HEADER]: 'https://client.test/cb' } }),
+      new URL('https://app.example/oauth/authorize.data'),
+    );
+    expect(res.headers.has(CONSENT_HEADER)).toBe(false);
   });
 });
