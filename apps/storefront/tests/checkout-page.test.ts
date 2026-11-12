@@ -144,7 +144,7 @@ describe('the checkout page’s loader', () => {
       turnstileKey: null,
     });
     expect(r.headers.get('cache-control')).toBe('no-store');
-    expect(r.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(r.headers.get('referrer-policy')).toBe('same-origin');
     // React Router hands `headers` all three sets, the unused ones empty (not undefined): what the
     // page sends is private whichever answered, and a refusal's own headers stay.
     for (const route of [page, placed]) {
@@ -154,7 +154,7 @@ describe('the checkout page’s loader', () => {
         errorHeaders: undefined,
       } as never);
       expect(sent.get('cache-control')).toBe('no-store');
-      expect(sent.get('referrer-policy')).toBe('no-referrer');
+      expect(sent.get('referrer-policy')).toBe('same-origin');
       const limited = route.headers({
         loaderHeaders: new Headers(),
         actionHeaders: new Headers(),
@@ -206,7 +206,7 @@ describe('an update posted from the page', () => {
     expect(r.status).toBe(303);
     expect(r.location).toBe('/checkout/chk_1');
     expect(r.headers.get('cache-control')).toBe('no-store');
-    expect(r.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(r.headers.get('referrer-policy')).toBe('same-origin');
 
     const [id, patch, secret, actor, version] = updateCheckout.mock.calls[0]!;
     expect(id).toBe('chk_1');

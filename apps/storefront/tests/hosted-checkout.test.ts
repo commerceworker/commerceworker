@@ -60,7 +60,7 @@ describe('a hosted checkout’s start link: a GET only shows a page', () => {
     } as never)) as unknown as { data: unknown; init: ResponseInit };
     const headers = new Headers(res.init.headers);
     expect(headers.get('cache-control')).toBe('no-store');
-    expect(headers.get('referrer-policy')).toBe('no-referrer');
+    expect(headers.get('referrer-policy')).toBe('same-origin');
     expect(headers.has('set-cookie')).toBe(false);
     // The token isn't in what the page is given, and the engine wasn't asked for anything.
     expect(JSON.stringify(res.data)).not.toContain('tok');
@@ -73,7 +73,7 @@ describe('a hosted checkout’s start link: a GET only shows a page', () => {
       errorHeaders: undefined,
     } as never);
     expect(sent.get('cache-control')).toBe('no-store');
-    expect(sent.get('referrer-policy')).toBe('no-referrer');
+    expect(sent.get('referrer-policy')).toBe('same-origin');
   });
 
   it('refuses a malformed id and still redeems nothing', async () => {
@@ -118,7 +118,7 @@ describe('redeeming a hosted checkout’s start link by POST', () => {
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('/checkout/chk_1');
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('referrer-policy')).toBe('same-origin');
     const set = res.headers.get('set-cookie')!;
     expect(set).toMatch(
       new RegExp(
@@ -195,7 +195,7 @@ describe('the buyer’s checkout page', () => {
     });
     const headers = new Headers(res.init.headers);
     expect(headers.get('cache-control')).toBe('no-store');
-    expect(headers.get('referrer-policy')).toBe('no-referrer');
+    expect(headers.get('referrer-policy')).toBe('same-origin');
 
     const [id, secret, actor] = checkout.mock.calls[0]!;
     expect(id).toBe('chk_1');

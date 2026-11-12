@@ -90,8 +90,15 @@ export async function checkoutBuyer(request: Request, id: string) {
   };
 }
 
-/** What every hosted checkout page sends: never cached or shared, and nothing of it in a Referer. */
-export const PRIVATE_HEADERS = { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' };
+/**
+ * What every hosted checkout page sends: never cached or shared, and nothing of it in a Referer to
+ * another origin (the start link's token and the order's address stay here). `same-origin`, not
+ * `no-referrer`: under `no-referrer` a browser posts the page's own forms (the start link's Continue,
+ * an update, place order, pay) with `Origin: null`, which React Router and the Worker's cross-site
+ * check refuse. `same-origin` sends no Referer cross-origin, and the Origin of a same-origin post
+ * is the page's own.
+ */
+export const PRIVATE_HEADERS = { 'cache-control': 'no-store', 'referrer-policy': 'same-origin' };
 
 /**
  * The notes a checkout page passes to entry.server.tsx when it takes a card: `STRIPE_HEADER` lets

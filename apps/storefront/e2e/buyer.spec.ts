@@ -92,7 +92,7 @@ test('a hosted checkout’s start link shows a Continue page that spends nothing
     expect(res?.status(), `visit ${visit}`).toBe(200);
     expect(res?.headers()['set-cookie']).toBeUndefined();
     expect(res?.headers()['cache-control']).toBe('no-store');
-    expect(res?.headers()['referrer-policy']).toBe('no-referrer');
+    expect(res?.headers()['referrer-policy']).toBe('same-origin');
     await expect(page.getByRole('heading', { name: 'Your checkout is ready' })).toBeVisible();
   }
   const button = page.getByRole('button', { name: 'Continue to checkout' });
