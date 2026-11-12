@@ -20,6 +20,7 @@ import { useEffect, useRef } from 'react';
 import { data, redirect, useActionData, useLoaderData, useNavigation } from 'react-router';
 import { CheckoutForm } from '~/components/checkout-form';
 import { CheckoutRefusal } from '~/components/checkout-refusal';
+import { StoreName } from '~/components/store-name';
 import {
   type FieldErrors,
   type FormValues,
@@ -39,11 +40,12 @@ import {
 } from '~/lib/hosted-checkout.server';
 import { overBudget } from '~/lib/rate-limit';
 import { savedDetails } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import { checkPayTurnstile, turnstileSiteKey } from '~/lib/turnstile.server';
 import type { Route } from './+types/checkout';
 
-export const meta = () => [
-  { title: 'Checkout · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Checkout') },
   { name: 'robots', content: 'noindex' },
 ];
 
@@ -389,8 +391,7 @@ export default function CheckoutPage() {
       className="mx-auto w-full max-w-5xl px-safe-4 pt-safe-6 pb-safe-8 sm:px-safe-6 lg:px-safe-8"
     >
       <header className="mb-6 flex flex-col gap-1">
-        {/* TODO(S7): the merchant's store name, which the wordmark stands in for until then. */}
-        <p className="font-semibold text-brand tracking-title">CommerceWorker</p>
+        <StoreName />
         <h1 className="font-semibold text-2xl tracking-title">Checkout</h1>
       </header>
 

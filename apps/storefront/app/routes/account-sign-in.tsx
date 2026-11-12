@@ -20,11 +20,12 @@ import {
   shopperActor,
   signInBudget,
 } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import { checkSignInTurnstile, turnstileSiteKey } from '~/lib/turnstile.server';
 import type { Route } from './+types/account-sign-in';
 
-export const meta = () => [
-  { title: 'Sign in · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Sign in') },
   { name: 'robots', content: 'noindex' },
 ];
 

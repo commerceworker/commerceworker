@@ -346,6 +346,7 @@ describe('the buyer’s session', () => {
       await sf.updateCheckout(b.id, { buyer: { email: 'a@example.com' } }, b.secret, b.actor),
     ).toBeNull();
     expect(await sf.storefrontSettings()).toEqual({
+      storeName: null,
       checkout: { enabled: false, editLines: false, testPayments: true, publishableKey: null },
     });
     await setting({});
@@ -446,6 +447,7 @@ describe('what a buyer changes', () => {
 
     await setting({ editLines: true });
     expect(await sf.storefrontSettings()).toEqual({
+      storeName: null,
       checkout: { enabled: true, editLines: true, testPayments: true, publishableKey: null },
     });
     const next = ok(
@@ -602,6 +604,32 @@ describe('placing the order in test mode', () => {
       .from(orders)
       .where(eq(orders.idempotencyKey, `hosted:${id}`))
       .all();
+
+  it('gives the storefront the merchant’s store name, null until one is saved', async () => {
+    expect((await sf.storefrontSettings()).storeName).toBeNull();
+    const set = (storeName: unknown) =>
+      db()
+        .insert(workspaceSettings)
+        .values({
+          key: STOREFRONT_SETTINGS_KEY,
+          value: JSON.stringify({ storeName, checkout: { enabled: true } }),
+          updatedAt: Date.now(),
+          updatedBy: 'test',
+        })
+        .onConflictDoUpdate({
+          target: workspaceSettings.key,
+          set: { value: JSON.stringify({ storeName, checkout: { enabled: true } }) },
+        });
+    await set('Acme Supply');
+    expect((await sf.storefrontSettings()).storeName).toBe('Acme Supply');
+    // A stored value that isn't a valid name is no settings at all, so no name and checkout off:
+    // the engine never hands the storefront text it wouldn't have accepted.
+    await set('x'.repeat(61));
+    expect(await sf.storefrontSettings()).toMatchObject({
+      storeName: null,
+      checkout: { enabled: false },
+    });
+  });
 
   it('is offered while payments are only recorded, and not otherwise', async () => {
     expect(await sf.storefrontSettings()).toMatchObject({ checkout: { testPayments: true } });

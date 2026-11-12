@@ -49,6 +49,7 @@ const addressesPage = await import('../app/routes/account-addresses');
 const checkoutPage = await import('../app/routes/checkout');
 const lib = await import('../app/lib/hosted-checkout.server');
 const { CheckoutForm } = await import('../app/components/checkout-form');
+const { drawPage, MARKUP_NAME, rootMatches } = await import('./draw-page');
 
 const ORIGIN = 'https://shop.test';
 const SECRET = 'b2'.repeat(32);
@@ -580,5 +581,54 @@ describe('a hosted checkout offering a shopper’s own details', () => {
     const r = await fill({ saved: 'order:ord_2' });
     expect(r.status).toBe(409);
     expect(r.data).toMatchObject({ intent: 'update', changed: true });
+  });
+});
+
+describe('the merchant’s store name on the account pages', () => {
+  const pages = [
+    ['the order list', list, { email: 'pat@example.com', orders: [], next: null, paged: false }],
+    ['an order', orderPage, view],
+  ] as const;
+
+  it('shows the merchant’s store name, never CommerceWorker', () => {
+    for (const [name, route, data] of pages) {
+      const html = drawPage(route.default as never, data as never, 'Acme Supply');
+      expect(html, name).toContain('>Acme Supply</p>');
+      expect(html, name).not.toMatch(/commerceworker/i);
+    }
+  });
+
+  it('says “Your account” when no name is set, and never the platform', () => {
+    for (const [name, route, data] of pages) {
+      const html = drawPage(route.default as never, data as never, null);
+      expect(html, name).toContain('>Your account</p>');
+      expect(html, name).not.toMatch(/commerceworker/i);
+    }
+  });
+
+  it('draws the name as text, never as markup', () => {
+    const html = drawPage(list.default as never, pages[0][2] as never, MARKUP_NAME);
+    expect(html).toContain('Acme &lt;b&gt;Supply&lt;/b&gt; &amp; &quot;Sons&quot;');
+    expect(html).not.toContain('<b>Supply');
+  });
+
+  it('titles every account page with it, or with the page alone', async () => {
+    const title = (m: { meta: (a: never) => { title?: string }[] }, name: string | null) =>
+      m.meta({ matches: rootMatches(name), loaderData: undefined } as never).find((d) => d.title)
+        ?.title;
+    const signIn = await import('../app/routes/account-sign-in');
+    const code = await import('../app/routes/account-code');
+    const confirm = await import('../app/routes/account-confirm');
+    for (const [route, own] of [
+      [list, 'Your orders'],
+      [addressesPage, 'Your addresses'],
+      [signIn, 'Sign in'],
+      [code, 'Enter your code'],
+      [confirm, 'Confirm sign-in'],
+      [orderPage, 'Order'],
+    ] as const) {
+      expect(title(route as never, 'Acme Supply'), own).toBe(`${own} · Acme Supply`);
+      expect(title(route as never, null), own).toBe(own);
+    }
   });
 });

@@ -97,6 +97,11 @@ describe('the sign-in email', () => {
     expect(mail.subject).not.toMatch(/042917|https/);
   });
 
+  it('never names the platform: a buyer gets mail from the merchant’s sender, about their sign-in', () => {
+    const mail = shopperSignInEmail('042917', 'https://shop.example/account/confirm/ab');
+    expect([mail.subject, mail.text, mail.html].join('\n')).not.toMatch(/commerceworker/i);
+  });
+
   it('escapes every value into its HTML part, so nothing is markup', () => {
     const mail = shopperSignInEmail('<img src=x onerror=alert(1)>', 'https://x.test/?a=1&b="2"');
     expect(mail.html).not.toMatch(/<img|"2"/);

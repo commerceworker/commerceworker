@@ -872,6 +872,7 @@ describe('removing a webhook subscription over REST', () => {
 describe('hosted checkout’s settings over REST', () => {
   beforeEach(() => audit.mockReset());
   const settings = {
+    storeName: 'Acme Supply',
     checkout: { enabled: true, checkoutFlowId: 'tpl-checkout', editLines: false },
   };
 
@@ -906,6 +907,49 @@ describe('hosted checkout’s settings over REST', () => {
     ).toBe(400);
     expect((await post('storefront/settings', settings, operator)).status).toBe(403);
     expect(audit).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a store name that is blank, too long, or has a control character, saving nothing', async () => {
+    storefront.setStorefrontSettings.mockClear();
+    for (const storeName of ['', '   ', 'x'.repeat(61), 'Acme\nSupply', 'Acme\u0000', 7]) {
+      const res = await post('storefront/settings', { ...settings, storeName }, admin);
+      expect(res.status, JSON.stringify(storeName)).toBe(400);
+    }
+    expect(storefront.setStorefrontSettings).not.toHaveBeenCalled();
+    // Trimmed on the way in; markup is just text and is kept as typed (the pages render text only).
+    storefront.setStorefrontSettings.mockResolvedValueOnce({
+      ok: true,
+      settings,
+      audit: { action: 'checkout.settings', detail: {} },
+    });
+    await post('storefront/settings', { ...settings, storeName: '  <b>Acme</b>  ' }, admin);
+    expect(storefront.setStorefrontSettings).toHaveBeenCalledWith(
+      { ...settings, storeName: '<b>Acme</b>' },
+      expect.any(String),
+    );
+  });
+
+  it('passes a left-out name on as left out (kept), and null as null (cleared)', async () => {
+    const result = {
+      ok: true,
+      settings,
+      audit: { action: 'checkout.settings', detail: {} },
+    };
+    storefront.setStorefrontSettings.mockResolvedValue(result);
+    const { storeName: _name, ...without } = settings;
+    expect((await post('storefront/settings', without, admin)).status).toBe(200);
+    expect(storefront.setStorefrontSettings).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ storeName: expect.anything() }),
+      expect.any(String),
+    );
+    expect(
+      (storefront.setStorefrontSettings.mock.lastCall![0] as Record<string, unknown>).storeName,
+    ).toBeUndefined();
+    await post('storefront/settings', { ...settings, storeName: null }, admin);
+    expect(storefront.setStorefrontSettings).toHaveBeenLastCalledWith(
+      { ...settings, storeName: null },
+      expect.any(String),
+    );
   });
 });
 

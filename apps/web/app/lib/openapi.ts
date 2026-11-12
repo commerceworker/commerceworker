@@ -59,6 +59,7 @@ import {
   startOrderResultSchema,
   startOrderSchema,
   storefrontAdminSchema,
+  storefrontSettingsInputSchema,
   storefrontSettingsSchema,
   subjectExportSchema,
   subscriptionSecretSchema,
@@ -1481,8 +1482,8 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'Turn hosted checkout on or off, and set what a buyer may do on it (admin)',
           description:
-            'Hosted checkout is the page a buyer pays on, opened from a one-time link `POST /api/v1/checkouts` makes. `checkoutFlowId` is the published flow that prices it and places its order (null uses agentic checkout’s); turning it on needs a flow that authorizes a card payment. `editLines` lets the buyer change the lines on their page. Turning it off stops every link and page at once. Replaces all three.',
-          requestBody: body(storefrontSettingsSchema),
+            'Hosted checkout is the page a buyer pays on, opened from a one-time link `POST /api/v1/checkouts` makes. `checkoutFlowId` is the published flow that prices it and places its order (null uses agentic checkout’s); turning it on needs a flow that authorizes a card payment. `editLines` lets the buyer change the lines on their page. Turning it off stops every link and page at once. `storeName` is the name buyer pages show (plain text, up to 60 characters): leave it out to keep the current one, `null` clears it. Replaces the rest.',
+          requestBody: body(storefrontSettingsInputSchema),
           responses: {
             '200': okJson(
               'The settings as saved',

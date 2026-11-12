@@ -1,4 +1,4 @@
-import type { StorefrontSettings } from '@commerceworker/core';
+import { STORE_NAME_MAX, type StorefrontSettings } from '@commerceworker/core';
 import { Button } from '@commerceworker/ui/button';
 import {
   Field,
@@ -8,6 +8,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@commerceworker/ui/field';
+import { Input } from '@commerceworker/ui/input';
 import { NativeSelect, NativeSelectOption } from '@commerceworker/ui/native-select';
 import { Section } from '@commerceworker/ui/page';
 import { useState } from 'react';
@@ -17,13 +18,13 @@ import { useAssistant } from '~/lib/assistant';
 /** The flow the checkout is priced by is agentic checkout's, unless one is chosen. */
 const SAME = '';
 
+type StorefrontForm = { storeName: string; enabled: boolean; flowId: string; editLines: boolean };
+
 /** What a save sends: the form's choices as the tool takes them. */
-export function storefrontInput(form: {
-  enabled: boolean;
-  flowId: string;
-  editLines: boolean;
-}): StorefrontSettings {
+export function storefrontInput(form: StorefrontForm): StorefrontSettings {
   return {
+    // Blank is no name: buyer pages then name no one, rather than the platform.
+    storeName: form.storeName.trim() || null,
     checkout: {
       enabled: form.enabled,
       checkoutFlowId: form.flowId === SAME ? null : form.flowId,
@@ -35,7 +36,7 @@ export function storefrontInput(form: {
 /** What saving came to: saved, declined on its card (nothing changed), or refused with why (nothing changed). */
 export async function saveStorefrontSettings(
   act: (tool: 'set_storefront_settings', input: unknown) => Promise<object>,
-  form: { enabled: boolean; flowId: string; editLines: boolean },
+  form: StorefrontForm,
 ): Promise<{ saved: true } | { saved: false; error?: string }> {
   try {
     const r = await act('set_storefront_settings', storefrontInput(form));
@@ -46,7 +47,7 @@ export async function saveStorefrontSettings(
 }
 
 /**
- * Hosted checkout, the page a buyer pays on at the storefront: whether it is on, the flow that
+ * The storefront's settings: the store name buyers see, and hosted checkout, the page a buyer pays on: whether it is on, the flow that
  * prices it and whether buyers may change the lines. Saved through the assistant, as the other
  * workspace settings are: its card says what changes, and refuses a flow that can't take a card.
  */
@@ -58,6 +59,7 @@ export function StorefrontSettingsForm({
   flows: { id: string; name: string }[];
 }) {
   const saved = settings.checkout;
+  const [storeName, setStoreName] = useState(settings.storeName ?? '');
   const [enabled, setEnabled] = useState(saved.enabled);
   const [flowId, setFlowId] = useState(saved.checkoutFlowId ?? SAME);
   const [editLines, setEditLines] = useState(saved.editLines);
@@ -68,13 +70,14 @@ export function StorefrontSettingsForm({
   // A flow saved earlier that is no longer published stays visible, marked, rather than showing as another.
   const missing = flowId !== SAME && !flows.some((f) => f.id === flowId) ? flowId : null;
   const changed =
+    storeName.trim() !== (settings.storeName ?? '') ||
     enabled !== saved.enabled ||
     flowId !== (saved.checkoutFlowId ?? SAME) ||
     editLines !== saved.editLines;
   const save = async () => {
     setBusy(true);
     setError(null);
-    const r = await saveStorefrontSettings(act, { enabled, flowId, editLines });
+    const r = await saveStorefrontSettings(act, { storeName, enabled, flowId, editLines });
     if (r.saved) revalidate();
     else if (r.error) setError(r.error);
     setBusy(false);
@@ -86,6 +89,21 @@ export function StorefrontSettingsForm({
     >
       <div className="max-w-xl">
         <FieldGroup className="gap-5">
+          <Field>
+            <FieldLabel htmlFor="store-name">Store name</FieldLabel>
+            <Input
+              id="store-name"
+              value={storeName}
+              maxLength={STORE_NAME_MAX}
+              aria-describedby="store-name-hint"
+              autoComplete="off"
+              onChange={(e) => setStoreName(e.target.value)}
+            />
+            <FieldDescription id="store-name-hint" className="text-xs">
+              The name buyers see at the top of checkout, receipts and their account, and in the
+              page title. Left blank, those pages name no store.
+            </FieldDescription>
+          </Field>
           <Field orientation="horizontal">
             <input
               id="hosted-enabled"

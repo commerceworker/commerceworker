@@ -90,7 +90,11 @@ import { PROMOTION_KINDS, PROMOTION_STACKING } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
-import { storefrontAdminSchema, storefrontSettingsSchema, ucpSettingsSchema } from './ucp/profile';
+import {
+  storefrontAdminSchema,
+  storefrontSettingsInputSchema,
+  ucpSettingsSchema,
+} from './ucp/profile';
 
 /**
  * The flow draft a publish or test is held to: `get_flow`'s `draft`. Over REST it is required (a
@@ -862,7 +866,7 @@ export const TOOL_INPUTS = {
   revoke_ucp_platform: z.object({ platformId: z.string().min(1).max(60) }),
   get_storefront_settings: z.object({}),
   // The REST body, exactly, as set_ucp_settings'.
-  set_storefront_settings: storefrontSettingsSchema,
+  set_storefront_settings: storefrontSettingsInputSchema,
   publish_catalog: z.object({
     keys: z.array(productKey).min(1).max(500).describe('Product keys whose staged edits publish'),
   }),

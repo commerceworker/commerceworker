@@ -852,17 +852,21 @@ describe('MCP', () => {
       await seed();
       const read = async () =>
         (await call(admin, 'get_storefront_settings', {})).structuredContent as {
-          settings: { checkout: Record<string, unknown> };
+          settings: { storeName: string | null; checkout: Record<string, unknown> };
         };
       expect((await read()).settings.checkout).toEqual({
         enabled: false,
         checkoutFlowId: null,
         editLines: false,
       });
+      expect((await read()).settings.storeName).toBeNull();
 
       const on = await confirm(admin, 'set_storefront_settings', {
+        storeName: 'Acme Supply',
         checkout: { enabled: true, checkoutFlowId: 'tpl-storefront-order', editLines: true },
       });
+      expect(on.preview.consequences.join('\n')).toMatch(/Store name: “Acme Supply” \(was none\)/);
+      expect((await read()).settings.storeName).toBe('Acme Supply');
       expect(on.preview.title).toBe('Turn hosted checkout on');
       expect(on.preview.consequences.join('\n')).toMatch(/Buyers may change the lines/);
       expect(on.done).toMatchObject({ done: 'Saved hosted checkout' });
@@ -879,10 +883,23 @@ describe('MCP', () => {
           editLines: true,
           fromFlow: null,
           wasEnabled: false,
+          storeName: 'Acme Supply',
+          fromStoreName: null,
           via: 'mcp',
           tool: 'set_storefront_settings',
         },
       });
+
+      // A control character, a blank and a long name never reach a preview.
+      for (const storeName of ['Acme\nSupply', '  ', 'x'.repeat(61)]) {
+        const r = await call(admin, 'set_storefront_settings', {
+          storeName,
+          checkout: { enabled: true },
+        });
+        expect(r.isError, JSON.stringify(storeName)).toBe(true);
+        expect(r.structuredContent?.confirmation).toBeUndefined();
+      }
+      expect((await read()).settings.storeName).toBe('Acme Supply');
 
       // A code is for the input it previewed.
       const first = await call(admin, 'set_storefront_settings', { checkout: { enabled: false } });
@@ -898,6 +915,20 @@ describe('MCP', () => {
       expect(off.preview.title).toBe('Turn hosted checkout off');
       expect(off.preview.consequences.join('\n')).toMatch(/links stops working|link stops working/);
       expect((await read()).settings.checkout.enabled).toBe(false);
+      // Turning it off without naming the store keeps the name; the preview says so. null clears.
+      expect(off.preview.consequences.join('\n')).toMatch(/Store name: “Acme Supply” \(kept\)/);
+      expect((await read()).settings.storeName).toBe('Acme Supply');
+      const cleared = await confirm(admin, 'set_storefront_settings', {
+        storeName: null,
+        checkout: { enabled: false },
+      });
+      expect(cleared.preview.consequences.join('\n')).toMatch(
+        /Store name: none, buyer pages name no store \(was “Acme Supply”\)/,
+      );
+      expect((await read()).settings.storeName).toBeNull();
+      expect((await audited('checkout.settings')).at(-1)).toMatchObject({
+        detail: { storeName: null, fromStoreName: 'Acme Supply' },
+      });
 
       // Refused at the preview, with no code issued: a flow that is not there or never holds a
       // card, and no flow at all (agentic checkout has none here either).

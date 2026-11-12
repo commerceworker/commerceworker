@@ -49,7 +49,7 @@ export async function previewStorefrontSettings(
   i: ToolInput<'set_storefront_settings'>,
   roleBlock?: string,
 ): Promise<ActionPreview> {
-  const { from, flowId, refusal } = await planStorefrontSettings(settingsPorts(env), i);
+  const { from, next, flowId, refusal } = await planStorefrontSettings(settingsPorts(env), i);
   const flowName = async (id: string) =>
     boundText((await flowStore(env).flow(id))?.name ?? id, 80) ?? id;
   const on = i.checkout.enabled;
@@ -70,6 +70,10 @@ export async function previewStorefrontSettings(
           ? 'Buyers may change the lines on their page'
           : 'Only you may change a checkout’s lines; the buyer changes their details'
         : `Now: ${from.checkout.enabled ? 'on' : 'off'}`,
+      // Left out, the name stays; the preview says which it is.
+      next.storeName === from.storeName
+        ? `Store name: ${from.storeName ? `“${boundText(from.storeName, 80)}”` : 'none, buyer pages name no store'}${i.storeName === undefined ? ' (kept)' : ''}`
+        : `Store name: ${next.storeName ? `“${boundText(next.storeName, 80)}”` : 'none, buyer pages name no store'} (was ${from.storeName ? `“${boundText(from.storeName, 80)}”` : 'none'})`,
       'The storefront picks it up within 30 seconds',
     ],
     blocked: roleBlock ?? refusal ?? undefined,

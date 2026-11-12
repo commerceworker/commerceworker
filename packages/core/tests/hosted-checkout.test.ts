@@ -13,8 +13,11 @@ import {
   hostedStartPath,
   hostedView,
   readStorefrontSettings,
+  STORE_NAME_MAX,
   STOREFRONT_OFF,
   signGuestActor,
+  storefrontSettingsInputSchema,
+  storefrontSettingsSchema,
   verifyGuestActor,
   verifyRpcActor,
 } from '../src';
@@ -151,6 +154,7 @@ describe('the storefront setting', () => {
   it('is off until an admin turns it on, and off again when it does not parse', () => {
     expect(readStorefrontSettings(null)).toEqual(STOREFRONT_OFF);
     expect(STOREFRONT_OFF).toEqual({
+      storeName: null,
       checkout: { enabled: false, checkoutFlowId: null, editLines: false },
     });
     expect(readStorefrontSettings('{}')).toEqual(STOREFRONT_OFF);
@@ -158,6 +162,44 @@ describe('the storefront setting', () => {
     expect(readStorefrontSettings('{"checkout":{"enabled":"yes"}}')).toEqual(STOREFRONT_OFF);
     expect(
       readStorefrontSettings('{"checkout":{"enabled":true,"checkoutFlowId":"tpl-x"}}'),
-    ).toEqual({ checkout: { enabled: true, checkoutFlowId: 'tpl-x', editLines: false } });
+    ).toEqual({
+      storeName: null,
+      checkout: { enabled: true, checkoutFlowId: 'tpl-x', editLines: false },
+    });
+  });
+
+  it('takes a store name as one trimmed line of text, or null', () => {
+    const name = (storeName: unknown) => storefrontSettingsSchema.safeParse({ storeName });
+    expect(name(null)).toMatchObject({ success: true, data: { storeName: null } });
+    expect(name(undefined)).toMatchObject({ success: true, data: { storeName: null } });
+    expect(name('  Acme Supply  ')).toMatchObject({
+      success: true,
+      data: { storeName: 'Acme Supply' },
+    });
+    expect(name('x'.repeat(STORE_NAME_MAX)).success).toBe(true);
+    // Markup is text here; the storefront draws it as text, so it is neither stripped nor refused.
+    expect(name('<b>Acme</b> & Sons')).toMatchObject({ data: { storeName: '<b>Acme</b> & Sons' } });
+    for (const bad of [
+      '',
+      '   ',
+      'x'.repeat(STORE_NAME_MAX + 1),
+      'Acme\nSupply',
+      'Acme\tSupply',
+      'Acme\u0000',
+      'Acme\u007f',
+      'Acme\u0085',
+      'Acme\u2028Supply',
+      'Acme\u202eSupply',
+      42,
+    ])
+      expect(name(bad).success, JSON.stringify(bad)).toBe(false);
+    // What a change takes: left out keeps the current name (undefined), null clears, a string sets.
+    const input = (body: object) => storefrontSettingsInputSchema.parse(body).storeName;
+    expect(input({})).toBeUndefined();
+    expect(input({ storeName: null })).toBeNull();
+    expect(input({ storeName: ' Acme ' })).toBe('Acme');
+    expect(storefrontSettingsInputSchema.safeParse({ storeName: '' }).success).toBe(false);
+    // A name that was stored but doesn't parse is no settings: off, nameless.
+    expect(readStorefrontSettings('{"storeName":"a\\nb"}')).toEqual(STOREFRONT_OFF);
   });
 });

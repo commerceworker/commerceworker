@@ -26,6 +26,7 @@ import {
   shopperCookie,
   signInBudget,
 } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/account-confirm';
 
 const invalid = () => data('This link isn’t valid.', { status: 404, headers: PRIVATE_HEADERS });
@@ -35,8 +36,8 @@ const spent = () =>
     headers: PRIVATE_HEADERS,
   });
 
-export const meta = () => [
-  { title: 'Confirm sign-in · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Confirm sign-in') },
   { name: 'robots', content: 'noindex' },
 ];
 

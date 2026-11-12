@@ -10,6 +10,7 @@ import { Empty } from '@commerceworker/ui/page';
 import { CircleCheck } from 'lucide-react';
 import { data, redirect, useLoaderData } from 'react-router';
 import { CheckoutRefusal } from '~/components/checkout-refusal';
+import { StoreName } from '~/components/store-name';
 import { engine } from '~/lib/env.server';
 import {
   checkoutBuyer,
@@ -20,10 +21,11 @@ import {
 } from '~/lib/hosted-checkout.server';
 import { orderRef } from '~/lib/order-ref';
 import { overBudget } from '~/lib/rate-limit';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/checkout-placed';
 
-export const meta = () => [
-  { title: 'Order placed · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Order placed') },
   { name: 'robots', content: 'noindex' },
 ];
 
@@ -58,8 +60,7 @@ export default function OrderPlacedPage() {
   const { orderId, testPayments } = useLoaderData<typeof loader>();
   return (
     <main id="main" className="mx-auto max-w-2xl px-safe-4 pt-safe-6 pb-safe-8 sm:px-safe-6">
-      {/* TODO(S7): the merchant's store name, which the wordmark stands in for until then. */}
-      <p className="mb-6 font-semibold text-brand tracking-title">CommerceWorker</p>
+      <StoreName className="mb-6" />
       <Empty
         icon={<CircleCheck aria-hidden="true" />}
         title={<h1 className="text-xl tracking-title">Order placed</h1>}

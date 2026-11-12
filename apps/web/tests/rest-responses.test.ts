@@ -1250,6 +1250,7 @@ describe('hosted checkout’s settings', () => {
   it('are off until saved, saved only for a flow that takes cards, and read back as saved', async () => {
     const off = await expectResponse(await call('GET', 'storefront'), 200, storefrontAdminSchema);
     expect(off.settings).toEqual({
+      storeName: null,
       checkout: { enabled: false, checkoutFlowId: null, editLines: false },
     });
     const card = { ...storefrontOrderFlow(), id: 'tpl-card' };
@@ -1267,6 +1268,7 @@ describe('hosted checkout’s settings', () => {
       ).toBe(true);
     }
     const saved = {
+      storeName: 'Acme Supply',
       checkout: { enabled: true, checkoutFlowId: 'tpl-card', editLines: true },
     };
     const set = await expectResponse(

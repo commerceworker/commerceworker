@@ -14,10 +14,11 @@ import { CartRefusal } from '~/components/cart-refusal';
 import { cartGuest, cartRefusal } from '~/lib/cart-guest.server';
 import { engine } from '~/lib/env.server';
 import { signedActor } from '~/lib/principal.server';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/cart-buy';
 
-export const meta = ({ loaderData: d }: Route.MetaArgs) => [
-  { title: `${d?.snapshot.cart?.title ?? 'Cart'} · CommerceWorker` },
+export const meta: Route.MetaFunction = ({ loaderData: d, matches }) => [
+  { title: pageTitle(matches, d?.snapshot.cart?.title ?? 'Cart') },
 ];
 
 export async function loader({ request, params }: Route.LoaderArgs) {

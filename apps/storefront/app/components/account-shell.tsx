@@ -1,19 +1,21 @@
 import type { ReactNode } from 'react';
 import { Form, NavLink } from 'react-router';
+import { useStoreName } from '~/lib/store-name';
 
 /**
- * The frame of every account page: the wordmark and one narrow column, padded for the notch, the
+ * The frame of every account page: the store's name and one narrow column, padded for the notch, the
  * status bar and the home indicator. `wide` is for the pages that list things (orders, addresses),
  * which have room to.
  */
 export function AccountShell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
+  const storeName = useStoreName();
   return (
     <main
       id="main"
       className={`mx-auto flex min-h-dvh flex-col px-safe-4 pt-safe-6 pb-safe-8 sm:px-safe-6 ${wide ? 'max-w-2xl' : 'max-w-md'}`}
     >
-      {/* TODO(S7): the merchant's store name, which the wordmark stands in for until then. */}
-      <p className="mb-8 font-semibold text-brand tracking-title">CommerceWorker</p>
+      {/* The merchant's name, or a neutral label: never the platform's. */}
+      <p className="mb-8 font-semibold text-brand tracking-title">{storeName ?? 'Your account'}</p>
       {children}
     </main>
   );

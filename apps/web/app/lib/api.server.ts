@@ -103,7 +103,7 @@ import {
   signatureKeyId,
   staffCartActor,
   startOrderSchema,
-  storefrontSettingsSchema,
+  storefrontSettingsInputSchema,
   subjectTarget,
   toStartRequest,
   ucpSettingsSchema,
@@ -734,7 +734,7 @@ async function handleStorefrontAdmin(
   if (parts.length === 1 && request.method === 'GET')
     return json({ settings: await storefrontAdmin() });
   if (parts[1] === 'settings' && parts.length === 2 && request.method === 'POST') {
-    const parsed = storefrontSettingsSchema.safeParse(await body());
+    const parsed = storefrontSettingsInputSchema.safeParse(await body());
     if (!parsed.success)
       return json({ error: 'Invalid settings', issues: parsed.error.issues }, 400);
     const changed = await setStorefrontSettings(parsed.data, actor(caller));

@@ -8,6 +8,7 @@ import {
   formId,
   PLACED_ID,
   PLACED_ORDER,
+  STORE_NAME,
   startId,
   startToken,
 } from './checkout-seed';
@@ -35,6 +36,10 @@ const open = async (page: Page, id = CHECKOUT_ID) => {
   const res = await page.goto(`/checkout/${id}`);
   expect(res?.status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible();
+  // The merchant's name, in the page and its title, and never the platform's.
+  await expect(page.getByText(STORE_NAME, { exact: true })).toBeVisible();
+  await expect(page).toHaveTitle(`Checkout · ${STORE_NAME}`);
+  await expect(page.getByText('CommerceWorker')).toHaveCount(0);
   return res!;
 };
 

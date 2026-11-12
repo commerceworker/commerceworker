@@ -9,12 +9,12 @@ import {
   changeStorefrontSettings,
   readStorefrontAdminSettings,
 } from '@commerceworker/application/commerce';
-import type { StorefrontSettings } from '@commerceworker/core';
+import type { StorefrontSettingsInput } from '@commerceworker/core';
 import { flowStore, workspaceStore } from './wire.server';
 
 /** The settings as stored, hosted checkout off until an admin turns it on. */
 export const storefrontAdmin = () => readStorefrontAdminSettings({ workspace: workspaceStore() });
 
 /** Sets the settings; turning hosted checkout on needs a flow that takes cards. */
-export const setStorefrontSettings = (next: StorefrontSettings, by: string) =>
+export const setStorefrontSettings = (next: StorefrontSettingsInput, by: string) =>
   changeStorefrontSettings({ workspace: workspaceStore(), flows: flowStore() }, next, by);

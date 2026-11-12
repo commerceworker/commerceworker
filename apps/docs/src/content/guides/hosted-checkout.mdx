@@ -22,6 +22,11 @@ stop working. An admin turns it on in the **Hosted checkout** section of the Tea
 `set_storefront_settings` over [MCP](/reference/mcp/#outside-access) or the [assistant](/guides/assistant/), or with
 `POST /api/v1/storefront/settings`, which takes:
 
+- `storeName`: your store's name as buyers see it: at the top of the checkout, the order-placed page, the
+  receipt and the customer account, and after the page's own name in the browser tab's title. Plain text of up
+  to 60 characters on one line; `null` clears it. Leave it out of a call and the current name stays, so turning checkout off never
+  wipes it (the other settings are replaced by each call). Until you set one, those pages show no name at all
+  (the account pages say "Your account"): they never show the platform's.
 - `checkout.enabled`: on or off.
 - `checkout.checkoutFlowId`: the published flow that prices every hosted checkout and places its order, or
   `null` for the flow [agentic checkout](/reference/ucp/) uses.

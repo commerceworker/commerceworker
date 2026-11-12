@@ -7,7 +7,7 @@
 import {
   cartOpSchema,
   REST_OPERATION_TOOLS,
-  storefrontSettingsSchema,
+  storefrontSettingsInputSchema,
   TOOL_INPUTS,
   ucpSettingsSchema,
 } from '@commerceworker/core';
@@ -149,7 +149,7 @@ const PAIRS: {
   {
     rest: 'POST /storefront/settings',
     tool: 'set_storefront_settings',
-    body: storefrontSettingsSchema,
+    body: storefrontSettingsInputSchema,
     path: [],
   },
   // The removals and revocations take only the id in the path.

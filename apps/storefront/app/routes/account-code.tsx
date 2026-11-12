@@ -22,10 +22,11 @@ import {
   shopperCookie,
   signInBudget,
 } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/account-code';
 
-export const meta = () => [
-  { title: 'Enter your code · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Enter your code') },
   { name: 'robots', content: 'noindex' },
 ];
 
