@@ -474,7 +474,15 @@ checkout session (`CHECKOUT_STATUSES`, `missingInfo`, `openStatus`, `quoteNodes`
 extension's view of the quote (`discount.ts`), RFC 9421
 message signatures (`signature.ts`, ES256 and `Content-Digest`), RFC 8941 structured fields
 (`structured.ts`) and error shapes (`errors.ts`). All of it is pure and tested against the official
-schemas. The engine serves it from `apps/engine/src/ucp/`.
+schemas. The engine serves it from `apps/engine/src/ucp/`, a thin adapter over the engine's own
+checkout in `apps/engine/src/checkout/`, which knows no protocol: `session.ts` (sessions loaded for
+their owner, versioned writes, `current`, `refresh`, which prices and finds the issues), `complete.ts`
+(price again, claim `complete_in_progress`, hold the payment, `startOrderOnce`, release the hold if
+the order fails), `payments.ts` (`PaymentAuthorizer`, `releaseHold`), `quote.ts` (`quoteCheckout`) and
+`pickup.ts`. A caller (`CheckoutCaller`, `caller.ts`) names its `ownerId`, order `channel`,
+`idempotencyPrefix`, extra order `meta` and protocol issues. UCP's is the platform, `agent` and
+`ucp:<session id>`; the adapter keeps the HTTP statuses, the UCP bodies and the error mapping, so a
+second front (a hosted checkout page) adds a caller, not a second checkout.
 
 **Boundary.** A platform is not a `Principal`: it has no role and acts only on its own checkouts
 and orders. The storefront Worker (`ucpFetch`, `apps/storefront/app/lib/ucp.server.ts`; platforms are registered on the admin) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_`; only the key's SHA-256 leaves the Worker, to `StorefrontApi.ucpPlatform`, which looks it up in `ucp_platforms.key_hash`, revoked rows excluded, and records its use), requires `UCP-Agent` to equal the
@@ -1360,7 +1368,7 @@ the rest is in its SQL, paged by `history`).
 
 - **Pricing.** Nobody sets a price. After each op that changes lines or promo codes the agent
   prices the cart with the flow's pricing nodes through `quoteCheckout`, exactly as a UCP checkout
-  is priced, for the cart's customer (`DraftExtra` in `apps/engine/src/ucp/quote.ts`) with its codes in
+  is priced, for the cart's customer (`DraftExtra` in `apps/engine/src/checkout/quote.ts`) with its codes in
   `meta.promoCodes`. A quote that finishes after the cart changed again is dropped, and a cart is
   ready only when its quote is for its current `version` and found no errors (`cartReadyProblem`).
 - **Ship-to and shipping option.** `Cart.shipTo` and `Cart.shippingOption` go into the quote's
@@ -1417,7 +1425,7 @@ the rest is in its SQL, paged by `history`).
   (`cart-search:<actorId>`, a buyer's `cart-search:<cartId>:<actorId>`), apart from their
   `/api/v1` one, and is refused with `429` and `retry-after` past it. `unitPrice` comes from running the flow's `commerce.price`
   executor dry on the cart's draft order with one of each result (`unitPrices` in
-  `ucp/quote.ts`, the same draft the quote uses: contract prices and price rules, before
+  `checkout/quote.ts`, the same draft the quote uses: contract prices and price rules, before
   promotions, shipping and tax). A flow that prices at cost shows a guest no prices, and a search
   never returns cost, stock or supplier. The SKU box stays for a SKU the person knows.
 - **Files.** The admin stores an upload (`uploadAttachment`, `packages/cart/src/files.ts`; at most 10 MB, `ATTACHMENT_TYPES` only, 20 a cart) at

@@ -54,12 +54,12 @@ import {
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
 import { sendAiFeedback } from './ai';
 import { recordAudit } from './audit';
+import { releaseHold } from './checkout/payments';
 import { compensateOrder } from './connectors';
 import { a2aAgent } from './namespaces';
 import { emit, orderSummary } from './outbox';
 import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
-import { releaseHold } from './ucp/payments';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
 import { approvalPorts, orderRecords, purchaseOrderStore } from './wire';
 import { plural } from './words';

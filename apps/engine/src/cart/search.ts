@@ -21,8 +21,8 @@ import {
   isCartExpired,
   isFinalCart,
 } from '@commerceworker/core';
+import { unitPrices } from '../checkout/quote';
 import { loadFlowVersion } from '../flows';
-import { unitPrices } from '../ucp/quote';
 import { productIndexStore } from '../wire';
 import { cartSnapshot } from './carts';
 import { cartDraftExtra, cartSession } from './session';

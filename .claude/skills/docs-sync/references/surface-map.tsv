@@ -87,7 +87,7 @@
 ^apps/web/app/lib/scim(\.server)?\.ts$	guides/team-and-roles docs/architecture.md docs/data-model.md docs/operations.md docs/testing.md	prose
 ^packages/core/src/(checkout|ucp/[^/]+)\.ts$	reference/ucp docs/architecture.md docs/testing.md	gen
 ^apps/docs/src/components/UcpValues\.astro$	reference/ucp	gen
-^apps/engine/src/ucp/	reference/ucp docs/architecture.md docs/configuration.md docs/data-model.md docs/testing.md	prose
+^apps/engine/src/(ucp|checkout)/	reference/ucp docs/architecture.md docs/configuration.md docs/data-model.md docs/testing.md	prose
 ^apps/(web|storefront)/app/lib/ucp\.server\.ts$	reference/ucp reference/rest-api guides/team-and-roles docs/architecture.md	prose
 ^apps/(engine|web|storefront)/tests/(stripe/)?ucp(-helpers)?\.test\.ts$|^apps/engine/tests/ucp-helpers\.ts$|^packages/core/tests/(checkout|ucp)\.test\.ts$	docs/testing.md	prose
 ^packages/core/src/types\.ts$	guides/commerce-models	prose

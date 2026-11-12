@@ -5,21 +5,11 @@
  * completion retried after a lost answer replays the same hold rather than placing a second one.
  */
 
-import {
-  type CheckoutSession,
-  type OrderPayment,
-  toMinor,
-  type UcpInstrument,
-} from '@commerceworker/core';
+import { type CheckoutSession, toMinor, type UcpInstrument } from '@commerceworker/core';
+import { type Authorized, declined } from '../checkout/payments';
 import { stripeFor, stripeMode } from '../gateway';
 import { StripeError } from '../stripe';
 import { STRIPE_HANDLER, TEST_HANDLER } from './config';
-
-export type Authorized =
-  | { ok: true; payment?: OrderPayment }
-  | { ok: false; code: string; content: string };
-
-const declined = (content: string): Authorized => ({ ok: false, code: 'payment_failed', content });
 
 /** Places the hold for the session's total with the instrument's handler. */
 export async function authorizeCheckout(
@@ -66,21 +56,5 @@ export async function authorizeCheckout(
     if (err instanceof StripeError && err.isCardError)
       return declined(`The card was declined${err.declineCode ? ` (${err.declineCode})` : ''}.`);
     throw err;
-  }
-}
-
-/**
- * Releases a hold no order took: the order failed before (or instead of) adopting it. Idempotent;
- * an intent already captured or canceled is left alone.
- */
-export async function releaseHold(env: Env, intentId: string) {
-  if (!stripeMode(env)) return;
-  const stripe = stripeFor(env);
-  try {
-    const pi = await stripe.paymentIntents.retrieve(intentId);
-    if (pi.status === 'requires_capture')
-      await stripe.paymentIntents.cancel(intentId, {}, `ucp_release_${intentId}`);
-  } catch (err) {
-    if (!(err instanceof StripeError) || err.isRetryable) throw err;
   }
 }
