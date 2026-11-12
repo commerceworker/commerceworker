@@ -624,6 +624,10 @@ export const backsUpD1 = (d: Deployment): d is Deployment & { redundancy: Redund
   !!d.redundancy && !d.redundancy.except.includes('d1Backup');
 
 /** The two Workflows' cron schedules: the backup daily, the drill six hours later on Sundays or the 1st. */
+/** Whether `DOCS` has a replica: `redundancy` on, `r2Replica` not an exception. */
+export const replicatesDocs = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('r2Replica');
+
 export function redundancySchedules(r: Redundancy) {
   const drillHour = (r.backupHourUtc + 6) % 24;
   return {
@@ -1120,6 +1124,10 @@ export const names = (d: Deployment) => ({
   /** The commerce D1 backups and drill evidence (`redundancy`), and the database a drill restores into. */
   backups: `commerceworker-backups${d.suffix}`,
   standbyD1: `commerceworker-standby${d.suffix}`,
+  /** The replica of the order documents bucket (`redundancy`), the queue R2's notifications go to, and its dead letters. */
+  docsReplica: `commerceworker-docs-replica${d.suffix}`,
+  docsReplicaQueue: `commerceworker-docs-replica${d.suffix}`,
+  docsReplicaDlq: `commerceworker-docs-replica-dlq${d.suffix}`,
   catalogKv: `commerceworker-catalog-cards${d.suffix}`,
   catalogFeedParts: `commerceworker-catalog-feed-parts${d.suffix}`,
   catalogFeedPartsDlq: `commerceworker-catalog-feed-parts-dlq${d.suffix}`,
@@ -1526,6 +1534,39 @@ function redundancyBindings(config: Config, d: Deployment) {
   );
 }
 
+/**
+ * The docs replica's bindings: the bucket (in the deployment's jurisdiction), the reconcile
+ * Workflow, and the queue consumers for R2's notifications and their dead letters, with the
+ * suffixed queue names. Stripped, with the bucket, when `redundancy` is off or `r2Replica` is an
+ * exception. Apart from the D1 backup's, so each part switches off on its own.
+ */
+function docsReplicaBindings(config: Config, d: Deployment) {
+  if (!replicatesDocs(d)) {
+    config.r2_buckets = config.r2_buckets.filter((b: Config) => b.binding !== 'DOCS_REPLICA');
+    config.workflows = config.workflows.filter((w: Config) => w.binding !== 'DOCS_RECONCILE');
+    delete config.queues;
+    return;
+  }
+  const n = names(d);
+  config.r2_buckets = config.r2_buckets.map((b: Config) =>
+    b.binding === 'DOCS_REPLICA'
+      ? {
+          ...b,
+          bucket_name: n.docsReplica,
+          ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
+        }
+      : b,
+  );
+  config.queues = {
+    ...config.queues,
+    consumers: config.queues.consumers.map((c: Config) => ({
+      ...c,
+      queue: `${c.queue}${d.suffix}`,
+      ...(c.dead_letter_queue ? { dead_letter_queue: `${c.dead_letter_queue}${d.suffix}` } : {}),
+    })),
+  };
+}
+
 export function renderEngine(base: Config, d: Deployment): Config {
   const config = structuredClone(base);
   config.name = names(d).engine;
@@ -1533,6 +1574,7 @@ export function renderEngine(base: Config, d: Deployment): Config {
   config.workflows = config.workflows.map((w: Config) => ({ ...w, name: `${w.name}${d.suffix}` }));
   storage(config, d);
   redundancyBindings(config, d);
+  docsReplicaBindings(config, d);
   // The product index ai.extract reads. A demo mocks every model, so it has none (and
   // scripts/provision.sh creates none).
   if (d.demo) delete config.vectorize;
@@ -2284,6 +2326,11 @@ export function shellVars(d: Deployment): Record<string, string> {
     BACKUPS_R2: backsUpD1(d) ? n.backups : '',
     STANDBY_D1: backsUpD1(d) ? n.standbyD1 : '',
     BACKUP_DAYS: backsUpD1(d) ? String(d.redundancy.backupDays) : '',
+    // The docs replica: its bucket, the queue R2's notifications go to and that queue's dead-letter
+    // queue. All empty without `redundancy` (or with `r2Replica` an exception).
+    DOCS_REPLICA_R2: replicatesDocs(d) ? n.docsReplica : '',
+    DOCS_REPLICA_QUEUE: replicatesDocs(d) ? n.docsReplicaQueue : '',
+    DOCS_REPLICA_DLQ: replicatesDocs(d) ? n.docsReplicaDlq : '',
     CATALOG_KV: n.catalogKv,
     CATALOG_FEED_PARTS: n.catalogFeedParts,
     CATALOG_FEED_PARTS_DLQ: n.catalogFeedPartsDlq,

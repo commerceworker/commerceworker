@@ -6,6 +6,10 @@
 
 import { createCatalogEdgeReader } from '@commerceworker/adapters/catalog-edge';
 import { createCfEmailSender } from '@commerceworker/adapters/email-cf';
+import {
+  createR2ObjectBucket,
+  createReplicaFallbackBucket,
+} from '@commerceworker/adapters/object-replica-r2';
 import type { ApprovalPorts } from '@commerceworker/application/commerce';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { createDb, probeDb } from '@commerceworker/db';
@@ -73,6 +77,8 @@ import type {
   LabelService,
   MarketplaceStore,
   MessageStore,
+  ObjectBucket,
+  ObjectReader,
   ObjectStore,
   OrderQueries,
   OrderRecords,
@@ -200,13 +206,44 @@ export function shippingStore(env: Pick<Env, 'DB'>): ShippingStore {
   return store;
 }
 
+/** The replica bucket, bound only when the registry's `redundancy` is on (and `r2Replica` isn't an exception). */
+type DocsReplica = { DOCS_REPLICA?: R2Bucket };
+
+const docsReaders = new WeakMap<R2Bucket, ObjectReader>();
+
+/**
+ * Where reads of `DOCS` go. With the replica bound, a read the primary can't answer (a 5xx, or no
+ * answer in time) reads the replica's copy and logs a `docs_replica_read` line, which is the count
+ * of reads served from it. Writes and deletes always go to `DOCS` itself (`env.DOCS`).
+ */
+export function docsReader(env: Pick<Env, 'DOCS'> & DocsReplica): ObjectReader {
+  let reader = docsReaders.get(env.DOCS);
+  if (!reader) {
+    const replica = env.DOCS_REPLICA;
+    reader = replica
+      ? createReplicaFallbackBucket(env.DOCS, replica, {
+          onFallback: (e) => console.warn(JSON.stringify({ type: 'docs_replica_read', ...e })),
+        })
+      : env.DOCS;
+    docsReaders.set(env.DOCS, reader);
+  }
+  return reader;
+}
+
+/** `DOCS` as the replication port: what a create event is copied from. */
+export const docsPrimary = (env: Pick<Env, 'DOCS'>): ObjectBucket => createR2ObjectBucket(env.DOCS);
+
+/** The replica bucket as the replication port. */
+export const docsReplica = (env: Pick<Env, 'DOCS_REPLICA'>): ObjectBucket =>
+  createR2ObjectBucket(env.DOCS_REPLICA);
+
 const documentStores = new WeakMap<R2Bucket, DocumentStore>();
 
 /** An order's documents: bodies in R2 (`DOCS`), records in D1. */
-export function documentStore(env: Pick<Env, 'DB' | 'DOCS'>): DocumentStore {
+export function documentStore(env: Pick<Env, 'DB' | 'DOCS'> & DocsReplica): DocumentStore {
   let store = documentStores.get(env.DOCS);
   if (!store) {
-    store = d1DocumentStore(env.DB, env.DOCS, systemClock);
+    store = d1DocumentStore(env.DB, env.DOCS, systemClock, docsReader(env));
     documentStores.set(env.DOCS, store);
   }
   return store;

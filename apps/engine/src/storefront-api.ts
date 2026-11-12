@@ -76,7 +76,7 @@ import {
   unlink,
 } from './ucp/identity-link';
 import { handleUcp } from './ucp/rest';
-import { d1Reachable, pricingStore, ucpStore } from './wire';
+import { d1Reachable, docsReader, pricingStore, ucpStore } from './wire';
 
 /** How often a platform's last use is written back. */
 const TOUCH_MS = 5 * 60_000;
@@ -254,7 +254,7 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
       return null;
     const a = found.state.attachments?.find((f) => f.id === attachmentId);
     if (!a || a.key !== cartAttachmentKey(cartId, attachmentId)) return null;
-    const obj = await this.env.DOCS.get(a.key);
+    const obj = await docsReader(this.env).get(a.key);
     return obj ? { body: obj.body } : null;
   }
 

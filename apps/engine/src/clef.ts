@@ -18,6 +18,7 @@ import {
   safeFetch,
 } from '@commerceworker/core';
 import { type AiCall, callOptions, logAiCall, retryModelCall, withTimeout } from './ai';
+import { docsReader } from './wire';
 
 /** Clef's limits: 4 images, 4 MiB each, 8 MiB decoded in all. */
 export const MAX_IMAGES = 4;
@@ -93,7 +94,7 @@ async function loadImage(
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(ref)) return `${short}: only https, data URLs or R2 keys`;
   if (!ref.startsWith(`orders/${orderId}/`)) return `${short}: not one of this order's documents`;
-  const obj = await env.DOCS.get(ref);
+  const obj = await docsReader(env).get(ref);
   if (!obj) return `${short}: no such document`;
   const type = mime(obj.httpMetadata?.contentType);
   if (obj.size > MAX_IMAGE_BYTES) {

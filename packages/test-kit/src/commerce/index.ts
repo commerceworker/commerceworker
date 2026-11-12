@@ -39,6 +39,8 @@ export * from './logs';
 export * from './logs-contract';
 export * from './marketplace-store';
 export * from './marketplace-store-contract';
+export * from './object-replica';
+export * from './object-replica-contract';
 export * from './order-board';
 export * from './order-board-contract';
 export * from './order-queries';

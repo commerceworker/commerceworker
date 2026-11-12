@@ -15,6 +15,7 @@
     "./images-cf": "./src/images-cf/index.ts",
     "./import-space-export": "./src/import-space-export/index.ts",
     "./import-structured": "./src/import-structured/index.ts",
+    "./object-replica-r2": "./src/object-replica-r2/index.ts",
     "./plugins-cf-loader": "./src/plugins-cf-loader/index.ts",
     "./queue-cf": "./src/queue-cf/index.ts",
     "./rate-limit-cf": "./src/rate-limit-cf/index.ts",

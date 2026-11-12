@@ -19,6 +19,7 @@ export * from './inventory';
 export * from './invoices';
 export * from './logs';
 export * from './marketplace';
+export * from './object-replica';
 export * from './order-board';
 export * from './order-queries';
 export * from './order-views';

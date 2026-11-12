@@ -33,6 +33,7 @@
     "@cfworker/json-schema": "catalog:",
     "@cloudflare/vitest-plugin": "catalog:",
     "@commerceworker/plugin-sdk": "workspace:*",
+    "@commerceworker/test-kit": "workspace:*",
     "@commerceworker/typescript-config": "workspace:*",
     "typescript": "catalog:",
     "vitest": "catalog:",

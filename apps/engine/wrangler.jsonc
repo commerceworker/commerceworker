@@ -75,8 +75,9 @@
       "schedules": ["0 6 * * *"],
       "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
     },
-    // The redundancy bindings below (the two Workflows, STANDBY_DB and BACKUPS) belong to a
-    // deployment whose registry sets `redundancy`; scripts/fleet.ts strips them from the rest.
+    // The redundancy bindings below (the three Workflows, STANDBY_DB, BACKUPS, DOCS_REPLICA and the
+    // docs replica's queue consumers) belong to a deployment whose registry sets `redundancy`;
+    // scripts/fleet.ts strips them from the rest.
     {
       // Daily logical backup of the commerce D1 into BACKUPS (src/d1-backup.ts). The registry's
       // redundancy.backupHourUtc sets the hour; commerceworker's is 01:00 UTC.
@@ -98,6 +99,17 @@
       "schedules": ["0 7 * * 0"],
       "limits": { "steps": 10000 },
       "default_retention": { "success_retention": "30 days", "error_retention": "30 days" }
+    },
+    {
+      // Nightly: lists DOCS and its replica, copies what the replica lacks or holds stale, flags
+      // what it holds that DOCS doesn't, and writes replica/<date>.json (src/docs-replica.ts).
+      "name": "commerceworker-docs-reconcile",
+      "binding": "DOCS_RECONCILE",
+      "class_name": "DocsReplicaReconcile",
+      "schedules": ["0 4 * * *"],
+      // A hundred objects a step, so this covers hundreds of thousands of objects.
+      "limits": { "steps": 10000 },
+      "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
     }
   ],
   // Resource ids are provisioned by `wrangler deploy` on first deploy.
@@ -121,8 +133,36 @@
     { "binding": "DOCS", "bucket_name": "commerceworker-docs" },
     // The D1 backups (d1/, locked for the registry's redundancy.backupDays) and the drills'
     // evidence (drills/); provisioned only for a deployment with `redundancy`.
-    { "binding": "BACKUPS", "bucket_name": "commerceworker-backups" }
+    { "binding": "BACKUPS", "bucket_name": "commerceworker-backups" },
+    // The replica of DOCS: R2 event notifications copy each object here (src/docs-replica.ts), a
+    // delete moves the copy to deleted/<date>/ for 30 days, audit/ and plugins/ are locked as in
+    // DOCS, and reads fall back to it when DOCS fails (wire.ts). Provisioned only for a
+    // deployment with `redundancy`.
+    { "binding": "DOCS_REPLICA", "bucket_name": "commerceworker-docs-replica" }
   ],
+  // The replica's queue (R2's object-create and object-delete notifications from DOCS) and its
+  // dead-letter queue, whose messages are kept in the replica under dlq/ and logged at error level.
+  // The names get the deployment's suffix; scripts/provision.sh creates both queues and the
+  // notification rule, and scripts/fleet.ts strips this with the bucket when `redundancy` is off.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "commerceworker-docs-replica",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "retry_delay": 30,
+        "dead_letter_queue": "commerceworker-docs-replica-dlq"
+      },
+      {
+        "queue": "commerceworker-docs-replica-dlq",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_retries": 10,
+        "retry_delay": 60
+      }
+    ]
+  },
   // The product catalog, for the assistant's product content drafts (docs/product-editor.md) and
   // UCP catalog search (its types, channels and ORDERS_CHANNEL). The catalog deploys before the
   // engine. The engine's tests stub it (vitest.config.ts).

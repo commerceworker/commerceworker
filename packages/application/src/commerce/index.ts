@@ -10,6 +10,7 @@ export * from './database-backup';
 export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';
+export * from './object-replica';
 export * from './order-confirmation';
 export * from './payments';
 export * from './price-books';

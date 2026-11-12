@@ -37,7 +37,7 @@ import {
 import { readCapped } from './body';
 import { openSecret } from './data-key';
 import { pluginStorage } from './namespaces';
-import { pluginInstalls } from './wire';
+import { docsReader, pluginInstalls } from './wire';
 
 export type PluginStub = Fetcher & { [K in keyof PluginRpc]: PluginRpc[K] };
 
@@ -226,7 +226,7 @@ function devBundle(env: Env, id: string): string | undefined {
 
 /** A pinned bundle from `DOCS`, refused unless it hashes to its pin. */
 async function loadBundle(env: Env, id: string, sha: string): Promise<Bundle> {
-  const obj = await env.DOCS.get(`plugins/${id}/${sha}.json`);
+  const obj = await docsReader(env).get(`plugins/${id}/${sha}.json`);
   // Local dev hands the engine its bundles directly (apps/web/vite.config.ts); checked the same.
   const body = obj ? await obj.text() : devBundle(env, id);
   if (body === undefined)
