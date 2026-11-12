@@ -598,11 +598,14 @@ holds a capture for the intent; `meta.hosted` and `hosted:` idempotency keys are
 outside (`fromOutside`). The authorize step declines any source but the adopted intent for a hosted order, and
 `adoptProblem` also checks the intent's `checkout_id` against the order's external id.
 
-**Storefront.** `checkout/start/:id/:token` redeems and redirects (`no-store`, `no-referrer`);
+**Storefront.** `checkout/start/:id/:token` redeems and redirects (`no-store`, `same-origin`);
 `checkout/:id` is the page: its loader reads the buyer view and its action posts the form (`intent=update` or
 `place`) under `API_LIMIT` per cookie; `checkout/:id/placed` is the order's reference until the confirmation page. The
 Worker's cross-origin check refuses a browser's cross-site POST to them, and every response is `no-store`,
-`no-referrer` and `frame-ancestors 'none'`, with nothing personal in a URL.
+`Referrer-Policy: same-origin` and `frame-ancestors 'none'`, with nothing personal in a URL. It is `same-origin`, not
+`no-referrer`, because under `no-referrer` a browser posts the page's own forms with `Origin: null`, which React Router
+and the Worker's cross-site check refuse; `same-origin` still sends no Referer to another origin, so the start link's
+token and the order's address never leave.
 The page is one plain `<form>` (it works without a script): contact (email validated before the engine is asked),
 the ship-to with `shipping …` autocomplete tokens, the quote's shipping options, a store to collect from where the
 flow offers pickup (`pickupStores`), promo codes (applied and refused, from the quote), the total as rows

@@ -65,7 +65,10 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    `buyerOf`). A UCP platform's session, or anyone else's, is `null`; with the `storefront` setting
    off every method refuses; a buyer's patch is strict, so no price, owner or status can be set, and a buyer is shown an explicit
    projection (`hostedView`), never the stored session. A start link redeems only by POST; a GET
-   spends nothing. A hosted buyer pays with their own instrument: never on-account, never the
+   spends nothing. The hosted checkout pages (start, page, placed) send
+   `Referrer-Policy: same-origin`, never `no-referrer`: under `no-referrer` a browser posts their own forms with
+   `Origin: null`, which React Router and the Worker's `crossOrigin` refuse, and `same-origin` still sends no
+   Referer to another origin, so the link's token can't leak. (The order receipt has no form, so it keeps `no-referrer`.) A hosted buyer pays with their own instrument: never on-account, never the
    customer's credit or saved cards, unless the operator explicitly allows it. `completeCheckout`
    completes only in test mode (`PAYMENTS_MODE` `mock`: a payment is recorded, none is taken), with the
    same cookie-secret and actor checks as every call; with real payments it completes nothing. With them `payCheckout` takes a card: Stripe's confirmation

@@ -5,8 +5,11 @@ import {
   CHECKOUT_SECRET,
   CLAIMED_ID,
   ENDED_ID,
+  formId,
   PLACED_ID,
   PLACED_ORDER,
+  startId,
+  startToken,
 } from './checkout-seed';
 
 /**
@@ -115,7 +118,7 @@ test('is never cached, shared, framed or read from a Referer, and pads for the n
 }) => {
   const res = await open(page);
   expect(res.headers()['cache-control']).toBe('no-store');
-  expect(res.headers()['referrer-policy']).toBe('no-referrer');
+  expect(res.headers()['referrer-policy']).toBe('same-origin');
   // The dev server sets no policy of its own; the Worker still denies framing
   // (tests/checkout-page.test.ts holds `frame-ancestors 'none'` on the built entry).
   expect(res.headers()['x-frame-options']).toBe('DENY');
@@ -283,3 +286,68 @@ test('has nothing an accessibility scan finds, open or over', async ({ page }) =
     ).toEqual([]);
   }
 });
+
+/** The seed's key for this test: one per device project and retry, so none is spent twice. */
+const keyOf = (info: { project: { name: string }; retry: number }) =>
+  `${info.project.name.replace('-', '')}${info.retry}`;
+
+/**
+ * The pages send `Referrer-Policy: same-origin`, not `no-referrer`: under `no-referrer` a browser
+ * posts a form with `Origin: null`, which React Router and the Worker's cross-site check
+ * (`crossOrigin`) refuse with a 403. These submit the forms for real, with nothing mocked, once as
+ * the page hydrated (React Router's fetch) and once as a plain form with scripts off, and read the
+ * Origin the browser sent.
+ */
+for (const scripts of [true, false]) {
+  const how = scripts ? 'hydrated' : 'with scripts off';
+  test.describe(how, () => {
+    test.use({ javaScriptEnabled: scripts });
+
+    test('the start link’s Continue button posts with the page’s own Origin and opens the checkout', async ({
+      page,
+      baseURL,
+    }, info) => {
+      const key = keyOf(info);
+      const res = await page.goto(`/checkout/start/${startId(key)}/${startToken(key)}`);
+      expect(res?.headers()['referrer-policy']).toBe('same-origin');
+      const origins: Array<string | undefined> = [];
+      page.on('request', async (r) => {
+        if (r.method() === 'POST') origins.push((await r.allHeaders()).origin);
+      });
+      const answer = page.waitForResponse((r) => r.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Continue to checkout' }).click();
+      const posted = await answer;
+      expect(posted.status(), 'the POST was not refused').not.toBe(403);
+      await expect(page).toHaveURL(new RegExp(`/checkout/${startId(key)}$`));
+      await expect(page.getByRole('heading', { name: 'Checkout', level: 1 })).toBeVisible();
+      expect(origins).not.toEqual([]);
+      for (const origin of origins) expect(origin).toBe(new URL(baseURL!).origin);
+    });
+
+    test('an update posted from the page carries its own Origin and reaches the engine', async ({
+      page,
+      context,
+      baseURL,
+    }, info) => {
+      const id = formId(keyOf(info));
+      await context.addCookies([{ name: `cw_chk_${id}`, value: CHECKOUT_SECRET, url: baseURL! }]);
+      await page.goto(`/checkout/${id}`);
+      const origins: Array<string | undefined> = [];
+      page.on('request', async (r) => {
+        if (r.method() === 'POST') origins.push((await r.allHeaders()).origin);
+      });
+      await page.getByLabel('Email').fill('ada@example.com');
+      const answer = page.waitForResponse((r) => r.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Apply' }).click();
+      const posted = await answer;
+      // The device tests' engine has no checkout flow, so it answers its own refusal (422, "not set
+      // up") after the page and Worker accepted the post: a refused Origin would be a 403 first.
+      expect(posted.status(), 'the POST was not refused as cross-site').not.toBe(403);
+      await expect(
+        page.getByRole('alert').filter({ hasText: 'Checkout is not set up for this business.' }),
+      ).toBeVisible();
+      expect(origins).not.toEqual([]);
+      for (const origin of origins) expect(origin).toBe(new URL(baseURL!).origin);
+    });
+  });
+}
