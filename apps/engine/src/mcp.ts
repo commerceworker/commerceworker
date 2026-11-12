@@ -130,6 +130,8 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'decline_quote',
   'expire_quote',
   'convert_quote',
+  // The same delivery again: its id and payload don't change, and the receiver dedupes by id.
+  'redeliver_webhook_delivery',
   'delete_webhook_subscription',
   'revoke_integration',
   'revoke_ucp_platform',
@@ -148,6 +150,8 @@ const OPEN_WORLD = new Set<AssistantTool>([
   'cancel_po',
   // Converting a quote makes a PO draft or starts an order.
   'convert_quote',
+  // Sends the receiver the event again.
+  'redeliver_webhook_delivery',
   'run_stock_review',
   'start_order',
   'restart_order',

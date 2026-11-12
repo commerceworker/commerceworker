@@ -61,6 +61,14 @@ export function d1WebhookOutbox(d1: D1Database): WebhookOutbox {
         .where(eq(webhookDeliveries.subscriptionId, subscriptionId))
         .orderBy(desc(webhookDeliveries.createdAt))
         .limit(limit),
+    async delivery(id) {
+      const [row] = await d
+        .select()
+        .from(webhookDeliveries)
+        .where(eq(webhookDeliveries.id, id))
+        .limit(1);
+      return row;
+    },
     subscriptions: () =>
       d
         .select({
@@ -106,6 +114,26 @@ export function d1WebhookOutbox(d1: D1Database): WebhookOutbox {
                 sql`${webhookDeliveries.subscriptionId} LIKE 'plugin:%'`,
               ),
             ),
+          ),
+        );
+      return rows.map((r) => ({
+        id: r.id,
+        subscriptionId: r.subscriptionId,
+        subject: r.orderId,
+        event: r.event,
+        payload: r.payload,
+      }));
+    },
+
+    async unsent(subject, idPrefix) {
+      const rows = await d
+        .select()
+        .from(webhookDeliveries)
+        .where(
+          and(
+            ne(webhookDeliveries.status, 'delivered'),
+            eq(webhookDeliveries.orderId, subject),
+            sql`${webhookDeliveries.id} LIKE ${startsWith(idPrefix)} ESCAPE '\\'`,
           ),
         );
       return rows.map((r) => ({

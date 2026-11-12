@@ -2904,7 +2904,7 @@ describe('outbound webhooks', () => {
     expect(rows.every((r) => r.status === 'delivered' && r.attempts === 1)).toBe(true);
   });
 
-  it('retries a failing endpoint, then gives up without failing the order', async () => {
+  it('hands a failing endpoint to the agent’s schedule without holding or failing the order', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () => new Response('no', { status: 503 }),
     );
@@ -2923,8 +2923,12 @@ describe('outbound webhooks', () => {
       .select()
       .from(webhookDeliveries)
       .where(eq(webhookDeliveries.orderId, orderId));
+    // One attempt from the Workflow's step, which then moved on; the agent retries the rest of the
+    // day (tests/webhook-redelivery.test.ts drives those).
     expect(row).toMatchObject({ event: 'order.completed', status: 'failed', responseStatus: 503 });
-    expect(row!.attempts).toBe(6);
+    expect(row!.attempts).toBe(1);
+    const schedules = (await (agent(orderId).getSchedules() as unknown)) as { callback: string }[];
+    expect(schedules.filter((q) => q.callback === 'retryWebhook')).toHaveLength(1);
   });
 
   const capture = () => {

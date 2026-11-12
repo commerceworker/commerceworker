@@ -8,11 +8,11 @@
 import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import {
-  CART_EVENT_RETRIES,
   type CartActor,
   type CartEventPayload,
   type CartSummary,
   cartSummary,
+  EVENT_RETRIES,
   TERMINAL_ORDER_STATUSES,
   verifyWebhook,
 } from '@commerceworker/core';
@@ -337,7 +337,7 @@ describe('cart events', () => {
     await cart(id).emitWebhook({
       event: 'cart.canceled',
       cart: summary,
-      attempt: CART_EVENT_RETRIES,
+      attempt: EVENT_RETRIES,
       erasure: 0,
     });
     expect(await queued(id)).toEqual([]);

@@ -224,18 +224,29 @@ Cancelling does not go through rollback: the agent terminates the instance and c
 ## Outbound webhooks
 
 `emitStep` delivers one event in its own `${key}:emit` step with
-`{ retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' }`. The
+`{ retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' }, timeout: '1 minute' }`. The
 step calls `emit` (`apps/engine/src/outbox.ts`), which records one `webhook_deliveries` row per
-matching subscription, keyed `whd_${orderId}_${stepKey}_${subscriptionId}`, then attempts every row
-for that key not yet `delivered`. The step throws while any are pending, so Workflows retries it;
-when retries run out the error is swallowed, the rows stay `failed`, and the order carries on.
+matching subscription, keyed `whd_${orderId}_${stepKey}_${subscriptionId}`, then makes one attempt
+at every row for that key not yet `delivered` (each receiver has a 10 second timeout, in parallel).
+The Workflow never waits on a receiver: when deliveries are still pending the step hands them to the
+OrderAgent (`queueWebhookRetry`, once per key, marked in the agent's KV so a retried step or a
+replay queues nothing more), whose alarm schedule runs `retryWebhook` for about a day
+(`EVENT_RETRIES`, `eventRetryDelaySec`: 10 seconds doubling to an hour, then hourly). A retry is
+`resend`: it sends the rows as recorded (same id, same payload) and records nothing, so an order
+erased meanwhile (its rows `forget`ten) has nothing left to send. The step's own retries cover only
+the database and the agent call, both safe to repeat; a failure that outlasts them is swallowed, the
+rows stay `failed`, and the order carries on. The step keeps its name and the hand-off is inside it,
+so a published flow's step names don't change and a run replaying an old `${key}:emit` finds its
+stored result. A delivery that runs out of retries stays `failed` for an operator to send again
+with `redeliver_webhook_delivery` (`redeliver` in `outbox.ts`: the same row, id and payload, signed
+with the subscription's current secret, one attempt recorded on it).
 
 Which nodes emit is `NODE_EVENTS` in `packages/core/src/webhooks.ts`. Cart events (`CART_EVENTS`)
 don't come from a Workflow: `CartAgent` (`apps/engine/src/cart/agent.ts`) schedules its own
 `emitWebhook` when a cart opens or ends (`announce`), which calls `emitCart` with the cart's
 `cartSummary`, keyed `whd_${cartId}_${event}_${subscriptionId}`. The schedule is written with the
-state change, before the `carts` row, and retries for about a day (`CART_EVENT_RETRIES`,
-`cartEventRetryDelaySec`). An erasure bumps the agent's `cart_erasures` count: a queued event from
+state change, before the `carts` row, and retries for about a day (`EVENT_RETRIES`,
+`eventRetryDelaySec`, the schedule an order's events share). An erasure bumps the agent's `cart_erasures` count: a queued event from
 before it is dropped, and one in flight deletes the rows it wrote. See
 [Outbound webhooks](https://docs.commerceworker.com/guides/outbound-webhooks/).
 

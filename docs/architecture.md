@@ -207,6 +207,12 @@ type, and the `rest-responses.test.ts` of web, engine and catalog to what they r
 `cancel` enforce the same bounds on the live socket as the REST schemas do.
 
 Outbound webhook subscriptions have a `rotate` route beside create and delete; it audits `webhook.rotated`.
+`POST /api/v1/webhook-deliveries/{deliveryId}/redeliver` is a `REST_OPERATIONS` row for the
+`redeliver_webhook_delivery` tool (admin; it previews and refuses as MCP does, and audits
+`webhook.redelivered`): the engine sends the recorded delivery again (`redeliver`, `outbox.ts`) with
+its id and payload and the subscription's current signature, so there is no second payload to
+drift. The `WebhookOutbox` port's `delivery` and `unsent` (what a retry sends, never recording
+anything) serve it and the OrderAgent's retries.
 
 Business events are audited at the first place that knows the actor: the web app's routes and API
 handlers write them with `audit` (`apps/web/app/lib/audit.server.ts`), the engine writes them with

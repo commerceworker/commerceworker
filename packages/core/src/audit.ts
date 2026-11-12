@@ -26,6 +26,7 @@ export const BUSINESS_AUDIT_ACTIONS = {
   'webhook.subscribed': 'Subscribed to order events',
   'webhook.unsubscribed': 'Removed a webhook subscription',
   'webhook.rotated': 'Rotated a webhook signing secret',
+  'webhook.redelivered': 'Sent a webhook delivery again',
   'integration.revoked': 'Revoked an integration key',
   'ucp.settings': 'Changed agentic checkout settings',
   'ucp.platform_revoked': 'Revoked an AI shopping platform',

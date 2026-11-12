@@ -844,6 +844,15 @@ export const TOOL_INPUTS = {
     subscriptionId: z.string().max(60),
     limit: z.number().int().min(1).max(200).optional().describe('Default 50'),
   }),
+  redeliver_webhook_delivery: z.object({
+    deliveryId: z
+      .string()
+      .min(1)
+      .max(400)
+      .describe(
+        'A delivery’s id: `id` in `list_webhook_deliveries`, and `X-CommerceWorker-Delivery`',
+      ),
+  }),
   delete_webhook_subscription: z.object({ subscriptionId: z.string().min(1).max(60) }),
   list_integrations: z.object({}),
   revoke_integration: z.object({ integrationId: z.string().min(1).max(60) }),
@@ -1333,6 +1342,20 @@ export const TOOL_OUTPUTS = {
       }),
     ),
   }),
+  redeliver_webhook_delivery: actionOutput.extend({
+    id: z.string().optional().describe('The delivery sent again'),
+    status: z
+      .enum(['delivered', 'failed'])
+      .optional()
+      .describe('Where it stands after this attempt'),
+    attempts: z.number().optional(),
+    responseStatus: z
+      .number()
+      .nullable()
+      .optional()
+      .describe('The receiver’s HTTP status, if it answered'),
+    lastError: z.string().nullable().optional(),
+  }),
   delete_webhook_subscription: actionOutput,
   list_integrations: row({
     integrations: z.array(
@@ -1614,6 +1637,7 @@ export const REST_OPERATION_TOOLS = [
   'revise_quote',
   'expire_quote',
   'convert_quote',
+  'redeliver_webhook_delivery',
   'run_stock_review',
   'find_products',
   'assess_order',

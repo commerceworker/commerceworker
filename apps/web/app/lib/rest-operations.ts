@@ -101,6 +101,11 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'POST', path: '/quotes/{quoteId}/revise', tool: 'revise_quote' },
   { method: 'POST', path: '/quotes/{quoteId}/expire', tool: 'expire_quote' },
   { method: 'POST', path: '/quotes/{quoteId}/convert', tool: 'convert_quote' },
+  {
+    method: 'POST',
+    path: '/webhook-deliveries/{deliveryId}/redeliver',
+    tool: 'redeliver_webhook_delivery',
+  },
   { method: 'POST', path: '/stock/review', tool: 'run_stock_review' },
   { method: 'GET', path: '/stock', tool: 'find_products' },
   { method: 'POST', path: '/orders/{orderId}/assess', tool: 'assess_order' },

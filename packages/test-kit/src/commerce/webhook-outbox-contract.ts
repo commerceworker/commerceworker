@@ -78,6 +78,44 @@ export function describeWebhookOutboxContract(
       ]);
     });
 
+    it("lists a step's undelivered deliveries to any subscriber, and records nothing", async () => {
+      const o = await make(OUTBOX_FIXTURE);
+      await o.record(
+        [
+          delivery('wo_s_1_wo_on'),
+          delivery('wo_s_1_plugin_x', { subscriptionId: 'plugin:x' }),
+          delivery('wo_s_2_wo_on'),
+          delivery('wo_s_1_other', { subject: 'wo_else' }),
+        ],
+        1,
+      );
+      await o.attempted([{ id: 'wo_s_1_plugin_x', ok: true, status: null, error: null }], 2);
+      expect(ids(await o.unsent('wo_order', 'wo_s_1_'))).toEqual(['wo_s_1_wo_on']);
+      // The prefix's wildcards are literal.
+      expect(await o.unsent('wo_order', 'wo_s%')).toEqual([]);
+      expect(await o.unsent('wo_gone', 'wo_s_1_')).toEqual([]);
+    });
+
+    it('finds one delivery by its id, with its attempts', async () => {
+      const o = await make(OUTBOX_FIXTURE);
+      await o.record([delivery('wo_one', { payload: '{"a":1}' })], 5);
+      await o.attempted([{ id: 'wo_one', ok: false, status: 503, error: 'HTTP 503' }], 6);
+      expect(await o.delivery('wo_one')).toEqual({
+        id: 'wo_one',
+        subscriptionId: 'wo_on',
+        orderId: 'wo_order',
+        event: 'order.completed',
+        payload: '{"a":1}',
+        status: 'failed',
+        attempts: 1,
+        responseStatus: 503,
+        lastError: 'HTTP 503',
+        createdAt: 5,
+        deliveredAt: null,
+      });
+      expect(await o.delivery('wo_nope')).toBeUndefined();
+    });
+
     it("forgets a subject's deliveries, of one event or all", async () => {
       const o = await make(OUTBOX_FIXTURE);
       await o.record(

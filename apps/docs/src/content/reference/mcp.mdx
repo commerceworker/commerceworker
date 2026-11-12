@@ -110,7 +110,7 @@ An action (`decide_approval`, `decide_approvals`, `deliver_event`, `cancel_order
 `publish_flow`, `publish_catalog`, `create_promotion`, `set_promotion_status`, the [price book](/guides/price-books/) writes (`create_price_book`, `set_price_book_status`, `put_price_book_entries`, `assign_price_book`, `put_contract_prices`), `set_fx_rate`,
 `verify_tax_certificate`, `revoke_tax_certificate`, `set_credit_limit`, `adjust_credit`, the [company](#companies) tools (`create_customer`, `update_customer`, `set_company_status`, `put_company_members`, `remove_company_member`, `put_company_team`), the [budget](#budgets) tools (`put_budget`, `set_budget_status`), the [purchase order](#purchase-orders) tools (`submit_po`, `cancel_po`), the [quote](#quotes) tools (`send_quote`, `accept_quote`, `decline_quote`, `expire_quote`, `convert_quote`), the admin tools (`set_member_role`,
 `set_approval_separation`, `set_plugin_enabled`, `approve_plugin`, `rollback_plugin`,
-`uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`, and `set_storefront_settings`, which turns [hosted checkout](/guides/hosted-checkout/) on), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
+`uninstall_plugin`, and the [outside access](#outside-access) tools `delete_webhook_subscription`, `redeliver_webhook_delivery`, `revoke_integration`, `revoke_ucp_platform` and `set_ucp_settings`, and `set_storefront_settings`, which turns [hosted checkout](/guides/hosted-checkout/) on), `run_stock_review`, `start_order`, `restart_order`, `cancel_cart`, `test_flow` and the catalog writes marked as confirming [below](#catalog-writes)) never runs on the first call, whatever the client does. Those that need a step-up (approving, rolling back, uninstalling or turning on a plugin, and making someone an admin) are refused over MCP, which has no session to step up; an admin API token may still turn a plugin off. How the person
 agrees depends on the client.
 
 `create_promotion` takes `kind: "bxgy"` with a `bxgy` rule (buy `{skus?, qty}`, get `{skus?, qty, percent?}`, `repeat?`; see [Buy X, get Y](/guides/promotions/#buy-x-get-y)) and refuses one that can never apply, and an optional `condition`, a JSON Logic expression over a documented context, and a `conditionMessage` for a buyer whose order doesn't meet it; the call is refused, with the reason, for a variable or operator the [promotions guide](/guides/promotions/#conditions) doesn't list, and the person's card shows the condition as written.
@@ -189,6 +189,7 @@ Annotations also tell a client when to confirm:
 | `create_checkout` | a write without a confirmation, not destructive, not idempotent: each call makes a checkout and its one-time link, and nothing is ordered until the buyer completes it |
 | `send_quote`, `accept_quote`, `decline_quote`, `expire_quote` | `destructiveHint: true` and `idempotentHint: true`: a sent quote can't be edited, accepting or ending one changes what a company pays, and the same move again changes nothing |
 | `convert_quote` | `destructiveHint: true`, `idempotentHint: true` and `openWorldHint: true`: it makes a PO draft or starts an order, once per quote |
+| `redeliver_webhook_delivery` | `idempotentHint: true` and `openWorldHint: true`, not destructive: it sends the receiver the same delivery again, which a receiver that dedupes by delivery id handles once |
 | `create_quote`, `update_quote`, `revise_quote` | writes without a confirmation, not destructive: a draft prices nothing |
 
 `cancel_order`, `submit_cart`, `run_stock_review`, `start_order`, `restart_order`, `test_flow` and
@@ -349,17 +350,19 @@ someone changes it: the daily refresh leaves it and keeps refreshing the other c
 
 ## Outside access
 
-An admin can also take away what lets a system into the workspace, change agentic checkout and turn
-hosted checkout on. These five are REST's `DELETE /api/v1/webhook-subscriptions/:id`,
+An admin can also take away what lets a system into the workspace, change agentic checkout, turn
+hosted checkout on and send a webhook delivery again. These six are REST's `DELETE /api/v1/webhook-subscriptions/:id`,
+`POST /api/v1/webhook-deliveries/:deliveryId/redeliver`,
 `DELETE /api/v1/integrations/:id`, `DELETE /api/v1/ucp/platforms/:id`, `POST /api/v1/ucp/settings` and
 `POST /api/v1/storefront/settings`, run by the same code, so they refuse what REST refuses and write the
-same audit entries (`webhook.unsubscribed`, `integration.revoked`, `ucp.platform_revoked`, `ucp.settings`
+same audit entries (`webhook.unsubscribed`, `webhook.redelivered`, `integration.revoked`, `ucp.platform_revoked`, `ucp.settings`
 and `checkout.settings`), recorded as made over MCP. Each confirms, as
 [above](#actions-wait-for-the-person).
 
 | Tool | Role | What it does |
 |---|---|---|
 | `delete_webhook_subscription` | admin | Removes a subscription and its record of deliveries. The preview shows where it posts (without any query), the events it takes and its last delivery. Refused up front for an unknown id. |
+| `redeliver_webhook_delivery` | admin | Sends a `failed` or `delivered` delivery to its receiver again, with the same delivery id and payload and the subscription's current signature (see [Outbound webhooks](/guides/outbound-webhooks/#redelivering)). The preview shows where it goes (without any query), the event and its last outcome. Refused up front for an unknown delivery, one still waiting for its first attempt, or one whose subscription is gone. |
 | `revoke_integration` | admin | Revokes an integration at once, both its secrets. The preview shows its name, when it was last used and whether it starts orders. Refused up front for an unknown or already revoked one. |
 | `revoke_ucp_platform` | admin | Revokes an AI shopping platform's key. Its checkouts and orders stay. The preview shows its name, profile and when it was last used. Refused up front for an unknown or already revoked one. |
 | `set_ucp_settings` | admin | Sets the checkout flow (`null` turns agentic checkout off), the legal links and the order page URL, taking the same body as REST and replacing all three. The preview says what changes from now; it is refused up front when the flow is unpublished or never authorizes a card. |

@@ -1702,6 +1702,35 @@ describe('operations REST runs as MCP does', () => {
     expect((await post('customers/cus_1/tax-certificates/txc_1/approve', {})).status).toBe(404);
     expect(run).toHaveBeenCalledTimes(3);
   });
+
+  it('redelivers a webhook delivery as an admin only, the path naming the delivery', async () => {
+    run.mockReset();
+    // Webhooks are an admin's: a viewer or an operator is refused before the engine is asked.
+    for (const as of [viewer, operator])
+      expect((await post('webhook-deliveries/whd_1/redeliver', {}, as)).status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+
+    run.mockResolvedValueOnce({
+      ok: true,
+      value: { done: 'Sent again, and the receiver took it', id: 'whd_1', status: 'delivered' },
+    });
+    const sent = await post(
+      'webhook-deliveries/whd_1/redeliver',
+      { deliveryId: 'whd_other' },
+      admin,
+    );
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toMatchObject({ id: 'whd_1', status: 'delivered' });
+    // The path names the delivery: a body can't name another.
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'redeliver_webhook_delivery',
+      { deliveryId: 'whd_1' },
+    ]);
+    // A delivery the engine won't send (unknown, or still on its first attempt) is a 409.
+    run.mockResolvedValueOnce({ ok: false, error: 'No webhook delivery whd_2.' });
+    expect((await post('webhook-deliveries/whd_2/redeliver', {}, admin)).status).toBe(409);
+    run.mockReset();
+  });
 });
 
 describe('an OAuth grant at the REST API', () => {
