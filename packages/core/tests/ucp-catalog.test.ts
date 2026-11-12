@@ -247,6 +247,76 @@ describe('toUcpProduct', () => {
   });
 });
 
+describe('availability', () => {
+  const stocked: UcpCatalogContext = {
+    ...ctx,
+    stock: new Map([
+      ['TEE-BL-L', 'in_stock'],
+      ['TEE-BL-S', 'out_of_stock'],
+    ]),
+  };
+
+  it('maps a SKU’s stock status to available and status, and omits it for an unknown SKU', () => {
+    const p = toUcpProduct(twoAxes, stocked);
+    expect(p?.variants.map((v) => [v.id, v.availability])).toEqual([
+      ['TEE-BL-L', { available: true, status: 'in_stock' }],
+      ['TEE-BL-S', { available: false, status: 'out_of_stock' }],
+      ['TEE-RD-L', undefined],
+    ]);
+    expect(toUcpProduct(twoAxes, ctx)?.variants.some((v) => 'availability' in v)).toBe(false);
+  });
+
+  it('carries only available and status: the schema has no quantity, and no count can leave', () => {
+    const rich = doc({
+      attributes: { stock: 99 },
+      variants: [variant('S1', { attributes: { stock: 5 } })],
+    });
+    const p = toUcpProduct(rich, { ...ctx, stock: new Map([['S1', 'in_stock']]) });
+    expect(Object.keys(p?.variants[0]?.availability ?? {}).sort()).toEqual(['available', 'status']);
+    expect(JSON.stringify(p)).not.toMatch(/99|"stock"|quantity/);
+  });
+
+  it('conforms to the search, lookup and get_product responses', () => {
+    const p = toUcpProduct(twoAxes, stocked);
+    expect(conformsTo('shopping/catalog_search.json#/$defs/search_response', search([p]))).toEqual(
+      [],
+    );
+    expect(
+      conformsTo('shopping/catalog_lookup.json#/$defs/lookup_response', {
+        ucp: ucpCatalogEnvelope(),
+        products: lookupProducts([twoAxes], ['tee'], stocked),
+      }),
+    ).toEqual([]);
+    expect(
+      conformsTo('shopping/catalog_lookup.json#/$defs/get_product_response', {
+        ucp: ucpCatalogEnvelope(),
+        product: toUcpDetailProduct(twoAxes, [], [], stocked),
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags an option value unavailable only when every variant that has it is out of stock', () => {
+    const d = detailOptions(twoAxes, [], [], {
+      ...stocked,
+      stock: new Map([
+        ['TEE-BL-S', 'out_of_stock'],
+        ['TEE-RD-L', 'out_of_stock'],
+      ]),
+    });
+    const by = (name: string) => d.options.find((o) => o.name === name)?.values;
+    // Blue has TEE-BL-L (stock unknown, so not claimed out); Red has only TEE-RD-L, out of stock.
+    expect(by('Color')?.map((v) => [v.id, v.exists, v.available])).toEqual([
+      ['blue', true, true],
+      ['red', true, false],
+    ]);
+    // Small has only TEE-BL-S, out of stock; Large has the unknown and the out-of-stock one.
+    expect(by('Size')?.map((v) => [v.id, v.exists, v.available])).toEqual([
+      ['l', true, true],
+      ['s', true, false],
+    ]);
+  });
+});
+
 describe('lookup', () => {
   const docs = [twoAxes, doc()];
 
@@ -269,6 +339,39 @@ describe('lookup', () => {
       conformsTo('shopping/catalog_lookup.json#/$defs/lookup_response', {
         ucp: ucpCatalogEnvelope(),
         products: lone,
+      }),
+    ).toEqual([]);
+  });
+
+  it('resolves a handle like a key and a GTIN, in any length, to every variant that carries it', () => {
+    const d = doc({
+      key: 'gt',
+      slug: 'plain-tee',
+      variants: [
+        variant('G-1', { gtin: '036000291452' }),
+        variant('G-2', { gtin: '36000291452'.padStart(12, '0'), price: usd(2500) }),
+        variant('G-3', { gtin: '4006381333931' }),
+      ],
+    });
+    const [p] = lookupProducts([d], ['plain-tee', '00036000291452', '4006381333931', '9999'], ctx);
+    expect(p?.variants.map((v) => [v.id, v.inputs])).toEqual([
+      [
+        'G-1',
+        [
+          { id: 'plain-tee', match: 'featured' },
+          { id: '00036000291452', match: 'exact' },
+        ],
+      ],
+      ['G-2', [{ id: '00036000291452', match: 'exact' }]],
+      ['G-3', [{ id: '4006381333931', match: 'exact' }]],
+    ]);
+    // An invalid GTIN matches nothing, even one a variant carries as written.
+    const bad = doc({ variants: [variant('B-1', { gtin: '1234567890123' })] });
+    expect(lookupProducts([bad], ['1234567890123'], ctx)).toEqual([]);
+    expect(
+      conformsTo('shopping/catalog_lookup.json#/$defs/lookup_response', {
+        ucp: ucpCatalogEnvelope(),
+        products: [p],
       }),
     ).toEqual([]);
   });

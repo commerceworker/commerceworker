@@ -9,6 +9,7 @@ import type {
   ProductRecord,
   StockLevel,
   StockRow,
+  StockStatus,
 } from '@commerceworker/ports/commerce';
 
 /** What an inventory store holds, as a test seeds it. */
@@ -83,6 +84,19 @@ export class InMemoryInventoryStore implements InventoryStore {
     for (const sku of new Set(skus)) {
       const level = this.row(sku, locationId);
       if (level) out.set(sku, { stock: level.stock, reserved: level.reserved });
+    }
+    return out;
+  }
+
+  async availability(skus: readonly string[]) {
+    const out = new Map<string, StockStatus>();
+    for (const sku of new Set(skus)) {
+      const row = this.central.get(sku);
+      if (row)
+        out.set(
+          sku,
+          row.kind === 'digital' || row.stock - row.reserved > 0 ? 'in_stock' : 'out_of_stock',
+        );
     }
     return out;
   }

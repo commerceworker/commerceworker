@@ -4,6 +4,7 @@
   "commerce.price: price 2 lines in another currency": { "statements": 6, "roundTrips": 1 },
   "commerce.price: price a buy-side order at cost": { "statements": 1, "roundTrips": 1 },
   "commerce.route_fulfillment: ship 2 lines": { "statements": 4, "roundTrips": 4 },
+  "ucp: catalog availability of 2 SKUs": { "statements": 1, "roundTrips": 1 },
   "commerce.reserve: hold 2 lines": { "statements": 12, "roundTrips": 5 },
   "commerce.reserve: retried after holding": { "statements": 12, "roundTrips": 5 },
   "rollback commerce.reserve: release": { "statements": 10, "roundTrips": 3 },

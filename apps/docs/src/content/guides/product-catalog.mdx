@@ -289,7 +289,7 @@ in minor units, and text is already in the requested locale (falling back to the
 | Route | Answers |
 |---|---|
 | `products/<key>` | The product: `key`, `type`, `version`, `title`, `slug`, `description`, `brand`, `categories`, `primaryCategory`, `media`, `attributes`, `variants`, `price`, `compareAt`, `priceRange`, `extra`. Each variant has `sku`, `options` (each axis as `{ code, label }`), `attributes`, `price` and `media`; enum values are `{ code, label }` |
-| `skus/<sku>`, `slugs/<slug>` | The same document, found by a variant SKU or by the product's slug in that locale |
+| `skus/<sku>`, `slugs/<slug>`, `gtins/<gtin14>` | The same document, found by a variant SKU, by the product's slug in that locale or by a variant's GTIN written as 14 digits (a UPC or EAN padded with zeros on the left) |
 | `products?keys=a,b,c` | `{ "products": [card or null, …] }` for up to 100 keys, in the order asked; `null` for one that isn't published |
 | `categories` | `{ "categories": [{ code, parent, name, slug, position }] }`, the whole tree, flat |
 | `categories/<code>/products` | A page of the category's listing, below |
@@ -408,9 +408,12 @@ over UCP. It is shown the same published documents as the public read API, in th
 | `price_range`, `list_price_range` | The variants' prices in the channel, and the product's `compareAt` |
 | `media` | Images with an `https` URL, with their alt text and size. `asset:` images are left out |
 | `options` | Each variant axis, named as in the product type, with its values' labels |
-| `variants` | Each variant's SKU (its `id`), title (its option labels), price, GTIN and images |
+| `variants` | Each variant's SKU (its `id`), title (its option labels), price, GTIN, images and `availability` (`in_stock` or `out_of_stock`) |
 
-Nothing else leaves: not attributes, `extra`, cost, stock or supplier data, whatever the document holds.
+Nothing else leaves: not attributes, `extra`, cost, stock counts or supplier data, whatever the document holds.
+Availability is read from inventory when the platform asks, not from the published document, and says only
+whether any stock is free, never how many. A platform can look a product up by its key, a variant's SKU
+or GTIN, or its handle.
 A product with no price in the channel's currency is not shown, and variants priced in another currency are
 left out. Only products that are published in the channel can be found, so hiding a product there, or
 archiving it, takes it out of what platforms see (after the usual minute for the cache).

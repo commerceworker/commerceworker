@@ -180,9 +180,14 @@ export class CatalogDelivery extends WorkerEntrypoint<CatalogEnv> {
       case 'product':
         return this.document(request, route, route.key);
       case 'sku':
+      case 'gtin':
       case 'slug': {
         const alias =
-          route.kind === 'sku' ? `sku:${route.sku}` : `slug:${route.locale}:${route.slug}`;
+          route.kind === 'sku'
+            ? `sku:${route.sku}`
+            : route.kind === 'gtin'
+              ? `gtin:${route.gtin}`
+              : `slug:${route.locale}:${route.slug}`;
         const pointer = await this.env.PUBLISHED.get(paths.alias(DOC_FORMAT, route.channel, alias));
         if (!pointer) return missing(`no product for ${route.kind}`, [tags.channel(route.channel)]);
         const { key } = (await pointer.json()) as { key: string };

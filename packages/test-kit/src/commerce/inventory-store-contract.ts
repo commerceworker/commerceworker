@@ -42,6 +42,28 @@ export function describeInventoryStoreContract(
       expect(await level(s, 'IC-NONE')).toBeUndefined();
     });
 
+    it('says a SKU is in stock while free stock remains, never a count, and nothing for an unknown SKU', async () => {
+      const s = await fresh();
+      const skus = ['IC-TEE', 'IC-LAST', 'IC-EBOOK', 'IC-NONE'];
+      expect(Object.fromEntries(await s.availability(skus))).toEqual({
+        'IC-TEE': 'in_stock',
+        'IC-LAST': 'in_stock',
+        'IC-EBOOK': 'in_stock',
+      });
+      // Holding all of it leaves none free; a digital good holds none and stays deliverable.
+      await s.reserve(order('ic_avail', [{ sku: 'IC-LAST', qty: 3 }]), 'reserve#1');
+      expect((await s.availability(['IC-LAST', 'IC-TEE'])).get('IC-LAST')).toBe('out_of_stock');
+      await s.release('ic_avail');
+      expect((await s.availability(['IC-LAST'])).get('IC-LAST')).toBe('in_stock');
+    });
+
+    it('reads availability in runs under the bound-parameter limit', async () => {
+      const s = await fresh();
+      const many = Array.from({ length: 250 }, (_, i) => `IC-X${i}`);
+      const got = await s.availability([...many, 'IC-TEE']);
+      expect([...got.keys()]).toEqual(['IC-TEE']);
+    });
+
     it('holds per order and line, once per step, and a later step keeps the first hold', async () => {
       const s = await fresh();
       const two = [

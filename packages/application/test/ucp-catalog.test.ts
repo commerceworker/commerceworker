@@ -3,6 +3,7 @@ import {
   CATALOG_CHANNEL,
   type CatalogReaderFixture,
   InMemoryCatalogReader,
+  InMemoryInventoryStore,
 } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
 import {
@@ -66,7 +67,23 @@ const setup = (over: CatalogReaderFixture = {}) => {
     axes: { en: { apparel: { size: 'Size' } }, es: { apparel: { size: 'Talla' } } },
     ...over,
   });
-  return { catalog, ports: { catalog } };
+  // Stock: the small tee is in stock, the large one is out, the hat is all held, and the mug has no
+  // stock row at all (nothing known). The spy counts what the use-case asked the store.
+  const inventory = new InMemoryInventoryStore({
+    products: [
+      { sku: 'TEE-S', stock: 5 },
+      { sku: 'TEE-L', stock: 0 },
+      { sku: 'HAT-1', stock: 2, reserved: 2 },
+    ],
+  });
+  const asked: string[][] = [];
+  const spy = {
+    availability: (skus: readonly string[]) => {
+      asked.push([...skus]);
+      return inventory.availability(skus);
+    },
+  };
+  return { catalog, asked, ports: { catalog, inventory: spy } };
 };
 const settings = { productUrl: 'https://shop.example/p/{slug}' };
 const page = (limit = 10, cursor?: string) => ({ limit, ...(cursor ? { cursor } : {}) });
@@ -297,6 +314,62 @@ describe('searchCatalog', () => {
   });
 });
 
+type Shown = {
+  id: string;
+  variants: { id: string; availability?: unknown; barcodes?: unknown; inputs?: unknown }[];
+};
+
+describe('availability', () => {
+  it('shows each variant in or out of stock, and nothing for a SKU the inventory does not know', async () => {
+    const { ports } = setup();
+    const r = await searchCatalog(ports, settings, { query: 'cotton', pagination: page() });
+    const tee = (body(r).products as unknown as Shown[]).find((p) => p.id === 'tee');
+    expect(tee?.variants.map((v) => [v.id, v.availability])).toEqual([
+      ['TEE-S', { available: true, status: 'in_stock' }],
+      ['TEE-L', { available: false, status: 'out_of_stock' }],
+    ]);
+    const mug = (body(r).products as unknown as Shown[]).find((p) => p.id === 'mug');
+    expect(mug?.variants[0]).not.toHaveProperty('availability');
+  });
+
+  it('never carries a count, whatever the stock is', async () => {
+    const { ports } = setup();
+    const r = await lookupCatalog(ports, settings, { ids: ['tee', 'hat'] });
+    expect(JSON.stringify(body(r))).not.toMatch(/quantity|stock":\d|reserved|"count"/);
+    expect(
+      Object.keys(
+        (body(r).products[0] as unknown as Shown).variants[0]?.availability as object,
+      ).sort(),
+    ).toEqual(['available', 'status']);
+  });
+
+  it('reads stock once for a response, over every SKU shown, not once per product', async () => {
+    const { ports, asked } = setup();
+    await searchCatalog(ports, settings, { query: 'cotton', pagination: page() });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.sort()).toEqual(['MUG-1', 'SCARF-1', 'TEE-L', 'TEE-S']);
+    asked.length = 0;
+    await lookupCatalog(ports, settings, { ids: ['tee', 'hat', 'ghost'] });
+    expect(asked).toHaveLength(1);
+  });
+
+  it('flags get_product’s option values by stock: a value is available while a matching variant is', async () => {
+    const { ports } = setup();
+    const r = await getCatalogProduct(ports, settings, { id: 'tee' });
+    const options = (body(r).product as unknown as { options: { values: unknown[] }[] }).options;
+    expect(options[0]?.values).toEqual([
+      expect.objectContaining({ id: 's', exists: true, available: true }),
+      expect.objectContaining({ id: 'l', exists: true, available: false }),
+    ]);
+  });
+
+  it('reads no stock for a request that shows no product', async () => {
+    const { ports, asked } = setup();
+    await lookupCatalog(ports, settings, { ids: ['ghost'] });
+    expect(asked.flat()).toEqual([]);
+  });
+});
+
 describe('catalogLocale', () => {
   const channel = { ...CATALOG_CHANNEL, locales: ['en-US', 'es'], defaultLocale: 'en-US' };
   it('matches exactly, then by language, and skips what the channel lacks', () => {
@@ -333,6 +406,79 @@ describe('lookupCatalog', () => {
       ['bySku', 'hat'],
       ['doc', 'hat'],
     ]);
+  });
+
+  it('finds a product by a GTIN in any length and by its handle, correlated to the id', async () => {
+    const gtinTee = doc('gtin-tee', {
+      slug: 'plain-tee',
+      variants: [
+        variant('GT-S', 1000, { gtin: '036000291452' }),
+        variant('GT-L', 1100, { gtin: '036000291452' }),
+        variant('GT-X', 1200, { gtin: '4006381333931' }),
+      ],
+    });
+    const { catalog, ports } = setup({ docs: { en: [tee, hat, gtinTee] } });
+    // A UPC and its GTIN-14 are one item: both name the two variants that carry it.
+    const upc = await lookupCatalog(ports, settings, { ids: ['036000291452', '00036000291452'] });
+    const shown = body(upc).products as unknown as Shown[];
+    expect(shown.map((p) => p.id)).toEqual(['gtin-tee']);
+    expect(shown[0]?.variants.map((v) => [v.id, v.inputs])).toEqual([
+      [
+        'GT-S',
+        [
+          { id: '036000291452', match: 'exact' },
+          { id: '00036000291452', match: 'exact' },
+        ],
+      ],
+      [
+        'GT-L',
+        [
+          { id: '036000291452', match: 'exact' },
+          { id: '00036000291452', match: 'exact' },
+        ],
+      ],
+    ]);
+    // A handle is its product, the cheapest variant featured, as a key is.
+    const byHandle = await lookupCatalog(ports, settings, { ids: ['plain-tee'] });
+    expect((body(byHandle).products[0] as unknown as Shown).variants).toEqual([
+      expect.objectContaining({ id: 'GT-S', inputs: [{ id: 'plain-tee', match: 'featured' }] }),
+    ]);
+    expect(catalog.calls.filter((c) => c.method === 'byGtin').map((c) => c.args[2])).toContain(
+      '00036000291452',
+    );
+  });
+
+  it('asks the edge for a GTIN or a handle only for an id that could be one, and last', async () => {
+    const { catalog, ports } = setup();
+    // A bad check digit is no GTIN (though digits can be a handle), capitals and 201 characters are
+    // no handle: they never reach the edge as one.
+    const r = await lookupCatalog(ports, settings, {
+      ids: ['12345678', 'Not-A-Handle', `${'a'.repeat(201)}`, 'nothing-here', '4006381333931'],
+    });
+    expect(body(r).products).toEqual([]);
+    expect(body(r).messages?.map((m) => m.code)).toEqual(Array(5).fill('not_found'));
+    expect(catalog.calls.filter((c) => c.method === 'byGtin').map((c) => c.args[2])).toEqual([
+      '04006381333931',
+    ]);
+    expect(catalog.calls.filter((c) => c.method === 'bySlug').map((c) => c.args[2])).toEqual([
+      '12345678',
+      'nothing-here',
+      '4006381333931',
+    ]);
+  });
+
+  it('prefers a SKU or a key to a GTIN or a handle of the same spelling', async () => {
+    const clash = doc('clash', { slug: 'hat', variants: [variant('CL-1', 500)] });
+    const { ports } = setup({ docs: { en: [hat, clash] } });
+    const r = await lookupCatalog(ports, settings, { ids: ['hat'] });
+    expect((body(r).products as unknown as Shown[]).map((p) => p.id)).toEqual(['hat']);
+  });
+
+  it('shows a product no longer published as not found: the edge has no alias for it', async () => {
+    const { ports } = setup({ docs: { en: [] } });
+    const r = await lookupCatalog(ports, settings, { ids: ['tee', 'TEE-S', '4006381333931'] });
+    expect(body(r).products).toEqual([]);
+    expect(body(r).messages?.map((m) => m.code)).toEqual(['not_found', 'not_found', 'not_found']);
   });
 
   it('says which ids matched nothing, including ones the edge would refuse', async () => {

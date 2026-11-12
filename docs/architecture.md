@@ -796,7 +796,7 @@ The pure mapping is `ucp/catalog.ts` in core (`toUcpProduct`, `lookupProducts`, 
 name every field that leaves); the use-cases are `searchCatalog`, `lookupCatalog` and `getCatalogProduct`
 (`packages/application/src/commerce/ucp-catalog.ts`), which take a `CatalogReader`
 (`packages/ports/src/commerce/catalog-reader.ts`: `channel`, `search`, `listing`, `doc`, `bySku`,
-`axisNames`). `createCatalogEdgeReader` (`@commerceworker/adapters/catalog-edge`), bound in
+`bySlug`, `byGtin`, `axisNames`) and an `InventoryStore`'s `availability`. `createCatalogEdgeReader` (`@commerceworker/adapters/catalog-edge`), bound in
 `apps/engine/src/wire.ts` (`catalogReader`, the only engine file that imports it or reads `CATALOG_EDGE`,
 held by `scripts/composition-root.test.ts`), implements it, and `InMemoryCatalogReader`
 (`packages/test-kit`) fakes it.
@@ -816,12 +816,13 @@ kept 30 seconds).
   that category, with `r.price` for a price range, and the cursor is the edge's own, checked with
   `decodeListingCursor` before it is sent. Anything else is an empty page and a `query_required` message.
   Page size is 10 by default and 25 at most.
-- **Lookup.** Each id (a `CODE`, or it is not looked up at all) is tried as `/skus/<id>` and, only on a miss, as `/products/<id>`, and the documents are merged by key before `lookupProducts` correlates ids to variants.
+- **Lookup.** Each id is tried in turn, each step only on a miss and only if the id could be one: as `/skus/<id>` and `/products/<id>` (a `CODE`, or it is not looked up at all), as `/gtins/<gtin14>` (`gtin14` from core pads a UPC or EAN and refuses a bad check digit, so the edge sees the one spelling the catalog claims), and as `/slugs/<handle>` (a `SLUG` of at most 200 characters, in the response's locale). The documents are merged by key before `lookupProducts` correlates ids to variants: a SKU or GTIN is `exact` (a GTIN on every variant of the product that carries it, matched as its GTIN-14), a key or handle `featured`. A GTIN or a handle is no new index: the catalog already claims `gtin:<gtin14>` and `slug:<locale>:<slug>` aliases and publishes a pointer for each (`productAliases`), uniquely, so a GTIN names one product and a draft or archived product, which publishes none, is not found. An archived variant's pointer can outlive its place in the document; the mapping matches only the variants the document lists, so it finds nothing.
+- **Availability.** Each variant shows `availability` (`in_stock` or `out_of_stock`, `types/availability.json`, which has no quantity: a count cannot leave). It is read live from the inventory port (`InventoryStore.availability`, central stock: free stock `stock - reserved` above zero, or a digital good), not carried in the published document. A document with stock would be cached at the edge and every sale would have to republish it and purge the cache (purges are rationed), and the catalog (a Durable Object per shard) knows nothing of reservations, which live in D1. The cost is one `SELECT` for the response, over the SKUs of the products it shows (`stockOf`, once per response, chunked at 90 SKUs under D1's 100 parameters), a read on the engine's D1 binding that writes nothing: search is at most 25 products, lookup 50 ids, so it is one statement unless a response shows over 90 variants. The snapshot `ucp: catalog availability of 2 SKUs` in `packages/db/test/query-counts.json` holds it at one statement; no existing count changed. A SKU with no `products` row has no `availability` and counts as available in `get_product`'s option values. Per-location stock (pickup stores) isn't reported, and neither is backorder; a deployment with a very hot catalog read path could later put the status in a KV read model the inventory writes keep, at the cost of a write on every stock movement, which the D1 read doesn't need yet.
 - **Get product.** An id is a key (preferred) or a SKU, which anchors the selection on that variant.
 - **Context.** Locale: `context.language`, then `Accept-Language`, then the channel's default
   (`catalogLocale`); the channel's currency only, with an info message when `context.currency` differs and
   a price filter ignored with a warning. `context` and `signals` are read for those and never logged.
-  Prices are the catalog's list prices (checkout totals stay authoritative); there is no availability.
+  Prices are the catalog's list prices (checkout totals stay authoritative).
 
 `productUrl` (`UcpSettings`, a template with `{slug}` or `{key}`) gives each product its `url`.
 
@@ -1366,7 +1367,7 @@ so the deployed script stays about 10 KiB gzipped: `test/catalog-bundle.test.ts`
 | Route (`GET`, under `/v1/<channel>/<locale>/`) | Answers |
 |---|---|
 | `products/<key>` | The product document, `docs/f1/<channel>/<locale>/p/<key>.json` from R2 |
-| `skus/<sku>`, `slugs/<slug>` | The same document, found through the R2 alias pointer (`sku:<sku>`, `slug:<locale>:<slug>`) |
+| `skus/<sku>`, `slugs/<slug>`, `gtins/<gtin14>` | The same document, found through the R2 alias pointer (`sku:<sku>`, `slug:<locale>:<slug>`, `gtin:<gtin14>`; a GTIN is its 14 digits, zero-padded, and any other length is `400`) |
 | `products?keys=a,b` | `{ "products": [card or null, …] }`, in the order asked, for at most `BATCH_MAX` (100) distinct keys. Key to uid through KV `u:f1:<key>` (one bulk `get`), then cards `c:f1:<channel>:<locale>:<uid>` (a second) |
 | `categories` | The channel's category tree for that locale |
 | `categories/<code>/products` | One page of a category: `{ total, next, sorts, products, facets, ranges }`, filtered, sorted and faceted from the listing index, `products` being the cards in order. Query: `f.<attr>=a,b` (any of the values; attributes AND together), `r.<attr>=lo..hi` (either end may be empty), `sort` (`newest`, the default, or `<attr>_asc` / `<attr>_desc` for a sort the index has), `cursor` (`next` from the last page: an opaque string, exactly `LISTING_SEGMENTS` base-36 positions joined by `.`, no leading zeros; `next` is `null` on the last page), `limit` (default 24, at most 100). At most 20 filters and 50 values a filter |
