@@ -96,6 +96,23 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    cookie is `__Host-` everywhere but localhost, and no session is set over plain http elsewhere. Asking never reads orders, so its answer can't show whether an
    address has any; it is Turnstile-checked (`shop_sign_in`) and budgeted per address and per client. Erasure
    and export of the address cover `shopper_*` (ending every session), and retention sweeps them.
+   **A signed-in shopper's account is scoped by the session's email and nothing the storefront sends.**
+   `shopperOrders`, `shopperOrder`, `shopperAddresses` and `forgetAddress` take the same secret and `shopper`
+   actor and re-verify the session in the use-case (`packages/application/src/commerce/shopper-account.ts`), so
+   an ended session answers null. The orders are those whose `lower(contact_email)` is the session's address
+   (an erased order has none and never lists), keyset-paged by a cursor the engine parses strictly (anything
+   else starts from the top); `shopperOrder` re-checks `placedUnder` before it reads anything, and another
+   address's order, an erased one and an unknown id answer the same `null`, so the page leaks no existence. The
+   places are the ship-tos of the newest few of those orders plus the address book of customers with
+   `kind = 'consumer'` and that email, **never** a business customer's or a company member's (a separate B2B
+   decision); `forgetAddress` deletes only a book entry whose customer is one of those, by one guarded
+   `DELETE ... WHERE id = ? AND customer_id IN (consumers of the email)`, so an id the storefront made up (an
+   order's, another shopper's, a business's) deletes nothing, and a repeat is a no-op. The hosted checkout's
+   "use my saved details" is a `fill` the storefront builds from `shopperAddresses` read again on the server:
+   the form posts only an id picked from the engine's list, so a posted address is never taken as the
+   shopper's. The account pages carry no credential in a URL (`orderReceipt`'s link token stays the one bearer
+   exception), send `no-store` and `referrer-policy: same-origin` (`no-referrer` makes a plain form post
+   `Origin: null`, which is refused), and post only same-origin forms (the Worker's `crossOrigin` check).
    REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
    `POST /api/v1/storefront/settings` accept an admin API token with no person-confirm, though their
    tools are in `PERSON_CONFIRMS_TOOLS` (over MCP, A2A and the app a person confirms on a card). They

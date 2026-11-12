@@ -3,34 +3,46 @@
  * contract in ./address-book-contract.ts holds it to the same behaviour as the D1 store.
  */
 import type { ShipAddress } from '@commerceworker/core';
-import type { AddressBook } from '@commerceworker/ports/commerce';
+import type { AddressBook, AddressBookEntry } from '@commerceworker/ports/commerce';
 
-type Place = {
-  id: string;
-  key: string;
-  name: string | null;
-  line1: string;
-  line2: string | null;
-  region: string | null;
-  city: string;
-  postalCode: string;
-  country: string;
-  orders: number;
-  firstUsedAt: number;
-  lastUsedAt: number;
-  lastOrderId: string;
-};
+type Place = AddressBookEntry;
 
 export interface AddressBookFixture {
+  /** The customers the shopper lookups find by email; only a `consumer` is a shopper. */
+  customers?: { id: string; email: string; kind: string }[];
   pending?: { id: string; customerId: string | null; createdAt: number; erasedAt: number | null }[];
 }
 
 export class InMemoryAddressBook implements AddressBook {
   private readonly places = new Map<string, Map<string, Place>>();
   private pending: NonNullable<AddressBookFixture['pending']>;
+  private readonly customers: NonNullable<AddressBookFixture['customers']>;
 
   constructor(fixture: AddressBookFixture = {}) {
     this.pending = structuredClone(fixture.pending ?? []);
+    this.customers = structuredClone(fixture.customers ?? []);
+  }
+
+  private consumerIds(email: string) {
+    return this.customers
+      .filter((c) => c.kind === 'consumer' && c.email.toLowerCase() === email.toLowerCase())
+      .map((c) => c.id);
+  }
+
+  async forConsumer(email: string, limit: number) {
+    return this.consumerIds(email)
+      .flatMap((id) => [...(this.places.get(id)?.values() ?? [])])
+      .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+      .slice(0, limit);
+  }
+
+  async forgetForConsumer(email: string, id: string) {
+    for (const customerId of this.consumerIds(email)) {
+      const mine = this.places.get(customerId);
+      const place = [...(mine?.values() ?? [])].find((p) => p.id === id);
+      if (mine && place) return mine.delete(place.key);
+    }
+    return false;
   }
 
   async remember(e: {

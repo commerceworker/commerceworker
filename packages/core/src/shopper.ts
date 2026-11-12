@@ -15,6 +15,7 @@
 
 import { z } from 'zod';
 import { escapeHtml } from './order-confirmation';
+import type { OrderStatus } from './types';
 
 /** How long a code and its link work. */
 export const SHOPPER_CODE_TTL_MS = 10 * 60_000;
@@ -162,4 +163,64 @@ export function shopperSignInEmail(code: string, link: string): ShopperEmail {
     '<p>If you didn’t ask for this, you can ignore it: nobody is signed in until the code or link is used.</p>',
   ].join('\n');
   return { subject: 'Your sign-in code', text, html };
+}
+
+/** Orders on a page of the shopper's list. */
+export const SHOPPER_ORDERS_PAGE = 20;
+/** The newest orders whose ship-to is read for the address list (each is an order agent's state). */
+export const SHOPPER_ADDRESS_ORDERS = 10;
+/** The most saved addresses the list holds. */
+export const SHOPPER_ADDRESS_MAX = 20;
+
+/** One order on a shopper's list: what the list shows, nothing of its lines, timeline or payment. */
+export interface ShopperOrderItem {
+  readonly id: string;
+  readonly ref: string;
+  readonly placedAt: number;
+  readonly status: OrderStatus;
+  readonly currency: string;
+  readonly total: number;
+}
+
+/** A page of a shopper's orders, newest first; `next` is the cursor of the page after it, if any. */
+export interface ShopperOrderPage {
+  readonly email: string;
+  readonly orders: readonly ShopperOrderItem[];
+  readonly next: string | null;
+}
+
+/**
+ * A place a shopper has shipped to. `order` ones come from their own orders and are the orders'
+ * to keep; `book` ones are the address book's, which the shopper may forget. `id` is the engine's,
+ * stable between two lists, and widens nothing: every method re-reads the list for the session's
+ * email and finds the id in it.
+ */
+export interface ShopperAddress {
+  readonly id: string;
+  readonly source: 'order' | 'book';
+  readonly name: string | null;
+  readonly line1: string;
+  readonly line2: string | null;
+  readonly city: string;
+  readonly region: string | null;
+  readonly postalCode: string;
+  readonly country: string;
+  readonly lastUsedAt: number;
+}
+
+export interface ShopperAddresses {
+  readonly email: string;
+  readonly addresses: readonly ShopperAddress[];
+}
+
+/** A list cursor: the last order's time and id, which keyset paging continues after. */
+export const shopperOrderCursor = (o: { createdAt: number; id: string }) =>
+  `${o.createdAt}:${o.id}`;
+
+const CURSOR = /^(\d{1,15}):([A-Za-z0-9_-]{1,100})$/;
+
+/** A cursor as `shopperOrderCursor` makes it; null for anything else. */
+export function parseShopperOrderCursor(raw: unknown): { createdAt: number; id: string } | null {
+  const m = typeof raw === 'string' ? CURSOR.exec(raw) : null;
+  return m ? { createdAt: Number(m[1]), id: m[2]! } : null;
 }

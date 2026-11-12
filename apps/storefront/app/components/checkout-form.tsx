@@ -1,4 +1,4 @@
-import { HOSTED_LIMITS, type HostedCheckout } from '@commerceworker/core';
+import { HOSTED_LIMITS, type HostedCheckout, type ShopperAddresses } from '@commerceworker/core';
 import { Alert, AlertDescription, AlertTitle } from '@commerceworker/ui/alert';
 import { Button } from '@commerceworker/ui/button';
 import { FieldDescription, FieldLegend } from '@commerceworker/ui/field';
@@ -48,6 +48,8 @@ const days = (min: number, max: number) =>
 
 export type CheckoutFormProps = {
   checkout: HostedCheckout;
+  /** A signed-in shopper's own details, as the engine read them, to offer filling the form from. */
+  saved?: ShopperAddresses | null | undefined;
   /** Payments are only recorded: the page offers a test order instead of a card. */
   testPayments: boolean;
   /**
@@ -86,6 +88,7 @@ export type CheckoutFormProps = {
  */
 export function CheckoutForm({
   checkout,
+  saved,
   testPayments,
   card,
   editLines,
@@ -139,6 +142,7 @@ export function CheckoutForm({
         />
 
         <div className="flex min-w-0 flex-col gap-4">
+          {saved ? <SavedDetails saved={saved} error={errors.saved} busy={busy} /> : null}
           <Section title="Contact" description="Where we send your confirmation.">
             <div className="grid gap-4 sm:grid-cols-2">
               <TextField
@@ -453,6 +457,53 @@ export function CheckoutForm({
         </aside>
       </fieldset>
     </Form>
+  );
+}
+
+/**
+ * What a signed-in shopper may fill the form with: their address and, as radios, the places their
+ * orders have shipped (the first, the newest, chosen). Posted as `intent=fill` with only the id
+ * chosen: the engine's list is read again on the server, so the page can't say what an address is.
+ */
+function SavedDetails({
+  saved,
+  error,
+  busy,
+}: {
+  saved: ShopperAddresses;
+  error: string | undefined;
+  busy: boolean;
+}) {
+  return (
+    <Section title="Your saved details" description={`Signed in as ${saved.email}.`}>
+      <div className="flex flex-col gap-3">
+        {saved.addresses.length ? (
+          <fieldset className="flex flex-col gap-2">
+            <FieldLegend variant="label">Ship to</FieldLegend>
+            {saved.addresses.map((a, i) => (
+              <RadioRow key={a.id} name="saved" value={a.id} checked={i === 0}>
+                <span className="block break-words">
+                  {[a.name, a.line1, a.line2, a.city, a.region, a.postalCode]
+                    .filter(Boolean)
+                    .join(', ')}
+                </span>
+              </RadioRow>
+            ))}
+          </fieldset>
+        ) : null}
+        {error ? <FieldMessage id="saved-error">{error}</FieldMessage> : null}
+        <Button
+          type="submit"
+          name="intent"
+          value="fill"
+          variant="outline"
+          className="h-11 w-full"
+          disabled={busy}
+        >
+          {saved.addresses.length ? 'Use these details' : 'Use my email'}
+        </Button>
+      </div>
+    </Section>
   );
 }
 

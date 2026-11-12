@@ -17,6 +17,12 @@ const place = (name: string): ShipAddress =>
   }) as ShipAddress;
 
 export const ADDRESS_BOOK_FIXTURE: AddressBookFixture = {
+  customers: [
+    { id: 'ab_shopper', email: 'Shopper@Example.com', kind: 'consumer' },
+    { id: 'ab_shopper_twin', email: 'shopper@example.com', kind: 'consumer' },
+    { id: 'ab_business', email: 'shopper@example.com', kind: 'business' },
+    { id: 'ab_other', email: 'other@example.com', kind: 'consumer' },
+  ],
   pending: [
     { id: 'ab_o1', customerId: 'ab_cus', createdAt: 1, erasedAt: null },
     { id: 'ab_o2', customerId: null, createdAt: 2, erasedAt: null },
@@ -78,6 +84,48 @@ export function describeAddressBookContract(
       expect(await mine()).toEqual(['ab_o1', 'ab_o2']);
       await a.clearPending('ab_o1');
       expect(await mine()).toEqual(['ab_o2']);
+    });
+
+    it('lists a consumer’s places by their email, never a business customer’s', async () => {
+      const a = await make(ADDRESS_BOOK_FIXTURE);
+      const at = (customerId: string, key: string, when: number) =>
+        a.remember({ customerId, orderId: `ab_${key}`, key, address: place(key), at: when });
+      await at('ab_shopper', 'k1', 10);
+      await at('ab_shopper_twin', 'k2', 30);
+      await at('ab_business', 'kb', 40);
+      await at('ab_other', 'ko', 50);
+      expect((await a.forConsumer('SHOPPER@example.com', 10)).map((p) => p.key)).toEqual([
+        'k2',
+        'k1',
+      ]);
+      expect((await a.forConsumer('shopper@example.com', 1)).map((p) => p.key)).toEqual(['k2']);
+      expect(await a.forConsumer('nobody@example.com', 10)).toEqual([]);
+    });
+
+    it('forgets only a place the email’s own consumer customers hold, once', async () => {
+      const a = await make(ADDRESS_BOOK_FIXTURE);
+      const keep = async (customerId: string, key: string) => {
+        await a.remember({
+          customerId,
+          orderId: `ab_${key}`,
+          key,
+          address: place(key),
+          at: 1,
+        });
+        return (await a.addresses(customerId))[0]!.id;
+      };
+      const mine = await keep('ab_shopper', 'k1');
+      const business = await keep('ab_business', 'kb');
+      const other = await keep('ab_other', 'ko');
+      // Another's id, a business's id and an unknown one delete nothing.
+      expect(await a.forgetForConsumer('shopper@example.com', other)).toBe(false);
+      expect(await a.forgetForConsumer('shopper@example.com', business)).toBe(false);
+      expect(await a.forgetForConsumer('shopper@example.com', 'ab_unknown')).toBe(false);
+      expect(await a.addresses('ab_business')).toHaveLength(1);
+      expect(await a.addresses('ab_other')).toHaveLength(1);
+      expect(await a.forgetForConsumer('Shopper@example.com', mine)).toBe(true);
+      expect(await a.forgetForConsumer('shopper@example.com', mine)).toBe(false);
+      expect(await a.addresses('ab_shopper')).toEqual([]);
     });
   });
 }

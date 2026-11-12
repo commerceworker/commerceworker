@@ -7,6 +7,22 @@
  */
 import type { ShipAddress } from '@commerceworker/core';
 
+export interface AddressBookEntry {
+  id: string;
+  key: string;
+  name: string | null;
+  line1: string;
+  line2: string | null;
+  region: string | null;
+  city: string;
+  postalCode: string;
+  country: string;
+  orders: number;
+  firstUsedAt: number;
+  lastUsedAt: number;
+  lastOrderId: string;
+}
+
 export interface AddressBook {
   /** Records an order's ship-to (`key` from core's `rememberedAddress`) against its customer. */
   remember(e: {
@@ -17,26 +33,19 @@ export interface AddressBook {
     at: number;
   }): Promise<void>;
   /** A customer's places, most recently used first, up to `limit`. */
-  addresses(
-    customerId: string,
-    limit?: number,
-  ): Promise<
-    {
-      id: string;
-      key: string;
-      name: string | null;
-      line1: string;
-      line2: string | null;
-      region: string | null;
-      city: string;
-      postalCode: string;
-      country: string;
-      orders: number;
-      firstUsedAt: number;
-      lastUsedAt: number;
-      lastOrderId: string;
-    }[]
-  >;
+  addresses(customerId: string, limit?: number): Promise<AddressBookEntry[]>;
+  /**
+   * The places of the customers who are consumers (`kind` consumer) with this email, most recently
+   * used first, up to `limit`. Never a business customer's, nor a company member's: a shopper is
+   * the address, and a business's places are its own (a separate decision).
+   */
+  forConsumer(email: string, limit: number): Promise<AddressBookEntry[]>;
+  /**
+   * Deletes one of those places by its id, only if it is one `forConsumer` would list for this
+   * email: any other id (another customer's, a business's) deletes nothing. True when one was
+   * deleted, so a repeat answers false.
+   */
+  forgetForConsumer(email: string, id: string): Promise<boolean>;
   /** Orders started before addresses were kept, still to be added, up to `limit`. */
   pendingBackfill(
     limit: number,

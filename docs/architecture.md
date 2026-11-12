@@ -99,7 +99,7 @@ second entrypoint, and the only one the public storefront is bound to. It exists
 else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
 calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
 its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
-`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)), a shopper's sign-in, `startShopperSignIn`, `redeemShopperCode`, `redeemShopperLink`, `shopper` and `shopperSignOut` (see [Shoppers](#shoppers)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)), a shopper's sign-in, `startShopperSignIn`, `redeemShopperCode`, `redeemShopperLink`, `shopper` and `shopperSignOut`, and the account calls `shopperOrders`, `shopperOrder`, `shopperAddresses` and `forgetAddress` (see [Shoppers](#shoppers)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
 (anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
 an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
 whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
@@ -176,7 +176,7 @@ database and no bucket and holds no `PRINCIPAL_KEY`: it reaches the engine only 
 | `/ucp`, `/ucp/*` | `ucpFetch`, by a registered platform's key, before the cross-site check (a platform is no browser and holds no cookie) |
 | any state-changing request or WebSocket upgrade | `crossOrigin` (`@commerceworker/security/origin`): its `Origin` must be this host, or `403`. The buyer's cookie is `SameSite=None` (their system frames the cart), so this is what stops another site posting with it |
 | `/agents/cart-agent/:id` | the buyer's cookie for that cart (`cartGuest`), else `401`; forwarded to the engine with `cookie` and `authorization` removed and the guest signed for that path (`setGuestHeader`). No other agent's socket is served here |
-| everything else | React Router: `/cart/start/:cartId/:token`, `/cart/:cartId`, `/carts/:cartId/attachments`, `/carts/:cartId/attachments/:attachmentId` and `/carts/:cartId/products`, the hosted checkout's pages, the order receipt, and a shopper's `/account`, `/account/sign-in`, `/account/code` and `/account/confirm/:token` (a page without its own `cache-control` gets `private, no-cache`) |
+| everything else | React Router: `/cart/start/:cartId/:token`, `/cart/:cartId`, `/carts/:cartId/attachments`, `/carts/:cartId/attachments/:attachmentId` and `/carts/:cartId/products`, the hosted checkout's pages, the order receipt, and a shopper's `/account` (their orders), `/account/orders/:id`, `/account/addresses`, `/account/sign-in`, `/account/code` and `/account/confirm/:token` (a page without its own `cache-control` gets `private, no-cache`) |
 
 The two Workers each authenticate their own kind of caller and share the rules after it: the cart's
 files and product search are `@commerceworker/cart/files` (`uploadAttachment`, `downloadAttachment`,
@@ -500,7 +500,8 @@ second front (a hosted checkout page) adds a caller, not a second checkout.
 ### Shoppers
 
 A shopper is a **verified email address**, not a `customers` row: whoever can read the mailbox is signed in as it,
-and the orders that address placed are found by `orders.contact_email` (the order list is the next slice, S6).
+and the orders that address placed are found by `orders.contact_email` (index `orders_contact_email` on
+`lower(contact_email)`, migration 0076).
 Guest checkout is unaffected. The engine owns every credential (`apps/engine/src/shopper.ts`, over the use-cases in
 `packages/application/src/commerce/shopper.ts`, the rules in `packages/core/src/shopper.ts`); the storefront presents
 a secret it never mints.
@@ -545,6 +546,32 @@ a secret it never mints.
    method (it has no actor), and both are bound to one call, so an actor signed for a checkout or a cart opens
    none of this. A compromised storefront can start sign-ins (mail the deployment sends, within the engine's
    cooldown) but can't mint a session: only a redeemed code or link does.
+
+5. **The account** (`/account`, `/account/orders/:id`, `/account/addresses`; `apps/storefront/app/routes/account*.tsx`).
+   `shopperOrders(secret, actor, cursor?)`, `shopperOrder(secret, actor, id)`, `shopperAddresses(secret, actor)` and
+   `forgetAddress(secret, actor, id)` take the session's secret and the `shopper` actor as the five above do, and
+   `packages/application/src/commerce/shopper-account.ts` re-verifies the session itself (`shopperSession`, so an
+   ended one answers `null`) and scopes every read by *its* email: no id, email or customer the storefront sends
+   widens it. The **order list** is `OrderQueries.forContact`: orders whose `lower(contact_email)` is the address,
+   `erased_at` null, newest first, keyset-paged on `(created_at, id)` (`SHOPPER_ORDERS_PAGE` = 20 and one more to
+   know whether there is another; the cursor `<created_at>:<id>` is parsed strictly and anything else starts from the
+   top). Each item is the reference, date, status and total, no more. **One order** is `placedUnder(email, id)` first
+   and only then the buyer-safe view (`BuyerOrderView`, the one the receipt and the email show, `confirmations(env)`);
+   another address's order, an erased one and an unknown id answer the same `null`, and the page's 404 says the same
+   thing for each. **Addresses** are the ship-tos of the newest `SHOPPER_ADDRESS_ORDERS` (10) of those orders, read
+   from each order agent's `meta.shipTo` (the index row holds none), de-duplicated by `rememberedAddress`'s key, plus
+   `AddressBook.forConsumer(email)`: the address book of customers with `kind = 'consumer'` and that email, never a
+   business customer's or a company member's (a separate B2B decision). A book entry wins over an order's place with
+   the same key, and only a book entry can be forgotten: `forgetForConsumer(email, id)` is one `DELETE ... WHERE id = ?
+   AND customer_id IN (select id from customers where kind = 'consumer' and lower(email) = ?)`, so an id that isn't one
+   of the email's own deletes nothing, and a repeat does nothing. The pages are plain forms and links (no script), send
+   `no-store` and `referrer-policy: same-origin`, carry no credential in the URL, and post only same-origin (the
+   Worker's `crossOrigin`). **Checkout pre-fill:** a signed-in shopper opening a hosted checkout is offered their email
+   and saved places (`savedDetails`, from `shopperAddresses`); "Use these details" posts `intent=fill` with only an id,
+   and the action reads the engine's list again and builds the patch itself (`fillPatch`: the shopper's email as the
+   buyer's, the chosen place as the ship-to, the shipping option cleared when the address changes), so a posted address
+   is never taken as the shopper's and the engine's own checks (`hostedPatchSchema`, the version) apply as to any
+   update. Nothing about a payment is shown: `BuyerOrderView` carries none.
 
 Personal data: `shopper_*` rows are exported and erased with an email's data-subject request (`ShopperAuth.exportFor`,
 `eraseFor`: no hash or secret is exported; erasing ends every session), and the retention sweep deletes expired

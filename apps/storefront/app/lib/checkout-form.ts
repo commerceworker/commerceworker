@@ -13,6 +13,7 @@ import {
   hostedBuyerSchema,
   MAX_LINE_QUANTITY,
   SHIP_TO_LIMITS,
+  type ShopperAddresses,
   shipToSchema,
 } from '@commerceworker/core';
 
@@ -169,6 +170,39 @@ export function patchFromForm(
       patch.lines = lines;
   }
   return { patch, errors };
+}
+
+/**
+ * The patch that fills a checkout from what the engine says a signed-in shopper has: their address
+ * as the contact email and, when `chosen` names one of their saved places, that place as the
+ * ship-to. `chosen` is only an id picked from the engine's own list, never an address: what the
+ * page posted can name one of the shopper's places and cannot make one. A change of address clears
+ * the shipping option, as an edit of it does, since the options belong to the address.
+ */
+export function fillPatch(
+  chosen: string,
+  checkout: HostedCheckout,
+  saved: ShopperAddresses | null,
+): { patch: HostedPatch; errors: FieldErrors } {
+  if (!saved) return { patch: {}, errors: { saved: 'Sign in again to use your saved details.' } };
+  // The session takes the buyer whole: what is already there, less anything the schema doesn't name.
+  const buyer: Record<string, string> = {};
+  for (const n of BUYER_FIELDS) {
+    const v = checkout.buyer[n];
+    if (v) buyer[n] = v;
+  }
+  const patch: HostedPatch = { buyer: { ...buyer, email: saved.email } };
+  if (!chosen) return { patch, errors: {} };
+  const place = saved.addresses.find((a) => a.id === chosen);
+  if (!place)
+    return {
+      patch: {},
+      errors: { saved: 'That address isn’t saved any more. Choose another, or type it below.' },
+    };
+  const address = shipToFrom((f) => place[f] ?? '');
+  patch.shipTo = address;
+  if (!sameAddress(address, checkout.shipTo ?? {})) patch.shippingOption = null;
+  return { patch, errors: {} };
 }
 
 /** The sections of the page an issue can belong to. */

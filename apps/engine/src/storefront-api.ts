@@ -13,7 +13,10 @@
  *
  * A shopper's sign-in (`startShopperSignIn` and the five after it) is the same shape: the engine mints
  * the session secret and keeps only its SHA-256, the storefront presents it from its `__Host-cw_shop`
- * cookie with an actor signed for `shopper`, and neither alone is a shopper (./shopper.ts).
+ * cookie with an actor signed for `shopper`, and neither alone is a shopper (./shopper.ts). The
+ * account calls (`shopperOrders`, `shopperOrder`, `shopperAddresses`, `forgetAddress`) take that
+ * same pair, re-verify the session and scope everything by its email: an id is only ever looked up
+ * within what the email owns.
  *
  * Each cart call names its buyer as an actor the storefront signed for `cart:<cartId>`
  * (`signGuestActor`); `buyer` admits it only to an external cart that buyer was admitted to, so one
@@ -51,10 +54,14 @@ import { cartAgent } from './namespaces';
 import { orderConfirmation } from './order-confirmation';
 import { guestActor } from './principal';
 import {
+  forgetAddress,
   redeemShopperCode,
   redeemShopperLink,
+  shopperAddresses,
   shopperLinkPreview,
   shopperOf,
+  shopperOrder,
+  shopperOrders,
   shopperSignOut,
   startShopperSignIn,
 } from './shopper';
@@ -274,6 +281,22 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
 
   shopperSignOut(secret: string, actor: SignedActor) {
     return shopperSignOut(this.env, secret, actor);
+  }
+
+  shopperOrders(secret: string, actor: SignedActor, cursor?: string) {
+    return shopperOrders(this.env, secret, cursor, actor);
+  }
+
+  shopperOrder(secret: string, actor: SignedActor, id: string) {
+    return shopperOrder(this.env, secret, id, actor);
+  }
+
+  shopperAddresses(secret: string, actor: SignedActor) {
+    return shopperAddresses(this.env, secret, actor);
+  }
+
+  forgetAddress(secret: string, actor: SignedActor, id: string) {
+    return forgetAddress(this.env, secret, id, actor);
   }
 
   async searchCartProducts(cartId: string, q: string, signed: SignedActor) {

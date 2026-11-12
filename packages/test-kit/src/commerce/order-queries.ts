@@ -27,6 +27,10 @@ export interface OrderQueriesFixture {
     idempotencyKey?: string | null;
     flowId?: string;
     flowVersion?: number;
+    /** The address it was placed under, as the buyer typed it. */
+    contactEmail?: string | null;
+    /** When a data subject erasure took the buyer off it. */
+    erasedAt?: number | null;
   }[];
   /** Published flow versions, by flow and version. */
   flowVersions?: { flowId: string; version: number; flow: unknown }[];
@@ -149,5 +153,37 @@ export class InMemoryOrderQueries implements OrderQueries {
     if (ids.includes(ref)) return ref;
     const tail = ids.filter((id) => id.toLowerCase().endsWith(ref.toLowerCase()));
     return tail.length === 1 ? tail[0]! : null;
+  }
+
+  private placed(email: string) {
+    return (this.f.orders ?? []).filter(
+      (o) => o.contactEmail?.toLowerCase() === email.toLowerCase() && !o.erasedAt,
+    );
+  }
+
+  async forContact(
+    email: string,
+    { before, limit }: { before?: { createdAt: number; id: string }; limit: number },
+  ) {
+    return this.placed(email)
+      .filter(
+        (o) =>
+          !before ||
+          o.createdAt < before.createdAt ||
+          (o.createdAt === before.createdAt && o.id < before.id),
+      )
+      .sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : -1))
+      .slice(0, limit)
+      .map(({ id, status, currency, total, createdAt }) => ({
+        id,
+        status,
+        currency,
+        total,
+        createdAt,
+      }));
+  }
+
+  async placedUnder(email: string, orderId: string) {
+    return this.placed(email).some((o) => o.id === orderId);
   }
 }

@@ -27,3 +27,29 @@ export function AccountRefusal() {
     </main>
   );
 }
+
+/**
+ * The error boundary of a signed-in account page: why it can't show what was asked for (an order
+ * that isn't the shopper's reads as one that doesn't exist), with the way back.
+ */
+export function AccountPageRefusal() {
+  const error = useRouteError();
+  const said = isRouteErrorResponse(error) && typeof error.data === 'string' ? error.data : null;
+  return (
+    <main id="main" className="mx-auto max-w-md px-safe-4 py-24 sm:px-safe-6">
+      <Empty
+        icon={<TriangleAlert aria-hidden="true" />}
+        title={
+          <h1 className="text-xl tracking-title">
+            {said ? 'We can’t show this' : 'Something went wrong'}
+          </h1>
+        }
+      >
+        {said ?? 'Try again in a moment.'}
+        <a href="/account" className="mt-4 inline-flex min-h-11 items-center underline">
+          Back to your account
+        </a>
+      </Empty>
+    </main>
+  );
+}

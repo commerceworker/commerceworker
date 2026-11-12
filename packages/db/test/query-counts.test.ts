@@ -23,6 +23,7 @@ import {
   queryCountDrift,
 } from '@commerceworker/test-kit/d1';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { d1AddressBook } from '../src/address-book';
 import { d1BackOffice } from '../src/back-office';
 import { d1BalanceStore } from '../src/balance-store';
 import { d1BudgetStore } from '../src/budget-store';
@@ -85,6 +86,7 @@ function stores(d1: D1Database) {
     shipping: d1ShippingStore(d1, clock),
     orders: d1OrderRecords(d1, clock),
     orderQueries: d1OrderQueries(d1),
+    addressBook: d1AddressBook(d1),
     board: d1OrderBoard(d1),
     office: d1BackOffice(d1),
     carts: d1CartRecords(d1, clock),
@@ -245,6 +247,23 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     () => ports.orderQueries.find({ customer: 'north', minTotal: 10, limit: 20 }, now),
   ],
   ['assistant: resolve an order reference', () => ports.orderQueries.resolveId('abc123')],
+  [
+    'shopper account: a page of orders',
+    () =>
+      ports.orderQueries.forContact('qc@example.test', {
+        before: { createdAt: now, id: id('shopper-order') },
+        limit: 21,
+      }),
+  ],
+  [
+    'shopper account: one order’s owner',
+    () => ports.orderQueries.placedUnder('qc@example.test', id('shopper-order')),
+  ],
+  ['shopper account: saved addresses', () => ports.addressBook.forConsumer('qc@example.test', 20)],
+  [
+    'shopper account: forget an address',
+    () => ports.addressBook.forgetForConsumer('qc@example.test', id('shopper-address')),
+  ],
   [
     'admin orders: a filtered page',
     () => ports.board.list({ status: 'failed', q: 'north', sort: 'updated' }, 200),

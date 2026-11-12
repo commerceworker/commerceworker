@@ -35,7 +35,7 @@ export const confirmsByEmail = (order: { channel: string }, key: string | undefi
   order.channel === 'web' && !!key?.startsWith('hosted:');
 
 /** An order as its buyer sees it, and the address to write to: the customer's, else the order's contact. */
-function confirmations(env: Env): OrderConfirmations {
+export function confirmations(env: Env): OrderConfirmations {
   return {
     async read(orderId) {
       // An id nothing started is not woken as an agent of its own.

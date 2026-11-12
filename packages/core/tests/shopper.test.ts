@@ -5,11 +5,13 @@ import {
   maskShopperEmail,
   newShopperCode,
   newShopperSecret,
+  parseShopperOrderCursor,
   SHOPPER_CODE,
   SHOPPER_SECRET,
   shopperCodeKey,
   shopperEmail,
   shopperLinkUrl,
+  shopperOrderCursor,
   shopperSignInEmail,
   storefrontKey,
 } from '../src';
@@ -100,5 +102,33 @@ describe('the sign-in email', () => {
     expect(mail.html).not.toMatch(/<img|"2"/);
     expect(mail.html).toContain('&lt;img');
     expect(mail.html).toContain('&amp;b=&quot;2&quot;');
+  });
+});
+
+describe('an order list’s cursor', () => {
+  it('round-trips the last order’s time and id', () => {
+    const last = { createdAt: 1_700_000_000_000, id: 'ord_abc-123_x' };
+    expect(parseShopperOrderCursor(shopperOrderCursor(last))).toEqual(last);
+  });
+
+  it('is null for anything the engine didn’t make, so a caller can’t steer the query', () => {
+    for (const bad of [
+      undefined,
+      null,
+      7,
+      {},
+      '',
+      '12',
+      ':abc',
+      '12:',
+      '-1:abc',
+      '1.5:abc',
+      '1234567890123456:abc',
+      "12:x' or 1=1",
+      '12:a b',
+      '12:a:b',
+      `12:${'x'.repeat(101)}`,
+    ])
+      expect(parseShopperOrderCursor(bad)).toBeNull();
   });
 });
