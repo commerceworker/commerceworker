@@ -13,6 +13,11 @@
 # Turnstile widget and the Logpush job are created through the API, so they also need
 # CLOUDFLARE_API_TOKEN (for the widget, with Turnstile Sites Write) and CLOUDFLARE_ACCOUNT_ID;
 # without them it prints what to create instead, or says what it skipped.
+#
+# With `redundancy.alerts` in the registry it also creates the account's notification policies, a
+# webhook destination from ALERT_WEBHOOK_URL (exported in this shell) and a Health Check on each
+# app's /health/deep; the API token then needs Notifications Write, Health Checks Write and Zone
+# Read. PagerDuty is connected in the dashboard. See docs/operations.md, "Alerting".
 set -euo pipefail
 id="${1:?usage: scripts/provision.sh <id>}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -371,6 +376,7 @@ fi
 # else of the deployment's. They expire after logRetentionDays: the rule is replaced on each run, so
 # a changed number takes effect.
 logpush_spec=$(node scripts/fleet.ts logpush "$id")
+alert_spec=$(node scripts/fleet.ts alerts "$id")
 logs_prefix=$(jq -er .prefix <<<"$logpush_spec")
 wrangler r2 bucket create "$LOGS_R2" ${j[@]+"${j[@]}"} || echo "R2 bucket $LOGS_R2 already exists"
 wrangler r2 bucket lifecycle remove "$LOGS_R2" --name logs ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
@@ -479,6 +485,136 @@ else
   echo "to create it) and CLOUDFLARE_ACCOUNT_ID, and run this again. Until then nothing is pushed."
 fi
 if [ -n "$logpush_xtrace" ]; then set -x; fi
+
+# Detection (registry `redundancy.alerts`, docs/operations.md, "Alerting"): the account's four
+# notification policies, a webhook destination from ALERT_WEBHOOK_URL (a secret: set in this shell,
+# never printed, never on disk), PagerDuty when `alerts.pagerduty` is set (connected in the
+# dashboard: the API can only list a connected service), and a Health Check a minute on each app's
+# /health/deep with a policy of its own. Everything is found by name first and made only when
+# missing; a policy that exists gains this deployment's destinations and loses none, since one set
+# serves every deployment on a shared account. Needs Notifications Write, Health Checks Write and
+# Zone Read on CLOUDFLARE_API_TOKEN. Off without `alerts` (or with `alerts` an exception).
+case $- in *x*) alerts_xtrace=1 ;; *) alerts_xtrace="" ;; esac
+set +x
+# alerts:begin
+if [ "$ALERTS" = true ]; then
+  if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    echo "Skipped the alerts: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, and run this again."
+  else
+    cf_base=https://api.cloudflare.com/client/v4
+    notif="/accounts/$CLOUDFLARE_ACCOUNT_ID/alerting/v3"
+    # One API call, its response on stdout; a failure stops provisioning, naming the call. The token
+    # reaches curl through a pipe and a body through stdin, never its arguments.
+    cfa() {
+      local out
+      if [ "$1" = GET ]; then
+        out=$(curl -sS "$cf_base$2" -H @<(printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN"))
+      else
+        out=$(curl -sS -X "$1" "$cf_base$2" -H @<(printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN") \
+          -H 'Content-Type: application/json' --data-binary @-)
+      fi
+      if ! jq -e .success >/dev/null 2>&1 <<<"$out"; then
+        echo "Cloudflare API $1 ${2%%\?*}: $(jq -r '[.errors[]?.message] | join("; ")' <<<"$out" 2>/dev/null)" >&2
+        return 1
+      fi
+      printf '%s' "$out"
+    }
+
+    # Destinations: the webhook (updated in place when it exists, so a rotated URL takes effect),
+    # PagerDuty (only if already connected) and an optional email address.
+    webhook_url="${ALERT_WEBHOOK_URL:-$ALERT_WEBHOOK_FALLBACK}"
+    webhook_id=""
+    if [ -n "$webhook_url" ]; then
+      hooks=$(cfa GET "$notif/destinations/webhooks")
+      webhook_id=$(jq -r --arg n "$(jq -r .webhookName <<<"$alert_spec")" \
+        '[.result[]? | select(.name == $n)][0].id // empty' <<<"$hooks")
+      hook_body=$(CW_URL="$webhook_url" jq -n --arg n "$(jq -r .webhookName <<<"$alert_spec")" '{name: $n, url: env.CW_URL}')
+      if [ -n "$webhook_id" ]; then
+        cfa PUT "$notif/destinations/webhooks/$webhook_id" <<<"$hook_body" >/dev/null
+        echo "Alert webhook $(jq -r .webhookName <<<"$alert_spec") updated"
+      else
+        webhook_id=$(cfa POST "$notif/destinations/webhooks" <<<"$hook_body" | jq -er .result.id)
+        echo "Created alert webhook $(jq -r .webhookName <<<"$alert_spec")"
+      fi
+    fi
+    pagerduty_id=""
+    if [ "$(jq -r .pagerduty <<<"$alert_spec")" = true ]; then
+      pagerduty_id=$(cfa GET "$notif/destinations/pagerduty" | jq -r '.result[0].id // empty')
+      if [ -z "$pagerduty_id" ]; then
+        echo "PagerDuty isn't connected to this account: connect it in the dashboard (Notifications >"
+        echo "Destinations > PagerDuty > Connect) and run this again; until then it pages nobody."
+      else
+        echo "Alert destination: PagerDuty (connected)"
+      fi
+    fi
+    mechanisms=$(jq -n --arg wh "$webhook_id" --arg pd "$pagerduty_id" --arg em "${ALERT_EMAIL:-}" '
+      {} | (if $wh != "" then .webhooks = [{id: $wh}] else . end)
+         | (if $pd != "" then .pagerduty = [{id: $pd}] else . end)
+         | (if $em != "" then .email = [{id: $em}] else . end)')
+    if [ "$mechanisms" = '{}' ]; then
+      echo "The alerts have nowhere to go: set ALERT_WEBHOOK_URL, connect PagerDuty, or set ALERT_EMAIL." >&2
+      exit 1
+    fi
+
+    # A policy by name: made if missing, and otherwise given any destination it lacks.
+    policies=$(cfa GET "$notif/policies")
+    ensure_policy() { # name alert_type description filters-json
+      local have body merged
+      have=$(jq -c --arg n "$1" '[.result[]? | select(.name == $n)][0] // empty' <<<"$policies")
+      if [ -z "$have" ]; then
+        body=$(jq -n --arg n "$1" --arg t "$2" --arg d "$3" --argjson f "$4" --argjson m "$mechanisms" \
+          '{name: $n, description: $d, alert_type: $t, enabled: true, mechanisms: $m}
+           + (if $f == {} then {} else {filters: $f} end)')
+        cfa POST "$notif/policies" <<<"$body" >/dev/null
+        echo "Created notification policy $1"
+        return
+      fi
+      merged=$(jq -c --argjson m "$mechanisms" '
+        .mechanisms as $h | reduce ("email", "pagerduty", "webhooks") as $k ({};
+          .[$k] = ((($h[$k] // []) + ($m[$k] // [])) | map({id}) | unique_by(.id)))
+        | with_entries(select(.value | length > 0))' <<<"$have")
+      if [ "$merged" = "$(jq -c '.mechanisms | with_entries(.value |= (map({id}) | unique_by(.id))) | with_entries(select(.value | length > 0))' <<<"$have")" ]; then
+        echo "Notification policy $1 already sends to these destinations"
+        return
+      fi
+      body=$(jq --argjson m "$merged" '{name, description, alert_type, enabled, mechanisms: $m}
+        + (if (.filters // {}) == {} then {} else {filters} end)' <<<"$have")
+      cfa PUT "$notif/policies/$(jq -r .id <<<"$have")" <<<"$body" >/dev/null
+      echo "Notification policy $1 now also sends to these destinations"
+    }
+    while IFS= read -r p; do
+      ensure_policy "$(jq -r .name <<<"$p")" "$(jq -r .alert_type <<<"$p")" "$(jq -r .description <<<"$p")" '{}'
+    done < <(jq -c '.policies[]' <<<"$alert_spec")
+
+    # The zone a host is in: its own name, then each parent, until the account has one.
+    zone_of() {
+      local h="$1" z
+      while [[ "$h" == *.* ]]; do
+        z=$(cfa GET "/zones?name=$h&account.id=$CLOUDFLARE_ACCOUNT_ID" | jq -r '.result[0].id // empty') || return 1
+        if [ -n "$z" ]; then printf '%s' "$z"; return 0; fi
+        h="${h#*.}"
+      done
+      return 1
+    }
+    while IFS= read -r c; do
+      host=$(jq -r .host <<<"$c")
+      zone=$(zone_of "$host") || { echo "No zone in this account holds $host: its Health Check can't be made" >&2; exit 1; }
+      checks=$(cfa GET "/zones/$zone/healthchecks")
+      check_id=$(jq -r --arg n "$(jq -r .name <<<"$c")" '[.result[]? | select(.name == $n)][0].id // empty' <<<"$checks")
+      if [ -n "$check_id" ]; then
+        cfa PUT "/zones/$zone/healthchecks/$check_id" <<<"$(jq -c .body <<<"$c")" >/dev/null
+        echo "Health Check $(jq -r .name <<<"$c") updated: https://$host/health/deep every minute"
+      else
+        check_id=$(cfa POST "/zones/$zone/healthchecks" <<<"$(jq -c .body <<<"$c")" | jq -er .result.id)
+        echo "Created Health Check $(jq -r .name <<<"$c"): https://$host/health/deep every minute"
+      fi
+      ensure_policy "$(jq -r .policy <<<"$c")" health_check_status_notification \
+        "$(jq -r .name <<<"$c") went unhealthy or recovered" "$(jq -nc --arg i "$check_id" '{health_check_id: [$i]}')"
+    done < <(jq -c '.healthChecks[]' <<<"$alert_spec")
+  fi
+fi
+# alerts:end
+if [ -n "$alerts_xtrace" ]; then set -x; fi
 
 # The GitHub environment the deploy job runs in, and its secrets. A secret already set is left
 # alone; the setup code is generated and kept in .secrets/<id>/ (gitignored) for the first admin.

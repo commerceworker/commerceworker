@@ -19,6 +19,7 @@
     "@commerceworker/cart": "workspace:*",
     "@commerceworker/core": "workspace:*",
     "@commerceworker/security": "workspace:*",
+    "@commerceworker/telemetry": "workspace:*",
     "@commerceworker/ui": "workspace:*",
     "@fontsource-variable/inter": "catalog:",
     "@fontsource/ibm-plex-mono": "catalog:",

@@ -56,6 +56,7 @@ import { loadAccount } from './accounts';
 import type { Report } from './agent';
 import { recordAudit } from './audit';
 import { loadFlowVersion } from './flows';
+import { ops } from './metrics';
 import { orderAgent } from './namespaces';
 import { EXECUTORS, type NodeResult, ROLLBACKS, scaled } from './nodes';
 import { confirmsByEmail, orderConfirmation } from './order-confirmation';
@@ -184,6 +185,9 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         '',
       );
       const where = typeof err === 'object' && err !== null ? failure.where.get(err) : undefined;
+      // Counted here, once per failed run, not per attempt: a step's retries aren't failures yet.
+      // Observational, not an effect on the order, so outside a step like the warnings below.
+      ops().stepFailed(where?.node?.type ?? 'run');
       // The blamed node's own step may not be the one that threw first; report it unless it did.
       const nodeSent = where?.node ? failure.reportedNodes.has(where.node.id) : false;
       const reason = where

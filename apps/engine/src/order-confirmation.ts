@@ -16,6 +16,7 @@ import {
 import { buyerOrderView, type OrderState } from '@commerceworker/core';
 import type { EmailSender } from '@commerceworker/ports';
 import type { OrderConfirmations } from '@commerceworker/ports/commerce';
+import { ops } from './metrics';
 import { orderAgent } from './namespaces';
 import {
   emailSender,
@@ -76,13 +77,16 @@ export const orderConfirmation = {
   /** Mails the order's confirmation once; a repeat finds it sent and does nothing. */
   async send(env: Env, orderId: string): Promise<OrderConfirmationOutcome> {
     try {
-      return await sendOrderConfirmation(
+      const outcome = await sendOrderConfirmation(
         { ...ports(env), email: sender(env) },
         orderId,
         Date.now(),
       );
+      if (outcome.status === 'failed') ops().failover('email_failed');
+      return outcome;
     } catch (err) {
       console.warn('order confirmation failed', err);
+      ops().failover('email_failed');
       return {
         status: 'failed',
         messageId: '',

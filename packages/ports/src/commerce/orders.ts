@@ -92,6 +92,12 @@ export interface OrderRecords {
    */
   staleQueued(before: number, limit: number): Promise<{ id: string; instanceId: string | null }[]>;
   /**
+   * Orders whose row says `running` and hasn't changed since `before`, least recently changed
+   * first: the ones whose Workflow should still be going, for the hourly sweep that checks it is
+   * (a live order's row changes with every report, so a quiet one is worth a look).
+   */
+  staleRunning(before: number, limit: number): Promise<{ id: string; instanceId: string | null }[]>;
+  /**
    * Ends a queued order as failed with `reason`; true when it did. An order that has moved on
    * (or already failed) is left alone, so it is safe to repeat.
    */

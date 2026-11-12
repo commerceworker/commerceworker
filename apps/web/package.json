@@ -32,6 +32,7 @@
     "@commerceworker/db": "workspace:*",
     "@commerceworker/ports": "workspace:*",
     "@commerceworker/security": "workspace:*",
+    "@commerceworker/telemetry": "workspace:*",
     "@commerceworker/ui": "workspace:*",
     "@fontsource-variable/inter": "catalog:",
     "@fontsource/ibm-plex-mono": "catalog:",

@@ -112,6 +112,10 @@
       "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
     }
   ],
+  // Operational metrics (packages/telemetry/src/metrics.ts): one data point per request outcome,
+  // order-step failure, D1 round trip and failover. Always on; scripts/fleet.ts gives each deployment
+  // its own dataset, shared by web, engine and storefront (docs/operations.md, "Metrics").
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "commerceworker_ops" }],
   // Resource ids are provisioned by `wrangler deploy` on first deploy.
   "d1_databases": [
     {

@@ -470,3 +470,218 @@ test('a deployment without the replica creates nothing', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls, []);
 });
+
+// The detection section (`alerts:begin` to `alerts:end`), run against a fake `curl` that records
+// "METHOD url" and each body, and answers a GET from fixture files by its path. Nothing reaches
+// Cloudflare. `alert_spec` is what `fleet.ts alerts <id>` prints.
+const alerts = /# alerts:begin\n([\s\S]*?)# alerts:end/.exec(script)?.[1];
+
+const FAKE_CURL = `#!/usr/bin/env bash
+method=GET; url=""
+args=("$@"); i=0
+while [ $i -lt \${#args[@]} ]; do
+  a="\${args[$i]}"
+  case "$a" in
+    -X) i=$((i+1)); method="\${args[$i]}" ;;
+    --data-binary) i=$((i+1)); body=$(cat) ;;
+    -H|-sS) [ "$a" = -H ] && i=$((i+1)) ;;
+    -*) ;;
+    *) url="$a" ;;
+  esac
+  i=$((i+1))
+done
+path="\${url#https://api.cloudflare.com/client/v4}"
+echo "$method $path" >> "$FIX/calls"
+[ -n "\${body:-}" ] && jq -c . <<<"$body" >> "$FIX/bodies"
+if [ "$method" != GET ]; then
+  # Every write answers with the id "new-id" (a created object's id).
+  echo '{"success":true,"result":{"id":"new-id"}}'; exit 0
+fi
+f="$FIX/get$(echo "\${path%%\\?*}" | tr '/' '_')"
+if [ -f "$f" ]; then cat "$f"; else echo '{"success":true,"result":[]}'; fi
+`;
+
+const SPEC = {
+  policies: [
+    {
+      name: 'CommerceWorker: Worker issues',
+      alert_type: 'workers_observability_real_time_issue',
+      description: 'issues',
+    },
+    { name: 'CommerceWorker: HTTP DDoS', alert_type: 'dos_attack_l7', description: 'ddos' },
+  ],
+  webhookName: 'commerceworker-alerts',
+  pagerduty: false,
+  healthChecks: [
+    {
+      name: 'commerceworker-web',
+      policy: 'CommerceWorker: commerceworker-web health',
+      host: 'app.example.com',
+      body: { name: 'commerceworker-web', address: 'app.example.com' },
+    },
+  ],
+};
+
+const ACCOUNT = 'acct1';
+const GET = (p: string) => `get${p.replaceAll('/', '_')}`;
+
+function runAlerts(opts: {
+  fixtures?: Record<string, unknown>;
+  spec?: unknown;
+  env?: Record<string, string>;
+}) {
+  assert.ok(alerts, 'provision.sh has no alerts section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-alerts-'));
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'curl'), FAKE_CURL);
+  chmodSync(join(bin, 'curl'), 0o755);
+  for (const [path, body] of Object.entries(opts.fixtures ?? {}))
+    writeFileSync(join(dir, GET(path)), JSON.stringify({ success: true, result: body }));
+  const result = spawnSync('bash', ['-c', `set -euo pipefail\n${alerts}`], {
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      FIX: dir,
+      ALERTS: 'true',
+      ALERT_WEBHOOK_FALLBACK: '',
+      CLOUDFLARE_API_TOKEN: 'token',
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      alert_spec: JSON.stringify(opts.spec ?? SPEC),
+      ...opts.env,
+    },
+    encoding: 'utf8',
+  });
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(dir, name), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    writes: read('calls')
+      .split('\n')
+      .filter((c) => c && !c.startsWith('GET')),
+    bodies: read('bodies')
+      .split('\n')
+      .filter(Boolean)
+      .map((b) => JSON.parse(b)),
+  };
+}
+
+const N = `/accounts/${ACCOUNT}/alerting/v3`;
+const ZONES = { '/zones': [{ id: 'zone1' }] };
+const HOOK = 'https://hooks.example/secret-path';
+
+test('with alerts off, nothing is called', () => {
+  const r = runAlerts({ env: { ALERTS: 'false' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.writes, []);
+});
+
+test('a new account gets the webhook, the policies, the Health Check and its policy', () => {
+  const r = runAlerts({ fixtures: ZONES, env: { ALERT_WEBHOOK_URL: HOOK } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.writes, [
+    `POST ${N}/destinations/webhooks`,
+    `POST ${N}/policies`,
+    `POST ${N}/policies`,
+    'POST /zones/zone1/healthchecks',
+    `POST ${N}/policies`,
+  ]);
+  // The secret URL reaches the API in a body only, and is never printed.
+  assert.deepEqual(r.bodies[0], { name: 'commerceworker-alerts', url: HOOK });
+  assert.equal(`${r.stdout}${r.stderr}`.split(HOOK).length, 1, 'the webhook URL was printed');
+  assert.deepEqual(r.bodies[1].mechanisms, { webhooks: [{ id: 'new-id' }] });
+  assert.equal(r.bodies[1].alert_type, 'workers_observability_real_time_issue');
+  assert.deepEqual(r.bodies.at(-1).filters, { health_check_id: ['new-id'] });
+  assert.equal(r.bodies.at(-1).alert_type, 'health_check_status_notification');
+});
+
+test('a second run finds everything by name and writes only the webhook it keeps current', () => {
+  const mechanisms = { webhooks: [{ id: 'hook1' }] };
+  const r = runAlerts({
+    env: { ALERT_WEBHOOK_URL: HOOK },
+    fixtures: {
+      ...ZONES,
+      [`${N}/destinations/webhooks`]: [{ id: 'hook1', name: 'commerceworker-alerts' }],
+      [`${N}/policies`]: [
+        { id: 'p1', name: 'CommerceWorker: Worker issues', mechanisms },
+        { id: 'p2', name: 'CommerceWorker: HTTP DDoS', mechanisms },
+        { id: 'p3', name: 'CommerceWorker: commerceworker-web health', mechanisms },
+      ],
+      '/zones/zone1/healthchecks': [{ id: 'hc1', name: 'commerceworker-web' }],
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  // No second webhook, policy or check: the webhook and the check are updated in place, and no
+  // policy already sending to the destination is written.
+  assert.deepEqual(r.writes, [
+    `PUT ${N}/destinations/webhooks/hook1`,
+    'PUT /zones/zone1/healthchecks/hc1',
+  ]);
+});
+
+test('a policy that exists gains the destination and keeps the ones it had', () => {
+  const r = runAlerts({
+    env: { ALERT_WEBHOOK_URL: HOOK, ALERT_EMAIL: 'ops@example.com' },
+    fixtures: {
+      ...ZONES,
+      [`${N}/destinations/webhooks`]: [{ id: 'hook1', name: 'commerceworker-alerts' }],
+      [`${N}/policies`]: [
+        {
+          id: 'p1',
+          name: 'CommerceWorker: Worker issues',
+          alert_type: 'workers_observability_real_time_issue',
+          enabled: true,
+          description: 'issues',
+          mechanisms: { email: [{ id: 'old@example.com' }] },
+        },
+      ],
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.writes.includes(`PUT ${N}/policies/p1`), r.writes.join('\n'));
+  const put = r.bodies.find(
+    (b) => b.name === 'CommerceWorker: Worker issues' && b.mechanisms.email,
+  );
+  assert.deepEqual(put.mechanisms.email.map((e: { id: string }) => e.id).sort(), [
+    'old@example.com',
+    'ops@example.com',
+  ]);
+  assert.deepEqual(put.mechanisms.webhooks, [{ id: 'hook1' }]);
+});
+
+test('PagerDuty that is not connected is said so, and with no other destination it stops', () => {
+  const r = runAlerts({ spec: { ...SPEC, pagerduty: true }, fixtures: ZONES });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /PagerDuty isn't connected/);
+  assert.match(r.stderr, /nowhere to go/);
+  assert.deepEqual(r.writes, []);
+});
+
+test('a connected PagerDuty service is a destination of every policy', () => {
+  const r = runAlerts({
+    spec: { ...SPEC, pagerduty: true },
+    fixtures: { ...ZONES, [`${N}/destinations/pagerduty`]: [{ id: 'pd1' }] },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.bodies[0].mechanisms, { pagerduty: [{ id: 'pd1' }] });
+});
+
+test('a host in no zone of the account stops provisioning, naming it', () => {
+  const r = runAlerts({ env: { ALERT_WEBHOOK_URL: HOOK } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /No zone in this account holds app\.example\.com/);
+});
+
+test('without an API token the alerts are skipped, not half made', () => {
+  const r = runAlerts({ env: { CLOUDFLARE_API_TOKEN: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Skipped the alerts/);
+  assert.deepEqual(r.writes, []);
+});

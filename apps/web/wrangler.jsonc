@@ -31,6 +31,10 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "app.commerceworker.com", "custom_domain": true }],
+  // Operational metrics (packages/telemetry/src/metrics.ts): one data point per request outcome,
+  // order-step failure, D1 round trip and failover. Always on; scripts/fleet.ts gives each deployment
+  // its own dataset, shared by web, engine and storefront (docs/operations.md, "Metrics").
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "commerceworker_ops" }],
   "d1_databases": [
     {
       "binding": "DB",

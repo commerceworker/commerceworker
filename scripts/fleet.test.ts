@@ -9,6 +9,9 @@ import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 import {
+  ALERT_POLICIES,
+  alertSpec,
+  alertsOn,
   CONTENT_QUEUES,
   CONTENT_SECRETS,
   contentHosts,
@@ -2009,6 +2012,8 @@ test("provisioning knows the content stack's resource names, and only for a cont
     'CLOUDFLARE_API_TOKEN',
     'CLOUDFLARE_ACCOUNT_ID',
     'ROTATE_LOGPUSH_KEY',
+    'ALERT_WEBHOOK_URL',
+    'ALERT_EMAIL',
   ]);
   const used = new Set([...script.matchAll(/\$\{?([A-Z][A-Z0-9_]+)/g)].map((m) => m[1]!));
   for (const name of used)
@@ -2617,4 +2622,97 @@ test('provision.sh is told the replica bucket and its queues only when the repli
   );
   // A bucket and the queue it feeds share a name apart from the dead-letter queue.
   assert.notEqual(names(acme).docsReplicaDlq, names(acme).docsReplicaQueue);
+});
+
+// --- Detection: metrics, alert policies and Health Checks ---
+
+test('every app renders its own metrics dataset, with no flag', () => {
+  // The base names stay for the unsuffixed deployment; another's carries its suffix.
+  for (const [app, render] of [
+    ['web', renderWeb],
+    ['storefront', renderStorefront],
+    ['engine', renderEngine],
+  ] as const) {
+    assert.deepEqual(
+      base(app).analytics_engine_datasets,
+      [{ binding: 'METRICS', dataset: 'commerceworker_ops' }],
+      `${app}'s base config`,
+    );
+    assert.deepEqual(render(base(app), acme).analytics_engine_datasets, [
+      { binding: 'METRICS', dataset: 'commerceworker_ops_acme' },
+    ]);
+  }
+  assert.equal(names(acme).opsDataset, 'commerceworker_ops_acme');
+});
+
+test('alerts are made only with redundancy.alerts set and not excepted', () => {
+  assert.equal(alertSpec(acme), null);
+  assert.equal(alertSpec(protectedAcme()), null);
+  assert.equal(alertsOn(protectedAcme({ alerts: { pagerduty: 'routing-key' } })), true);
+  assert.equal(
+    alertSpec(
+      protectedAcme({ alerts: { webhook: 'https://hooks.example/x' }, except: ['alerts'] }),
+    ),
+    null,
+  );
+  assert.equal(shellVars(protectedAcme({ alerts: { pagerduty: 'k' } })).ALERTS, 'true');
+  assert.equal(shellVars(acme).ALERTS, 'false');
+});
+
+test('the four policies the docs name, and a minute-by-minute check on each deep health', () => {
+  const spec = alertSpec(protectedAcme({ alerts: { pagerduty: 'routing-key' } }))!;
+  assert.deepEqual(
+    spec.policies.map((p) => [p.name, p.alert_type]),
+    [
+      ['CommerceWorker: Worker issues', 'workers_observability_real_time_issue'],
+      ['CommerceWorker: HTTP DDoS', 'dos_attack_l7'],
+      ['CommerceWorker: Universal SSL', 'universal_ssl_event_type'],
+      ['CommerceWorker: Advanced certificates', 'dedicated_ssl_certificate_event_type'],
+    ],
+  );
+  assert.equal(ALERT_POLICIES.length, 4);
+  assert.equal(spec.pagerduty, true);
+  assert.equal(spec.webhookName, 'commerceworker-alerts-acme');
+  assert.deepEqual(
+    spec.healthChecks.map((h) => [
+      h.name,
+      h.body.address,
+      h.body.http_config.path,
+      h.body.interval,
+    ]),
+    [
+      ['commerceworker-web-acme', acme.domain, '/health/deep', 60],
+      ['commerceworker-storefront-acme', acme.storefrontDomain, '/health/deep', 60],
+    ],
+  );
+  assert.deepEqual(spec.healthChecks[0]!.body, {
+    name: 'commerceworker-web-acme',
+    description: 'web deep health (D1, R2 and the engine) for acme',
+    address: acme.domain,
+    type: 'HTTPS',
+    interval: 60,
+    timeout: 10,
+    retries: 2,
+    consecutive_fails: 2,
+    consecutive_successes: 2,
+    check_regions: ['WEU', 'ENAM'],
+    http_config: {
+      method: 'GET',
+      path: '/health/deep',
+      port: 443,
+      expected_codes: ['200'],
+      follow_redirects: false,
+      allow_insecure: false,
+      header: { Host: [acme.domain] },
+    },
+  });
+  assert.equal(
+    protectedAcme({ alerts: { webhook: 'https://hooks.example/x' } }).redundancy?.alerts?.webhook,
+    'https://hooks.example/x',
+  );
+  assert.equal(
+    spec.pagerduty &&
+      alertSpec(protectedAcme({ alerts: { webhook: 'https://h.example/x' } }))!.pagerduty,
+    false,
+  );
 });

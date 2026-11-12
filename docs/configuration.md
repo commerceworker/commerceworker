@@ -150,6 +150,17 @@ A deployment with `"content": true` ([Operations](operations.md#the-content-stac
 
 The content Workers' bindings and variables are in each app's `wrangler.jsonc` (`apps/pipeline`, `apps/api`, `apps/media`, `apps/studio`, and `apps/delivery`'s content template); `scripts/fleet.ts` renders them per deployment: the content database (`commerceworker-content<suffix>`) as `DB` on every one of them, `KV_CACHE`, `MEDIA_BUCKET`, `VECTORIZE`, the queues, Workflows and Durable Object script names (`commerceworker-pipeline<suffix>`) with the deployment's names, `MEDIA_BASE_URL` (the api's host), `MEDIA_PUBLIC_URL` (the media host), `OAUTH_ISSUER` (the studio's host), `QUEUE_SUFFIX`, `AI_GATEWAY_ID` and `DATA_JURISDICTION`. Their rate-limit namespaces are `<slot>501` to `<slot>506`.
 
+## Alert secrets
+
+Not Worker secrets: inputs to `./scripts/provision.sh <id>`, exported in the shell that runs it, and used only when the deployment's registry sets `redundancy.alerts` ([Alerting](operations.md#alerting)). Neither is printed or written to disk.
+
+| Variable | Notes |
+|---|---|
+| `ALERT_WEBHOOK_URL` | The webhook the notification policies and Health Checks post to (a chat or incident tool's incoming URL, or your own endpoint). Becomes the destination `commerceworker-alerts<suffix>`, updated in place when the script runs again. Unset, the registry's `alerts.webhook` is used if it has one |
+| `ALERT_EMAIL` | Optional: an address the policies also email |
+
+PagerDuty has no secret here: it is connected to the account in the dashboard (Notifications > Destinations > PagerDuty), and `alerts.pagerduty` in the registry says to send to it.
+
 ## Bindings
 
 | Binding | Worker | Resource |
@@ -169,6 +180,7 @@ The content Workers' bindings and variables are in each app's `wrangler.jsonc` (
 | `A2A_AGENT` | engine | Durable Object `A2AAgent` (SQLite-backed, migration `v3`), one per [A2A](https://docs.commerceworker.com/reference/a2a/) caller |
 | `PLUGIN_STORAGE` | engine | Durable Object `PluginStorage` (SQLite-backed, migration `v4`), one per sandboxed plugin id: the plugin's own database (`PluginDb` in `apps/engine/src/plugin-host.ts`), with the bundle's migrations applied once each. Unused until a deployment installs a plugin with `runtime` `sandboxed` |
 | `LOADER` | engine | Worker Loader (`worker_loaders` in `wrangler.jsonc`; open beta, Workers Paid): loads a sandboxed plugin's bundle as a Dynamic Worker, with `PluginEgress` as its `globalOutbound`, `PluginTail` as its tail and `PluginDb` (over `PluginStorage`) and `PluginSecrets` as its env. Unused until a plugin is sandboxed. See [Plugins](plugins.md#runtimes) |
+| `METRICS` | web, storefront, engine | Analytics Engine dataset `commerceworker_ops` (`commerceworker_ops_<id>` for a customer; created by its first write): one data point per request outcome, order-step failure, D1 round trip and failover, always on ([Metrics](operations.md#metrics)) |
 | `ORDER_WORKFLOW` | engine | Workflow `commerceworker-order` (class `OrderWorkflow`), up to 10,000 steps per instance |
 | `REPLENISH` | engine | Workflow `commerceworker-replenish` (class `Replenish`), scheduled `0 6 * * *` |
 | Cron trigger | engine | `triggers.crons` `30 3 * * *`: `scheduled()` runs the daily [retention sweep](data-model.md#retention); `15 * * * *`: hourly, the product index catches up with `products` (`reindexProducts` in `apps/engine/src/product-index.ts`; an admin can also run it from the Commerce page) |

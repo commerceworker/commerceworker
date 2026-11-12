@@ -209,7 +209,7 @@ async function start(
   return { orderId };
 }
 
-const instanceIdFor = (orderId: string) => `${orderId}-g1`;
+export const instanceIdFor = (orderId: string) => `${orderId}-g1`;
 
 /** Stores the inbound document, initialises the agent and creates the Workflow; all repeatable. */
 async function launch(

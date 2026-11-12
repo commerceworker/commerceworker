@@ -21,6 +21,7 @@
     "@commerceworker/core": "workspace:*",
     "@commerceworker/db": "workspace:*",
     "@commerceworker/ports": "workspace:*",
+    "@commerceworker/telemetry": "workspace:*",
     "@modelcontextprotocol/server": "catalog:",
     "agents": "catalog:",
     "ai": "catalog:",
