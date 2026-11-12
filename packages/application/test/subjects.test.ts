@@ -55,7 +55,13 @@ describe('data subject requests', () => {
       { id: 'sc2_cart_ext' },
       { id: 'sc2_cart_staff', shipTo: { city: 'London' } },
     ]);
-    expect(x.checkouts).toHaveLength(2);
+    // Hers by email, and those opened for her account (a hosted checkout names its customer).
+    expect(x.checkouts.map((c) => c.id).sort()).toEqual([
+      'sc2_chk_acct',
+      'sc2_chk_acct_placed',
+      'sc2_chk_open',
+      'sc2_chk_placed',
+    ]);
     // Her account's company, and the member rows with her email.
     expect(x.companies).toMatchObject([
       { customerId: 'sc2_acct', legalName: 'Lovelace Engines Ltd' },

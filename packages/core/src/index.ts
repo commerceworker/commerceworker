@@ -32,6 +32,7 @@ export * from './fulfillment';
 export * from './fx';
 export * from './graph';
 export * from './health';
+export * from './hosted-checkout';
 export * from './integration-schemas';
 export * from './integrations';
 export * from './invoices';

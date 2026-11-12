@@ -30,6 +30,7 @@
     "react-router": "catalog:"
   },
   "devDependencies": {
+    "@axe-core/playwright": "catalog:",
     "@babel/plugin-proposal-decorators": "catalog:",
     "@cloudflare/vite-plugin": "catalog:",
     "@commerceworker/typescript-config": "workspace:*",

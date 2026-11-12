@@ -6,6 +6,11 @@
  * buyer or a UCP platform, never as staff, and can't start, cancel or pay an order, touch a plugin
  * or read a data subject, because none of those is a method here.
  *
+ * A hosted checkout's buyer is named twice: by the SHA-256 of the cookie secret the engine minted
+ * when the start link was redeemed (the session's owner, `hosted:<hash>`) and by an actor the
+ * storefront signed for `checkout:<id>` (`hostedCall`), so the storefront's key alone mints no
+ * buyer and a cookie alone reaches no session; a UCP platform's session is never one of these.
+ *
  * Each cart call names its buyer as an actor the storefront signed for `cart:<cartId>`
  * (`signGuestActor`); `buyer` admits it only to an external cart that buyer was admitted to, so one
  * cart's signature opens no other cart, and no staff cart at all.
@@ -27,6 +32,13 @@ import {
 import { routeAgents } from './agent-routes';
 import { cartSnapshot, keepCartOpen, redeemCartStart } from './cart/carts';
 import { searchCartProducts } from './cart/search';
+import {
+  completeHosted,
+  publicSettings,
+  readHosted,
+  redeemHostedStart,
+  updateHosted,
+} from './checkout/hosted';
 import { cartAgent } from './namespaces';
 import { guestActor } from './principal';
 import { ucpProfile, ucpSettings } from './ucp/config';
@@ -103,6 +115,37 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
           .catch((err) => console.error('platform touch failed', err)),
       );
     return { id: row.id, name: row.name, profileUrl: row.profileUrl };
+  }
+
+  storefrontSettings() {
+    return publicSettings(this.env);
+  }
+
+  async redeemCheckoutStart(checkoutId: string, token: string) {
+    return redeemHostedStart(this.env, checkoutId, token);
+  }
+
+  checkout(checkoutId: string, secret: string, actor: SignedActor) {
+    return readHosted(this.env, checkoutId, secret, actor);
+  }
+
+  updateCheckout(
+    checkoutId: string,
+    patch: unknown,
+    secret: string,
+    actor: SignedActor,
+    version?: number,
+  ) {
+    return updateHosted(this.env, checkoutId, patch, secret, actor, version);
+  }
+
+  completeCheckout(
+    checkoutId: string,
+    secret: string,
+    actor: SignedActor,
+    shown?: { version: number; total: number },
+  ) {
+    return completeHosted(this.env, checkoutId, secret, actor, shown);
   }
 
   redeemCartStart(cartId: string, token: string) {

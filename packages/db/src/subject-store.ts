@@ -69,6 +69,10 @@ const memberIds = (email: string) =>
 const checkoutBuyer = (email: string) =>
   sql`lower(json_extract(${checkoutSessions.data}, '$.buyer.email')) = ${email.toLowerCase()}`;
 
+/** A checkout opened for this account (a hosted one names its customer). */
+const checkoutCustomer = (customerId: string) =>
+  sql`json_extract(${checkoutSessions.data}, '$.customerId') = ${customerId}`;
+
 export function d1SubjectStore(d1: D1Database): SubjectStore {
   const d = createDb(d1);
 
@@ -189,11 +193,11 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
       };
     },
 
-    async checkouts(email, limit) {
+    async checkouts(email, customerIds, limit) {
       const rows = await d
         .select({ data: checkoutSessions.data })
         .from(checkoutSessions)
-        .where(checkoutBuyer(email))
+        .where(or(checkoutBuyer(email), ...customerIds.map(checkoutCustomer)))
         .limit(limit);
       return rows.map((r) => JSON.parse(r.data) as CheckoutSession);
     },
@@ -319,6 +323,10 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         .delete(customerAddresses)
         .where(eq(customerAddresses.customerId, customerId))
         .returning({ id: customerAddresses.id });
+      // Checkouts made for the account that placed no order: nothing needs them.
+      await d
+        .delete(checkoutSessions)
+        .where(and(isNull(checkoutSessions.orderId), checkoutCustomer(customerId)));
       await d
         .update(customers)
         .set({

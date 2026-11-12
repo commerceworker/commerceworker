@@ -599,3 +599,12 @@ actions must reach the engine.
 - **Don't** port another product's look; Ledger is this product's.
 - **Don't** make a person wait on motion: an action responds at once, and a page change never
   waits for its transition.
+
+## Storefront buyer pages
+
+The storefront's buyer pages (`apps/storefront`: the hosted checkout, the cart) are a buyer's own, on
+their phone as often as not, so they size controls for a finger everywhere: fields, buttons and choice
+rows are 44px tall and fields 16px on a desktop too, not only where the pointer is coarse (the admin
+sizes by pointer, `touch:` and `fine:`). Rows and notices are `rounded-lg`, a chosen row takes the
+brand's edge and tint, and a checked radio or checkbox is the brand's cobalt, as above. Pages show what
+the engine priced and add nothing up themselves.

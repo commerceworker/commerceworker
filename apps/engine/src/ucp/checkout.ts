@@ -9,15 +9,15 @@
  */
 
 import {
-  CHECKOUT_TTL_MS,
   type CheckoutPatch,
   type CheckoutSession,
+  checkoutFlowProblem,
   checkoutPatch,
+  type FlowGraph,
   type FlowVersion,
   FULFILLMENT_CAPABILITY,
   isFinalCheckout,
   isOpenCheckout,
-  newId,
   ORDER_CAPABILITY,
   type OrderState,
   orderPermalink,
@@ -36,11 +36,11 @@ import {
 } from '@commerceworker/core';
 import type { CheckoutCaller } from '../checkout/caller';
 import { completeSession } from '../checkout/complete';
-import { bump, current, refresh, save } from '../checkout/session';
+import { bump, current, newSession, refresh, save } from '../checkout/session';
 import { loadFlowVersion } from '../flows';
 import { orderAgent } from '../namespaces';
 import { checkoutSessions, paymentLedger, pricingStore, shippingStore } from '../wire';
-import { CHECKOUT_CURRENCY, paymentHandlers, ucpSettings } from './config';
+import { paymentHandlers, ucpSettings } from './config';
 import { authorizeCheckout } from './payments';
 
 export type UcpResult = { status: number; body: unknown };
@@ -106,29 +106,10 @@ export async function createCheckout(
   const settings = await ucpSettings(env);
   const flow = await checkoutFlow(env, settings);
   if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
-  const now = Date.now();
-  const empty: CheckoutSession = {
-    id: newId('chk'),
-    ownerId: ctx.caller.id,
-    status: 'incomplete',
-    currency: CHECKOUT_CURRENCY,
-    lines: [],
-    buyer: {},
-    fulfillment: 'ship',
-    shipTo: null,
-    shippingOption: null,
-    quote: null,
-    issues: [],
-    orderId: null,
-    createdAt: now,
-    updatedAt: now,
-    expiresAt: now + CHECKOUT_TTL_MS,
-    version: 1,
-  };
   const s = await refresh(
     env,
     flow,
-    patchCheckout(empty, checkoutPatch(input, undefined, ctx.capabilities)),
+    patchCheckout(newSession(ctx.caller.id), checkoutPatch(input, undefined, ctx.capabilities)),
     callerOf(ctx),
     input,
   );
@@ -207,7 +188,9 @@ export async function completeCheckout(
 
   const settings = await ucpSettings(env);
   const flow = await checkoutFlow(env, settings);
-  if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
+  // Checked on the version loaded now: a later publish may no longer authorize a card.
+  if (!flow || checkoutFlowProblem(flow as unknown as FlowGraph))
+    return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
   const caller: CheckoutCaller = {
     ...callerOf(ctx),
     meta: { ucp: { platformId: ctx.caller.id, checkoutId: s.id, origin: ctx.caller.origin } },

@@ -166,6 +166,7 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 | `POST` | `/api/v1/carts/:id/ops` | One cart op, such as `{ op: "add", sku, qty }` | `{ cart }`, or `409 { error }` |
 | `POST` | `/api/v1/carts/:id/submit` | `{ version? }` (or `cartVersion`, or `If-Match`) | `201 { orderId, cartId }`, `409 { error }`, or `412 { error }` when the cart changed since that version |
 | `POST` | `/api/v1/carts/:id/cancel` | | `{ cart }`, or `409 { error }` |
+| `POST` | `/api/v1/checkouts` | `{ lines, buyer?, shipTo?, customerId? }` | `{ id, url }` (operator) |
 | `GET` | `/api/v1/audit-events?type=&before=&after=&limit=` | | `{ events }` (admin) |
 | `GET` | `/api/v1/audit-events/verify?after=` | | `{ ok, checked, last, next }` or `{ ok: false, brokenAt, reason }` (admin) |
 | `POST` | `/api/v1/data-subjects/export` | `{ email }` | A JSON file: `{ email, customers, orders, messages, inboundEmails, documents, carts, taxCertificates, addresses, companies, companyMembers, purchaseOrders, quotes, truncated, teamMember }` (admin) |
@@ -176,6 +177,8 @@ if (!check.ok) return new Response(check.reason, { status: 400 });
 | `DELETE` | `/api/v1/integrations/:id` | | `{ ok: true }` (admin) |
 | `GET` | `/api/v1/ucp` | | `{ settings, platforms }` (admin) |
 | `POST` | `/api/v1/ucp/settings` | `{ checkoutFlowId, links?, orderUrl? }` | `{ settings }`, or `422 { error }` when the flow cannot take checkouts (admin) |
+| `GET` | `/api/v1/storefront` | | `{ settings: { checkout: { enabled, checkoutFlowId, editLines } } }`: [hosted checkout](/guides/hosted-checkout/)'s settings, off until set (admin) |
+| `POST` | `/api/v1/storefront/settings` | `{ checkout: { enabled?, checkoutFlowId?, editLines? } }` | `{ settings }`, or `422 { error }` when turning it on with a flow that cannot take checkouts, or with none to price by (admin) |
 | `POST` | `/api/v1/ucp/platforms` | `{ name, profileUrl }` | `201 { platform, key }`; the key is shown once (admin) |
 | `DELETE` | `/api/v1/ucp/platforms/:id` | | `{ ok: true }`, or `404` (admin) |
 | `GET` | `/api/v1/plugins` | | `{ plugins }`: for each plugin, `id`, `runtime` (`worker`, running on its own, or `sandboxed`, run inside CommerceWorker with only the outside hosts its manifest lists), `source` (`deployment`, set up with the workspace, or `installed`, uploaded by an admin), `name`, `version`, `nodes` (node types), `events`, `provides` (the built-in node surfaces it can do the work of: `shipping.rates`, `shipping.labels`, `tax`, `address`), `healthy` (whether it answered just now) and, when it didn't, `error`. A plugin whose manifest was refused has `name` and `version` `null` and no `nodes`; one that is not answering keeps the last manifest it gave (admin) |
@@ -245,7 +248,7 @@ Idempotency-Key: po-NW-7781
   [Simulating failures](/guides/templates/#simulating-failures)).
 - `vars` seeds the run's variables.
 
-**Idempotency.** With an `Idempotency-Key` header (at most 255 characters, and not starting `cart:`, `ucp:`, `plugin:`, `order:`, `email:`, `a2a:`, `replenish:`, `po:` or `quote:`, which CommerceWorker keeps for orders it starts itself; otherwise `400`), a repeat of the key
+**Idempotency.** With an `Idempotency-Key` header (at most 255 characters, and not starting `cart:`, `ucp:`, `plugin:`, `order:`, `email:`, `a2a:`, `replenish:`, `po:`, `quote:` or `hosted:`, which CommerceWorker keeps for orders it starts itself; otherwise `400`), a repeat of the key
 returns `200` and the order the first request created, even when two requests race. If the first
 request failed after recording the order, the repeat finishes starting it. The key is bound to a
 SHA-256 fingerprint of the body (flow, version, input and vars, ignoring property order): a repeat
@@ -336,6 +339,19 @@ payment authorizations, cancels shipments and staged pickups, restocks shipped s
 `409` `{ error: "The order has already finished" }`; an unknown order is `404`.
 
 ## Carts
+
+### Hosted checkouts
+
+`POST /api/v1/checkouts` makes a [hosted checkout](/guides/hosted-checkout/) for one buyer and returns
+`{ id, url }`: the checkout's id (`chk_…`) and the one-time link to give the buyer. `lines` is one to
+100 `{ sku, qty }` (never a price: the checkout flow prices them), `buyer` is optionally `{ email?,
+firstName?, lastName?, phone? }`, `shipTo` an optional address, and `customerId` an optional customer
+(`cus_…`) whose contract prices apply and who the order is for. It needs an operator and is refused (`422`)
+while hosted checkout is off, for a customer or SKU that doesn't exist, or when nothing in it can be
+bought. Each call makes a new checkout; the link opens it once and is never shown again. An admin turns
+hosted checkout on with `POST /api/v1/storefront/settings`, which replaces its three settings; turning it
+on needs a published flow that authorizes a card payment, the one it names or agentic checkout's, and
+turning it off stops every link and page at once. The change is audited as `checkout.settings`.
 
 A [cart](/guides/carts/) is a list of lines your team builds before it becomes an order, priced
 by its flow after every change. These routes reach the carts opened on the Carts page (or here);

@@ -105,7 +105,13 @@ export type CheckoutQuote = {
     ships: boolean;
     /** The unit price before promotions, when the flow has a discount step. */
     listPrice?: number;
+    /** What the line costs: `unitPrice` times `qty`, worked out by the quote (set on every quote it prices). */
+    total?: number;
+    /** The line before promotions (`listPrice` times `qty`; its `total` without a discount step). */
+    listTotal?: number;
   }[];
+  /** The lines before promotions: the sum of their `listTotal` (set by the quote, like them). */
+  listSubtotal?: number;
   subtotal: number;
   shipping: number;
   tax: number;
@@ -129,7 +135,11 @@ export type PickupStore = { id: string; name: string; postalCode?: string };
 
 export type CheckoutSession = {
   id: string;
-  /** Who opened it: the protocol's caller (a UCP platform). */
+  /**
+   * Who may act on it: a UCP platform's id, or `hosted:<sha256 of the buyer's cookie secret>` for a
+   * hosted checkout (./hosted-checkout.ts), which starts as `hosted-start:<hash of its start token>`
+   * until the buyer redeems the link.
+   */
   ownerId: string;
   status: CheckoutStatus;
   currency: string;
@@ -146,6 +156,10 @@ export type CheckoutSession = {
   promoCodes?: string[];
   quote: CheckoutQuote | null;
   issues: CheckoutIssue[];
+  /** The customer it is priced for (contract prices, credit) and its order is placed for. */
+  customerId?: string;
+  /** The payment held for it, once a hosted checkout takes payment. Unset until then. */
+  payment?: { intentId: string; state: string };
   /** The order completing it started. */
   orderId: string | null;
   createdAt: number;

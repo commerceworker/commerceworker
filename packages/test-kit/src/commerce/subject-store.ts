@@ -51,7 +51,7 @@ export interface SubjectFixture {
     notes: string | null;
     createdBy?: string | null;
   }[];
-  checkouts?: { id: string; email: string; orderId: string | null }[];
+  checkouts?: { id: string; email: string; orderId: string | null; customerId?: string }[];
   carts?: {
     id: string;
     buyerId: string | null;
@@ -101,6 +101,7 @@ export class InMemorySubjectStore implements SubjectStore {
       currency: 'USD',
       lines: [],
       buyer: c.email ? { email: c.email } : {},
+      ...(c.customerId ? { customerId: c.customerId } : {}),
       fulfillment: 'ship',
       shipTo: null,
       shippingOption: null,
@@ -170,9 +171,13 @@ export class InMemorySubjectStore implements SubjectStore {
     };
   }
 
-  async checkouts(email: string, limit: number) {
+  async checkouts(email: string, customerIds: readonly string[], limit: number) {
     return this.f.checkouts
-      .filter((c) => lower(c.email) === email.toLowerCase())
+      .filter(
+        (c) =>
+          lower(c.email) === email.toLowerCase() ||
+          (c.customerId !== undefined && customerIds.includes(c.customerId)),
+      )
       .slice(0, limit)
       .map((c) => this.session(c));
   }
@@ -261,6 +266,7 @@ export class InMemorySubjectStore implements SubjectStore {
     const addrs = this.f.addresses.filter((a) => a.customerId === customerId).length;
     this.f.taxCertificates = this.f.taxCertificates.filter((c) => c.customerId !== customerId);
     this.f.addresses = this.f.addresses.filter((a) => a.customerId !== customerId);
+    this.f.checkouts = this.f.checkouts.filter((k) => k.orderId || k.customerId !== customerId);
     const c = this.f.customers.find((x) => x.id === customerId);
     if (c) Object.assign(c, { name: 'Erased customer', email: erasedCustomerEmail(customerId) });
     for (const co of this.f.companies)

@@ -17,6 +17,7 @@ import type {
 import type { ErasureResult, SubjectExport } from './erasure';
 import type { EdgeState, GraphIssue } from './graph';
 import type { HealthReport } from './health';
+import type { HostedChange, HostedCheckout, HostedCheckoutSettings } from './hosted-checkout';
 import type {
   PluginCase,
   PluginCaseResult,
@@ -527,6 +528,55 @@ export interface StorefrontRpc {
     cartId: string,
     token: string,
   ): Promise<{ guest: CartGuest; expiresAt: number } | null>;
+  /**
+   * What the storefront offers: whether hosted checkout is on, whether a buyer may change the
+   * lines, and whether payments are only recorded (a test order, no card). Changes rarely, so
+   * callers may cache it.
+   */
+  storefrontSettings(): Promise<HostedCheckoutSettings>;
+  /**
+   * Redeems a hosted checkout's one-time start link, once: the engine mints the buyer's cookie
+   * secret (it keeps only its hash) and returns it with the session's end, for the storefront to
+   * set as the cookie. Null for a link that is unknown, used or expired, or while hosted checkout is off.
+   */
+  redeemCheckoutStart(
+    checkoutId: string,
+    token: string,
+  ): Promise<{ secret: string; expiresAt: number } | null>;
+  /**
+   * The hosted session for the buyer holding the cookie `secret` (the value `redeemCheckoutStart`
+   * returned; the engine hashes it to compare), with `actor` signed for `checkout:<id>`; null for anyone else's, a UCP platform's, an unknown one, or while
+   * hosted checkout is off.
+   */
+  checkout(checkoutId: string, secret: string, actor: SignedActor): Promise<HostedCheckout | null>;
+  /**
+   * Changes the buyer's session: `patch` may set the buyer, ship-to, shipping option, fulfillment,
+   * store and promo codes, and the lines only when the merchant's setting allows it; it can set no
+   * price. `version` is the session version the buyer's page showed: when it is no longer the
+   * session's, nothing is changed and the answer is `changed` with the session as it is. Null as
+   * `checkout`; otherwise the session as it is now, or why not.
+   */
+  updateCheckout(
+    checkoutId: string,
+    patch: unknown,
+    secret: string,
+    actor: SignedActor,
+    version?: number,
+  ): Promise<HostedChange | null>;
+  /**
+   * Places the order for the buyer's session, in test mode only (PAYMENTS_MODE "mock": the payment
+   * is recorded, no card is taken). Null as `checkout`; refused, with the session as it is, when
+   * payments are real, the session isn't ready, or it changed while this ran. `shown` is the version
+   * and total the buyer's page showed: a session at another version, or priced differently now, is
+   * `changed` and no order is placed. The buyer pays with
+   * their own instrument only: nothing is ever charged to an account or a saved card.
+   */
+  completeCheckout(
+    checkoutId: string,
+    secret: string,
+    actor: SignedActor,
+    shown?: { version: number; total: number },
+  ): Promise<HostedChange | null>;
   /** The cart as its agent holds it, or null unless `actor` is that external cart's buyer. */
   cartSnapshot(cartId: string, actor: SignedActor): Promise<CartState | null>;
   /** The name of the cart's customer, for its page, or null. */

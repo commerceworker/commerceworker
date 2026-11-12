@@ -88,6 +88,7 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'revoke_integration',
   'revoke_ucp_platform',
   'set_ucp_settings',
+  'set_storefront_settings',
 ]);
 /** Calling these twice with the same input does nothing more the second time. */
 const IDEMPOTENT = new Set<AssistantTool>([
@@ -133,6 +134,7 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'revoke_integration',
   'revoke_ucp_platform',
   'set_ucp_settings',
+  'set_storefront_settings',
 ]);
 /**
  * These reach outside CommerceWorker: cancelling voids payments and cancels shipments with the

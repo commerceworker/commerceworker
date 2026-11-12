@@ -143,6 +143,10 @@ export const SUBJECT_FIXTURE: SubjectFixture = {
   checkouts: [
     { id: 'sc2_chk_placed', email: ADA, orderId: 'sc2_o_guest' },
     { id: 'sc2_chk_open', email: ADA, orderId: null },
+    // Hosted checkouts name their customer, and may carry no email yet.
+    { id: 'sc2_chk_acct', email: '', orderId: null, customerId: 'sc2_acct' },
+    { id: 'sc2_chk_acct_placed', email: '', orderId: 'sc2_o_acct', customerId: 'sc2_acct' },
+    { id: 'sc2_chk_other', email: '', orderId: null, customerId: 'sc2_other' },
   ],
   carts: [
     { id: 'sc2_cart_ext', buyerId: ADA, customerId: null, pluginId: 'shop', orderId: null },
@@ -206,7 +210,14 @@ export function describeSubjectStoreContract(
       expect(rows.purchaseOrders.map((p) => p.id).sort()).toEqual(['sc2_po_acct', 'sc2_po_ada']);
       // Her company's quotes, and the one for her; not Grace's.
       expect(rows.quotes.map((q) => q.id).sort()).toEqual(['sc2_qt_acct', 'sc2_qt_ada']);
-      expect((await s.checkouts(ADA, 10)).map((c) => c.id).sort()).toEqual([
+      expect((await s.checkouts(ADA, [], 10)).map((c) => c.id).sort()).toEqual([
+        'sc2_chk_open',
+        'sc2_chk_placed',
+      ]);
+      // With their accounts, the checkouts made for them too; not another account's.
+      expect((await s.checkouts(ADA, ['sc2_acct'], 10)).map((c) => c.id).sort()).toEqual([
+        'sc2_chk_acct',
+        'sc2_chk_acct_placed',
         'sc2_chk_open',
         'sc2_chk_placed',
       ]);
@@ -312,16 +323,26 @@ export function describeSubjectStoreContract(
         ['sc2_m_1', ERASED],
         ['sc2_m_2', ADA],
       ]);
-      expect((await s.checkouts(ADA, 10)).map((c) => c.id)).toEqual(['sc2_chk_open']);
+      expect((await s.checkouts(ADA, [], 10)).map((c) => c.id)).toEqual(['sc2_chk_open']);
       expect(await s.unlinkedFiles(ADA)).toEqual(['inbound/sc2_in_2.eml']);
       expect(await s.eraseUnlinked(ADA)).toEqual({ messages: 1, inboundEmails: 1 });
-      expect(await s.checkouts(ADA, 10)).toEqual([]);
+      expect(await s.checkouts(ADA, [], 10)).toEqual([]);
       expect(await s.unlinkedFiles(ADA)).toEqual([]);
+      // The account's own unplaced checkout goes with the account, and one that placed an order stays.
+      expect((await s.checkouts(ADA, ['sc2_acct'], 10)).map((c) => c.id).sort()).toEqual([
+        'sc2_chk_acct',
+        'sc2_chk_acct_placed',
+      ]);
       expect(await s.eraseAccount('sc2_acct')).toEqual({
         taxCertificates: 1,
         addresses: 1,
         companyMembers: 1,
       });
+      expect(
+        (await s.checkouts('nobody@example.com', ['sc2_acct', 'sc2_other'], 10))
+          .map((c) => c.id)
+          .sort(),
+      ).toEqual(['sc2_chk_acct_placed', 'sc2_chk_other']);
       expect((await s.subject(ADA)).accounts).toEqual([]);
       // Her own company's people and legal details are blanked, and not twice.
       const after2 = await s.rows(await s.subject('charles@corp.example'), []);

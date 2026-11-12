@@ -16,7 +16,7 @@ candidate finding that still needs a concrete attacker before it is reported.
 - Is each envelope checked under exactly one key? v1 and staff `a1` under `PRINCIPAL_KEY`; `g1`,
   `u1`, guest `a1` and `gs1` under the storefront key (`storefrontKeysOf`). A new storefront
   envelope or method belongs on `StorefrontApi`, with the buyer checked against the cart
-  (`buyerOf`), and the storefront still binds no D1, `DOCS` or `EngineApi`
+  (`buyerOf`; a hosted checkout's also by the cookie secret, `hosted.ts`), and the storefront still binds no D1, `DOCS` or `EngineApi`
   (`scripts/composition-root.test.ts`, `scripts/fleet.test.ts`).
 - Does anything widen `PRINCIPAL_TTL_MS`, accept a missing `exp`, or fall back to
   `DEV_PRINCIPAL_KEY` outside local dev?
@@ -108,3 +108,15 @@ candidate finding that still needs a concrete attacker before it is reported.
 - New dependency: needed, maintained, and does `pnpm audit --prod --audit-level high` stay clean?
 - Workflows: actions pinned by full SHA, `permissions` minimal, no secrets in `pull_request` jobs
   from forks, no untrusted input interpolated into `run:` (`${{ github.event.* }}`).
+- Does a hosted checkout's payment use the buyer's own instrument? Never on-account, never the
+  customer's credit or saved cards, unless the operator explicitly allows it
+  (`apps/engine/src/checkout/complete.ts`; `completeHosted` in `hosted.ts` completes only in test mode, with a
+  test authorizer that holds and takes nothing, until a card is taken). When a card is taken (S3), also:
+  - a live hosted authorizer returns the buyer's own `payment.intentId` for the order to adopt, and a
+    live completion without one is refused (`holdsNothingOnlyInTestMode` throws);
+  - a flow that carries the order on account (`commerce.invoice` with `onAccount`, `commerce.charge`) is
+    refused, as one that doesn't authorize a card is (`checkoutFlowProblem`);
+  - the flow is loaded and re-checked at completion, not trusted from when the setting was saved
+    (`completeHosted`, and UCP's `completeCheckout`);
+  - completion is for the version and total the buyer saw (`completeCheckout`'s `shown`), so an
+    order is never placed at a price they were not shown.

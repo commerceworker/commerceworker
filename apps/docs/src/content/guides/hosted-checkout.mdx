@@ -1,0 +1,86 @@
+---
+title: Hosted checkout
+description: A checkout page on your storefront for one buyer, opened by a one-time link you make through the API. Turn it on, create a checkout, and see what your buyer sees. Card payment is coming.
+---
+
+A hosted checkout is a checkout for one buyer on your storefront (`shop.<your domain>`), started by
+you rather than by the buyer. You make it through the [REST API](/reference/rest-api/#hosted-checkouts), over
+[MCP](/reference/mcp/) or with the [assistant](/guides/assistant/) with `create_checkout`, naming the lines
+(and the buyer, ship-to and customer if you know them), and you get back an id and a link. Give the buyer
+the link; they review the checkout on a page of its own and place the order.
+
+:::note
+Card payment is coming. Until it is, a deployment whose payments are only recorded (test mode) shows
+a **Place order (test mode)** button that places the order without charging anything, and a deployment
+taking real payments shows the page with "Card payment is coming" and no way to place the order.
+:::
+
+## Turning it on
+
+Hosted checkout is off by default. While it is off, `create_checkout` makes no link and links already made
+stop working. An admin turns it on in the **Hosted checkout** section of the Team page, with
+`set_storefront_settings` over [MCP](/reference/mcp/#outside-access) or the [assistant](/guides/assistant/), or with
+`POST /api/v1/storefront/settings`, which takes:
+
+- `checkout.enabled`: on or off.
+- `checkout.checkoutFlowId`: the published flow that prices every hosted checkout and places its order, or
+  `null` for the flow [agentic checkout](/reference/ucp/) uses.
+- `checkout.editLines`: whether the buyer may change the quantity of a line, or remove one, on their page.
+  Off, only you change what is in a checkout.
+
+Turning it on is refused when the flow that would price it isn't published or doesn't authorize a card
+payment, so a checkout can never be made that no flow could take. Changes are confirmed on a card, apply
+within about 30 seconds and are recorded in the audit log as `checkout.settings`.
+`GET /api/v1/storefront` reads the settings.
+
+## Creating a checkout
+
+```bash
+curl -X POST https://app.example.com/api/v1/checkouts \
+  -H "Authorization: Bearer $COMMERCEWORKER_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "lines": [{ "sku": "MON-27", "qty": 1 }], "buyer": { "email": "ada@example.com" } }'
+```
+
+The answer is `{ "id": "chk_…", "url": "https://shop.example.com/checkout/start/chk_…/…" }`. The checkout is
+priced by your flow, and lasts six hours. The link is shown once and never stored in the clear, so make a
+new checkout if it is lost.
+
+## What the link does
+
+The link opens once. Opening it shows a "Continue to checkout" page, so an email scanner or link
+preview that fetches the link doesn't use it up; the buyer's tap on the button hands their browser a
+cookie for that checkout alone and goes to the checkout. After that, a second visit to the same link, or one after the checkout has expired, is refused and
+you make a new one. The cookie is private to the buyer's browser: it opens that one checkout and
+nothing else, not another buyer's, not an order, not the admin. A checkout that an AI platform started
+over [agentic checkout](/reference/ucp/) is never opened by a hosted link, and the other way round.
+
+## What the buyer sees
+
+One page, which works on a phone, a tablet and a desktop, and without JavaScript:
+
+- **Contact**: email (checked as they send it), first and last name, phone. Browsers fill them in.
+- **Delivery**: the address to ship to, the shipping options your flow offers for it with their price and
+  time, and where your flow offers pickup, a choice of the stores that hold everything. A checkout of digital
+  goods has no delivery.
+- **Promo code**: the codes they entered, each shown as applied or refused with the reason.
+- **Your order**: the lines, and a total broken into subtotal, discounts, shipping, tax and total, as your
+  flow priced them. The page adds nothing up itself, and an order is placed only at the total the buyer saw:
+  if the price moved, they are shown the new one first.
+
+Anything wrong is said next to what it is about: an email that isn't one beside the email, a missing
+address in Delivery, a code your promotions refused beside the code. What is still to fill in is held back
+until the buyer tries to continue. If the checkout changed since the page was drawn (you changed a line,
+or they have it open twice), the page says "This checkout changed" and shows it as it is now, instead of
+overwriting it.
+
+What the buyer can change is their own details (contact, address, shipping option, pickup store and promotion
+codes), and the lines only if you allowed it. They can never change a price. Pages are never cached,
+never framed by another site, and put nothing about the buyer in the address.
+
+## Placing the order
+
+In test mode the buyer presses **Place order (test mode)**: the order starts on your checkout flow on the
+`web` channel, no card is charged, and they see an order reference. Pressing it twice places one order.
+A buyer pays with their own card only: a hosted checkout is never charged to a customer's account or
+saved card, even when you made it for that customer.

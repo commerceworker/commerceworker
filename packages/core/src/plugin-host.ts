@@ -214,6 +214,8 @@ export const RESERVED_ORDER_KEY_PREFIXES = [
   'po:',
   // A quote's own order start (`quoteOrderKey`).
   'quote:',
+  // A hosted checkout's own order start (`hosted:<session id>`, apps/engine/src/checkout/complete.ts).
+  'hosted:',
 ] as const;
 
 export const reservedOrderKey = (key: string) =>

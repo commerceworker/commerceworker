@@ -42,6 +42,7 @@ export const OPERATIONS = {
   change_cart: { method: 'POST', path: '/api/v1/carts/{id}/ops', pathParams: ["id"], input: 'body' },
   convert_quote: { method: 'POST', path: '/api/v1/quotes/{quoteId}/convert', pathParams: ["quoteId"], input: 'body' },
   create_cart: { method: 'POST', path: '/api/v1/carts', pathParams: [], input: 'body' },
+  create_checkout: { method: 'POST', path: '/api/v1/checkouts', pathParams: [], input: 'body' },
   create_customer: { method: 'POST', path: '/api/v1/customers', pathParams: [], input: 'body' },
   create_flow: { method: 'POST', path: '/api/v1/flows/new', pathParams: [], input: 'body' },
   create_integration: { method: 'POST', path: '/api/v1/integrations', pathParams: [], input: 'body' },
@@ -83,6 +84,7 @@ export const OPERATIONS = {
   get_price_book: { method: 'GET', path: '/api/v1/price-books/{bookId}', pathParams: ["bookId"], input: 'query' },
   get_purchase_order: { method: 'GET', path: '/api/v1/purchase-orders/{poId}', pathParams: ["poId"], input: 'query' },
   get_quote: { method: 'GET', path: '/api/v1/quotes/{quoteId}', pathParams: ["quoteId"], input: 'query' },
+  get_storefront: { method: 'GET', path: '/api/v1/storefront', pathParams: [], input: 'query' },
   get_ucp: { method: 'GET', path: '/api/v1/ucp', pathParams: [], input: 'query' },
   import_catalog_feed: { method: 'POST', path: '/api/v1/catalog/feeds', pathParams: [], input: 'raw', contentTypes: ["text/csv", "application/x-ndjson"] },
   list_audit_events: { method: 'GET', path: '/api/v1/audit-events', pathParams: [], input: 'query' },
@@ -140,6 +142,7 @@ export const OPERATIONS = {
   set_fx_rate: { method: 'POST', path: '/api/v1/fx-rates/{currency}', pathParams: ["currency"], input: 'body' },
   set_price_book_status: { method: 'POST', path: '/api/v1/price-books/{bookId}/status', pathParams: ["bookId"], input: 'body' },
   set_promotion_status: { method: 'POST', path: '/api/v1/promotions/{promotionId}/status', pathParams: ["promotionId"], input: 'body' },
+  set_storefront_settings: { method: 'POST', path: '/api/v1/storefront/settings', pathParams: [], input: 'body' },
   set_ucp_settings: { method: 'POST', path: '/api/v1/ucp/settings', pathParams: [], input: 'body' },
   stage_catalog_edits: { method: 'POST', path: '/api/v1/catalog/edits', pathParams: [], input: 'body' },
   start_order: { method: 'POST', path: '/api/v1/orders', pathParams: [], input: 'body', idempotent: true },
@@ -438,6 +441,41 @@ export type CreateCartInput = {
 export type CreateCartResult = {
   cart: Cart;
 };
+
+/** Create a hosted checkout (Operator) (request) */
+export type CreateCheckoutInput = {
+  /** What the buyer is buying; the checkout flow prices it */
+  lines: {
+    sku: string;
+    qty: number;
+  }[];
+  /** Who is buying, if known; the page asks for the rest */
+  buyer?: {
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+  };
+  /** Where it ships, if known */
+  shipTo?: {
+    name?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    region?: string;
+    postalCode?: string;
+    country?: string;
+  };
+  /** The customer it is for (cus_…): their contract prices apply and the order is theirs */
+  customerId?: string;
+};
+
+export type CreateCheckoutResult = {
+  /** The checkout (chk_…) */
+  id: string;
+  /** The one-time link to give the buyer: it opens their checkout page once */
+  url: string;
+} & { [key: string]: unknown };
 
 /** Add a customer (Operator) (request) */
 export type CreateCustomerInput = {
@@ -1249,6 +1287,11 @@ export type GetQuoteResult = {
   } & { [key: string]: unknown };
 } & { [key: string]: unknown };
 
+/** Hosted checkout: its settings (admin) (request) */
+export type GetStorefrontInput = { [key: string]: unknown };
+
+export type GetStorefrontResult = StorefrontAdmin;
+
 /** Agentic checkout: its settings and the AI shopping platforms let in (admin) (request) */
 export type GetUcpInput = { [key: string]: unknown };
 
@@ -1266,7 +1309,7 @@ export type ImportCatalogFeedResult = FeedResponse;
 
 /** Audit log, newest first; or with `after`, oldest first for export (admin) (request) */
 export type ListAuditEventsInput = {
-  type?: "auth" | "team" | "token" | "scim" | "api" | "oauth" | "integration" | "ucp" | "order" | "approval" | "cart" | "flow" | "webhook" | "stock" | "promotion" | "price_book" | "contract_price" | "fx" | "tax_certificate" | "customer" | "company" | "credit" | "budget" | "purchase_order" | "quote" | "catalog" | "plugin" | "personal_data";
+  type?: "auth" | "team" | "token" | "scim" | "api" | "oauth" | "integration" | "ucp" | "order" | "approval" | "cart" | "checkout" | "flow" | "webhook" | "stock" | "promotion" | "price_book" | "contract_price" | "fx" | "tax_certificate" | "customer" | "company" | "credit" | "budget" | "purchase_order" | "quote" | "catalog" | "plugin" | "personal_data";
   before?: number;
   after?: number;
   limit?: number;
@@ -2446,6 +2489,31 @@ export type SetPromotionStatusResult = {
   href?: string;
 } & { [key: string]: unknown };
 
+/** Turn hosted checkout on or off, and set what a buyer may do on it (admin) (request) */
+export type SetStorefrontSettingsInput = {
+  checkout?: {
+    /** Whether buyers can open a hosted checkout; off, every link stops working */
+    enabled?: boolean;
+    /** The published flow that prices a hosted checkout; null uses agentic checkout’s */
+    checkoutFlowId?: string | null;
+    /** Whether the buyer may change the lines on their page */
+    editLines?: boolean;
+  };
+};
+
+export type SetStorefrontSettingsResult = {
+  settings: {
+    checkout: {
+      /** Whether buyers can open a hosted checkout; off, every link stops working */
+      enabled: boolean;
+      /** The published flow that prices a hosted checkout; null uses agentic checkout’s */
+      checkoutFlowId: string | null;
+      /** Whether the buyer may change the lines on their page */
+      editLines: boolean;
+    };
+  };
+};
+
 /** Set agentic checkout up, or turn it off (admin) (request) */
 export type SetUcpSettingsInput = {
   checkoutFlowId: string | null;
@@ -3059,6 +3127,10 @@ export type PluginUsage = {
   }[];
 };
 
+export type StorefrontAdmin = {
+  settings: StorefrontSettings;
+};
+
 export type UcpAdmin = {
   settings: UcpSettings;
   platforms: UcpPlatform[];
@@ -3548,6 +3620,17 @@ export type TimelineEntry = {
   key?: string;
 };
 
+export type StorefrontSettings = {
+  checkout: {
+    /** Whether buyers can open a hosted checkout; off, every link stops working */
+    enabled: boolean;
+    /** The published flow that prices a hosted checkout; null uses agentic checkout’s */
+    checkoutFlowId: string | null;
+    /** Whether the buyer may change the lines on their page */
+    editLines: boolean;
+  };
+};
+
 export type UcpSettings = {
   checkoutFlowId: string | null;
   links: {
@@ -3951,6 +4034,8 @@ export interface OperationTypes {
   convert_quote: { input: ConvertQuoteInput; result: ConvertQuoteResult };
   /** Open a cart (operator) */
   create_cart: { input: CreateCartInput; result: CreateCartResult };
+  /** Create a hosted checkout (Operator) */
+  create_checkout: { input: CreateCheckoutInput; result: CreateCheckoutResult };
   /** Add a customer (Operator) */
   create_customer: { input: CreateCustomerInput; result: CreateCustomerResult };
   /** Create a flow (Operator) */
@@ -4033,6 +4118,8 @@ export interface OperationTypes {
   get_purchase_order: { input: GetPurchaseOrderInput; result: GetPurchaseOrderResult };
   /** Get a quote (Viewer) */
   get_quote: { input: GetQuoteInput; result: GetQuoteResult };
+  /** Hosted checkout: its settings (admin) */
+  get_storefront: { input: GetStorefrontInput; result: GetStorefrontResult };
   /** Agentic checkout: its settings and the AI shopping platforms let in (admin) */
   get_ucp: { input: GetUcpInput; result: GetUcpResult };
   /** Import a feed file (operator) */
@@ -4147,6 +4234,8 @@ export interface OperationTypes {
   set_price_book_status: { input: SetPriceBookStatusInput; result: SetPriceBookStatusResult };
   /** Pause or reactivate a promotion (Operator) */
   set_promotion_status: { input: SetPromotionStatusInput; result: SetPromotionStatusResult };
+  /** Turn hosted checkout on or off, and set what a buyer may do on it (admin) */
+  set_storefront_settings: { input: SetStorefrontSettingsInput; result: SetStorefrontSettingsResult };
   /** Set agentic checkout up, or turn it off (admin) */
   set_ucp_settings: { input: SetUcpSettingsInput; result: SetUcpSettingsResult };
   /** Stage product edits, up to 500 (operator) */

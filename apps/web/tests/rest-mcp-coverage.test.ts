@@ -43,6 +43,8 @@ const TWINS: Record<string, AssistantTool> = {
   'DELETE /api/v1/integrations/{id}': 'revoke_integration',
   'GET /api/v1/ucp': 'get_ucp_settings',
   'POST /api/v1/ucp/settings': 'set_ucp_settings',
+  'GET /api/v1/storefront': 'get_storefront_settings',
+  'POST /api/v1/storefront/settings': 'set_storefront_settings',
   'DELETE /api/v1/ucp/platforms/{id}': 'revoke_ucp_platform',
   'GET /api/v1/catalog/products/{key}': 'get_product',
   'GET /api/v1/catalog/products/{key}/sheet': 'get_product_sheet',

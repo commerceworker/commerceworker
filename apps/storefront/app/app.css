@@ -282,7 +282,7 @@
     caret-color: var(--link);
   }
   /* Checkboxes and radios stay native (they post with their form) but are drawn as the preset's:
-     an input-edged 16px box with 6px corners, round for a radio, filled with primary once
+     an input-edged 16px box with 6px corners, round for a radio, filled with the brand once
      checked, the mark drawn in borders so no image loads. */
   input:where([type="checkbox"], [type="radio"]) {
     appearance: none;
@@ -301,9 +301,11 @@
     [data-theme="dark"] & {
       background-color: color-mix(in oklch, var(--input) 30%, transparent);
     }
+    /* The brand's cobalt, as DESIGN.md has a checked radio or checkbox: the same as a chosen row's edge. */
     &:checked {
-      border-color: var(--primary);
-      background-color: var(--primary);
+      border-color: var(--brand);
+      background-color: var(--brand);
+      color: var(--brand-foreground);
     }
     &:focus-visible {
       outline: none;

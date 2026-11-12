@@ -84,6 +84,7 @@ export type AssistantTool =
   | 'catalog_board'
   | 'catalog_board_column'
   | 'create_cart'
+  | 'create_checkout'
   | 'change_cart'
   | 'decide_approval'
   | 'decide_approvals'
@@ -183,6 +184,8 @@ export type AssistantTool =
   | 'get_ucp_settings'
   | 'set_ucp_settings'
   | 'revoke_ucp_platform'
+  | 'get_storefront_settings'
+  | 'set_storefront_settings'
   | 'draft_cart_reply'
   | 'set_assistant_routing';
 
@@ -383,6 +386,14 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Open a cart',
     description:
       'Open a cart priced by a published flow that prices orders, for a customer if given. Nothing is ordered until the cart is submitted.',
+  },
+  create_checkout: {
+    role: 'operator',
+    confirm: false,
+    label: 'Made a checkout link',
+    title: 'Create a hosted checkout',
+    description:
+      'Start a hosted checkout for a buyer: lines, and the buyer and ship-to if known, optionally for a customer. Returns the one-time link that opens the buyer’s checkout page on the storefront. Nothing is ordered until the buyer completes it. Needs hosted checkout turned on and a checkout flow.',
   },
   change_cart: {
     role: 'operator',
@@ -1163,6 +1174,22 @@ export const ASSISTANT_TOOLS: Record<
     description:
       'Set agentic checkout: the flow a completed checkout starts (null turns it off), the legal links and the order page URL with {id}. Replaces all three. The flow must authorize a card payment.',
   },
+  get_storefront_settings: {
+    role: 'admin',
+    confirm: false,
+    label: 'Read hosted checkout settings',
+    title: 'Get hosted checkout settings',
+    description:
+      'Hosted checkout, the page a buyer pays on: whether it is on, the flow that prices it (null uses agentic checkout’s) and whether the buyer may change the lines.',
+  },
+  set_storefront_settings: {
+    role: 'admin',
+    confirm: true,
+    label: 'Change hosted checkout settings',
+    title: 'Change hosted checkout settings',
+    description:
+      'Set hosted checkout: turn it on or off, the flow that prices it and places its order (null uses agentic checkout’s), and whether the buyer may change the lines. Replaces all three. Turning it on needs a flow that authorizes a card payment; while it is off, links already made stop working.',
+  },
   revoke_ucp_platform: {
     role: 'admin',
     confirm: true,
@@ -1206,6 +1233,7 @@ export const WRITES_WITHOUT_CONFIRM: readonly AssistantTool[] = [
   'draft_plugin',
   'draft_product_content',
   'create_cart',
+  'create_checkout',
   'change_cart',
   'create_po_draft',
   'update_po_draft',
@@ -1263,6 +1291,8 @@ export const PERSON_CONFIRMS_TOOLS: readonly AssistantTool[] = [
   'revoke_integration',
   'revoke_ucp_platform',
   'set_ucp_settings',
+  // Whether the public storefront takes buyers at all.
+  'set_storefront_settings',
   // Who may do what: only a person on the Team page decides it.
   'set_member_role',
   'set_approval_separation',

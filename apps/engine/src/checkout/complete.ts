@@ -6,14 +6,21 @@
  * (`CheckoutCaller`); what the answer looks like and how a refusal is framed stay with it.
  */
 
-import { type CheckoutSession, type FlowVersion, isPickup } from '@commerceworker/core';
+import { type CheckoutSession, type FlowVersion, isPickup, toMinor } from '@commerceworker/core';
 import { startOrderOnce } from '../orders';
 import type { CheckoutCaller } from './caller';
 import { type PaymentAuthorizer, releaseHold } from './payments';
 import { bump, refresh, save } from './session';
 
-/** The session to show, or that another write won the race for it. */
-export type Completed = { kind: 'session'; session: CheckoutSession } | { kind: 'raced' };
+/**
+ * The session to show, that another write won the race for it, or (only when the caller named the
+ * total its buyer saw) that the price now differs: the session is written priced again and nothing
+ * is claimed.
+ */
+export type Completed =
+  | { kind: 'session'; session: CheckoutSession }
+  | { kind: 'changed'; session: CheckoutSession }
+  | { kind: 'raced' };
 
 const shown = (session: CheckoutSession): Completed => ({ kind: 'session', session });
 const raced: Completed = { kind: 'raced' };
@@ -27,8 +34,12 @@ const retryable = (code: string, content: string) => ({
 });
 
 /**
- * Completes `s` (read at `s.version`, neither complete nor canceled). Throws when the processor or
- * the order fails, after opening the session again and releasing the hold.
+ * Completes `s` (read at `s.version`, neither complete nor canceled).
+ *
+ * A hosted checkout's buyer pays with their own instrument (its test mode records a payment and
+ * takes none). Never on-account, never the customer's credit or saved cards (`customerId` prices a
+ * session, it is no authority to charge), unless the operator explicitly allows it. Throws when
+ * the processor or the order fails, after opening the session again and releasing the hold.
  */
 export async function completeSession(
   env: Env,
@@ -36,9 +47,19 @@ export async function completeSession(
   flow: FlowVersion,
   s: CheckoutSession,
   payment: PaymentAuthorizer,
+  /** The total the buyer saw: completing is refused (`changed`) when the price now differs. */
+  shownTotal?: number,
 ): Promise<Completed> {
   // Priced again now: the hold must be for what the flow will charge.
   const fresh = await refresh(env, flow, s, caller);
+  if (
+    shownTotal !== undefined &&
+    fresh.quote &&
+    toMinor(fresh.quote.total, fresh.currency) !== toMinor(shownTotal, fresh.currency)
+  ) {
+    const next = bump(fresh, {});
+    return (await save(env, next, s.version)) ? { kind: 'changed', session: next } : raced;
+  }
   if (fresh.status !== 'ready_for_complete') {
     const next = bump(fresh, {});
     return (await save(env, next, s.version)) ? shown(next) : raced;
@@ -82,6 +103,7 @@ export async function completeSession(
         model: flow.model,
         channel: caller.channel,
         externalId: claimed.id,
+        ...(claimed.customerId ? { customerId: claimed.customerId } : {}),
         title: `Checkout ${claimed.id}`,
         currency: claimed.currency,
         lines: q.lines.map((l) => ({ sku: l.sku, name: l.title, qty: l.qty })),

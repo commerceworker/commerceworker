@@ -90,6 +90,7 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
   { method: 'POST', path: '/purchase-orders/{poId}/update', tool: 'update_po_draft' },
   { method: 'POST', path: '/purchase-orders/{poId}/submit', tool: 'submit_po' },
   { method: 'POST', path: '/purchase-orders/{poId}/cancel', tool: 'cancel_po' },
+  { method: 'POST', path: '/checkouts', tool: 'create_checkout' },
   { method: 'GET', path: '/quotes', tool: 'list_quotes' },
   { method: 'POST', path: '/quotes', tool: 'create_quote' },
   { method: 'GET', path: '/quotes/{quoteId}', tool: 'get_quote' },

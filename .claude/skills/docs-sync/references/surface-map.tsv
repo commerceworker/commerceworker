@@ -196,3 +196,4 @@
 ^packages/core/src/(lifecycle|lifecycles|credit|price-books|b2b/(companies|budgets|purchase-orders|quotes))\.ts$	reference/lifecycles	gen
 ^packages/sdk/commerce/(src|scripts)/	reference/rest-api docs/content/sdks.md	prose
 ^(packages/sdk/catalog/(src|scripts)/|apps/delivery/src/catalog/routes\.ts$)	guides/product-catalog docs/content/sdks.md	prose
+^(packages/core/src/hosted-checkout|apps/engine/src/(checkout/hosted|assistant/checkouts)|apps/storefront/app/(lib/hosted-checkout\.server|routes/checkout(-start)?))\.tsx?$	guides/hosted-checkout reference/rest-api docs/architecture.md docs/configuration.md	prose

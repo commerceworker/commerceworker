@@ -6,12 +6,15 @@
  */
 
 import {
+  BASE_CURRENCY,
+  CHECKOUT_TTL_MS,
   type CheckoutIssue,
   type CheckoutSession,
   type FlowVersion,
   isExpired,
   isPickup,
   missingInfo,
+  newId,
   openStatus,
   pickupLineIssues,
   type UcpCheckoutInput,
@@ -20,6 +23,28 @@ import { checkoutSessions } from '../wire';
 import type { CheckoutCaller } from './caller';
 import { pickupCheck } from './pickup';
 import { quoteCheckout } from './quote';
+
+/** A session with nothing in it yet, owned by `ownerId`; the caller patches it and prices it (`refresh`). */
+export function newSession(ownerId: string, now = Date.now()): CheckoutSession {
+  return {
+    id: newId('chk'),
+    ownerId,
+    status: 'incomplete',
+    currency: BASE_CURRENCY,
+    lines: [],
+    buyer: {},
+    fulfillment: 'ship',
+    shipTo: null,
+    shippingOption: null,
+    quote: null,
+    issues: [],
+    orderId: null,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: now + CHECKOUT_TTL_MS,
+    version: 1,
+  };
+}
 
 /** The caller's session, or null when it is another owner's or doesn't exist. */
 export const load = (env: Env, caller: CheckoutCaller, id: string) =>
@@ -55,7 +80,11 @@ export async function refresh(
   caller: CheckoutCaller,
   input?: UcpCheckoutInput,
 ): Promise<CheckoutSession> {
-  const { quote, issues } = await quoteCheckout(env, flow, s);
+  // A session for a customer is priced as theirs (contract prices, credit), on its caller's channel.
+  const { quote, issues } = await quoteCheckout(env, flow, s, {
+    channel: caller.channel,
+    ...(s.customerId ? { customerId: s.customerId } : {}),
+  });
   const priced = { ...s, quote };
   // The stores that could take the order are worked out once, here, and kept on the session for
   // every response; a store the platform chose must be one of them.

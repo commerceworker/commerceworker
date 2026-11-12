@@ -56,7 +56,29 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    bound to `StorefrontApi` (`StorefrontRpc`), not `EngineApi`: no method without an actor, and
    its `fetch` serves only `/agents/cart-agent/*` and `/ucp/*`. A new method on it must take a
    buyer signed for the cart and admit them only to that cart (`buyerOf`); a new envelope the
-   storefront signs goes under the storefront key.
+   storefront signs goes under the storefront key. A hosted checkout's buyer is named twice, because
+   the storefront's key alone must never mint one: by a cookie secret the engine minted when the
+   one-time start link was redeemed (the storefront carries it; the engine stores and compares only
+   its SHA-256, the session's owner `hosted:<hash>`, in constant time, so a stored owner is no
+   credential; the link's own `hosted-start:<hash>` is a different owner, so a link is never a
+   cookie) and by a guest `a1` actor signed for `checkout:<id>` (`apps/engine/src/checkout/hosted.ts`
+   `buyerOf`). A UCP platform's session, or anyone else's, is `null`; with the `storefront` setting
+   off every method refuses; a buyer's patch is strict, so no price, owner or status can be set, and a buyer is shown an explicit
+   projection (`hostedView`), never the stored session. A start link redeems only by POST; a GET
+   spends nothing. A hosted buyer pays with their own instrument: never on-account, never the
+   customer's credit or saved cards, unless the operator explicitly allows it. `completeCheckout`
+   completes only in test mode (`PAYMENTS_MODE` `mock`: a payment is recorded, none is taken), with the
+   same cookie-secret and actor checks as every call; with real payments it completes nothing.
+   It completes only the version and total the buyer's page showed (else `changed`, no order), and
+   re-checks the flow it loads with `checkoutFlowProblem`; a payment-less authorizer throws outside
+   test mode. REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
+   `POST /api/v1/storefront/settings` accept an admin API token with no person-confirm, though their
+   tools are in `PERSON_CONFIRMS_TOOLS` (over MCP, A2A and the app a person confirms on a card). They
+   are hand-written REST like the rest of the admin routes: the call is the admin's own deliberate
+   write (an admin token can already create integrations and revoke platforms the same way), and each is
+   audited (`ucp.settings`, `checkout.settings`) with the token as actor. `runOperation` (the generic
+   REST path) does refuse a token a person-confirmed tool; keep any new settings route consistent with
+   `set_ucp_settings`, whichever path it takes.
 3. **`/mcp`, `/a2a` and `/api/v1` are separate OAuth resources** (RFC 8707, `apps/web/app/lib/oauth.server.ts`):
    a token works only at the endpoint it was granted for. An OAuth grant at `/api/v1` carries its `grant`
    and is never a `person` (no step-up, no confirmation of what a person confirms), as over MCP. A consent grants a role no higher than

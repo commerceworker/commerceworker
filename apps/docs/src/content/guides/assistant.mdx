@@ -124,6 +124,7 @@ sent until you press the confirm button, and declining leaves everything as it w
 | `start_order` | `operator` | Starts an order on a published flow: its lines, and optionally a customer or guest contact, fulfilment, channel, currency, title and document text. The card lists everything the order acts on: its lines, the customer or the guest's email (where the flow's messages go), fulfilment, and any title, currency, channel or document text (its length and opening). It is blocked for an unpublished flow, an unknown SKU or customer, both a customer and a guest, a pickup or carry-out without a store, or a currency with no rate |
 | `restart_order` | `operator` | Starts a fresh order like an existing one, on its flow's current version, without demo failure switches; the old order stays as it is |
 | `cancel_cart` | `operator` | Cancels an open or locked cart; nothing is ordered |
+| `create_checkout` | `operator` | Makes a [hosted checkout](/guides/hosted-checkout/) for a buyer (lines, and optionally the buyer, ship-to and customer) and returns the one-time link that opens it. No confirm card: nothing is ordered until the buyer completes it |
 | `create_promotion` | `operator` | Adds a promotion, active at once: a code or an automatic one (no code, named), a percentage or amount off, free shipping or buy X, get Y (the card says the rule in words), optionally limited by subtotal, SKUs, customer, end date and uses, capped per order, with a priority and exclusive or stackable combining, and an optional JSON Logic `condition` with the message a buyer gets when it fails (the card shows the condition as written) |
 | `set_promotion_status` | `operator` | Pauses a promotion or reactivates it |
 | `create_price_book` | `operator` | Adds a price book in draft: a code, a name, a priority and optional dates. It prices nothing until it has entries, is assigned and is active |
@@ -166,6 +167,7 @@ A2A skills. Only a signed-in person verifies a certificate, never an API token.
 | `revoke_integration` | `admin` | Revokes an integration's signing keys at once. The card shows its name and when it was last used |
 | `revoke_ucp_platform` | `admin` | Revokes an AI shopping platform's key; its checkouts and orders stay. The card shows its name and when it was last used |
 | `set_ucp_settings` | `admin` | Sets agentic checkout's flow (none turns it off), legal links and order page URL, as the REST API does; refused for a flow that never authorizes a card |
+| `set_storefront_settings` | `admin` | Turns [hosted checkout](/guides/hosted-checkout/) on or off, names the flow that prices it and whether buyers may change the lines, as the REST API does; refused to turn on with a flow that never authorizes a card. A person confirms it, never a typed A2A skill |
 | `publish_catalog` | `operator` | Publishes up to 500 products' staged edits to the live catalog, each product all or none. The card lists each product and its staged fields, and is held to them |
 | `test_flow` | `operator` | Publishes a flow's saved draft when it changed since the live version, then starts a test order with a demo input; the card says which |
 

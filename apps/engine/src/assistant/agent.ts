@@ -349,7 +349,8 @@ export class AssistantAgent extends AIChatAgent<Env> {
           },
         }),
       pruneMessages({
-        messages: await convertToModelMessages(answeredOnly(this.messages)),
+        // With the tools, so an earlier turn's result reaches the model as `modelView` says.
+        messages: await convertToModelMessages(answeredOnly(this.messages), { tools }),
         reasoning: 'before-last-message',
         toolCalls: 'before-last-2-messages',
       }),
@@ -381,6 +382,8 @@ export class AssistantAgent extends AIChatAgent<Env> {
           tool({
             description: confirm ? `${description} The person confirms first.` : description,
             inputSchema: TOOL_INPUTS[name] as z.ZodObject,
+            // What the model reads of a result, where it differs from what the panel shows.
+            ...(modelView[name] ? { toModelOutput: modelView[name] } : {}),
             ...(confirm ? { needsApproval: true } : {}),
             execute: async (input: ToolInput<typeof name>, { toolCallId }) =>
               runTool(this.env, await this.caller(), name, input, {
@@ -394,6 +397,25 @@ export class AssistantAgent extends AIChatAgent<Env> {
     );
   }
 }
+
+/**
+ * A tool whose result holds a credential the person should see and the model should not: the
+ * panel shows the whole result, the model (and so the next turn's context) gets this instead.
+ */
+export const modelView: Partial<
+  Record<
+    AssistantTool,
+    (r: { output: unknown }) => { type: 'json'; value: { id: string | null; link: string } }
+  >
+> = {
+  create_checkout: ({ output }) => ({
+    type: 'json',
+    value: {
+      id: (output as { id?: string }).id ?? null,
+      link: 'shown to the user; it is a one-time link you cannot see',
+    },
+  }),
+};
 
 const connectionKey = (id: string) => `connection:${id}`;
 

@@ -337,7 +337,7 @@ describe('MCP', () => {
     });
     expect(viewer.every((t) => t.outputSchema)).toBe(true);
     const operator = await tools(person('operator', 'ops@example.com'));
-    expect(operator).toHaveLength(93);
+    expect(operator).toHaveLength(94);
     // A demo scenario starts only from its page's button: never listed here.
     expect(operator.find((t) => t.name === 'start_scenario')).toBeUndefined();
     expect(operator.find((t) => t.name === 'decide_approvals')).toMatchObject({
@@ -379,6 +379,13 @@ describe('MCP', () => {
     });
     expect(operator.find((t) => t.name === 'put_budget')).toMatchObject({
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    });
+    // A hosted checkout's link is an operator's, with no confirm: nothing is ordered until the buyer
+    // completes it, and the link opens once. A viewer is not offered it.
+    expect(viewer.map((t) => t.name)).not.toContain('create_checkout');
+    expect(operator.find((t) => t.name === 'create_checkout')).toMatchObject({
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      outputSchema: { type: 'object', properties: { id: {}, url: {} } },
     });
     // Purchase orders: a viewer reads them; an operator drafts without a confirm (nothing starts),
     // and submitting starts an order while cancelling ends one, each the same again as once.
@@ -452,11 +459,12 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(116);
+    expect(admin).toHaveLength(119);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
       'get_plugin_usage',
+      'get_storefront_settings',
       'get_ucp_settings',
       'list_audit_events',
       'list_integrations',
@@ -680,6 +688,7 @@ describe('MCP', () => {
         'revoke_integration',
         'revoke_ucp_platform',
         'set_ucp_settings',
+        'set_storefront_settings',
       ]) {
         expect(
           adminTools.find((t) => t.name === name),
@@ -707,6 +716,8 @@ describe('MCP', () => {
           'revoke_integration',
           'revoke_ucp_platform',
           'set_ucp_settings',
+          'get_storefront_settings',
+          'set_storefront_settings',
         ])
           expect(names, `${name} for a ${role}`).not.toContain(name);
       }
@@ -822,6 +833,82 @@ describe('MCP', () => {
       // Nothing a secret in any preview or result.
       for (const out of [hook, integration, platform, set, off].flatMap((r) => r.outputs))
         expect(JSON.stringify(out.structuredContent)).not.toMatch(SECRETS);
+    });
+
+    it('turns hosted checkout on and off on a card, audited, and refuses a flow that takes no card', async () => {
+      await seed();
+      const read = async () =>
+        (await call(admin, 'get_storefront_settings', {})).structuredContent as {
+          settings: { checkout: Record<string, unknown> };
+        };
+      expect((await read()).settings.checkout).toEqual({
+        enabled: false,
+        checkoutFlowId: null,
+        editLines: false,
+      });
+
+      const on = await confirm(admin, 'set_storefront_settings', {
+        checkout: { enabled: true, checkoutFlowId: 'tpl-storefront-order', editLines: true },
+      });
+      expect(on.preview.title).toBe('Turn hosted checkout on');
+      expect(on.preview.consequences.join('\n')).toMatch(/Buyers may change the lines/);
+      expect(on.done).toMatchObject({ done: 'Saved hosted checkout' });
+      expect((await read()).settings.checkout).toEqual({
+        enabled: true,
+        checkoutFlowId: 'tpl-storefront-order',
+        editLines: true,
+      });
+      expect((await audited('checkout.settings')).at(-1)).toMatchObject({
+        actor: 'ann@example.com',
+        detail: {
+          enabled: true,
+          flow: 'tpl-storefront-order',
+          editLines: true,
+          fromFlow: null,
+          wasEnabled: false,
+          via: 'mcp',
+          tool: 'set_storefront_settings',
+        },
+      });
+
+      // A code is for the input it previewed.
+      const first = await call(admin, 'set_storefront_settings', { checkout: { enabled: false } });
+      const wider = await call(admin, 'set_storefront_settings', {
+        checkout: { enabled: false, editLines: true },
+        confirmation: first.structuredContent!.confirmation,
+      });
+      expect(wider.isError).toBe(true);
+      expect(wider.content[0]!.text).toMatch(/different action or input/);
+      expect((await read()).settings.checkout.enabled).toBe(true);
+
+      const off = await confirm(admin, 'set_storefront_settings', { checkout: { enabled: false } });
+      expect(off.preview.title).toBe('Turn hosted checkout off');
+      expect(off.preview.consequences.join('\n')).toMatch(/links stops working|link stops working/);
+      expect((await read()).settings.checkout.enabled).toBe(false);
+
+      // Refused at the preview, with no code issued: a flow that is not there or never holds a
+      // card, and no flow at all (agentic checkout has none here either).
+      for (const [checkout, why] of [
+        [{ enabled: true, checkoutFlowId: 'tpl-nope' }, 'No published flow tpl-nope'],
+        [
+          { enabled: true, checkoutFlowId: 'tpl-b2b-order' },
+          'The checkout flow must authorize the payment (commerce.authorize_payment).',
+        ],
+      ] as const) {
+        const r = await call(admin, 'set_storefront_settings', { checkout });
+        expect(r.isError).toBe(true);
+        expect(r.content[0]!.text).toBe(why);
+        expect(r.structuredContent?.confirmation).toBeUndefined();
+      }
+      expect((await read()).settings.checkout.enabled).toBe(false);
+      // A lower role never reaches it.
+      const operatorCall = await rpc(operator, 'tools/call', {
+        name: 'set_storefront_settings',
+        arguments: { checkout: { enabled: true } },
+      });
+      expect(operatorCall.body).toMatchObject({
+        error: { message: 'Tool set_storefront_settings not found' },
+      });
     });
 
     it('refuses a confirm for another input, and previews nothing it would refuse', async () => {
