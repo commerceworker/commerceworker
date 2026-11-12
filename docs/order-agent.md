@@ -78,8 +78,10 @@ and syncs the index:
 - Building the next state touches only the broadcast tail: `log()` writes the entry to SQL and
   returns the newest 50, never copying the whole timeline.
 
-After a status change or an order patch the agent writes the index row (`syncIndex`). When the
-status becomes `failed` it schedules `checkInstance` to run 5 seconds later.
+After a status change or an order patch the agent writes the index row (`syncIndex`). While the
+status is `failed`, no rollback outcome is recorded and no `checkInstance` is scheduled, a report
+schedules it to run 5 seconds later: not only the one that changed the status, so a `run:failed`
+the Workflow sends again after a failed first delivery still starts the watch.
 
 ### Node timing
 
@@ -95,6 +97,17 @@ replayed snapshots, deduped keys, new generations and sticky terminal statuses, 
 synced state against the full snapshot.
 
 ## The orders index
+
+A write that fails never undoes the report, wait or cancel it rides on and never throws past it
+(`mirrorIndex`; only `erasePersonalData` lets it throw, so its caller knows the erasure didn't
+land). The agent marks the row behind in its `index_sync` table and schedules `retryIndex`, which
+tries again after 15 seconds and then with doubling waits (at most 5 minutes) for as long as D1
+refuses; from the fifth try each failure logs `order_index_stuck` at error level. A report that
+arrives while the row is behind writes it too. Without this the `orders` row would keep a
+status the agent has left (lists wrong, retention erasure selecting by D1 status never finding
+the order). An order whose D1 row is gone (a restored database) is not an error that retrying
+can fix: `OrderRecords.index` answers `false`, the agent logs `order_index_missing` at error
+level and carries on, and the next report tries again, so a row put back is filled in.
 
 `syncIndex` derives the row with core's `orderIndexRow` (`packages/core/src/order-index.ts`) and, when it changed, writes it through the order records port. It updates the order's D1 `orders` row from state: `status`, `total`, `customer_id`,
 `title`, `fx_rate`, `instance_id`, `generation`, `waiting_on` (the titles of open waits joined with ` · `),
@@ -207,8 +220,16 @@ order won't hold it and hasn't ended.
 
 ## Cancel
 
-`cancel` terminates the Workflow instance (logging, not failing, if that throws), runs
-`compensateOrder` (the use-case in `packages/application/src/commerce/compensate-order.ts`, unit tested over the in-memory stores: release held stock, void open authorizations, cancel booked shipments and staged pickups, cancel seller orders, reverse scheduled payouts, revoke issued digital codes, void unpaid Stripe invoices, restock consumed stock once no shipment is live, then reverse on-account invoice charges not already settled by a paid invoice), marks
+`cancel` stops the Workflow instance with `terminate({ rollback: true })`, so the compensations the
+instance's finished steps registered run (a plugin node's included, which `compensateOrder` can't
+reach). If `terminate` throws and the instance's status is not `errored`, `terminated` or
+`complete`, the run may still capture or ship, so the cancel fails: nothing is compensated, the
+order is not marked cancelled, the timeline says `Cancel pending`, `cancel` answers
+`{ ok: false, error }` (`EngineRpc.cancel`: `reason: 'not_stopped'`, the REST route's `503`), and
+`retryCancel` tries again after 15 seconds and then with doubling waits (at most 5 minutes);
+from the fifth try it logs `cancel_not_stopped` at error level. Once the instance is stopped, or
+was already finished, it runs
+`compensateOrder` (the use-case in `packages/application/src/commerce/compensate-order.ts`, unit tested over the in-memory stores: release held stock, void open authorizations, cancel booked shipments and staged pickups, cancel seller orders, reverse scheduled payouts, revoke issued digital codes, give back promotion redemptions, void unpaid Stripe invoices, restock consumed stock once no shipment is live, then reverse on-account invoice charges not already settled by a paid invoice), marks
 every pending approval row `cancelled`, sets status `cancelled` with the reason and clears the
 waits. Terminating means no End node runs, so the agent announces the ending itself: it schedules
 `emitWebhook` for `order.cancelled`. A second `cancel` that arrives while the first is still running returns `{ ok: false }` without doing anything.
@@ -250,9 +271,11 @@ digest is the last one delivered. A failure worth retrying is rescheduled with t
 ## Rollback outcome
 
 A failed instance runs its compensations inside Workflows, after the order is already `failed`.
-`checkInstance` polls the instance status every 10 seconds (up to 60 attempts) until it is
-`errored`, `terminated` or `complete`, then records `rollback` from the instance's `rollback`
-field. Runtimes that omit that field (including local dev) fall back to the node reports: an
+`checkInstance` polls the instance status (every 10 seconds for the first minute, then with
+doubling waits up to 5 minutes, `instancePollDelayS`, with no cap on the attempts: a rollback's
+steps retry with their own delays and can outlast any fixed poll) until it is `errored`,
+`terminated` or `complete`, then records `rollback` from the instance's `rollback` field. A rollback that
+failed logs `rollback_failed` at error level, which Workers Issues turns into an alert. Runtimes that omit that field (including local dev) fall back to the node reports: an
 errored instance with any `rolled_back` node counts as a complete rollback. A complete rollback
 sets status `rolled_back`; a failed one stays `failed` with the error.
 

@@ -8,6 +8,7 @@ import {
   InMemoryInvoiceStore,
   InMemoryMarketplaceStore,
   InMemoryPaymentLedger,
+  InMemoryPricingStore,
   InMemoryShippingStore,
   paymentModeFor,
 } from '@commerceworker/test-kit/commerce';
@@ -45,6 +46,7 @@ function ports() {
     labels: new FakeLabelService(),
     marketplace: new InMemoryMarketplaceStore(),
     fulfillment: new InMemoryFulfillmentStore(),
+    pricing: new InMemoryPricingStore({}, clock),
   };
 }
 
@@ -136,6 +138,7 @@ describe('cancelling an order', () => {
       unbilled: 0,
       creditReleased: 0,
       budgetSpendReversed: 0,
+      promotionsReleased: 0,
       invoicesVoided: 0,
       invoicesPaid: [],
       labelsNotVoided: 0,
@@ -172,5 +175,41 @@ describe('cancelling an order', () => {
     expect(await spent()).toBe(0);
     expect(await compensateOrder(p, 'o1', 3)).toMatchObject({ budgetSpendReversed: 0 });
     expect(await spent()).toBe(0);
+  });
+
+  it('gives back the promotion redemptions the order held, once', async () => {
+    const p = ports();
+    const promotion = { id: 'promo_1', maxRedemptions: 1 };
+    expect(
+      await p.pricing.redeem({
+        promotion,
+        orderId: 'o1',
+        customerId: 'ada',
+        amount: 5,
+        stepKey: 'discount#1',
+      }),
+    ).toBe(true);
+    // The cap is spent: another order can't redeem until this one lets go.
+    expect(
+      await p.pricing.redeem({
+        promotion,
+        orderId: 'o2',
+        customerId: 'ada',
+        amount: 5,
+        stepKey: 'discount#1',
+      }),
+    ).toBe(false);
+
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({ promotionsReleased: 1 });
+    expect(await compensateOrder(p, 'o1', 2)).toMatchObject({ promotionsReleased: 0 });
+    expect(
+      await p.pricing.redeem({
+        promotion,
+        orderId: 'o2',
+        customerId: 'ada',
+        amount: 5,
+        stepKey: 'discount#1',
+      }),
+    ).toBe(true);
   });
 });

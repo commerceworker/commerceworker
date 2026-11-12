@@ -64,7 +64,7 @@ import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
 import { approvalPorts, orderRecords, paymentLedger, purchaseOrderStore } from './wire';
-import { plural } from './words';
+import { capReason, plural } from './words';
 
 /** What recording a vote answered: where the vote stands, or why it couldn't be taken. */
 export type VoteResult =
@@ -95,6 +95,22 @@ type ConnectionState = { principal: ProxiedPrincipal | null };
 // Retries of the agent's smaller jobs (watchers, a hold's release, a UCP sync): 5, with exponential
 // backoff from 10 seconds. Webhook events retry for a day (`EVENT_RETRIES`).
 const WEBHOOK_RETRIES = 5;
+/** A cancel whose run couldn't be stopped is tried again after this many seconds, then doubling. */
+const CANCEL_RETRY_S = 15;
+const CANCEL_RETRIES_BEFORE_ALERT = 5;
+/** A D1 index write that failed is retried after this many seconds, then with doubling waits. */
+const INDEX_RETRY_S = 15;
+const INDEX_RETRIES_BEFORE_ALERT = 5;
+/** The longest wait between polls of the Workflow or retries of a store, in seconds. */
+const POLL_MAX_S = 300;
+
+/**
+ * The wait before poll `attempt` of a Workflow instance: 10 seconds for the first minute, then
+ * doubling up to `POLL_MAX_S`. A rollback can outlast any fixed number of polls (its steps retry
+ * with their own delays), so the polling has no cap, only a longest interval.
+ */
+export const instancePollDelayS = (attempt: number) =>
+  Math.min(10 * 2 ** Math.floor(attempt / 6), POLL_MAX_S);
 /** Statuses an order ends in without having been fulfilled. */
 const UNFULFILLED: readonly OrderStatus[] = ['cancelled', 'declined', 'failed', 'rolled_back'];
 
@@ -186,6 +202,9 @@ export class OrderAgent extends Agent<Env, State> {
       .sql`CREATE TABLE IF NOT EXISTS order_inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, payload TEXT NOT NULL, at INTEGER NOT NULL, taken_by TEXT)`;
     // What the order's waits were given (`eventDigest`), so a resend isn't held for a later pass.
     this.sql`CREATE TABLE IF NOT EXISTS order_delivered (digest TEXT PRIMARY KEY)`;
+    // Whether the D1 index row is behind this object's state (a write that failed), until a retry lands it.
+    this
+      .sql`CREATE TABLE IF NOT EXISTS index_sync (id INTEGER PRIMARY KEY, dirty INTEGER NOT NULL DEFAULT 0)`;
     this.tablesReady = true;
     // An order begun while the flow and the whole timeline were kept in state: move them out.
     const s = this.state;
@@ -321,9 +340,72 @@ export class OrderAgent extends Agent<Env, State> {
     if (!s.orderId || !s.order) return;
     const row = orderIndexRow({ ...s, order: s.order }, this.pinnedFlow());
     const key = JSON.stringify(row);
-    if (key === this.indexed) return;
-    await this.records().index(s.orderId, row);
-    this.indexed = key;
+    if (key === this.indexed && !this.indexDirty()) return;
+    try {
+      const written = await this.records().index(s.orderId, row);
+      // An order whose D1 row is gone (a restored database) can't be indexed, and no retry would
+      // change that: say so loudly, but never throw, so the order keeps running. `indexed` stays
+      // unset, so the next report tries again and a row put back is filled in.
+      if (!written)
+        console.error(JSON.stringify({ type: 'order_index_missing', orderId: s.orderId }));
+      else this.indexed = key;
+      this.setIndexDirty(false);
+    } catch (err) {
+      this.setIndexDirty(true);
+      throw err;
+    }
+  }
+
+  private indexDirty(): boolean {
+    this.tables();
+    return !!this.sql<{ dirty: number }>`SELECT dirty FROM index_sync WHERE id = 1`[0]?.dirty;
+  }
+
+  private setIndexDirty(dirty: boolean) {
+    this.sql`INSERT OR REPLACE INTO index_sync (id, dirty) VALUES (1, ${dirty ? 1 : 0})`;
+  }
+
+  /**
+   * `syncIndex` that never throws past its caller: a D1 error can't undo the state the report, wait
+   * or cancel has already saved, and a throw there would also skip what follows it (a failed
+   * order's rollback watch). The row is marked behind and retried from an alarm (`retryIndex`).
+   */
+  private async mirrorIndex() {
+    try {
+      await this.syncIndex();
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          type: 'order_index_failed',
+          orderId: this.state.orderId,
+          error: String(err),
+        }),
+      );
+      if (!this.getSchedules().some((s) => s.callback === 'retryIndex'))
+        await this.schedule(INDEX_RETRY_S, 'retryIndex', { attempt: 1 });
+    }
+  }
+
+  /** A write that failed, tried again with a growing wait, for as long as D1 refuses it. */
+  async retryIndex(p: { attempt: number }) {
+    try {
+      await this.syncIndex();
+    } catch (err) {
+      // Past a few tries this is an incident, not a blip: the order's list row and its retention
+      // erasure (which selects by D1 status) are wrong until it lands.
+      if (p.attempt >= INDEX_RETRIES_BEFORE_ALERT)
+        console.error(
+          JSON.stringify({
+            type: 'order_index_stuck',
+            orderId: this.state.orderId,
+            attempt: p.attempt,
+            error: String(err),
+          }),
+        );
+      await this.schedule(Math.min(INDEX_RETRY_S * 2 ** p.attempt, POLL_MAX_S), 'retryIndex', {
+        attempt: p.attempt + 1,
+      });
+    }
   }
 
   /** What the purchase order last got from this object, so an unchanged report writes nothing. */
@@ -452,11 +534,13 @@ export class OrderAgent extends Agent<Env, State> {
 
     if (folded.finished) await this.recordRun(folded.finished.id, folded.finished.run);
 
-    if (folded.statusChanged || r.order) await this.syncIndex();
+    if (folded.statusChanged || r.order || this.indexDirty()) await this.mirrorIndex();
     // A finished order takes no more events: what it held goes.
     if (folded.statusChanged && TERMINAL_ORDER_STATUSES.includes(next.status)) this.forgetEvents();
     // A failed order rolls back inside the Workflow; poll it until it settles to record the outcome.
-    if (folded.statusChanged && next.status === 'failed')
+    // Not only on the change to failed: a report the Workflow sends again finds the status already
+    // there, and a poll that was never scheduled (or has stopped) would leave the rollback unrecorded.
+    if (next.status === 'failed' && !next.rollback && !this.polling())
       await this.schedule(5, 'checkInstance', { attempt: 0 });
     await this.mirrorPurchaseOrder();
   }
@@ -523,7 +607,7 @@ export class OrderAgent extends Agent<Env, State> {
         key: `open:${w.eventType}`,
       }),
     });
-    await this.syncIndex();
+    await this.mirrorIndex();
     await this.mirrorPurchaseOrder();
     await this.deliverHeld(w);
   }
@@ -552,7 +636,7 @@ export class OrderAgent extends Agent<Env, State> {
         key: `close:${eventType}`,
       }),
     });
-    await this.syncIndex();
+    await this.mirrorIndex();
   }
 
   async continuedAs(instanceId: string, generation: number) {
@@ -567,7 +651,11 @@ export class OrderAgent extends Agent<Env, State> {
         key: `gen:${generation}`,
       }),
     });
-    await this.syncIndex();
+    await this.mirrorIndex();
+  }
+
+  private polling() {
+    return this.getSchedules().some((s) => s.callback === 'checkInstance');
   }
 
   async checkInstance(payload: { attempt: number }) {
@@ -580,8 +668,9 @@ export class OrderAgent extends Agent<Env, State> {
     };
     const settled = ['errored', 'terminated', 'complete'].includes(st.status);
     if (!settled) {
-      if (payload.attempt < 60)
-        await this.schedule(10, 'checkInstance', { attempt: payload.attempt + 1 });
+      await this.schedule(instancePollDelayS(payload.attempt), 'checkInstance', {
+        attempt: payload.attempt + 1,
+      });
       return;
     }
     // Older runtimes (and local dev) omit `rollback`; fall back to the rollback reports we received.
@@ -592,6 +681,14 @@ export class OrderAgent extends Agent<Env, State> {
         ? { outcome: 'complete' as const, error: null }
         : null);
     if (!rb) return;
+    if (rb.outcome === 'failed')
+      console.error(
+        JSON.stringify({
+          type: 'rollback_failed',
+          orderId: this.state.orderId,
+          error: rb.error?.message ?? null,
+        }),
+      );
     this.patch({
       rollback: { outcome: rb.outcome, error: rb.error?.message ?? null },
       status: rb.outcome === 'complete' ? 'rolled_back' : 'failed',
@@ -602,7 +699,7 @@ export class OrderAgent extends Agent<Env, State> {
         key: 'rollback:done',
       }),
     });
-    await this.syncIndex();
+    await this.mirrorIndex();
     await this.mirrorPurchaseOrder();
   }
 
@@ -909,6 +1006,12 @@ export class OrderAgent extends Agent<Env, State> {
     this.cancelling = true;
     try {
       const done = await this.cancelOrder(reason);
+      if (!done.ok) {
+        // The run couldn't be stopped: nothing was undone, and a retry is queued (once).
+        if (!this.getSchedules().some((s) => s.callback === 'retryCancel'))
+          await this.schedule(CANCEL_RETRY_S, 'retryCancel', { reason, actor: caller, attempt: 1 });
+        return { ok: false, error: done.error };
+      }
       if (caller)
         await recordAudit(this.env, 'order.cancelled', {
           actor: caller,
@@ -921,13 +1024,84 @@ export class OrderAgent extends Agent<Env, State> {
     }
   }
 
-  private async cancelOrder(reason: string) {
-    if (this.state.instanceId) {
-      try {
-        await (await this.env.ORDER_WORKFLOW.get(this.state.instanceId)).terminate();
-      } catch (err) {
-        console.warn('terminate', err);
+  /** A cancel whose run couldn't be stopped, tried again (nothing was compensated meanwhile). */
+  async retryCancel(p: { reason: string; actor: Principal | null; attempt: number }) {
+    if (TERMINAL_ORDER_STATUSES.includes(this.state.status)) return;
+    if (this.cancelling) return;
+    this.cancelling = true;
+    try {
+      const done = await this.cancelOrder(p.reason);
+      if (done.ok) {
+        if (p.actor)
+          await recordAudit(this.env, 'order.cancelled', {
+            actor: p.actor,
+            target: this.state.orderId,
+            detail: { reason: p.reason, via: 'app' },
+          });
+        return;
       }
+      if (p.attempt >= CANCEL_RETRIES_BEFORE_ALERT)
+        console.error(
+          JSON.stringify({
+            type: 'cancel_not_stopped',
+            orderId: this.state.orderId,
+            attempt: p.attempt,
+            error: done.error,
+          }),
+        );
+      await this.schedule(Math.min(CANCEL_RETRY_S * 2 ** p.attempt, POLL_MAX_S), 'retryCancel', {
+        reason: p.reason,
+        actor: p.actor,
+        attempt: p.attempt + 1,
+      });
+    } finally {
+      this.cancelling = false;
+    }
+  }
+
+  /**
+   * Stops the Workflow instance, running the rollbacks its finished steps registered (a plugin's
+   * included, which `compensateOrder` can't reach). True once it is stopped or was already
+   * finished (`terminate` throws for those, and the status confirms it); an instance that is
+   * still running after a failed `terminate` may yet capture or ship, so it is not stopped.
+   */
+  private async stopInstance(): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.state.instanceId) return { ok: true };
+    try {
+      const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
+      try {
+        await instance.terminate({ rollback: true });
+        return { ok: true };
+      } catch (err) {
+        const { status } = await instance.status();
+        if (['errored', 'terminated', 'complete'].includes(status)) return { ok: true };
+        throw err;
+      }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private async cancelOrder(reason: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const stopped = await this.stopInstance();
+    if (!stopped.ok) {
+      // Compensating now would undo what the still-running Workflow goes on to redo (capture,
+      // ship), and the order would read cancelled while it did. Say so on the order instead.
+      console.error(
+        JSON.stringify({
+          type: 'cancel_terminate_failed',
+          orderId: this.state.orderId,
+          error: stopped.error,
+        }),
+      );
+      this.patch({
+        timeline: this.log({
+          kind: 'order',
+          message: `Cancel pending: the run could not be stopped (${capReason(stopped.error, 200)}); trying again`,
+          key: 'cancel:stuck',
+        }),
+      });
+      return { ok: false, error: stopped.error };
     }
     const undone = this.state.orderId ? await compensateOrder(this.env, this.state.orderId) : null;
     if (this.state.orderId) {
@@ -944,7 +1118,7 @@ export class OrderAgent extends Agent<Env, State> {
         message: `Cancelled: ${reason}${undone ? ` (${undoneText(undone)})` : ''}`,
       }),
     });
-    await this.syncIndex();
+    await this.mirrorIndex();
     await this.mirrorPurchaseOrder();
     // Cancelling terminates the Workflow, so no End node announces it; the agent does.
     await this.schedule(0, 'emitWebhook', {
@@ -1172,6 +1346,8 @@ function undoneText(u: Awaited<ReturnType<typeof compensateOrder>>) {
   if (u.creditReleased) parts.push(`released ${plural(u.creditReleased, 'credit hold')}`);
   if (u.budgetSpendReversed)
     parts.push(`gave back ${plural(u.budgetSpendReversed, 'budget spend')}`);
+  if (u.promotionsReleased)
+    parts.push(`gave back ${plural(u.promotionsReleased, 'promotion redemption')}`);
   if (u.sellerOrdersCancelled) parts.push(plural(u.sellerOrdersCancelled, 'seller order'));
   if (u.payoutsReversed) parts.push(`reversed ${plural(u.payoutsReversed, 'payout')}`);
   if (u.revoked) parts.push(`revoked ${plural(u.revoked, 'code')}`);

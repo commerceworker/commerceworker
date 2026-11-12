@@ -302,11 +302,14 @@ export interface EngineRpc {
         error?: string;
       }
   >;
-  /** `finished` when the order had already ended, so there was nothing to cancel. */
+  /**
+   * `finished` when the order had already ended, so there was nothing to cancel; `not_stopped` when
+   * its run couldn't be stopped, so nothing was undone and the cancel is retried.
+   */
   cancel(
     orderId: string,
     reason: string,
-  ): Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'finished' }>;
+  ): Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'finished' | 'not_stopped' }>;
   snapshot(orderId: string): Promise<OrderState | null>;
   copilot(req: CopilotRequest): Promise<CopilotResult>;
   /** Email intake: mailbox local part → flow id, from the engine's INTAKE_MAILBOXES. */

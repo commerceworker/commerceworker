@@ -52,11 +52,12 @@ export function describeOrderRecordsContract(
 
     it("writes a started order's index row, and none for an order that hasn't started", async () => {
       const r = await fresh();
-      await r.index('oc_order', row);
+      expect(await r.index('oc_order', row)).toBe(true);
       expect(await r.indexed('oc_order')).toEqual(row);
       await r.index('oc_order', { ...row, status: 'completed', waitingOn: null });
       expect(await r.indexed('oc_order')).toMatchObject({ status: 'completed', waitingOn: null });
-      await r.index('oc_never', row);
+      // Nothing was written, and the caller is told: a missing row is data loss, not a no-op.
+      expect(await r.index('oc_never', row)).toBe(false);
       expect(await r.indexed('oc_never')).toBeUndefined();
     });
 

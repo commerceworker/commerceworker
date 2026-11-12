@@ -166,8 +166,12 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
   async cancel(orderId: string, reason: string) {
     if (!(await this.snapshot(orderId)))
       return { ok: false as const, reason: 'not_found' as const };
-    const r = (await this.agent(orderId).cancel(reason)) as { ok: boolean };
-    return r.ok ? { ok: true as const } : { ok: false as const, reason: 'finished' as const };
+    const r = (await this.agent(orderId).cancel(reason)) as { ok: boolean; error?: string };
+    if (r.ok) return { ok: true as const };
+    // The run couldn't be stopped: the order is still live and the cancel is being retried.
+    return r.error
+      ? { ok: false as const, reason: 'not_stopped' as const }
+      : { ok: false as const, reason: 'finished' as const };
   }
 
   async intakeMailboxes() {

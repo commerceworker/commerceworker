@@ -441,6 +441,11 @@ export async function handleApi(request: Request, caller: Caller): Promise<Respo
         });
         return json(res);
       }
+      if (res.reason === 'not_stopped')
+        return json(
+          { error: 'The order’s run could not be stopped yet; the cancel will be retried' },
+          503,
+        );
       return res.reason === 'not_found'
         ? json({ error: 'Not found' }, 404)
         : json({ error: 'The order has already finished' }, 409);

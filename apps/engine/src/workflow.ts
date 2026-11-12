@@ -63,7 +63,7 @@ import { instanceExists } from './orders';
 import { emit, orderSummary } from './outbox';
 import { voidAuthorizations } from './payments';
 import { execPluginNode, flowManifests, pluginRollback, usesPlugins } from './plugins';
-import { approvalPorts, balanceStore, budgetStore } from './wire';
+import { approvalPorts, balanceStore, budgetStore, pricingStore } from './wire';
 import { capReason, failureReason, orderReason, plural } from './words';
 
 export type OrderWorkflowParams = {
@@ -402,6 +402,11 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         await release('giving back its budget spend', () =>
           this.giveBackBudgetSpend(step, p, end!.nodeId, end!.key),
         );
+      // And the promotions: a redemption counts toward the code's cap until its order lets go.
+      if (flow.nodes.some((n) => n.type === 'commerce.discount'))
+        await release('giving back its promotion redemptions', () =>
+          this.giveBackRedemptions(step, p, end!.nodeId, end!.key),
+        );
     }
     // Whatever the outcome but failed (a failed run's rollbacks give the credit back), an order
     // that ends holds no credit: an invoice already converted its hold, and any left over (a card
@@ -628,6 +633,46 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
           }
         }
         return reversed;
+      },
+    );
+  }
+
+  /**
+   * Gives back the promotion redemptions the order holds, as one step (`<end key>:promotions`). A
+   * decline or cancel ends the order without failing it, so no rollback runs. Retry-safe: the
+   * release deletes by order, so a retry finds none left and reports nothing.
+   */
+  private async giveBackRedemptions(
+    step: WorkflowStep,
+    p: OrderWorkflowParams,
+    nodeId: string,
+    key: string,
+  ) {
+    const env = this.env;
+    const fx = effectKey(p.generation, key);
+    await step.do(
+      `${key}:promotions`,
+      { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+      async () => {
+        const released = await pricingStore(env).releaseRedemptions(p.orderId);
+        if (released) {
+          // Sent from inside the step, so it is reported once; a failed report doesn't redo the release.
+          try {
+            await orderAgent(env, p.orderId).report({
+              generation: p.generation,
+              log: {
+                at: Date.now(),
+                nodeId,
+                kind: 'rollback',
+                message: `Gave back ${plural(released, 'promotion redemption')}: the order ended without completing`,
+                key: `${fx}:promotions`,
+              },
+            });
+          } catch (err) {
+            console.warn('promotion release report failed', err);
+          }
+        }
+        return released;
       },
     );
   }
