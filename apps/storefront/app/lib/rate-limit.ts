@@ -3,7 +3,8 @@
  * (`API_LIMIT`), each UCP platform (`AGENT_LIMIT`) and each UCP platform's catalog search and lookup
  * (`CATALOG_LIMIT`, apart from `AGENT_LIMIT` so browsing can't use up a platform's checkouts), and on
  * the two things a hosted checkout's buyer can try that are worth guarding: promo codes
- * (`PROMO_LIMIT`) and card payments (`PAY_LIMIT`, per cookie and per address, against card testing).
+ * (`PROMO_LIMIT`) and card payments (`PAY_LIMIT`, per cookie and per address, against card testing),
+ * and a shopper's sign-in, per address (`SIGNIN_EMAIL_LIMIT`) and per client (`SIGNIN_IP_LIMIT`).
  * The budgets are Workers rate-limit bindings
  * (`apps/storefront/wrangler.jsonc`, overridden per deployment by the registry's `limits`, as the
  * web Worker's are), counted per Cloudflare location, so they stop a runaway client rather than
@@ -12,7 +13,14 @@
 
 import { env } from 'cloudflare:workers';
 
-export type Budget = 'API_LIMIT' | 'AGENT_LIMIT' | 'CATALOG_LIMIT' | 'PROMO_LIMIT' | 'PAY_LIMIT';
+export type Budget =
+  | 'API_LIMIT'
+  | 'AGENT_LIMIT'
+  | 'CATALOG_LIMIT'
+  | 'PROMO_LIMIT'
+  | 'PAY_LIMIT'
+  | 'SIGNIN_EMAIL_LIMIT'
+  | 'SIGNIN_IP_LIMIT';
 
 /** Every budget's window, in seconds: what a refused caller is told to wait. */
 export const RATE_WINDOW_S = 60;

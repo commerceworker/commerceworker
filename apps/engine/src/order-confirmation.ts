@@ -63,7 +63,7 @@ const ports = (env: Env) => ({
  * The deployment's sender. One that can't be built (a bad `EMAIL_FROM`) is a sender that refuses
  * with why, so the refusal is recorded on the order's message like any other.
  */
-function sender(env: Env): EmailSender | undefined {
+export function sender(env: Env): EmailSender | undefined {
   try {
     return emailSender(env);
   } catch (err) {

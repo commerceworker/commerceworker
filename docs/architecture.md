@@ -99,7 +99,7 @@ second entrypoint, and the only one the public storefront is bound to. It exists
 else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
 calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
 its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
-`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)), a shopper's sign-in, `startShopperSignIn`, `redeemShopperCode`, `redeemShopperLink`, `shopper` and `shopperSignOut` (see [Shoppers](#shoppers)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
 (anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
 an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
 whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
@@ -163,8 +163,9 @@ receives messages from Email Routing and hands them to `receiveEmail`; see
 
 ### Storefront routing
 
-`apps/storefront/workers/app.ts` is the buyer's side. It serves no admin, has no sign-in and holds no
-session: a buyer's only credential is the cookie a start link sets, and a platform's only one is its key. It binds no
+`apps/storefront/workers/app.ts` is the buyer's side. It serves no admin and holds no session of its own: a
+buyer's credential is the cookie a start link sets or, for a shopper who signed in, the one an emailed code or
+link sets (the engine mints both and keeps only a hash), and a platform's is its key. It binds no
 database and no bucket and holds no `PRINCIPAL_KEY`: it reaches the engine only through `StorefrontApi` (see
 [Engine RPC](#engine-rpc)) and signs with its derived key.
 
@@ -175,7 +176,7 @@ database and no bucket and holds no `PRINCIPAL_KEY`: it reaches the engine only 
 | `/ucp`, `/ucp/*` | `ucpFetch`, by a registered platform's key, before the cross-site check (a platform is no browser and holds no cookie) |
 | any state-changing request or WebSocket upgrade | `crossOrigin` (`@commerceworker/security/origin`): its `Origin` must be this host, or `403`. The buyer's cookie is `SameSite=None` (their system frames the cart), so this is what stops another site posting with it |
 | `/agents/cart-agent/:id` | the buyer's cookie for that cart (`cartGuest`), else `401`; forwarded to the engine with `cookie` and `authorization` removed and the guest signed for that path (`setGuestHeader`). No other agent's socket is served here |
-| everything else | React Router: `/cart/start/:cartId/:token`, `/cart/:cartId`, `/carts/:cartId/attachments`, `/carts/:cartId/attachments/:attachmentId` and `/carts/:cartId/products` (a page without its own `cache-control` gets `private, no-cache`) |
+| everything else | React Router: `/cart/start/:cartId/:token`, `/cart/:cartId`, `/carts/:cartId/attachments`, `/carts/:cartId/attachments/:attachmentId` and `/carts/:cartId/products`, the hosted checkout's pages, the order receipt, and a shopper's `/account`, `/account/sign-in`, `/account/code` and `/account/confirm/:token` (a page without its own `cache-control` gets `private, no-cache`) |
 
 The two Workers each authenticate their own kind of caller and share the rules after it: the cart's
 files and product search are `@commerceworker/cart/files` (`uploadAttachment`, `downloadAttachment`,
@@ -495,6 +496,59 @@ the order fails), `payments.ts` (`PaymentAuthorizer`, `releaseHold`), `quote.ts`
 `idempotencyPrefix`, extra order `meta` and protocol issues. UCP's is the platform, `agent` and
 `ucp:<session id>`; the adapter keeps the HTTP statuses, the UCP bodies and the error mapping, so a
 second front (a hosted checkout page) adds a caller, not a second checkout.
+
+### Shoppers
+
+A shopper is a **verified email address**, not a `customers` row: whoever can read the mailbox is signed in as it,
+and the orders that address placed are found by `orders.contact_email` (the order list is the next slice, S6).
+Guest checkout is unaffected. The engine owns every credential (`apps/engine/src/shopper.ts`, over the use-cases in
+`packages/application/src/commerce/shopper.ts`, the rules in `packages/core/src/shopper.ts`); the storefront presents
+a secret it never mints.
+
+1. **Asking** (`startShopperSignIn(email, actor)`, `/account/sign-in`). Any valid address is sent a six-digit code
+   and a link token through the deployment's `EmailSender` (the same Email Sending binding as order confirmations;
+   the HTML part escapes every value), so the answer never depends on whether the address has orders, and orders are
+   never read. One live sign-in exists per address (`shopper_sign_ins`, keyed by email): asking again replaces it,
+   at most once a minute and twenty a day (`SHOPPER_DAILY_MAX`). Failed tries count per address across its codes
+   (`attempts` and `last_attempt_at` carry to the next code unless it was used or the last try is over fifteen
+   minutes old), so at most five failures an address a window, never five a code: the fifth spends them and the
+   address is sent nothing for fifteen minutes from its last try, so guessing isn't renewed by asking again. Only hashes are stored: the code as an HMAC under `shopperCodeKey(PRINCIPAL_KEY)`
+   (a key only the engine holds, bound to the address, so a copy of the table can't be searched for six digits), the
+   link token as its SHA-256. Both live ten minutes. The form carries Turnstile where the deployment has a site key
+   (action `shop_sign_in`, checked before the engine is asked, hostname and action pinned), and per-address and
+   per-client rate limits (`SIGNIN_EMAIL_LIMIT`, keyed by an HMAC of the address under the storefront key, and
+   `SIGNIN_IP_LIMIT`). Turnstile should be on for any production storefront: without it only those budgets and the
+   engine's cooldown and daily cap stand between the form and a mailbox. The address travels to the code page in
+   the query string (`/account/code?email=`: the Worker's logs drop query strings and the page sends the email
+   only to its own origin); a POST body or cookie hand-off would need the code form to move into the sign-in page.
+2. **Redeeming** (`redeemShopperCode(email, code, actor)` from `/account/code`; `redeemShopperLink(token, actor)`
+   from `/account/confirm/<token>`). A try is counted before it is compared (`spendAttempt`; the fifth spends the
+   sign-in, a right code after it included), the hashes are compared in constant time against a stand-in when there
+   is nothing to compare, and the use is one guarded `UPDATE ... WHERE used_at IS NULL AND expires_at > ? ...
+   RETURNING`, so two racing redemptions, of the code or of the link, mint one session; either one kills the other.
+   Wrong, used, expired, replaced and never-sent all answer `null`. The link opens only by a POST (the page it
+   lands on is a form; a GET, a mail scanner's included, spends nothing), as the checkout start link does. The
+   lock gates the code and asking again, never the link: `consumeLink` doesn't read the tries, so a shopper whose
+   code is locked out can still use the link in the same email. The page shows who the link is for, masked
+   (`shopperLinkPreview`, a read), and while another shopper is signed in the POST redeems nothing until they
+   confirm replacing that session (then it ends it at the engine), so a forwarded link can't sign a victim in as
+   its owner (login CSRF).
+3. **The session.** Redeeming mints a 32-byte secret and stores its SHA-256 (`shopper_sessions`, 30 days, absolute,
+   `last_seen_at` written at most hourly). The storefront sets `__Host-cw_shop` (`HttpOnly`, `Secure`,
+   `SameSite=Lax`, `Path=/`, no `Domain`; plain `cw_shop` only on `localhost` and `127.0.0.1`; over http on any other host no session is set and a
+   planted `cw_shop` is never read) and presents the secret
+   with each call. `shopper(secret, actor)` and `shopperSignOut(secret, actor)` hash it to compare, so a stored hash
+   presented as a secret finds nothing. Sign-out deletes the session row, not only the cookie.
+4. **Who may ask.** Every one of the six methods takes a guest `a1` actor signed under the storefront key for the
+   call `shopper` as `guest:shopper` (`guestActor`, `fromStorefront`); the engine believes the storefront for these
+   and nothing else. The key alone mints no shopper (it has no secret to present), a secret alone reaches no engine
+   method (it has no actor), and both are bound to one call, so an actor signed for a checkout or a cart opens
+   none of this. A compromised storefront can start sign-ins (mail the deployment sends, within the engine's
+   cooldown) but can't mint a session: only a redeemed code or link does.
+
+Personal data: `shopper_*` rows are exported and erased with an email's data-subject request (`ShopperAuth.exportFor`,
+`eraseFor`: no hash or secret is exported; erasing ends every session), and the retention sweep deletes expired
+sessions, and sign-ins a day after they expire, since the row carries the address's tries, lockout and daily count (`pruneShopperAuth`; reported as `shopperAuth`).
 
 ### Hosted checkout
 

@@ -34,6 +34,7 @@ import type {
 } from './plugins';
 import type { ProductDraftRequest, ProductDraftResult } from './product/api';
 import type { CartGuest, SignedActor } from './roles';
+import type { ShopperSignedIn, ShopperStart, ShopperView } from './shopper';
 import type { TaxCertificate, TaxCertificateChange, TaxCertificateInput } from './tax-exemption';
 import type {
   FlowGraph,
@@ -645,6 +646,37 @@ export interface StorefrontRpc {
    * which orders exist.
    */
   orderReceipt(orderId: string, credential: string): Promise<BuyerOrderView | null>;
+  /**
+   * Sends a sign-in code and link to `email`, once a minute at most (`ShopperStart`). The answer
+   * never depends on whether the address has orders. `actor` is signed for `shopper` (as are the
+   * calls below): the engine takes the storefront's word under that call alone.
+   */
+  startShopperSignIn(email: string, actor: SignedActor): Promise<ShopperStart>;
+  /**
+   * Redeems the emailed code, once, for the address it was sent to; five wrong tries spend it. The
+   * engine mints the session secret (keeping only its hash) and returns it for the storefront to
+   * set as the cookie. Null for any refusal: wrong, used, expired or never sent look the same.
+   */
+  redeemShopperCode(
+    email: string,
+    code: string,
+    actor: SignedActor,
+  ): Promise<ShopperSignedIn | null>;
+  /**
+   * Who an unspent emailed link would sign in, as `p***@example.com`, or null for one that is
+   * unknown, used or expired. Reads only: the page it is shown on is opened by mail scanners too,
+   * and shows the shopper whose mailbox the link is for before they tap it.
+   */
+  shopperLinkPreview(token: string, actor: SignedActor): Promise<{ masked: string } | null>;
+  /** Redeems the emailed link's token, once, as `redeemShopperCode` does. */
+  redeemShopperLink(token: string, actor: SignedActor): Promise<ShopperSignedIn | null>;
+  /**
+   * Who the cookie's `secret` (the value a redemption returned; the engine hashes it to compare)
+   * is signed in as, or null for an unknown, expired or ended one. A stored hash is no secret.
+   */
+  shopper(secret: string, actor: SignedActor): Promise<ShopperView | null>;
+  /** Ends the session the cookie's `secret` names; nothing for one that is already gone. */
+  shopperSignOut(secret: string, actor: SignedActor): Promise<void>;
   /** Finds products to add to the cart by SKU or name, as `EngineRpc.searchCartProducts` does. */
   searchCartProducts(
     cartId: string,

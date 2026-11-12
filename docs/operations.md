@@ -702,8 +702,9 @@ The engine mails a buyer once, when their order is confirmed: a hosted checkout'
 `web`, started under the engine's reserved `hosted:` key, as every hosted checkout's is) gets a transactional confirmation (lines, totals, ship-to and a
 link to its receipt on the storefront). It goes through [Cloudflare Email
 Sending](https://developers.cloudflare.com/email-service/) over the engine's `send_email` binding,
-with no API key. Nothing else in the engine sends mail yet: `commerce.notify` still only queues a
-message in `messages`, and intake's acknowledgement goes through Email Routing.
+with no API key. The other mail the engine sends is a shopper's sign-in code and link (`/account/sign-in` on the
+storefront; see [Shoppers](architecture.md#shoppers)), through the same sender and domain. `commerce.notify` still
+only queues a message in `messages`, and intake's acknowledgement goes through Email Routing.
 
 To turn it on for a deployment:
 
@@ -734,13 +735,20 @@ page is never cached, sends no referrer and is kept out of search. Erasing a dat
 retention sweep erasing an order's buyer, deletes the order's credentials. The stored copy of the
 email keeps the link without its token, so staff reading `messages` never see one.
 
+A shopper's sign-in email is not recorded in `messages` (it holds a live credential and belongs to no order):
+the engine keeps only the hashes in `shopper_sign_ins`, and a send that fails is logged as
+`shopper_sign_in_unsent`. A deployment without `email` answers every sign-in request with "isn't available".
+Each address is sent at most one code a minute; the storefront's `SIGNIN_EMAIL_LIMIT` and `SIGNIN_IP_LIMIT`
+budgets (the registry's `limits` don't set them) are the first line against someone aiming the sender at an
+address.
+
 ## Turnstile
 
 Password sign-in, `/setup` and a card payment on the storefront's hosted checkout can ask for a
 [Turnstile](https://developers.cloudflare.com/turnstile/) challenge, so bots can't stuff passwords,
 race a new deployment's first admin or test stolen cards. The one widget serves all three (it covers
 `shop.<domain>` as a subdomain, and the storefront checks the `checkout_pay` action on its own host);
-the storefront needs the same `TURNSTILE_SECRET_KEY`, which the deploy writes to it too. It is per
+the storefront needs the same `TURNSTILE_SECRET_KEY`, which the deploy writes to it too. A shopper's request for a sign-in code (`/account/sign-in`, action `shop_sign_in`) is a fourth form it guards, so the form can't be aimed at strangers' mailboxes; it needs script, and Turnstile should be on for any production storefront (without it only the per-address and per-client budgets and the engine's one-a-minute and daily caps stand between the form and a mailbox). It is per
 deployment and off until the registry has a site key. Passkeys, single sign-on and the two-factor
 step aren't gated: the first two can't be stuffed, and the two-factor page is reached only through
 a password sign-in that passed the challenge. How the check works is under `TURNSTILE_SITE_KEY` in

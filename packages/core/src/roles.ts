@@ -515,6 +515,7 @@ export const HEALTH_CHECK_HEADER = 'x-commerceworker-health-check';
 const HEALTH_CHECK_VERSION = 'h1';
 const HEALTH_CHECK_LABEL = 'commerceworker-health-check';
 const STOREFRONT_LABEL = 'commerceworker-storefront';
+const SHOPPER_CODE_LABEL = 'commerceworker-shopper-code';
 const derived = new Map<string, Promise<string>>();
 
 /** An HMAC of `principalKey` under `label`, as hex: a key derived for one purpose. */
@@ -552,6 +553,16 @@ export function healthCheckKey(principalKey: string): Promise<string> {
  */
 export function storefrontKey(principalKey: string): Promise<string> {
   return derive(STOREFRONT_LABEL, principalKey);
+}
+
+/**
+ * The key a shopper's sign-in code is hashed under (`hashShopperCode`): derived from the principal
+ * key with its own label and held by the engine alone, so the storefront can't compute one and a
+ * copy of the table can't be searched for a code. A rotation of the principal key lapses the codes
+ * outstanding, which live ten minutes.
+ */
+export function shopperCodeKey(principalKey: string): Promise<string> {
+  return derive(SHOPPER_CODE_LABEL, principalKey);
 }
 
 /** `storefrontKey` of each of `principalKeys` that is set (the current, then the previous). */

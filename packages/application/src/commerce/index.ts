@@ -23,6 +23,7 @@ export * from './route-fulfillment';
 export * from './secrets';
 export * from './seller-orders';
 export * from './shipping-labels';
+export * from './shopper';
 export * from './storefront';
 export * from './subjects';
 export * from './tax-certificates';

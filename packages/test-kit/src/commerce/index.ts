@@ -70,6 +70,8 @@ export * from './sealed-secrets';
 export * from './sealed-secrets-contract';
 export * from './shipping-store';
 export * from './shipping-store-contract';
+export * from './shopper-auth';
+export * from './shopper-auth-contract';
 export * from './subject-store';
 export * from './subject-store-contract';
 export * from './tax-certificate-store';

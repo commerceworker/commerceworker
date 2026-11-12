@@ -1,5 +1,9 @@
 import { EMPTY_ORDER_STATE, type OrderState, subjectTarget } from '@commerceworker/core';
-import { InMemorySubjectStore, SUBJECT_FIXTURE } from '@commerceworker/test-kit/commerce';
+import {
+  InMemoryShopperAuth,
+  InMemorySubjectStore,
+  SUBJECT_FIXTURE,
+} from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
 import {
   eraseDataSubject,
@@ -12,10 +16,12 @@ import {
 const now = Date.UTC(2026, 10, 8);
 
 function ports(running = new Set<string>(['sc2_o_mail'])) {
+  const shoppers = new InMemoryShopperAuth();
   const deleted: string[] = [];
   const cartCalls: string[] = [];
   const p: SubjectPorts = {
     subjects: new InMemorySubjectStore(SUBJECT_FIXTURE),
+    shoppers,
     files: {
       deletePrefix: async (prefix) => {
         deleted.push(prefix);
@@ -37,7 +43,7 @@ function ports(running = new Set<string>(['sc2_o_mail'])) {
       eraseFromEvents: async (id) => cartCalls.push(`events ${id}`),
     },
   };
-  return { p, deleted, cartCalls, running };
+  return { p, deleted, cartCalls, running, shoppers };
 }
 
 describe('data subject requests', () => {
@@ -145,6 +151,83 @@ describe('data subject requests', () => {
     expect(
       await p.subjects.orders(await p.subjects.subject('ada@example.com'), { limit: 10 }),
     ).toEqual([]);
+  });
+});
+
+describe('a shopper’s sign-in in a data subject request', () => {
+  async function seeded() {
+    const t = ports(new Set());
+    // Nothing of Ada's is running, so her erasure goes ahead.
+    (t.p.subjects as unknown as { f: { orders: { id: string; status: string }[] } }).f.orders.find(
+      (o) => o.id === 'sc2_o_mail',
+    )!.status = 'completed';
+    // Ada and Grace each signed in on the storefront: a pending sign-in and a session.
+    for (const [email, c] of [
+      ['ada@example.com', 'a'],
+      ['grace@example.com', 'b'],
+    ] as const) {
+      await t.shoppers.issueSignIn(
+        {
+          email,
+          codeHash: c.repeat(64),
+          linkHash: `l${c}`.padEnd(64, '0'),
+          createdAt: now - 1000,
+          expiresAt: now + 1000,
+        },
+        { cooldownMs: 0, lockoutMs: 0, maxAttempts: 5 },
+      );
+      await t.shoppers.createSession({
+        tokenHash: `s${c}`.padEnd(64, '0'),
+        email,
+        createdAt: now - 1000,
+        expiresAt: now + 1e6,
+      });
+    }
+    return t;
+  }
+
+  it('exports their sign-ins and sessions, with no hash and no one else’s', async () => {
+    const { p } = await seeded();
+    const x = await exportDataSubject(p, 'Ada@Example.com', now);
+    expect(x.shopperSignIns).toEqual([
+      {
+        email: 'ada@example.com',
+        createdAt: now - 1000,
+        expiresAt: now + 1000,
+        attempts: 0,
+        usedAt: null,
+      },
+    ]);
+    expect(x.shopperSessions).toEqual([
+      { email: 'ada@example.com', createdAt: now - 1000, expiresAt: now + 1e6, lastSeenAt: null },
+    ]);
+    expect(JSON.stringify(x)).not.toMatch(/a{64}|sa0{62}|la0{62}/);
+  });
+
+  it('erases them, ends every session, and leaves other shoppers signed in', async () => {
+    const { p, shoppers } = await seeded();
+    const r = await eraseDataSubject(p, 'ada@example.com', now);
+    expect(r).toMatchObject({ ok: true, shopperSignIns: 1, shopperSessions: 1 });
+    expect(await shoppers.session(`sa`.padEnd(64, '0'), now)).toBeNull();
+    expect(await shoppers.session(`sb`.padEnd(64, '0'), now)).not.toBeNull();
+    expect((await exportDataSubject(p, 'ada@example.com', now)).shopperSessions).toEqual([]);
+    // A second request finds nothing left to delete.
+    expect(await eraseDataSubject(p, 'ada@example.com', now)).toMatchObject({
+      shopperSignIns: 0,
+      shopperSessions: 0,
+    });
+  });
+
+  it('keeps them while an order still runs, as it keeps everything', async () => {
+    const t = ports();
+    await t.shoppers.createSession({
+      tokenHash: 'c'.repeat(64),
+      email: 'ada@example.com',
+      createdAt: now,
+      expiresAt: now + 1e6,
+    });
+    expect(await eraseDataSubject(t.p, 'ada@example.com', now)).toMatchObject({ ok: false });
+    expect(await t.shoppers.session('c'.repeat(64), now)).not.toBeNull();
   });
 });
 

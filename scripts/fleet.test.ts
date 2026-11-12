@@ -281,7 +281,7 @@ test('the storefront config binds the engine’s narrow entrypoint and its own h
       'ai',
     ])
       assert.equal(config[binding], undefined, `the storefront binds ${binding}`);
-  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 to <slot>010.
+  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 to <slot>012.
   assert.deepEqual(
     c.ratelimits.map((r: { name: string; namespace_id: string }) => [r.name, r.namespace_id]),
     [
@@ -290,6 +290,8 @@ test('the storefront config binds the engine’s narrow entrypoint and its own h
       ['PROMO_LIMIT', '2008'],
       ['CATALOG_LIMIT', '2009'],
       ['PAY_LIMIT', '2010'],
+      ['SIGNIN_EMAIL_LIMIT', '2011'],
+      ['SIGNIN_IP_LIMIT', '2012'],
     ],
   );
   // No two Workers of the fleet share a rate-limit namespace.
@@ -627,6 +629,8 @@ test("a customer's turnstileSiteKey turns on the web Worker's Turnstile check", 
   const key = '0x4AAAAAAABkMYinukE8nzY';
   const guarded = toDeployment({ ...acme, turnstileSiteKey: key });
   assert.equal(renderWeb(base('web'), guarded).vars.TURNSTILE_SITE_KEY, key);
+  assert.equal(renderStorefront(base('storefront'), guarded).vars.TURNSTILE_SITE_KEY, key);
+  assert.equal(renderStorefront(base('storefront'), acme).vars.TURNSTILE_SITE_KEY, '');
   // Always rendered, so a deployment without one never keeps another's.
   assert.equal(renderWeb(base('web'), acme).vars.TURNSTILE_SITE_KEY, '');
   assert.equal(shellVars(guarded).TURNSTILE_SITE_KEY, key);
@@ -740,6 +744,11 @@ test('the storefront is rendered with no PRINCIPAL_KEY secret and no D1 binding'
   // The deploy's secrets for it are derived: PRINCIPAL_KEY is not among them.
   const secrets = storefrontSecrets({ PRINCIPAL_KEY: 'p'.repeat(40) });
   assert.deepEqual(Object.keys(secrets), ['STOREFRONT_KEY']);
+  // With a Turnstile widget it also gets that widget's secret: the same one the web Worker checks with.
+  assert.deepEqual(
+    storefrontSecrets({ PRINCIPAL_KEY: 'p'.repeat(40), TURNSTILE_SECRET_KEY: '0x4AAAAAAAsecret' }),
+    { STOREFRONT_KEY: storefrontKey('p'.repeat(40)), TURNSTILE_SECRET_KEY: '0x4AAAAAAAsecret' },
+  );
 });
 
 test('a deployment that takes cards through Stripe needs a Turnstile site key for the storefront', () => {
@@ -824,7 +833,14 @@ test('a deployment with a Turnstile site key needs its secret to deploy', () => 
     /TURNSTILE_SECRET_KEY to the deploy-acme GitHub environment/,
   );
   assert.equal(secretsProblem(guarded, { TURNSTILE_SECRET_KEY: '0x4AAAAAAAsecret' }, 'web'), null);
-  // Only the web Worker checks tokens.
+  // The storefront checks them too, on asking for a shopper's code, and is vetted the same way.
+  assert.match(secretsProblem(guarded, {}, 'storefront') ?? '', /TURNSTILE_SECRET_KEY/);
+  assert.equal(
+    secretsProblem(guarded, { TURNSTILE_SECRET_KEY: '0x4AAAAAAAsecret' }, 'storefront'),
+    null,
+  );
+  assert.equal(secretsProblem(acme, {}, 'storefront'), null);
+  // The engine never checks tokens.
   assert.equal(secretsProblem(guarded, {}, 'engine'), null);
   assert.equal(secretsProblem(acme, {}, 'web'), null);
 });

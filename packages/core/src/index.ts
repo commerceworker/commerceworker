@@ -70,6 +70,7 @@ export * from './roles';
 export * from './route-guards';
 export * from './scenarios';
 export * from './shipping';
+export * from './shopper';
 export * from './subscriptions';
 export * from './tax-exemption';
 export * from './templates';

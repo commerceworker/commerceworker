@@ -97,8 +97,11 @@ Set in `vars` in `apps/web/wrangler.jsonc`.
 
 ## Storefront variables and secrets
 
-`apps/storefront/wrangler.jsonc` has no variables, and no `PRINCIPAL_KEY`: the storefront is public, so a
-compromise of it must not be able to sign as staff. Its one secret is `STOREFRONT_KEY`, the HMAC-SHA256 of
+`apps/storefront/wrangler.jsonc` has one variable, `TURNSTILE_SITE_KEY` (the web Worker's, rendered from the same
+registry `turnstileSiteKey`, empty without one; the sign-in form's challenge, `app/lib/turnstile.server.ts`), and no
+`PRINCIPAL_KEY`: the storefront is public, so a compromise of it must not be able to sign as staff. Its secrets are
+`TURNSTILE_SECRET_KEY` (the same widget's, set by `fleet.ts secrets storefront` when the environment has it; a
+deployment with a site key can't deploy without it) and `STOREFRONT_KEY`, the HMAC-SHA256 of
 `PRINCIPAL_KEY` over the label `commerceworker-storefront` (`storefrontKey` in `packages/core/src/roles.ts`, mirrored
 in `scripts/fleet.ts`; the engine derives the same from its own `PRINCIPAL_KEY`). It signs the envelopes the
 storefront forwards to the engine (a cart's buyer, `signCartGuest`; a UCP platform, `signPlatform`; a buyer on
@@ -204,6 +207,7 @@ The content Workers' bindings and variables are in each app's `wrangler.jsonc` (
 | `stripePublishableKey` (registry) | fleet | With it the storefront's hosted checkout takes cards, so `scripts/fleet.ts` refuses it without a `turnstileSiteKey` |
 | `PAY_LIMIT` | storefront | 10 card payments a minute on a hosted checkout, counted twice per press: per cookie (`pay:<cookie budget key>`) and per client address (`pay:ip:<cf-connecting-ip>`), before Turnstile or the engine; its own namespace (`<slot>010`), not set by the registry's `limits`. The session's own cap, `HOSTED_PAY_ATTEMPTS` (5 attempts with a card, counted when a payment is claimed), is the third guard against card testing |
 | `PROMO_LIMIT` | storefront | 20 changes to a hosted checkout's promo codes a minute per cookie (`promo:<cookie budget key>`), on top of `API_LIMIT`; its own namespace (`<slot>008`), not set by the registry's `limits` |
+| `SIGNIN_EMAIL_LIMIT`, `SIGNIN_IP_LIMIT` | storefront | A shopper's sign-in, asking for a code and trying one: 10 a minute per email address (an HMAC of it under `STOREFRONT_KEY`, `start:`, `code:` and `link:` kept apart) and 20 per client address, in their own namespaces (`<slot>011` and `<slot>012`), not set by the registry's `limits`. Over the limit the page says to wait a minute (`429`, `Retry-After`) |
 | `API_LIMIT`, `AGENT_LIMIT`, `CATALOG_LIMIT` | storefront | The storefront's own budgets (`app/lib/rate-limit.ts`), in their own rate-limit namespaces (`<slot>006`, `<slot>007` and `<slot>009`; `PROMO_LIMIT`, above, is `<slot>008`, and `PAY_LIMIT` is `<slot>010`) and set by the same registry `limits` keys as the web Worker's (`api`, `agents`, `catalog`): 600 requests a minute per cart and buyer on product search (`cart-search:<cartId>:<buyer id>`), 300 per registered UCP platform on `/ucp` (`/ucp:<platform id>`, `AGENT_LIMIT`) and, apart from that, 120 per platform on its catalog search and lookup (`/ucp/catalog:<platform id>`, `CATALOG_LIMIT`): the REST paths `/ucp/v1/catalog/*` and an MCP `tools/call` of `search_catalog`, `lookup_catalog` or `get_product`. A lookup is charged one unit an id (the limiter counts a call each, so n calls, stopping at the first refusal), read from the body (up to 256 KB, from a copy, and only when it is declared `application/json`; the engine takes only JSON, `415` otherwise, and a body the storefront can't read costs the one unit it is refused for) |
 | `OAUTH_KV` | web | KV namespace for [MCP](https://docs.commerceworker.com/reference/mcp/) and [A2A](https://docs.commerceworker.com/reference/a2a/) OAuth clients, grants and tokens (tokens hashed, grant data encrypted). `wrangler.jsonc` gives no id; the namespace is provisioned on deploy |
 
