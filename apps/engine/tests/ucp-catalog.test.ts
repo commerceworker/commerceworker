@@ -15,7 +15,8 @@ import {
   LISTING_SEGMENTS,
   type ProductDoc,
 } from '@commerceworker/core/product';
-import { checkoutSessions } from '@commerceworker/db';
+import { checkoutSessions, products } from '@commerceworker/db';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import mcpSpec from '../../../packages/core/tests/fixtures/ucp/services/shopping/mcp.openrpc.json';
 import worker from '../src/index';
@@ -98,12 +99,33 @@ const one = (key: string, title: string, categories: string[], sku: string, pric
     ],
   });
 
+/** A lamp with a GTIN (a UPC, written as the catalog stores it) and a handle that is no key. */
+const lamp = doc({
+  key: 'lamp',
+  title: 'Desk lamp',
+  slug: 'desk-lamp',
+  categories: ['lighting'],
+  variants: [
+    {
+      sku: 'LAMP-1',
+      gtin: '036000291452',
+      status: 'active',
+      options: {},
+      attributes: {},
+      price: usd(6000),
+    },
+  ],
+});
+/** Keys the catalog has unpublished or archived: the edge holds no document or alias for them. */
+const gone = new Set<string>();
+
 const DOCS: Record<string, ProductDoc[]> = {
   en: [
     tee('Cotton tee', ['Small', 'Large']),
     one('hat', 'Wool hat', ['accessories'], 'HAT-1', usd(4000)),
     one('mug', 'Cotton mug', ['home'], 'MUG-1', usd(900)),
     one('scarf', 'Cotton scarf', ['apparel'], 'SCARF-1', { amount: 3000, currency: 'EUR' }),
+    lamp,
   ],
   es: [tee('Camiseta de algodon', ['Pequena', 'Grande'])],
 };
@@ -125,8 +147,9 @@ function fakeEdge() {
       asked.push(`${url.pathname}${url.search}`);
       if (fail) return json({ error: 'down' }, 503);
       const [, , channel, locale, kind, ...rest] = url.pathname.split('/');
-      const docs =
-        channel === 'web' ? (DOCS[locale ?? ''] ?? []) : channel === 'b2b' ? OTHER_CHANNEL : [];
+      const docs = (
+        channel === 'web' ? (DOCS[locale ?? ''] ?? []) : channel === 'b2b' ? OTHER_CHANNEL : []
+      ).filter((d) => !gone.has(d.key));
       const card = (d: ProductDoc) => ({ key: d.key, title: d.title });
       const limit = Number(url.searchParams.get('limit') ?? 24);
       if (kind === 'products' && rest[0]) {
@@ -138,6 +161,17 @@ function fakeEdge() {
           x.variants.some((v) => v.sku === decodeURIComponent(rest[0] as string)),
         );
         return d ? json(d) : json({ error: 'no product for sku' }, 404);
+      }
+      if (kind === 'gtins' && rest[0]) {
+        // The edge's alias is the GTIN-14, as the catalog claims it.
+        const d = docs.find((x) =>
+          x.variants.some((v) => v.gtin && v.gtin.padStart(14, '0') === rest[0]),
+        );
+        return d ? json(d) : json({ error: 'no product for gtin' }, 404);
+      }
+      if (kind === 'slugs' && rest[0]) {
+        const d = docs.find((x) => x.slug === decodeURIComponent(rest[0] as string));
+        return d ? json(d) : json({ error: 'no product for slug' }, 404);
       }
       if (kind === 'search') {
         const terms = (url.searchParams.get('q') ?? '').split(' ').filter(Boolean);
@@ -231,8 +265,25 @@ beforeAll(async () => {
   );
   searchOnly = await platform('searcher', profileWith(CATALOG_SEARCH_CAPABILITY));
   checkoutOnly = await platform('buyer_only', profileWith());
+  // Stock: the small tee is in stock (a count that must never show), the large one is out, the hat
+  // is all held, the lamp is plentiful and the mug has no stock row at all.
+  const row = (sku: string, stock: number, reserved = 0) => ({
+    sku,
+    name: sku,
+    price: 1,
+    cost: 1,
+    stock,
+    reserved,
+  });
+  await db()
+    .insert(products)
+    .values([row('TEE-S', 41), row('TEE-L', 0), row('HAT-1', 2, 2), row('LAMP-1', 7)])
+    .onConflictDoNothing();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  gone.clear();
+});
 
 /** Runs `fn` against a fresh fake edge, as the Worker's own bindings. */
 async function onEdge<T>(fn: (edge: ReturnType<typeof fakeEdge>) => Promise<T>): Promise<T> {
@@ -500,7 +551,8 @@ describe('UCP catalog lookup and get_product over REST', () => {
       expect(r.body.product.selected).toEqual([{ name: 'Size', id: 'l', label: 'Large' }]);
       expect(r.body.product.options[0].values).toEqual([
         { id: 's', label: 'Small', available: true, exists: true },
-        { id: 'l', label: 'Large', available: true, exists: true },
+        // Out of stock (see the stock rows in beforeAll): it exists, but isn't available.
+        { id: 'l', label: 'Large', available: false, exists: true },
       ]);
       // By SKU, the selection is that variant's.
       const bySku = await post(shopper, 'product', { id: 'TEE-S' });
@@ -517,6 +569,147 @@ describe('UCP catalog lookup and get_product over REST', () => {
         expect(conformsTo(ERROR, r.body)).toEqual([]);
         expect(r.body.messages[0]).toMatchObject({ code: 'not_found', path: '$.id' });
       }
+    });
+  });
+});
+
+let mcpId = 0;
+const mcpRpc = async (
+  caller: PlatformCaller,
+  method: string,
+  params: Record<string, unknown> = {},
+) => {
+  const res = await worker.fetch(
+    new Request('https://engine/ucp/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [PRINCIPAL_HEADER]: await signPlatform(platformKey, caller, '/ucp/mcp'),
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++mcpId, method, params }),
+    }),
+    env,
+  );
+  // biome-ignore lint/suspicious/noExplicitAny: a response body read as untyped JSON
+  return { status: res.status, body: (await res.json()) as Record<string, any> };
+};
+const mcpTool = (caller: PlatformCaller, name: string, catalog: unknown) =>
+  mcpRpc(caller, 'tools/call', {
+    name,
+    arguments: { meta: { 'ucp-agent': { profile: caller.profileUrl } }, catalog },
+  });
+
+describe('UCP catalog availability over REST', () => {
+  const statuses = (p: { variants: { id: string; availability?: unknown }[] }) =>
+    p.variants.map((v) => [v.id, v.availability]);
+
+  it('shows each variant in or out of stock in search, lookup and get_product, with no count', async () => {
+    await onEdge(async () => {
+      const search = await post(shopper, 'search', { query: 'cotton tee' });
+      expect(conformsTo(SEARCH, search.body)).toEqual([]);
+      expect(statuses(search.body.products[0])).toEqual([
+        ['TEE-S', { available: true, status: 'in_stock' }],
+        ['TEE-L', { available: false, status: 'out_of_stock' }],
+      ]);
+      const lookup = await post(shopper, 'lookup', { ids: ['tee', 'hat', 'mug'] });
+      expect(conformsTo(LOOKUP, lookup.body)).toEqual([]);
+      const [tee, hat, mug] = lookup.body.products;
+      expect(statuses(tee)).toEqual([['TEE-S', { available: true, status: 'in_stock' }]]);
+      // All of it held leaves none free; a SKU the inventory has no row for claims nothing.
+      expect(statuses(hat)).toEqual([['HAT-1', { available: false, status: 'out_of_stock' }]]);
+      expect(statuses(mug)).toEqual([['MUG-1', undefined]]);
+      const product = await post(shopper, 'product', { id: 'tee' });
+      expect(conformsTo(PRODUCT, product.body)).toEqual([]);
+      expect(product.body.product.options[0].values).toEqual([
+        { id: 's', label: 'Small', available: true, exists: true },
+        { id: 'l', label: 'Large', available: false, exists: true },
+      ]);
+      // The stock counts (41 on hand, 2 held) are nowhere in what a platform sees.
+      const text = JSON.stringify([search.body, lookup.body, product.body]);
+      expect(text).not.toMatch(/\b41\b|quantity|reserved|"stock"/);
+    });
+  });
+
+  it('follows a sale at once: stock is read live, not carried by the cached document', async () => {
+    await onEdge(async () => {
+      const read = async () =>
+        (await post(shopper, 'lookup', { ids: ['LAMP-1'] })).body.products[0].variants[0]
+          .availability.status;
+      expect(await read()).toBe('in_stock');
+      await db().update(products).set({ reserved: 7 }).where(eq(products.sku, 'LAMP-1'));
+      expect(await read()).toBe('out_of_stock');
+      await db().update(products).set({ reserved: 0 }).where(eq(products.sku, 'LAMP-1'));
+      expect(await read()).toBe('in_stock');
+    });
+  });
+});
+
+describe('UCP catalog lookup by GTIN and handle over REST', () => {
+  it('finds a product by GTIN in any length and by handle, correlated to the id asked', async () => {
+    await onEdge(async (edge) => {
+      const r = await post(shopper, 'lookup', {
+        ids: ['036000291452', '00036000291452', 'desk-lamp'],
+      });
+      expect(r.status).toBe(200);
+      expect(conformsTo(LOOKUP, r.body)).toEqual([]);
+      expect(ids(r.body)).toEqual(['lamp']);
+      expect(r.body.products[0].handle).toBe('desk-lamp');
+      expect(r.body.products[0].variants).toEqual([
+        expect.objectContaining({
+          id: 'LAMP-1',
+          barcodes: [{ type: 'GTIN', value: '036000291452' }],
+          inputs: [
+            { id: '036000291452', match: 'exact' },
+            { id: '00036000291452', match: 'exact' },
+            { id: 'desk-lamp', match: 'featured' },
+          ],
+        }),
+      ]);
+      expect(r.body.messages).toBeUndefined();
+      // A GTIN is asked as its GTIN-14, the one spelling the catalog claims, and a handle by its route.
+      expect(edge.asked).toContain('/v1/web/en/gtins/00036000291452');
+      expect(edge.asked).toContain('/v1/web/en/slugs/desk-lamp');
+    });
+  });
+
+  it('reads a handle in the response’s locale and says which ids found nothing', async () => {
+    await onEdge(async () => {
+      // A GTIN nobody holds, a bad check digit, and a handle no product has.
+      const r = await post(shopper, 'lookup', {
+        ids: ['4006381333931', '1234567890123', 'no-such-handle'],
+      });
+      expect(r.status).toBe(200);
+      expect(r.body.products).toEqual([]);
+      expect(r.body.messages.map((m: Body) => [m.code, m.path])).toEqual([
+        ['not_found', '$.ids[0]'],
+        ['not_found', '$.ids[1]'],
+        ['not_found', '$.ids[2]'],
+      ]);
+    });
+  });
+
+  it('does not find a product the catalog has unpublished or archived', async () => {
+    await onEdge(async () => {
+      gone.add('lamp');
+      const r = await post(shopper, 'lookup', {
+        ids: ['036000291452', 'desk-lamp', 'LAMP-1', 'lamp'],
+      });
+      expect(r.body.products).toEqual([]);
+      expect(r.body.messages).toHaveLength(4);
+      expect(r.body.messages.every((m: Body) => m.code === 'not_found')).toBe(true);
+    });
+  });
+
+  it('shows the same over MCP', async () => {
+    await onEdge(async () => {
+      const r = await mcpTool(shopper, 'lookup_catalog', { ids: ['036000291452', 'desk-lamp'] });
+      const body = r.body.result.structuredContent;
+      expect(conformsTo(LOOKUP, body)).toEqual([]);
+      expect(ids(body)).toEqual(['lamp']);
+      expect(body.products[0].variants[0].availability).toEqual({
+        available: true,
+        status: 'in_stock',
+      });
     });
   });
 });
@@ -551,31 +744,8 @@ describe('UCP catalog capabilities', () => {
 });
 
 describe('UCP catalog over MCP', () => {
-  let n = 0;
-  const rpc = async (
-    caller: PlatformCaller,
-    method: string,
-    params: Record<string, unknown> = {},
-  ) => {
-    const res = await worker.fetch(
-      new Request('https://engine/ucp/mcp', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          [PRINCIPAL_HEADER]: await signPlatform(platformKey, caller, '/ucp/mcp'),
-        },
-        body: JSON.stringify({ jsonrpc: '2.0', id: ++n, method, params }),
-      }),
-      env,
-    );
-    // biome-ignore lint/suspicious/noExplicitAny: a response body read as untyped JSON
-    return { status: res.status, body: (await res.json()) as Record<string, any> };
-  };
-  const tool = (caller: PlatformCaller, name: string, catalog: unknown) =>
-    rpc(caller, 'tools/call', {
-      name,
-      arguments: { meta: { 'ucp-agent': { profile: caller.profileUrl } }, catalog },
-    });
+  const rpc = mcpRpc;
+  const tool = mcpTool;
 
   it('lists the three read tools, named in the service spec and marked read-only', async () => {
     const r = await rpc(shopper, 'tools/list');

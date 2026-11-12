@@ -8,6 +8,7 @@
  *   GET /v1/<channel>/<locale>/products?keys=a,b   up to 100 listing cards, in that order
  *   GET /v1/<channel>/<locale>/skus/<sku>          the product holding a SKU
  *   GET /v1/<channel>/<locale>/slugs/<slug>        the product with a slug in that locale
+ *   GET /v1/<channel>/<locale>/gtins/<gtin14>      the product holding a variant with that GTIN-14
  *   GET /v1/<channel>/<locale>/categories          the category tree
  *   GET /v1/<channel>/<locale>/categories/<code>/products?f.<attr>=a,b&r.<attr>=lo..hi
  *       &sort=<newest|attr_asc|attr_desc>&cursor=<next>&limit=<1-100>
@@ -27,6 +28,7 @@ export type Route =
   | { kind: 'batch'; channel: string; locale: string; keys: string[] }
   | { kind: 'sku'; channel: string; locale: string; sku: string }
   | { kind: 'slug'; channel: string; locale: string; slug: string }
+  | { kind: 'gtin'; channel: string; locale: string; gtin: string }
   | { kind: 'categories'; channel: string; locale: string }
   | { kind: 'search'; channel: string; locale: string; q: string; cursor: number; limit: number }
   | {
@@ -50,6 +52,7 @@ export const MAX_VALUES = 50;
 /** The longest slug a route accepts. */
 export const SLUG_MAX = 200;
 export const SORT = /^(newest|[A-Za-z0-9][A-Za-z0-9._-]{0,127}_(asc|desc))$/;
+const GTIN14 = /^\d{14}$/;
 export const NUMBER = /^-?\d+(\.\d+)?$/;
 
 type Bad = { ok: false; status: 400; error: string };
@@ -149,6 +152,10 @@ export function parse(url: URL): Parsed {
       if (one === null || one.length > SLUG_MAX || !SLUG.test(one))
         return { ok: false, status: 400, error: 'bad slug' };
       return { ok: true, route: { kind: 'slug', channel, locale, slug: one } };
+    case 'gtins':
+      // The GTIN-14 the catalog claims (`gtin14`): the caller pads a UPC or EAN, so one item is one URL.
+      if (one === null || !GTIN14.test(one)) return { ok: false, status: 400, error: 'bad gtin' };
+      return { ok: true, route: { kind: 'gtin', channel, locale, gtin: one } };
     case 'search': {
       if (rest.length) return { ok: false, status: 404, error: 'not found' };
       const q = normalizeQuery(url.searchParams.get('q') ?? '');
@@ -188,6 +195,8 @@ export function canonical(route: Route): string {
       return `${base}/skus/${route.sku}`;
     case 'slug':
       return `${base}/slugs/${encodeURIComponent(route.slug)}`;
+    case 'gtin':
+      return `${base}/gtins/${route.gtin}`;
     case 'categories':
       return `${base}/categories`;
     case 'search': {

@@ -30,6 +30,10 @@ beforeAll(async () => {
     paths.alias(DOC_FORMAT, 'web', 'slug:fr:t-shirt'),
     JSON.stringify({ key: 'tee' }),
   );
+  await env.PUBLISHED.put(
+    paths.alias(DOC_FORMAT, 'web', 'gtin:04006381333931'),
+    JSON.stringify({ key: 'tee' }),
+  );
   await env.PUBLISHED.put(paths.categories(DOC_FORMAT, 'web', 'en'), '{"categories":[]}', json);
   await env.CARDS.put(paths.uid(DOC_FORMAT, 'tee'), '7');
   await env.CARDS.put(paths.uid(DOC_FORMAT, 'hat'), '70');
@@ -116,6 +120,15 @@ describe('documents', () => {
     expect(none.headers.get('cache-control')).toBe(MISSING);
   });
 
+  it('finds a product by GTIN-14, and a GTIN nobody holds is a brief miss', async () => {
+    expect(await (await get('/v1/web/en/gtins/04006381333931')).json()).toMatchObject({
+      title: 'Tee',
+    });
+    const none = await get('/v1/web/en/gtins/04006381333932');
+    expect(none.status).toBe(404);
+    expect(none.headers.get('cache-control')).toBe(MISSING);
+  });
+
   it('remembers a missing product only briefly', async () => {
     const r = await get('/v1/web/en/products/nope');
     expect(r.status).toBe(404);
@@ -198,6 +211,9 @@ describe('the gateway', () => {
     expect((await get('/v1/we%20b/en/products/tee')).status).toBe(400);
     expect((await get('/v1/web/EN_us/products/tee')).status).toBe(400);
     expect((await get('/v1/web/en/slugs/Not-A-Slug')).status).toBe(400);
+    // Only the GTIN-14 the catalog claims: a UPC or EAN is padded by the caller, so one item is one URL.
+    for (const g of ['4006381333931', '0400638133393a', '004006381333931'])
+      expect((await get(`/v1/web/en/gtins/${g}`)).status).toBe(400);
     expect((await get('/v1/web/en/widgets')).status).toBe(404);
     expect(await (await get('/health')).json()).toEqual({ ok: true });
   });

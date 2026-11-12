@@ -168,7 +168,7 @@ const TOOLS = [
   {
     name: 'lookup_catalog',
     description:
-      'Look up products or variants by product key or SKU. Each variant says which ids resolved to it.',
+      'Look up products or variants by product key, SKU, GTIN or handle. Each variant says which ids resolved to it, and whether it is in stock.',
     inputSchema: {
       type: 'object',
       properties: {

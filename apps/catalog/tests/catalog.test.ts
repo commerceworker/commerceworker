@@ -283,6 +283,28 @@ describe('unpublishing', () => {
     expect(await doc(p.key)).toMatchObject({ version: 3 });
   });
 
+  it('publishes a GTIN and a handle pointer for UCP lookup, as the GTIN-14, and takes both down with the product', async () => {
+    const p = product();
+    p.variants = [{ sku: `${p.key}-S`, gtin: '036000291452', attributes: { size: 'S' } }];
+    await api.putProducts([p], { by });
+    await settle();
+    // The pointer is the claim's spelling (a UPC padded to 14), so every length finds one key.
+    expect(await alias('gtin:00036000291452')).toEqual({ key: p.key });
+    expect(await alias('gtin:036000291452')).toBeNull();
+    expect(await alias(`slug:en:${p.slug?.en}`)).toEqual({ key: p.key });
+    await api.putProducts([{ ...p, status: 'archived' }], { by });
+    await settle();
+    expect(await alias('gtin:00036000291452')).toBeNull();
+    expect(await alias(`slug:en:${p.slug?.en}`)).toBeNull();
+    // Archived, it still holds the claim: another product can't take the GTIN.
+    const other = product();
+    other.variants = [{ sku: `${other.key}-S`, gtin: '00036000291452', attributes: { size: 'S' } }];
+    expect((await api.putProducts([other], { by }))[0]).toMatchObject({
+      status: 'rejected',
+      issues: [{ path: 'gtin:00036000291452', message: `already used by ${p.key}` }],
+    });
+  });
+
   it('puts back an alias pointer on the next publish, so a lost one repairs itself', async () => {
     // Two shards handing a SKU between products can leave the new owner's pointer deleted by the
     // old owner's later publish; the new owner's next write must restore it.

@@ -24,7 +24,7 @@ import {
   ucpLookupInput,
   ucpSearchInput,
 } from '@commerceworker/core';
-import { CatalogEdgeError, catalogReader } from '../wire';
+import { CatalogEdgeError, catalogReader, inventoryStore } from '../wire';
 import type { UcpContext, UcpResult } from './checkout';
 import { ucpSettings } from './config';
 
@@ -80,7 +80,7 @@ export async function catalogCall(
   // Catalog capabilities are on whenever checkout is, as the storefront and discovery have it.
   if (!settings.checkoutFlowId)
     return refuse(404, 'not_found', 'Agentic checkout is not turned on for this workspace.');
-  const ports = { catalog: catalogReader(env) };
+  const ports = { catalog: catalogReader(env), inventory: inventoryStore(env) };
   const run = { productUrl: settings.productUrl };
   const invalid = (issue: string | undefined) =>
     refuse(400, 'invalid_request', issue ?? 'Invalid request');

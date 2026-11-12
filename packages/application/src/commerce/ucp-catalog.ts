@@ -3,6 +3,11 @@
  * platform's agent sees of the catalog before it starts a checkout. Reads published documents
  * through the `CatalogReader` port, in the one channel the catalog feeds orders from, in that
  * channel's currency, and maps them with core's `ucp/catalog` (which names every field that leaves).
+ * Each variant shows a coarse availability (`in_stock` or `out_of_stock`, never a count) read from
+ * the inventory port: one batched read per response, over the SKUs of the products shown, not one
+ * per product. The catalog's published documents carry no stock (they are cached, and a sale would
+ * have to purge them), so stock is read live and a SKU the inventory doesn't know is shown without
+ * an `availability` rather than guessed at.
  * Read-only: nothing is stored, and a request's `context` and `signals` are read for the currency
  * and language only, never kept or logged.
  *
@@ -29,13 +34,23 @@ import {
 import {
   CODE,
   decodeListingCursor,
+  gtin14,
   normalizeQuery,
   queryTerms,
   SEARCH_DEPTH,
+  SLUG,
 } from '@commerceworker/core/product';
-import type { CatalogChannel, CatalogDoc, CatalogReader } from '@commerceworker/ports/commerce';
+import type {
+  CatalogChannel,
+  CatalogDoc,
+  CatalogReader,
+  InventoryStore,
+} from '@commerceworker/ports/commerce';
 
-export type UcpCatalogPorts = { catalog: CatalogReader };
+export type UcpCatalogPorts = {
+  catalog: CatalogReader;
+  inventory: Pick<InventoryStore, 'availability'>;
+};
 
 /** What a deployment's UCP settings say about catalog results. */
 export type UcpCatalogSettings = { productUrl: string | null };
@@ -80,8 +95,8 @@ type Prepared = {
   issues: Issue[];
   /** The price range to apply, or undefined when there is none or it can't be (another currency). */
   price: { min?: number; max?: number } | undefined;
-  /** A product's mapping context: its type's option names in the response's locale. */
-  forDoc(doc: CatalogDoc): Promise<UcpCatalogContext>;
+  /** A product's mapping context: its type's option names in the response's locale, and stock. */
+  forDoc(doc: CatalogDoc, stock?: UcpCatalogContext['stock']): Promise<UcpCatalogContext>;
 };
 
 async function prepare(
@@ -130,17 +145,22 @@ async function prepare(
     locale,
     issues,
     price,
-    forDoc: async (doc) => {
+    forDoc: async (doc, stock) => {
       const known = names.get(doc.type) ?? ports.catalog.axisNames(doc.type, locale);
       names.set(doc.type, known);
       return {
         axisNames: await known,
         currency: channel.currency,
+        ...(stock ? { stock } : {}),
         ...(settings.productUrl ? { productUrl: settings.productUrl } : {}),
       };
     },
   };
 }
+
+/** The stock status of every SKU of these documents, in one read (the store chunks it). */
+const stockOf = (ports: UcpCatalogPorts, docs: readonly CatalogDoc[]) =>
+  ports.inventory.availability(docs.flatMap((d) => d.variants.map((v) => v.sku)));
 
 const isResult = (p: Prepared | UcpCatalogResult): p is UcpCatalogResult => 'status' in p;
 
@@ -203,10 +223,11 @@ export async function searchCatalog(
   const q = normalizeQuery(input.query ?? '');
   const page = input.pagination;
   const products = async (docs: CatalogDoc[]) => {
+    const narrowed = docs.flatMap((doc) => narrow(doc, categories, p.price) ?? []);
+    const stock = await stockOf(ports, narrowed);
     const out = [];
-    for (const doc of docs) {
-      const narrowed = narrow(doc, categories, p.price);
-      const mapped = narrowed && toUcpProduct(narrowed, await p.forDoc(narrowed));
+    for (const doc of narrowed) {
+      const mapped = toUcpProduct(doc, await p.forDoc(doc, stock));
       if (mapped) out.push(mapped);
     }
     return out;
@@ -322,12 +343,32 @@ async function find(ports: UcpCatalogPorts, p: Prepared, id: string) {
   return byKey ? { doc: byKey, viaSku: false } : bySku ? { doc: bySku, viaSku: true } : null;
 }
 
-async function findBySkuFirst(ports: UcpCatalogPorts, p: Prepared, id: string) {
-  if (!CODE.test(id)) return null;
-  const bySku = await ports.catalog.bySku(p.channel.code, p.locale, id);
-  if (bySku) return { doc: bySku, viaSku: true };
-  const byKey = await ports.catalog.doc(p.channel.code, p.locale, id);
-  return byKey ? { doc: byKey, viaSku: false } : null;
+/** The longest handle the edge's route takes (`SLUG_MAX` in apps/delivery). */
+const HANDLE_MAX = 200;
+
+/**
+ * What a lookup id names: a SKU, else a product key, else a GTIN (any length, asked as its GTIN-14),
+ * else a handle in the response's locale. Each step is asked only when the id could be one (a GTIN
+ * only if it is a valid one, a handle only if it is shaped like one), and the next only on a miss.
+ */
+async function findForLookup(ports: UcpCatalogPorts, p: Prepared, id: string) {
+  const { code } = p.channel;
+  if (CODE.test(id)) {
+    const bySku = await ports.catalog.bySku(code, p.locale, id);
+    if (bySku) return { doc: bySku, viaSku: true };
+    const byKey = await ports.catalog.doc(code, p.locale, id);
+    if (byKey) return { doc: byKey, viaSku: false };
+  }
+  const gtin = gtin14(id);
+  if (gtin) {
+    const byGtin = await ports.catalog.byGtin(code, p.locale, gtin);
+    if (byGtin) return { doc: byGtin, viaSku: true };
+  }
+  if (id.length <= HANDLE_MAX && SLUG.test(id)) {
+    const bySlug = await ports.catalog.bySlug(code, p.locale, id);
+    if (bySlug) return { doc: bySlug, viaSku: false };
+  }
+  return null;
 }
 
 export async function lookupCatalog(
@@ -340,17 +381,17 @@ export async function lookupCatalog(
   if (isResult(p)) return p;
   const categories = [...new Set(input.filters?.categories ?? [])];
   const ids = [...new Set(input.ids)];
-  // An id is a SKU or a key. A SKU is tried first and a key only on a miss, so an id costs one edge
-  // read when it is a SKU and two when it is a key, not two always; a SKU that is also another
-  // product's key resolves to the SKU's product. The same product reached twice is kept once.
-  const found = await Promise.all(ids.map((id) => findBySkuFirst(ports, p, id)));
+  // An id is a SKU, a key, a GTIN or a handle, tried in that order and each only on a miss, so an id
+  // costs one edge read when it is a SKU and more only as it turns out to be something else; a SKU
+  // that is also another product's key resolves to the SKU's product. The same product reached
+  // twice is kept once.
+  const found = await Promise.all(ids.map((id) => findForLookup(ports, p, id)));
   const docs = new Map<string, CatalogDoc>();
   for (const f of found) if (f && !docs.has(f.doc.key)) docs.set(f.doc.key, f.doc);
+  const narrowed = [...docs.values()].flatMap((doc) => narrow(doc, categories, p.price) ?? []);
+  const stock = await stockOf(ports, narrowed);
   const out = [];
-  for (const doc of docs.values()) {
-    const narrowed = narrow(doc, categories, p.price);
-    if (narrowed) out.push(...lookupProducts([narrowed], ids, await p.forDoc(narrowed)));
-  }
+  for (const doc of narrowed) out.push(...lookupProducts([doc], ids, await p.forDoc(doc, stock)));
   const resolved = new Set(
     out.flatMap((x) => x.variants.flatMap((v) => v.inputs.map((i) => i.id))),
   );
@@ -395,7 +436,7 @@ export async function getCatalogProduct(
       doc,
       input.selected?.length ? input.selected : anchor,
       input.preferences ?? [],
-      await p.forDoc(doc),
+      await p.forDoc(doc, await stockOf(ports, [doc])),
     );
   if (!product)
     return {

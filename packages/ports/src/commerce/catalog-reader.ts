@@ -63,6 +63,13 @@ export interface CatalogReader {
   doc(channel: string, locale: string, key: string): Promise<CatalogDoc | null>;
   /** The product holding this variant SKU, or null. */
   bySku(channel: string, locale: string, sku: string): Promise<CatalogDoc | null>;
+  /** The product with this slug in `locale`, or null. */
+  bySlug(channel: string, locale: string, slug: string): Promise<CatalogDoc | null>;
+  /**
+   * The product holding a variant with this GTIN, or null. `gtin` is a GTIN-14 (`gtin14` in core
+   * pads a UPC or EAN), the one spelling the catalog claims.
+   */
+  byGtin(channel: string, locale: string, gtin: string): Promise<CatalogDoc | null>;
   /** Option axis code → the name shown for it, for a product's type (`code@version`). */
   axisNames(type: string, locale: string): Promise<Record<string, string>>;
 }

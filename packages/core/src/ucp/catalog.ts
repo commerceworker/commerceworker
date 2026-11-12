@@ -1,11 +1,13 @@
 /**
  * UCP catalog search and lookup (`shopping/catalog_search.json`, `catalog_lookup.json`): what a
  * published product document (../product/render.ts) shows an agent. Only display fields leave:
- * title, description, handle, media, price, option values and identifiers. Every output field is
- * named here, so attributes, `extra`, cost, stock and supplier data cannot reach a response by being
- * added to the document. Pure; the engine serves it, and picks the documents.
+ * title, description, handle, media, price, option values, identifiers and a coarse availability.
+ * Every output field is named here, so attributes, `extra`, cost, stock counts and supplier data
+ * cannot reach a response by being added to the document. Availability is `types/availability.json`'s
+ * `available` and `status`, which has no quantity, so no count can leave. Pure; the engine serves it, and picks the documents.
  */
 import { z } from 'zod';
+import { gtin14 } from '../product/model';
 import type { Option, ProductDoc, PublishedVariant } from '../product/render';
 import { QUERY_MAX } from '../product/search';
 import { UCP_VERSION } from './errors';
@@ -20,6 +22,9 @@ export type UcpMedia = {
   width?: number;
   height?: number;
 };
+/** The status of a SKU's stock, as the inventory port says it (`StockStatus`). */
+export type UcpStockStatus = 'in_stock' | 'out_of_stock';
+export type UcpAvailability = { available: boolean; status: UcpStockStatus };
 export type UcpSelectedOption = { name: string; id: string; label: string };
 export type UcpVariant = {
   id: string;
@@ -28,6 +33,7 @@ export type UcpVariant = {
   price: Money;
   sku: string;
   barcodes?: { type: 'GTIN'; value: string }[];
+  availability?: UcpAvailability;
   options?: UcpSelectedOption[];
   media?: UcpMedia[];
 };
@@ -67,6 +73,11 @@ export type UcpCatalogContext = {
   productUrl?: string;
   /** The currency a response is priced in; a variant priced in another is left out. */
   currency: string;
+  /**
+   * The stock status of each SKU the caller read. A SKU with none has no `availability`: nothing is
+   * known, so nothing is claimed (and an option value counts as available).
+   */
+  stock?: ReadonlyMap<string, UcpStockStatus>;
 };
 
 const MEDIA_MAX = 20;
@@ -115,6 +126,7 @@ export function toUcpVariant(
   if (v.price?.currency !== ctx.currency) return null;
   const options = selectedOptions(v, ctx);
   const media = mediaOf(v.media);
+  const status = ctx.stock?.get(v.sku);
   return {
     id: v.sku,
     title: options.length ? options.map((o) => o.label).join(' / ') : doc.title,
@@ -122,6 +134,7 @@ export function toUcpVariant(
     price: { amount: v.price.amount, currency: v.price.currency },
     sku: v.sku,
     ...(v.gtin ? { barcodes: [{ type: 'GTIN' as const, value: v.gtin }] } : {}),
+    ...(status ? { availability: { available: status === 'in_stock', status } } : {}),
     ...(options.length ? { options } : {}),
     ...(media ? { media } : {}),
   };
@@ -205,9 +218,11 @@ export function toUcpProduct(doc: ProductDoc, ctx: UcpCatalogContext): UcpProduc
 }
 
 /**
- * Products for a lookup. An id is a variant's SKU (that variant, `exact`) or a product key (its
- * cheapest variant, `featured`, the one an agent would add without asking). Each variant lists every
- * request id that resolved to it; an id that matches nothing is simply absent, which the schema allows.
+ * Products for a lookup. An id is a variant's SKU or GTIN (that variant, `exact`; a GTIN in any of
+ * its lengths, matched as its GTIN-14, and every variant of the product carrying it), or a product
+ * key or handle (its cheapest variant, `featured`, the one an agent would add without asking). Each
+ * variant lists every request id that resolved to it; an id that matches nothing is simply absent,
+ * which the schema allows.
  */
 export function lookupProducts(
   docs: ProductDoc[],
@@ -221,10 +236,15 @@ export function lookupProducts(
     const hits = new Map<string, UcpLookupVariant['inputs']>();
     const cheapest = product.variants.reduce((a, b) => (b.price.amount < a.price.amount ? b : a));
     for (const id of ids) {
-      if (id === doc.key)
-        hits.set(cheapest.id, [...(hits.get(cheapest.id) ?? []), { id, match: 'featured' }]);
-      else if (product.variants.some((v) => v.id === id))
-        hits.set(id, [...(hits.get(id) ?? []), { id, match: 'exact' }]);
+      const add = (variant: string, match: 'exact' | 'featured') =>
+        hits.set(variant, [...(hits.get(variant) ?? []), { id, match }]);
+      const g = gtin14(id);
+      const byGtin = g
+        ? product.variants.filter((v) => v.barcodes?.some((b) => gtin14(b.value) === g))
+        : [];
+      if (id === doc.key || (doc.slug && id === doc.slug)) add(cheapest.id, 'featured');
+      else if (product.variants.some((v) => v.id === id)) add(id, 'exact');
+      else for (const v of byGtin) add(v.id, 'exact');
     }
     const variants = product.variants.flatMap((v) => {
       const inputs = hits.get(v.id);
@@ -256,7 +276,8 @@ function resolve(
 /**
  * `get_product`'s narrowing: per option, each value flagged against the other options' current
  * selections. `exists` says a variant (priced in the currency) has the value together with those
- * selections; `available` is the same until the catalog carries stock, which it never emits.
+ * selections; `available` also needs one of those variants not to be out of stock (a SKU whose stock isn't
+ * known counts as available).
  * `preferences` are option names in priority order and come first; a selection that names no
  * option or value of this product is ignored.
  */
@@ -278,12 +299,16 @@ export function detailOptions(
       axis,
       name: o.name,
       values: o.values.map((val) => {
-        const exists = kept.some(
+        const matching = kept.filter(
           (v) =>
             v.options[axis]?.code === val.id &&
             [...picks].every(([a, code]) => a === axis || v.options[a]?.code === code),
         );
-        return { ...val, exists, available: exists };
+        return {
+          ...val,
+          exists: matching.length > 0,
+          available: matching.some((v) => ctx.stock?.get(v.sku) !== 'out_of_stock'),
+        };
       }),
     };
   });

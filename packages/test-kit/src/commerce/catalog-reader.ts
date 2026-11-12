@@ -5,7 +5,7 @@
  * category's members, narrowed to those with a variant priced in the range, with an opaque cursor.
  * `calls` records each read, so a test can say what a use-case did and did not ask for.
  */
-import { encodeListingCursor, LISTING_SEGMENTS } from '@commerceworker/core/product';
+import { encodeListingCursor, gtin14, LISTING_SEGMENTS } from '@commerceworker/core/product';
 import type {
   CatalogChannel,
   CatalogDoc,
@@ -114,6 +114,20 @@ export class InMemoryCatalogReader implements CatalogReader {
   async bySku(channel: string, locale: string, sku: string) {
     this.note('bySku', channel, locale, sku);
     return this.docs(channel, locale).find((d) => d.variants.some((v) => v.sku === sku)) ?? null;
+  }
+
+  async bySlug(channel: string, locale: string, slug: string) {
+    this.note('bySlug', channel, locale, slug);
+    return this.docs(channel, locale).find((d) => d.slug === slug) ?? null;
+  }
+
+  async byGtin(channel: string, locale: string, gtin: string) {
+    this.note('byGtin', channel, locale, gtin);
+    return (
+      this.docs(channel, locale).find((d) =>
+        d.variants.some((v) => v.gtin && gtin14(v.gtin) === gtin),
+      ) ?? null
+    );
   }
 
   async axisNames(type: string, locale: string) {

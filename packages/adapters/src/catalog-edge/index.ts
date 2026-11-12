@@ -56,6 +56,9 @@ export class CatalogEdgeError extends Error {
  */
 const CODE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const LOCALE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+const SLUG = /^[\p{Ll}\p{Lo}\p{N}]+(-[\p{Ll}\p{Lo}\p{N}]+)*$/u;
+const SLUG_MAX = 200;
+const GTIN14 = /^\d{14}$/;
 const valid = (channel: string, locale: string, ...codes: string[]) =>
   CODE.test(channel) && LOCALE.test(locale) && codes.every((c) => CODE.test(c));
 
@@ -180,6 +183,16 @@ export function createCatalogEdgeReader(options: CatalogEdgeOptions): CatalogRea
     bySku: async (channel, locale, sku) =>
       valid(channel, locale, sku)
         ? read<CatalogDoc>(`${base(channel, locale)}/skus/${encodeURIComponent(sku)}`)
+        : null,
+
+    bySlug: async (channel, locale, slug) =>
+      valid(channel, locale) && SLUG.test(slug) && slug.length <= SLUG_MAX
+        ? read<CatalogDoc>(`${base(channel, locale)}/slugs/${encodeURIComponent(slug)}`)
+        : null,
+
+    byGtin: async (channel, locale, gtin) =>
+      valid(channel, locale) && GTIN14.test(gtin)
+        ? read<CatalogDoc>(`${base(channel, locale)}/gtins/${gtin}`)
         : null,
 
     async axisNames(type, locale) {

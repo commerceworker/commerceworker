@@ -26,6 +26,13 @@ export interface StockRow {
   readonly supplier: string;
 }
 
+/**
+ * Whether a SKU can be had, as far as a buyer is told: the coarse status of its central stock, never
+ * a count. `in_stock` is free stock (`stock - reserved`) above zero, or a digital good, which holds
+ * none and is always deliverable.
+ */
+export type StockStatus = 'in_stock' | 'out_of_stock';
+
 export interface ReserveResult {
   /** The reservations the order holds after this step (an earlier step's, when it already had them). */
   readonly reservationIds: string[];
@@ -36,6 +43,12 @@ export interface ReserveResult {
 export interface InventoryStore {
   /** Levels per SKU: central stock, or a store's when `locationId` is set. Unknown SKUs are absent. */
   levels(skus: readonly string[], locationId?: string): Promise<Map<string, StockLevel>>;
+  /**
+   * The status of each SKU's central stock, for a read that shows a buyer what is available. One
+   * statement per 90 SKUs and nothing written. A SKU with no stock row is absent: nothing is known
+   * about it, so nothing is claimed.
+   */
+  availability(skus: readonly string[]): Promise<Map<string, StockStatus>>;
   /**
    * Holds stock for every physical line (digital goods hold none): at the line's own store when
    * routing split the shipment, else at `order.fulfillment.locationId`, else centrally. A line is

@@ -6,7 +6,7 @@
  */
 import type { OrderLine, StockLine } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
-import type { InventoryStore, StockLevel } from '@commerceworker/ports/commerce';
+import type { InventoryStore, StockLevel, StockStatus } from '@commerceworker/ports/commerce';
 import { and, asc, eq, inArray, lte, or, type SQL, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
@@ -141,6 +141,27 @@ export function d1InventoryStore(d1: D1Database, clock: Clock): InventoryStore {
               .where(and(eq(locationStock.locationId, locationId), inArray(locationStock.sku, run)))
           : await d.select().from(products).where(inArray(products.sku, run));
         for (const r of rows) out.set(r.sku, { stock: r.stock, reserved: r.reserved });
+      }
+      return out;
+    },
+
+    async availability(skus) {
+      const out = new Map<string, StockStatus>();
+      for (const run of chunk([...new Set(skus)], SKUS_PER_QUERY)) {
+        const rows = await d
+          .select({
+            sku: products.sku,
+            stock: products.stock,
+            reserved: products.reserved,
+            kind: products.kind,
+          })
+          .from(products)
+          .where(inArray(products.sku, run));
+        for (const r of rows)
+          out.set(
+            r.sku,
+            r.kind === 'digital' || r.stock - r.reserved > 0 ? 'in_stock' : 'out_of_stock',
+          );
       }
       return out;
     },

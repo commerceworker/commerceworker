@@ -172,6 +172,7 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     'commerce.route_fulfillment: ship 2 lines',
     () => routeFulfillment(ports, { lines: stocked, fulfillment: null, meta: {} } as never, 'ship'),
   ],
+  ['ucp: catalog availability of 2 SKUs', () => ports.inventory.availability(['IC-TEE', 'IC-ONE'])],
   [
     'commerce.reserve: hold 2 lines',
     () => ports.inventory.reserve({ id: id('reserve'), lines: stocked }, 'reserve#1'),
