@@ -1,4 +1,4 @@
-import { introspectWorkflow } from 'cloudflare:test';
+import { introspectWorkflow, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import {
   b2bOrderFlow,
@@ -12,7 +12,7 @@ import {
   type TimelineEntry,
 } from '@commerceworker/core';
 import { createDb, orders, sessions, users } from '@commerceworker/db';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
 import { startOrder } from '../src/orders';
@@ -190,19 +190,38 @@ describe('order live updates', () => {
     await a.report({ generation: 1, seq: 1, status: 'running', order: o });
     const ws = await watch(id);
     await until(async () => ws.frames.length > 0, 'the connect frame');
-    const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    await settle(150);
-    const before = ws.frames.length;
-
-    for (let i = 0; i < 5; i++)
-      await a.report({
-        generation: 1,
-        log: { at: i, kind: 'node', message: `s${i}`, key: `k${i}` },
+    // The window is the agent's own timer. Drive it by hand: a real 100 ms window is shorter than
+    // five RPCs take under load, so a burst would straddle it.
+    const realTimeout = globalThis.setTimeout;
+    const delivered = (n: number) => until(async () => ws.frames.length >= n, `${n} frames`);
+    const held = (inst: unknown) => (inst as { held: unknown }).held;
+    const before = await runInDurableObject(a, async (inst) => {
+      // Send whatever the first report left held, so the burst starts from a clean window.
+      (inst as unknown as { flushBroadcast(): void }).flushBroadcast();
+      return ws.frames.length;
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await runInDurableObject(a, async (inst) => {
+        for (let i = 0; i < 5; i++)
+          await inst.report({
+            generation: 1,
+            log: { at: i, kind: 'node', message: `s${i}`, key: `k${i}` },
+          });
+        // Inside the window the newest frame is held, not sent.
+        expect(held(inst)).not.toBeNull();
+        await vi.advanceTimersByTimeAsync(99);
+        expect(held(inst)).not.toBeNull();
+        // After it, one frame carries all five.
+        await vi.advanceTimersByTimeAsync(1);
+        expect(held(inst)).toBeNull();
       });
-    // Inside the window nothing has gone out; after it, one frame carries all five.
-    await settle(30);
-    expect(ws.frames.length).toBe(before);
-    await settle(250);
+    } finally {
+      vi.useRealTimers();
+    }
+    await delivered(before + 1);
+    // Let any extra frame the socket would carry arrive before counting.
+    await new Promise((r) => realTimeout(r, 50));
     expect(ws.frames.length).toBe(before + 1);
     expect(
       ws.frames
@@ -211,10 +230,12 @@ describe('order live updates', () => {
         .slice(-5),
     ).toEqual(['s0', 's1', 's2', 's3', 's4']);
 
-    // A status change goes out with the report, not after the window.
+    // A status change goes out with the report, not after the window: nothing is left held.
+    const nothingHeld = () => runInDurableObject(a, async (inst) => expect(held(inst)).toBeNull());
+    const last = () => ws.frames.at(-1)!.state;
     await a.report({ generation: 1, seq: 2, status: 'waiting' });
-    await settle(30);
-    expect(ws.frames.at(-1)!.state.status).toBe('waiting');
+    await nothingHeld();
+    await until(async () => last().status === 'waiting', 'the status frame');
     // So does a wait an approver needs, and a terminal status.
     await a.openWait({
       nodeId: 'extract',
@@ -224,11 +245,12 @@ describe('order live updates', () => {
       title: 'Payment',
       since: Date.now(),
     });
-    await settle(30);
-    expect(ws.frames.at(-1)!.state.waits.map((w) => w.eventType)).toEqual(['pay#1']);
+    await nothingHeld();
+    await until(async () => last().waits.length === 1, 'the wait frame');
+    expect(last().waits.map((w) => w.eventType)).toEqual(['pay#1']);
     await a.report({ generation: 1, seq: 3, status: 'completed' });
-    await settle(30);
-    expect(ws.frames.at(-1)!.state.status).toBe('completed');
+    await nothingHeld();
+    await until(async () => last().status === 'completed', 'the terminal frame');
     ws.close();
   });
 
