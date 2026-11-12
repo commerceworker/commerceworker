@@ -11,7 +11,7 @@ import {
 } from '@commerceworker/db';
 import { inArray } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { RETENTION, sweep } from '../src/retention';
+import { expirePluginExports, RETENTION, sweep } from '../src/retention';
 
 const db = () => createDb(env.DB);
 const DAY = 86_400_000;
@@ -152,5 +152,21 @@ describe('retention sweep', () => {
           .where(inArray(paymentEvents.id, ['evt_ret_old', 'evt_ret_new'])),
       ),
     ).toEqual(['evt_ret_new']);
+  });
+
+  it('deletes a plugin’s uninstall export after 30 days, and a failure skips nothing else', async () => {
+    await env.DOCS.put('plugin-exports/ret-plugin/a.ndjson', 'x');
+    await env.DOCS.put('plugin-exports/ret-other/b.ndjson', 'y');
+    const left = async () =>
+      (await env.DOCS.list({ prefix: 'plugin-exports/' })).objects.map((o) => o.key);
+    // Still within its window.
+    expect(await expirePluginExports(env, Date.now() + 29 * DAY)).toBe(0);
+    expect(await left()).toHaveLength(2);
+    // The daily sweep reports them.
+    expect((await sweep(env, Date.now() + 31 * DAY)).pluginExports).toBe(2);
+    expect(await left()).toEqual([]);
+    // A bucket that throws costs only this step.
+    const broken = { ...env, DOCS: { list: () => Promise.reject(new Error('R2 is down')) } };
+    expect(await expirePluginExports(broken as unknown as Env)).toBe(0);
   });
 });

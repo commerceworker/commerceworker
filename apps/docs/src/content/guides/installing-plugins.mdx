@@ -102,7 +102,7 @@ a plugin off over the REST API, so automation can switch off one that misbehaves
 |---|---|
 | **Turn off** / **Turn on** | Off, its steps stop running at once and flows that use it can't be published; its nodes read as not installed. Nothing is deleted. Turning it on or off on this page needs the identity check, since either changes what every order runs; an admin API token can still turn one off. |
 | **Roll back to** a version | Reinstalls an earlier version listed under **Earlier versions**. Needs the identity check. |
-| **Uninstall** | Refused while a published flow uses its nodes, an order that has not ended is running on it, or a label it made has not been voided yet; the page lists what is in the way (the same list as `GET /api/v1/plugins/:id/usage`). Otherwise it deletes the plugin's secrets and stored data. Needs the identity check. |
+| **Uninstall** | Refused while a published flow uses its nodes, an order that has not ended is running on it, or a label it made has not been voided yet; the page lists what is in the way (the same list as `GET /api/v1/plugins/:id/usage`). Otherwise it exports the plugin's stored data to a file in your documents store (`plugin-exports/<plugin>/<time>.ndjson`; exports are kept 30 days, then deleted, so download or re-import one within that time), then deletes the secrets and the stored data. If the export fails, nothing is deleted. Uploading a file for a plugin that once ran from your deployment's registry keeps the data it stored. Needs the identity check. |
 | Replace a secret | Enter a new value next to the secret. Needs the identity check. |
 
 A version whose publisher this workspace no longer trusts can't be approved, rolled back to or
@@ -128,4 +128,4 @@ Both need `admin`. See the [REST API](/reference/rest-api/#routes).
 Every action, and every refusal, is recorded under **Plugins** in the
 [audit log](/guides/team-and-roles/#audit-log): `plugin.uploaded`, `plugin.drafted` (the assistant drafted a version), `plugin.cases_run` (a draft's cases were run), `plugin.draft_refused` (a draft the assistant couldn't use), `plugin.approved`,
 `plugin.secret_set` (names the secret, never its value), `plugin.disabled`, `plugin.enabled`,
-`plugin.rolled_back`, `plugin.uninstalled` and `plugin.refused` (with the reason).
+`plugin.rolled_back`, `plugin.uninstalled`, `plugin.data_exported`, `plugin.data_wiped` and `plugin.refused` (with the reason).

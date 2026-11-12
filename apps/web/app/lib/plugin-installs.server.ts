@@ -206,11 +206,15 @@ async function act(
       };
     }
     case 'uninstall': {
-      const r = await answered(engine().uninstallPlugin(id), 'plugin.uninstalled', () => ({}));
+      const r = await answered(
+        engine().uninstallPlugin(id, by.id),
+        'plugin.uninstalled',
+        () => ({}),
+      );
       return (
         r.refusal ?? {
           ok: true,
-          done: `${id} is uninstalled; its secrets and storage are deleted.`,
+          done: `${id} is uninstalled; its secrets and storage are deleted, and its data was exported first.`,
         }
       );
     }

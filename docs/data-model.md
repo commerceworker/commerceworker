@@ -623,6 +623,17 @@ Orders and everything in an order's record (payments, invoices, shipments, the s
 
 The archive itself is kept unless the deployment's registry sets `auditArchiveDays`: `scripts/provision.sh` then replaces an R2 lifecycle rule named `audit-archive` on the prefix `audit/` that expires objects after that many days (see [Operations](operations.md#the-registry)). A bucket lock rule of the same name keeps each archived object from being deleted before that age (indefinitely when `auditArchiveDays` is unset), and another, `plugin-bundles`, keeps `plugins/` indefinitely ([Operations](operations.md#bucket-locks)).
 
+### Plugin exports
+
+Uninstalling a sandboxed plugin writes its storage to `DOCS` at `plugin-exports/<id>/<time>.ndjson` before
+deleting it ([Plugins](plugins.md#installing-at-runtime)). The file is the plugin's own data, which can hold
+buyer details when the plugin was granted them. The
+daily [retention](#retention) sweep deletes an export once it is 30 days old, or `PERSONAL_DATA_RETENTION_DAYS`
+if that is shorter (it reports them as `pluginExports`); the prefix isn't under a bucket lock. A [data subject
+erasure](#export-and-erasure) doesn't reach into an export: it is the plugin's own free-form data in NDJSON,
+which the engine can't match to an email address, and it doesn't read the plugin's live storage either. The
+30-day expiry is what removes a subject from an export; delete one sooner by hand if a request can't wait.
+
 ### Personal data on finished orders
 
 `PERSONAL_DATA_RETENTION_DAYS` is empty by default: personal data is kept. Where a deployment sets it (the registry's `personalDataRetentionDays`; `personalDataRetentionDays` in `packages/core/src/erasure.ts` raises anything below 30 to 30 and treats empty, zero or a non-integer as unset), the same sweep calls `expirePersonalData`. It picks up to 500 orders a run, oldest `updated_at` first, that have a status in `TERMINAL_ORDER_STATUSES`, no `erased_at`, and an `updated_at` older than that many days, and passes them to `eraseOrders`. Each order is erased as in an [erasure request](#export-and-erasure) (agent state, R2 `orders/<id>/`, `documents`, `webhook_deliveries`, `messages`, `inbound_emails`, and `orders.contact_email`, `title` and `erased_at`), except that the only terms erased are the order's own contact, and no `customers` row or unlinked intake mail is touched. An order whose agent refuses (running again) is skipped, logged as a `personal_data_retention_skipped` line, and tried again the next day; the rest of the batch goes ahead. Orders left over wait for the next day's run. The sweep reports the count as `personalDataErased`. The same cutoff applies to `customer_addresses`: `expireAddresses` deletes rows whose `last_used_at` is older (reported as `addressesExpired`), and to `company_members`: `expireMembers` blanks the name and email of members removed before it (reported as `membersExpired`).

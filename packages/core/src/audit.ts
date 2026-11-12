@@ -94,6 +94,8 @@ export const BUSINESS_AUDIT_ACTIONS = {
   'plugin.enabled': 'Turned on a plugin',
   'plugin.rolled_back': 'Rolled back a plugin',
   'plugin.uninstalled': 'Uninstalled a plugin',
+  'plugin.data_exported': 'Exported a plugin’s data before uninstalling it',
+  'plugin.data_wiped': 'Deleted a plugin’s data',
   'plugin.cases_run': 'Ran a drafted plugin’s test cases',
   'plugin.refused': 'Plugin change refused',
 } as const;

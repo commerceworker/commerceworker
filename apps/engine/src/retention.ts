@@ -10,7 +10,8 @@
  * secrets are resealed under the current `DATA_KEY` (`resealSecrets`). Hosted card payments that
  * began and never finished are settled (`settleOrphanedHolds`): the order placed if its hold is open,
  * the hold released otherwise. Expired storefront sign-ins and sessions are deleted
- * (`pruneShopperAuth`).
+ * (`pruneShopperAuth`). A sandboxed plugin's uninstall export (`plugin-exports/`) is deleted once it
+ * is 30 days old, or the personal data retention if that is shorter (`expirePluginExports`).
  */
 
 import * as uc from '@commerceworker/application/commerce';
@@ -42,6 +43,7 @@ export async function sweep(env: Env, now = Date.now()) {
     aiUsageDays: await pruneUsage(env, now),
     secrets: await resealSecrets(env),
     cardHolds: await settleOrphanedHolds(env, now),
+    pluginExports: await expirePluginExports(env, now),
     ...pruned,
   };
 }
@@ -98,4 +100,35 @@ export async function expireMembers(env: Env, now = Date.now()) {
   const days = personalDataRetentionDays(env.PERSONAL_DATA_RETENTION_DAYS);
   if (days === null) return 0;
   return uc.expireMembers({ retention: retentionStore(env) }, now, days);
+}
+
+/** How long an uninstalled plugin's export stays, for an admin to download or re-import. */
+export const PLUGIN_EXPORT_DAYS = 30;
+
+/**
+ * Deletes `plugin-exports/` objects past `PLUGIN_EXPORT_DAYS` (or the personal data retention, if
+ * shorter): an export holds whatever the plugin stored, buyer details included. A failure is logged
+ * and tried again tomorrow, and never stops the sweep's other steps. Returns how many it deleted.
+ */
+export async function expirePluginExports(env: Env, now = Date.now()) {
+  try {
+    const days = Math.min(
+      PLUGIN_EXPORT_DAYS,
+      personalDataRetentionDays(env.PERSONAL_DATA_RETENTION_DAYS) ?? PLUGIN_EXPORT_DAYS,
+    );
+    const cutoff = now - days * 86_400_000;
+    let deleted = 0;
+    let cursor: string | undefined;
+    do {
+      const page = await env.DOCS.list({ prefix: 'plugin-exports/', cursor });
+      const old = page.objects.filter((o) => o.uploaded.getTime() < cutoff).map((o) => o.key);
+      if (old.length) await env.DOCS.delete(old);
+      deleted += old.length;
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return deleted;
+  } catch (err) {
+    console.error(JSON.stringify({ type: 'plugin_export_expiry_failed', error: String(err) }));
+    return 0;
+  }
 }

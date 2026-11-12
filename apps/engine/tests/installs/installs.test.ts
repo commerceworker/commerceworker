@@ -1,4 +1,4 @@
-import { introspectWorkflow } from 'cloudflare:test';
+import { introspectWorkflow, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import {
   bundleSigningMessage,
@@ -14,6 +14,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { resealSecrets } from '../../src/data-key';
 import { ensureTemplates } from '../../src/flows';
 import { startOrder } from '../../src/orders';
+import type { PluginStorage } from '../../src/plugin-host';
 import { dropInstallsCache, pluginStub, resolveSecret } from '../../src/plugin-host';
 import * as installs from '../../src/plugin-installs';
 import { pluginStatuses, registry } from '../../src/plugins';
@@ -128,6 +129,23 @@ async function rate(input: Partial<OrderInput> = {}) {
   return (done.nodes.rates as { output?: { option?: { title?: string } } } | undefined)?.output
     ?.option?.title;
 }
+
+/** Rows the plugin's own migrations don't know, as a registry-era install would have left. */
+const seedStorage = (id: string, note: string) =>
+  runInDurableObject(env.PLUGIN_STORAGE.getByName(id), (_o: PluginStorage, state) => {
+    state.storage.sql.exec('CREATE TABLE IF NOT EXISTS keepsake (note TEXT)');
+    state.storage.sql.exec('INSERT INTO keepsake (note) VALUES (?)', note);
+  });
+const keepsakes = (id: string) =>
+  runInDurableObject(env.PLUGIN_STORAGE.getByName(id), (_o: PluginStorage, state) =>
+    state.storage.sql.exec<{ note: string }>('SELECT note FROM keepsake').toArray(),
+  ).catch(() => []);
+const exportKeys = async (id: string) =>
+  (await env.DOCS.list({ prefix: `plugin-exports/${id}/` })).objects.map((o) => o.key);
+const auditActions = async () =>
+  (await env.DB.prepare('SELECT action FROM audit_events').all<{ action: string }>()).results.map(
+    (r) => r.action,
+  );
 
 const status = async () =>
   (await pluginStatuses(env, true)).find((s) => s.id === 'fixture-carrier');
@@ -357,16 +375,28 @@ describe('installing a plugin at runtime', () => {
   });
 
   it('uninstalls only once nothing uses it, taking its secrets and storage with it', async () => {
-    await expect(installs.uninstallPlugin(env, 'fixture-carrier')).rejects.toThrow(
+    await expect(installs.uninstallPlugin(env, 'fixture-carrier', ADMIN)).rejects.toThrow(
       /still in use: 1 published flows/,
     );
     await db()
       .update(flows)
       .set({ archivedAt: Date.now() })
       .where(eq(flows.id, 'test-installed-rates'));
-    await installs.uninstallPlugin(env, 'fixture-carrier');
+    await seedStorage('fixture-carrier', 'before the uninstall');
+    await installs.uninstallPlugin(env, 'fixture-carrier', ADMIN);
     dropInstallsCache();
     expect(await status()).toBeUndefined();
+    // The data went to DOCS first (schema and rows as NDJSON), then was deleted, both on the record.
+    const [key] = await exportKeys('fixture-carrier');
+    const lines = (await (await env.DOCS.get(key!))!.text())
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    expect(lines).toContainEqual({ table: 'keepsake', row: { note: 'before the uninstall' } });
+    expect(await keepsakes('fixture-carrier')).toEqual([]);
+    expect(await auditActions()).toEqual(
+      expect.arrayContaining(['plugin.data_exported', 'plugin.data_wiped']),
+    );
     expect(await db().select().from(pluginSecrets)).toEqual([]);
     const rows = await db().select().from(installedPlugins);
     expect(new Set(rows.map((r) => r.status))).toEqual(new Set(['uninstalled']));
@@ -394,5 +424,60 @@ describe('installing a plugin at runtime', () => {
     );
     expect(running).toHaveLength(1);
     expect(running[0]!.approvedBy).toBe(ADMIN);
+  });
+
+  it('keeps what an id stored when a file is uploaded for it, and leaves it alone until approval', async () => {
+    // Uninstalled, then what a registry plugin of this id wrote is all that is left of it.
+    await installs.uninstallPlugin(env, 'fixture-carrier', ADMIN);
+    await seedStorage('fixture-carrier', 'from the registry era');
+    const v1 = await installs.uploadPlugin(env, await cwplugin(bundles.v1.body), ADMIN);
+    expect(v1.status).toBe('pending');
+    expect(await keepsakes('fixture-carrier')).toEqual([{ note: 'from the registry era' }]);
+  });
+
+  it('refuses another publisher’s file for an id that is installed, leaving its data', async () => {
+    const other = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, [
+      'sign',
+      'verify',
+    ])) as unknown as { privateKey: Signer; publicKey: CryptoKey };
+    const both = {
+      ...env,
+      PLUGIN_PUBLISHERS: JSON.stringify({
+        acme: JSON.parse((env as unknown as { PLUGIN_PUBLISHERS: string }).PLUGIN_PUBLISHERS).acme,
+        other: b64url((await crypto.subtle.exportKey('raw', other.publicKey)) as ArrayBuffer),
+      }),
+    } as Env;
+    await expect(
+      installs.uploadPlugin(
+        both,
+        await cwplugin(bundles.v2.body, { publisher: 'other', key: other.privateKey }),
+        ADMIN,
+      ),
+    ).rejects.toThrow(/installed from another publisher: uninstall it before installing this one/);
+    expect(await keepsakes('fixture-carrier')).toEqual([{ note: 'from the registry era' }]);
+  });
+
+  it('leaves the data in place when the export fails, and the plugin installed', async () => {
+    await installs.setPluginSecret(env, 'fixture-carrier', 'API_KEY', 'sk-admin-3333', ADMIN);
+    await installs.approvePlugin(
+      env,
+      'fixture-carrier',
+      bundles.v1.sha,
+      { personalData: true },
+      ADMIN,
+    );
+    const before = await auditActions();
+    const broken = {
+      ...env,
+      DOCS: { put: () => Promise.reject(new Error('R2 is down')) },
+    } as unknown as Env;
+    await expect(installs.uninstallPlugin(broken, 'fixture-carrier', ADMIN)).rejects.toThrow(
+      /R2 is down/,
+    );
+    expect(await keepsakes('fixture-carrier')).toEqual([{ note: 'from the registry era' }]);
+    const rows = await db().select().from(installedPlugins);
+    expect(rows.some((r) => r.status === 'active')).toBe(true);
+    // Nothing was exported or deleted, so nothing is on the record as either.
+    expect(await auditActions()).toEqual(before);
   });
 });
