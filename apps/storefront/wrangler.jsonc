@@ -20,6 +20,12 @@
   // Runs near the engine rather than near the buyer: every request calls it.
   "placement": { "mode": "smart" },
   "upload_source_maps": true,
+  "vars": {
+    // The site key of this deployment's Turnstile widget (public; the registry's turnstileSiteKey).
+    // With it, a card payment on a hosted checkout asks for a Turnstile check, which this Worker
+    // verifies with the TURNSTILE_SECRET_KEY secret. Empty: no check (local dev, tests, demos).
+    "TURNSTILE_SITE_KEY": ""
+  },
   // Trace events also go to Workers Logpush, like the web Worker's (docs/operations.md, "Logs").
   "logpush": true,
   // Served only at shop.commerceworker.com, so the zone's rules apply to every request: no workers.dev or
@@ -43,9 +49,13 @@
     // Promo-code changes on a hosted checkout, per cookie, on top of API_LIMIT: guessing codes is the one
     // thing a buyer can do here that is worth a budget of its own.
     { "name": "PROMO_LIMIT", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } },
-    { "name": "CATALOG_LIMIT", "namespace_id": "1009", "simple": { "limit": 120, "period": 60 } }
+    { "name": "CATALOG_LIMIT", "namespace_id": "1009", "simple": { "limit": 120, "period": 60 } },
+    // Card payments on a hosted checkout, per cookie and per client address: the first guard against
+    // card testing (the session's own attempt cap and Turnstile are the others).
+    { "name": "PAY_LIMIT", "namespace_id": "1010", "simple": { "limit": 10, "period": 60 } }
   ]
-  // Secrets (set by the deploy, `scripts/fleet.ts secrets storefront`): STOREFRONT_KEY — signs what
+  // Secrets (set by the deploy, `scripts/fleet.ts secrets storefront`): TURNSTILE_SECRET_KEY — the
+  // widget's secret, only on a deployment with a turnstileSiteKey. STOREFRONT_KEY — signs what
   // this Worker forwards to the engine (a cart's buyer, a UCP platform) and the cookie a start link
   // sets. It is derived from PRINCIPAL_KEY (`storefrontKey` in @commerceworker/core), which this
   // Worker never holds: the engine checks these envelopes under the derived key alone, so a

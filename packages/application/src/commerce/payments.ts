@@ -116,6 +116,9 @@ async function adoptProblem(
     return `PaymentIntent is ${pi.status}, not an open authorization`;
   if (pi.metadata?.order_id && pi.metadata.order_id !== order.id)
     return `PaymentIntent belongs to order ${pi.metadata.order_id}`;
+  // A checkout's intent names its session, which is the order's external id.
+  if (pi.metadata?.checkout_id && order.externalId && pi.metadata.checkout_id !== order.externalId)
+    return `PaymentIntent belongs to checkout ${pi.metadata.checkout_id}`;
   const other = await ports.ledger.forExternalId(pi.id);
   const taken = other.find((r) => r.orderId !== order.id);
   return taken ? `PaymentIntent already pays order ${taken.orderId}` : null;
@@ -177,9 +180,6 @@ export async function authorizePayment(
   const processor = ports.mode.processor();
   const saved = await savedPayment(ports, order);
   const source = paymentSource(order, method, saved);
-  if (source === 'external' || source === 'offline')
-    return record(ports, { ...base, provider: source, status: declined ? 'declined' : ok });
-
   const decline = (reason: string, intentId?: string) =>
     record(ports, {
       ...base,
@@ -188,6 +188,12 @@ export async function authorizePayment(
       ref: reason,
       externalId: intentId,
     });
+  // A hosted checkout's buyer pays with the card they just gave and nothing else: whatever else the
+  // order or its customer carries (a saved method, an account, a recorded payment) is never used.
+  if (order.meta?.hosted === true && source !== 'adopt')
+    return decline('A hosted checkout is paid with the buyer’s own card');
+  if (source === 'external' || source === 'offline')
+    return record(ports, { ...base, provider: source, status: declined ? 'declined' : ok });
 
   let pi: ProcessorIntent;
   try {

@@ -102,6 +102,9 @@ export const SECRETS = {
     'INTAKE_ALLOWLIST',
     'SHIPPING_CARRIER_AUTH',
     'STRIPE_SECRET_KEY',
+    // Public text, kept as a secret only for where a deploy reads it from: Stripe's Apple Pay
+    // domain verification file, which the storefront serves (docs/operations.md).
+    'APPLE_PAY_DOMAIN_ASSOCIATION',
     'UCP_SIGNING_KEY',
   ],
 } as const;
@@ -313,8 +316,9 @@ export type Deployment = {
   email?: { from: string; fromName?: string };
   /**
    * The site key of this deployment's Turnstile widget (public; scripts/provision.sh creates the
-   * widget and prints it). With it, password sign-in and /setup ask for a Turnstile check, which
-   * the web Worker verifies with the environment's TURNSTILE_SECRET_KEY: a deploy then requires
+   * widget and prints it). With it, password sign-in and /setup ask for a Turnstile check, and so
+   * does a card payment on the storefront's hosted checkout; the web Worker and the storefront
+   * verify them with the environment's TURNSTILE_SECRET_KEY: a deploy then requires
    * that secret. Without it, neither page shows a check. Cloudflare's test keys (1x…–3x…) only
    * on a demo.
    */
@@ -328,7 +332,8 @@ export type Deployment = {
   /**
    * The Stripe publishable key (pk_…) of the same account and mode as STRIPE_SECRET_KEY. Agentic
    * checkout's Stripe payment handler gives it to platforms to tokenize cards with; without it no
-   * handler is offered. Only with `payments: "stripe"`.
+   * handler is offered, and the storefront's hosted checkout takes cards, which needs a
+   * `turnstileSiteKey`. Only with `payments: "stripe"`.
    */
   stripePublishableKey?: string;
   /**
@@ -640,6 +645,12 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
       );
     if (payments !== 'stripe')
       throw new Error(`${file}: stripePublishableKey needs payments "stripe"`);
+    // The storefront's hosted checkout is turned on at runtime (a workspace setting), and with a
+    // publishable key it takes cards: each press of Pay can test one, so it needs the Turnstile check.
+    if (turnstile === undefined)
+      throw new Error(
+        `${file}: stripePublishableKey puts card payment on the storefront, which needs a turnstileSiteKey (docs/operations.md, "Card payment on the hosted checkout")`,
+      );
   }
   const plugins = raw.plugins ?? {};
   if (typeof plugins !== 'object' || plugins === null || Array.isArray(plugins))
@@ -1454,7 +1465,7 @@ function renderCatalogDelivery(base: Config, d: Deployment): Config {
 /**
  * The rate-limit bindings with this deployment's namespaces and budgets. Namespaces are per
  * account: slot 1 keeps the base ids (the web Worker's 1001 to 1005, the storefront's 1006 to
- * 1009), slot 2 uses 2001 and so on. The registry's `limits` replace a binding's requests a
+ * 1010), slot 2 uses 2001 and so on. The registry's `limits` replace a binding's requests a
  * minute; the period stays 60 seconds.
  */
 function rateLimits(ratelimits: Config[], d: Deployment): Config[] {
@@ -1483,6 +1494,8 @@ export function renderStorefront(base: Config, d: Deployment): Config {
     s.binding === 'ENGINE' ? { ...s, service: names(d).engine } : s,
   );
   config.ratelimits = rateLimits(config.ratelimits, d);
+  // Always set, so a deployment without a widget never shows another's.
+  config.vars = { ...config.vars, TURNSTILE_SITE_KEY: d.turnstileSiteKey ?? '' };
   return config;
 }
 
@@ -1621,7 +1634,7 @@ function contentCommon(base: Config, d: Deployment, app: ContentApp): Config {
           : s,
     );
   // The content Workers' namespaces sit in the deployment's slot at 500 and up: the commerce
-  // Workers' (1001 to 1009 for slot 1) are another set of counters with their own budgets.
+  // Workers' (1001 to 1010 for slot 1) are another set of counters with their own budgets.
   if (c.ratelimits)
     c.ratelimits = c.ratelimits.map((r: Config) => ({
       ...r,
@@ -1763,17 +1776,16 @@ export function matrix(list: Deployment[]): Record<Ring, Deployment[]> {
 /**
  * Why the environment's secrets can't run `app` for `d`, or null. The engine of a Stripe
  * deployment needs STRIPE_SECRET_KEY, in the same mode (test or live) as its publishable key. The
- * web Worker of a deployment with a Turnstile site key needs TURNSTILE_SECRET_KEY: without it every
- * password sign-in would be refused. The storefront needs only the principal key every app needs,
- * which it is given as a derived key.
+ * web Worker and the storefront of a deployment with a Turnstile site key need TURNSTILE_SECRET_KEY:
+ * without it every password sign-in and card payment would be refused. The storefront needs besides
+ * only the principal key every app needs, which it is given as a derived key.
  */
 export function secretsProblem(
   d: Deployment,
   env: Record<string, string | undefined>,
   app: 'engine' | 'storefront' | 'web',
 ) {
-  if (app === 'storefront') return null;
-  if (app === 'web')
+  if (app === 'storefront' || app === 'web')
     return d.turnstileSiteKey && !env.TURNSTILE_SECRET_KEY
       ? `${d.id} has a turnstileSiteKey: add its widget's secret as TURNSTILE_SECRET_KEY to the ${d.environment} GitHub environment`
       : null;
@@ -1789,13 +1801,15 @@ export function secretsProblem(
 
 /**
  * The storefront's secrets: `storefrontKey` of the principal key and of the previous one while a
- * rotation finishes. The principal key itself never reaches it.
+ * rotation finishes, and the Turnstile widget's secret where there is one (it checks a card
+ * payment's token). The principal key itself never reaches it.
  */
 export function storefrontSecrets(env: Record<string, string | undefined>) {
   const [current, previous] = [env.PRINCIPAL_KEY, env.PRINCIPAL_KEY_PREVIOUS];
   return {
     ...(current ? { STOREFRONT_KEY: storefrontKey(current) } : {}),
     ...(previous ? { STOREFRONT_KEY_PREVIOUS: storefrontKey(previous) } : {}),
+    ...(env.TURNSTILE_SECRET_KEY ? { TURNSTILE_SECRET_KEY: env.TURNSTILE_SECRET_KEY } : {}),
   };
 }
 

@@ -198,6 +198,24 @@ describe('checkoutFlowProblem', () => {
     auth.config = { method: 'card', purpose: 'verify' };
     expect(checkoutFlowProblem(terms)).toMatch(/verifies/);
   });
+
+  it('refuses a flow that carries the order on account: an invoice billed to it, or a stored-method charge', () => {
+    const node = (type: string, config?: Record<string, unknown>) =>
+      ({ id: 'extra', type, label: type, config, position: { x: 0, y: 0 } }) as never;
+    for (const extra of [
+      node('commerce.invoice'),
+      node('commerce.invoice', { terms: 'net_30', onAccount: true }),
+      node('commerce.charge'),
+    ]) {
+      const flow = storefrontOrderFlow();
+      flow.nodes.push(extra);
+      expect(checkoutFlowProblem(flow)).toMatch(/on account/);
+    }
+    // An invoice that is not billed to the account is the buyer's own to pay.
+    const paid = storefrontOrderFlow();
+    paid.nodes.push(node('commerce.invoice', { onAccount: false, provider: 'stripe' }));
+    expect(checkoutFlowProblem(paid)).toBeNull();
+  });
 });
 
 describe('flowOffersPickup', () => {

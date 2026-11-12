@@ -23,6 +23,7 @@ import {
   cartAttachmentKey,
   type GuestActor,
   guestCartOpen,
+  type HostedPayInput,
   runHealthChecks,
   type SignedActor,
   type StorefrontRpc,
@@ -33,7 +34,10 @@ import { routeAgents } from './agent-routes';
 import { cartSnapshot, keepCartOpen, redeemCartStart } from './cart/carts';
 import { searchCartProducts } from './cart/search';
 import {
+  applePayDomainAssociation,
   completeHosted,
+  confirmHostedPayment,
+  payHosted,
   publicSettings,
   readHosted,
   redeemHostedStart,
@@ -147,6 +151,18 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
     shown?: { version: number; total: number },
   ) {
     return completeHosted(this.env, checkoutId, secret, actor, shown);
+  }
+
+  payCheckout(checkoutId: string, secret: string, actor: SignedActor, pay: HostedPayInput) {
+    return payHosted(this.env, checkoutId, secret, actor, pay);
+  }
+
+  confirmCheckoutPayment(checkoutId: string, secret: string, actor: SignedActor) {
+    return confirmHostedPayment(this.env, checkoutId, secret, actor);
+  }
+
+  async applePayDomainAssociation() {
+    return applePayDomainAssociation(this.env);
   }
 
   redeemCartStart(cartId: string, token: string) {

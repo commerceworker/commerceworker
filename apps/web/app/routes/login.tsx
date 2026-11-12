@@ -9,6 +9,7 @@ import {
   FieldSeparator,
 } from '@commerceworker/ui/field';
 import { Input } from '@commerceworker/ui/input';
+import { Turnstile } from '@commerceworker/ui/turnstile';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -21,7 +22,6 @@ import {
   useSearchParams,
 } from 'react-router';
 import { Mark } from '~/components/mark';
-import { Turnstile } from '~/components/turnstile';
 import {
   authEnabled,
   principal,

@@ -15,6 +15,7 @@ import {
   hostedGuestId,
   hostedHash,
 } from '@commerceworker/core';
+import { STRIPE_HEADER, TURNSTILE_HEADER } from '@commerceworker/security/csp';
 import { data } from 'react-router';
 import { engine } from './env.server';
 import { signedActor } from './principal.server';
@@ -93,16 +94,37 @@ export async function checkoutBuyer(request: Request, id: string) {
 export const PRIVATE_HEADERS = { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' };
 
 /**
+ * The notes a checkout page passes to entry.server.tsx when it takes a card: `STRIPE_HEADER` lets
+ * this page alone load Stripe.js and frame its Payment Element (and allows the browser's payment
+ * request), `TURNSTILE_HEADER` its Turnstile widget. Both are folded into the CSP there and never sent.
+ */
+export const cardPageNotes = (card: boolean, turnstile: boolean): Record<string, string> => ({
+  ...(card ? { [STRIPE_HEADER]: '1' } : {}),
+  ...(card && turnstile ? { [TURNSTILE_HEADER]: '1' } : {}),
+});
+
+/**
  * The `headers` export of a hosted checkout route: `PRIVATE_HEADERS` whichever of its loader, action
  * or error boundary answered, with anything a refusal sent of its own (a 429's `Retry-After`). React
  * Router hands a route all three header sets, empty when unused, so choosing one with `??` would pick
  * an empty one and let the page fall to the Worker's `private, no-cache`.
  */
-export function privateHeaders({ errorHeaders }: { errorHeaders?: Headers | undefined }) {
+export function privateHeaders({
+  errorHeaders,
+  loaderHeaders,
+}: {
+  errorHeaders?: Headers | undefined;
+  loaderHeaders?: Headers | undefined;
+}) {
   const out = new Headers(PRIVATE_HEADERS);
   errorHeaders?.forEach((value, key) => {
     out.set(key, value);
   });
+  // What the loader noted for the page's policy (`cardPageNotes`), whichever answer is drawn.
+  for (const note of [STRIPE_HEADER, TURNSTILE_HEADER]) {
+    const v = loaderHeaders?.get(note);
+    if (v) out.set(note, v);
+  }
   return out;
 }
 

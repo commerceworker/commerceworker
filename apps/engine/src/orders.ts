@@ -21,8 +21,8 @@ import type { OrderWorkflowParams } from './workflow';
 
 /**
  * An order whose meta came from a caller (the binding: the web app's pages, the REST API, signed
- * and channel webhooks; and A2A's place_order): `meta.ucp`, `meta.cart` and `meta.plugin` are the
- * engine's own marks, set only when a UCP checkout, a cart or a plugin starts an order inside the
+ * and channel webhooks; and A2A's place_order): `meta.ucp`, `meta.cart`, `meta.plugin` and `meta.hosted` are the
+ * engine's own marks, set only when a UCP or hosted checkout, a cart or a plugin starts an order inside the
  * engine, so whatever a caller sent under them is dropped. A forged `meta.ucp` would point the
  * order's webhooks at a platform.
  */
@@ -30,6 +30,10 @@ export function fromOutside<T extends StartOrderInput>(req: T): T {
   // `purchaseOrder` is the engine's own call to tie an order to a PO: a `link` from a caller would
   // point an order at a PO it names, so it goes. A `record` is the web app's own, for an inbound PO.
   const out: T = req.purchaseOrder && 'link' in req.purchaseOrder ? withoutLink(req) : req;
+  // `hosted:` keys are a hosted checkout's own (its order is named for the session, and holds the
+  // buyer's card): no outside caller starts an order under one.
+  if ('idempotencyKey' in out && String(out.idempotencyKey).startsWith('hosted:'))
+    throw new Error('Idempotency keys starting "hosted:" are reserved');
   const meta = out.input.meta;
   if (!meta || !('ucp' in meta || 'cart' in meta || 'plugin' in meta || 'hosted' in meta))
     return out;

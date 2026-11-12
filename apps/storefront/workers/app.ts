@@ -2,6 +2,7 @@ import { runHealthChecks, UCP_PATH, UCP_PROFILE_PATH } from '@commerceworker/cor
 import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
 import { createRequestHandler } from 'react-router';
+import { APPLE_PAY_PATH, applePayFile } from '../app/lib/apple-pay.server';
 import { cartGuest } from '../app/lib/cart-guest.server';
 import { engine } from '../app/lib/env.server';
 import { setGuestHeader } from '../app/lib/principal.server';
@@ -40,6 +41,7 @@ async function route(request: Request): Promise<Response> {
   if (url.pathname === '/health')
     return Response.json({ ok: true, service: 'commerceworker-storefront' });
   if (url.pathname === '/health/deep') return deepHealth();
+  if (url.pathname === APPLE_PAY_PATH && request.method === 'GET') return applePayFile();
 
   // UCP (agentic checkout): the business profile is public; checkout and orders under /ucp take
   // a registered platform's key (app/lib/ucp.server.ts). Ahead of the cross-site check, as a

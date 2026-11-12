@@ -68,10 +68,13 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    spends nothing. A hosted buyer pays with their own instrument: never on-account, never the
    customer's credit or saved cards, unless the operator explicitly allows it. `completeCheckout`
    completes only in test mode (`PAYMENTS_MODE` `mock`: a payment is recorded, none is taken), with the
-   same cookie-secret and actor checks as every call; with real payments it completes nothing.
-   It completes only the version and total the buyer's page showed (else `changed`, no order), and
-   re-checks the flow it loads with `checkoutFlowProblem`; a payment-less authorizer throws outside
-   test mode. REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
+   same cookie-secret and actor checks as every call; with real payments it completes nothing. With them `payCheckout` takes a card: Stripe's confirmation
+   token from the buyer's browser becomes a manual-capture PaymentIntent for the *quote's* total (no customer,
+   saved method or `off_session`), which the order adopts; `confirmCheckoutPayment` finishes one the bank
+   authenticated; the engine's sweep settles holds nothing finished (`apps/engine/src/checkout/hosted.ts`).
+   Each completes only the version and total the buyer's page showed (else `changed`, no order), and
+   re-checks the flow it loads with `checkoutFlowProblem` (no card authorization, or an order carried on
+   account, is refused); a payment-less authorizer throws outside test mode. REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
    `POST /api/v1/storefront/settings` accept an admin API token with no person-confirm, though their
    tools are in `PERSON_CONFIRMS_TOOLS` (over MCP, A2A and the app a person confirms on a card). They
    are hand-written REST like the rest of the admin routes: the call is the admin's own deliberate

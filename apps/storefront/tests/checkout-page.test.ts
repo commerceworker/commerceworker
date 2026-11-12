@@ -10,9 +10,11 @@ const engineFetch = vi.fn(async (_r: Request) => new Response('ok'));
 const checkout = vi.fn();
 const updateCheckout = vi.fn();
 const completeCheckout = vi.fn();
+const payCheckout = vi.fn();
+const confirmCheckoutPayment = vi.fn();
 const storefrontSettings = vi.fn();
 const settings = (over: Record<string, unknown> = {}) => ({
-  checkout: { enabled: true, editLines: false, testPayments: true, ...over },
+  checkout: { enabled: true, editLines: false, testPayments: true, publishableKey: null, ...over },
 });
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
@@ -23,6 +25,8 @@ vi.mock('~/lib/env.server', () => ({
     checkout,
     updateCheckout,
     completeCheckout,
+    payCheckout,
+    confirmCheckoutPayment,
     storefrontSettings,
   }),
 }));
@@ -132,7 +136,13 @@ describe('the checkout page’s loader', () => {
     storefrontSettings.mockResolvedValue(settings({ editLines: true }));
     const r = await load();
     expect(r.status).toBe(200);
-    expect(r.data).toEqual({ checkout: view(), testPayments: true, editLines: true });
+    expect(r.data).toEqual({
+      checkout: view(),
+      testPayments: true,
+      editLines: true,
+      publishableKey: null,
+      turnstileKey: null,
+    });
     expect(r.headers.get('cache-control')).toBe('no-store');
     expect(r.headers.get('referrer-policy')).toBe('no-referrer');
     // React Router hands `headers` all three sets, the unused ones empty (not undefined): what the
@@ -607,10 +617,10 @@ describe('the page’s form', () => {
 
   it('takes no card yet in real mode: it says so and has no way to place the order', () => {
     const html = draw({ testPayments: false });
-    expect(html).toContain('Card payment is coming');
+    expect(html).toContain('Card payment isn’t set up here');
     expect(html).not.toContain('Place order');
     expect(has(html, 'button', 'value="place"')).toBe(false);
-    expect(draw()).not.toContain('Card payment is coming');
+    expect(draw()).not.toContain('Card payment isn’t set up here');
   });
 
   it('shows quantities as text unless the merchant lets the buyer change them', () => {
@@ -625,7 +635,7 @@ describe('the page’s form', () => {
       const html = draw({ checkout: view({ status }) as never, editLines: true });
       expect(html, status).toContain('<fieldset disabled=""');
       expect(html, status).not.toContain('Place order');
-      expect(html, status).not.toContain('Card payment is coming');
+      expect(html, status).not.toContain('Card payment isn’t set up here');
       // The one fieldset that is disabled holds every control: none is outside it.
       const outside = html.slice(html.indexOf('</fieldset>', html.lastIndexOf('</aside>')));
       expect(tagsOf(outside, 'input').filter((t) => !t.includes('type="hidden"'))).toEqual([]);

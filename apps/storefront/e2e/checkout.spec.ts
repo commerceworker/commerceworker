@@ -148,6 +148,26 @@ test('is never cached, shared, framed or read from a Referer, and pads for the n
   expect(await padding('Bottom')).toBeGreaterThanOrEqual(34);
 });
 
+test('in test mode loads nothing of Stripe and keeps the browser’s payment request denied', async ({
+  page,
+}) => {
+  // The dev engine records payments only, so this is the mock path: the page takes no card. (The
+  // Payment Element, Apple Pay and 3-D Secure need Stripe's own pages and a registered domain, which
+  // this offline run has neither of; tests/card-payment.test.ts holds what the page posts and its
+  // policy, and tests/stripe/hosted-pay.test.ts the engine against Stripe's shapes.)
+  const stripe: string[] = [];
+  page.on('request', (r) => {
+    if (/stripe\.com/.test(r.url())) stripe.push(r.url());
+  });
+  const res = await open(page);
+  expect(res.headers()['permissions-policy']).toContain('payment=()');
+  expect(res.headers()['permissions-policy'] ?? '').not.toContain('stripe');
+  await expect(page.getByRole('button', { name: 'Place order (test mode)' })).toBeVisible();
+  await expect(page.getByText('Card payment needs JavaScript')).toHaveCount(0);
+  await expect(page.locator('iframe')).toHaveCount(0);
+  expect(stripe).toEqual([]);
+});
+
 test('says which field is wrong, next to it, and keeps what was typed', async ({ page }) => {
   await open(page);
   await page.getByLabel('Email').fill('not an email');

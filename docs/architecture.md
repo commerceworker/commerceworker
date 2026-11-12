@@ -99,7 +99,7 @@ second entrypoint, and the only one the public storefront is bound to. It exists
 else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
 calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
 its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
-`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout` and `completeCheckout` (see [Hosted checkout](#hosted-checkout)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
 (anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
 an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
 whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
@@ -540,13 +540,13 @@ for `checkout:<id>` under its own key (`signGuestActor`; `guest:checkout:<id>`).
 setting on, the actor's signature and id, and the session's owner equal to `hosted:<SHA-256 of the secret>`, compared in
 constant time (`constantTimeEqual` over the owner read with `ownerOf`); anything else, a UCP platform's session
 included, is `null`. So the storefront's key alone mints no buyer (it has no cookie secret), and a cookie alone
-reaches no engine. The buyer sees an explicit projection of the session (`hostedView`: lines, quote, issues, contact and ship-to), never the customer, owner or a future payment's ids. A buyer's email must be an email (`hostedBuyerSchema`). When completion lands, a hosted buyer pays with their own instrument, never on-account or the customer's saved cards unless the operator explicitly allows it. The storefront's budget is keyed by the cookie's own hash, so a wrong cookie spends its own. `create_checkout` through the assistant shows the link to the person and gives the model only that it was shown (`modelView`, `toModelOutput`); REST and MCP return it. An account's erasure deletes its unplaced checkouts, and its export lists them.
+reaches no engine. The buyer sees an explicit projection of the session (`hostedView`: lines, quote, issues, contact and ship-to), never the customer, owner or the payment's token and intent ids. A buyer's email must be an email (`hostedBuyerSchema`). A hosted buyer pays with their own instrument, never on-account or the customer's saved cards unless the operator explicitly allows it. The storefront's budget is keyed by the cookie's own hash, so a wrong cookie spends its own. `create_checkout` through the assistant shows the link to the person and gives the model only that it was shown (`modelView`, `toModelOutput`); REST and MCP return it. An account's erasure deletes its unplaced checkouts, and its export lists them.
 
 **Changes.** `updateCheckout` parses the patch with a strict schema (`hostedPatchSchema`: buyer, ship-to,
 shipping option, fulfillment, store and promo codes; with `editLines`, `hostedPatchWithLinesSchema` adds lines,
 each a SKU and a quantity): an unknown key (a price, `quote`, `ownerId`, `status`, `payment`) is refused, not
 ignored. The session is priced again by the flow on every write and written over the version it read.
-`payment?: { intentId, state }` on the session is unused until payment is taken. `updateCheckout` also takes the
+`payment?: { attempts, token?, intentId? }` on the session is a card payment's own record (below), never part of `hostedView`. `updateCheckout` also takes the
 `version` the buyer's page showed: if it is no longer the session's, nothing is written and the answer is
 `{ ok: false, changed: true, checkout }` with the session as it is; a write that loses the race to another says the
 same (`HostedChange.changed`).
@@ -558,7 +558,45 @@ that holds nothing and takes nothing (UCP's test handler's twin). The order is o
 `hosted:<session id>`, started by the session's owner, so a second press (or two at once) places one order and answers
 the completed session again. A session that isn't ready is shown with what is missing and nothing is claimed; with real
 payments the answer is a refusal and nothing is claimed or placed. It never reaches the customer's account, credit or a
-saved card. Taking a card is the next slice.
+saved card.
+
+**Paying by card.** With `PAYMENTS_MODE` `stripe` the page takes a card with Stripe's Payment Element in
+deferred-intent mode (`mode: 'payment'`, `captureMethod: 'manual'`, the quote's amount and currency; card, Apple Pay,
+Google Pay and Link, no redirect methods); Stripe.js loads only on that page. Pay runs `elements.submit()` then
+`stripe.createConfirmationToken()` and posts only the `ctoken_…` id with the form's `version` and `total`.
+`payCheckout` (`payHosted`) takes the usual secret and actor and then: refuses outside live mode, a token that is not
+a `ctoken_`, a version or total the buyer was not shown (`changed`, no PaymentIntent) and a flow that
+`checkoutFlowProblem` refuses now (no card authorization, or an order carried on account: `commerce.invoice` with
+`onAccount`, `commerce.charge`); refuses a session already attempted `HOSTED_PAY_ATTEMPTS` (5) times; prices again
+and claims it (`complete_in_progress`, with `payment.attempts + 1` and the token in the claim write); and holds the
+card (`holdCard`): `paymentIntents.confirmWithToken` creates and confirms a PaymentIntent for the *quote's* total
+(never the page's), `capture_method: 'manual'`, `confirmation_token`, `use_stripe_sdk`, `allow_redirects: 'never'`,
+metadata `checkout_id`, idempotency key `hosted_<id>_<token>_<amount>`. The method has no customer, saved method or
+`off_session` parameter, so the customer a session prices for is never charged. The hold goes to the order as
+`payment.intentId` (`startOrderOnce`, key `hosted:<id>`, `meta.hosted: true`), which the authorize node adopts
+(`paymentSource` `adopt`, then `adoptProblem`: currency, exact minor amount, `requires_capture`, `metadata.order_id`,
+unused); `holdsNothingOnlyInTestMode` throws for a live authorizer that holds nothing. A decline reopens the
+session (`ready_for_complete`) with "Your card was declined" and cancels the refused intent; a processor failure
+throws after reopening it (the token stays on it), so a press retried with the same token replays the same
+PaymentIntent. A press with the token the session is already being paid with resumes it (the same intent, no
+second claim). A card that needs the bank answers `authenticate: { clientSecret }` and leaves the session claimed
+with `payment.intentId` recorded; the browser runs `stripe.handleNextAction`, then the page asks
+`confirmCheckoutPayment`, which retrieves the PaymentIntent (`settle`) and checks `metadata.checkout_id`, amount and
+currency and `requires_capture` before placing the order, and releases the hold (`releaseHold`) and reopens the
+session when the bank refused. `settleOrphanedHolds` (the retention sweep and the hourly cron) takes each hosted
+session claimed over `ORPHAN_HOLD_MS` (15 minutes) ago the same way: an open hold for this checkout becomes its
+order, anything else is released and the session reopened (`CheckoutSessionStore.stuckHosted`). A hold whose creation
+answer was lost (token recorded, no intent) is found by replaying the creation under the same key. A session
+whose sweeps keep failing (`MAX_FAILED_SWEEPS`, 5; each failure is counted in `payment.sweeps`), or whose hold Stripe will
+never find again (a token or intent that is gone, an idempotency window that has passed), is let go of: the hold released
+and the session reopened with a reason, so none sits claimed forever. A session whose order already exists (a lost
+completion save, or a replay under a flow published since: `completeFromOrder`) is completed with that order and its hold
+is never released, except when the order is known to have adopted another. An order that ends unfulfilled (cancelled,
+declined, failed, rolled back) with a UCP or hosted checkout's hold (`meta.ucp`, or `meta.hosted`) has it released by its
+OrderAgent once (`releaseUnusedHold`, its own `hold_release` table, retried with the webhooks' backoff), unless the ledger
+holds a capture for the intent; `meta.hosted` and `hosted:` idempotency keys are the engine's own and are refused from
+outside (`fromOutside`). The authorize step declines any source but the adopted intent for a hosted order, and
+`adoptProblem` also checks the intent's `checkout_id` against the order's external id.
 
 **Storefront.** `checkout/start/:id/:token` redeems and redirects (`no-store`, `no-referrer`);
 `checkout/:id` is the page: its loader reads the buyer view and its action posts the form (`intent=update` or
@@ -574,7 +612,12 @@ shipping option; only what the page showed is sent; no price field exists) and m
 `path`; what is merely still to fill in shows only once the buyer has tried to continue. A change made since the page
 was drawn (the form carries `version`) or a lost race answers 409 with "This checkout changed" and the session as it
 is. An update redirects back (303); placing updates first, then completes, and goes to the order page. With real
-payments the page says card payment is coming and has no button that completes. Fields are 44px tall and 16px; the
+payments and a publishable key the page takes a card (`components/card-payment.tsx`; `intent=pay`, then
+`intent=confirm` after the bank's step): `PAY_LIMIT` per cookie and per address, then the token's shape, then Turnstile
+(action `checkout_pay`), then the update, then `payCheckout`; without a script it says "Card payment needs
+JavaScript" and has no button; without a key it says card payment isn't set up. Its policy alone adds Stripe's
+script and frames (`js.stripe.com`, `*.js.stripe.com`, `hooks.stripe.com`) and API and `Permissions-Policy: payment=(self "https://js.stripe.com")` (`STRIPE_HEADER`, folded by
+`pageHeaders`, noted by the loader through `cardPageNotes`); every other page keeps `payment=()`. Fields are 44px tall and 16px; the
 react-router `headers` export returns the private headers whichever of loader, action or boundary answered
 (`privateHeaders`).
 

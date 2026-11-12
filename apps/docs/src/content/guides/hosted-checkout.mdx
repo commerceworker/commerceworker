@@ -1,6 +1,6 @@
 ---
 title: Hosted checkout
-description: A checkout page on your storefront for one buyer, opened by a one-time link you make through the API. Turn it on, create a checkout, and see what your buyer sees. Card payment is coming.
+description: A checkout page on your storefront for one buyer, opened by a one-time link you make through the API. Turn it on, create a checkout, and see what your buyer sees and how they pay by card or wallet.
 ---
 
 A hosted checkout is a checkout for one buyer on your storefront (`shop.<your domain>`), started by
@@ -10,9 +10,9 @@ you rather than by the buyer. You make it through the [REST API](/reference/rest
 the link; they review the checkout on a page of its own and place the order.
 
 :::note
-Card payment is coming. Until it is, a deployment whose payments are only recorded (test mode) shows
-a **Place order (test mode)** button that places the order without charging anything, and a deployment
-taking real payments shows the page with "Card payment is coming" and no way to place the order.
+A deployment whose payments are only recorded (test mode) shows a **Place order (test mode)** button that
+places the order without charging anything. A deployment taking real payments through Stripe shows a card
+form instead, and a button that holds the money; see [Taking a card](#taking-a-card).
 :::
 
 ## Turning it on
@@ -84,3 +84,45 @@ In test mode the buyer presses **Place order (test mode)**: the order starts on 
 `web` channel, no card is charged, and they see an order reference. Pressing it twice places one order.
 A buyer pays with their own card only: a hosted checkout is never charged to a customer's account or
 saved card, even when you made it for that customer.
+
+## Taking a card
+
+With payments live (`payments: "stripe"` in your registry, with a Stripe publishable key and secret key), the
+page shows [Stripe's Payment Element](https://docs.stripe.com/payments/payment-element) where the test button
+was: card, Apple Pay and Google Pay (where the buyer's device and Stripe domain registration allow them) and
+Link. The card details go from the buyer's browser to Stripe and never reach your storefront or engine;
+only a one-time token for them does.
+
+When the buyer presses **Pay**:
+
+1. The page sends that token with the version and total it showed. The engine prices the checkout again and
+   refuses, with nothing held, if either is not what the buyer saw.
+2. It authorizes the checkout's own total on the buyer's card: the money is held, not taken. Your checkout
+   flow's order adopts the hold and captures it when your flow says to.
+3. If the card's bank wants the buyer to confirm (3-D Secure), the page shows the bank's step and then
+   places the order by itself.
+4. If the card is declined, the checkout reopens with the reason and the buyer can try another card. After
+   five attempts on one checkout it stops taking cards; make a new checkout for them.
+
+The page needs JavaScript to take a card; without it, it says "Card payment needs JavaScript" rather than
+showing a form that cannot pay. A checkout is never paid on account or with a saved card, and a flow that
+carries orders on a customer's account (an invoice billed to the account, or a stored-card charge) can't
+price a hosted checkout: turning hosted checkout on is refused for it, and a later version of the flow that
+does is refused when the buyer pays.
+
+If a buyer leaves their bank's page, or something fails between the hold and the order, the engine settles it
+within the hour: the order is placed if the hold is good, and the hold is released otherwise.
+
+### Setting up Stripe
+
+Besides live payments and the keys, the owner of the deployment does these in Stripe (and, for the deploy, in
+the deployment's GitHub environment). The details are in the maintainers' operations guide.
+
+- Leave Radar on and the card checks (CVC, postal code) enabled.
+- Enable cards, Apple Pay, Google Pay and Link under **Settings** > **Payment methods**. Methods that
+  redirect or settle later are never offered here.
+- For Apple Pay and Google Pay, add your storefront's host (`shop.<your domain>`) under **Settings** >
+  **Payment method domains**. Apple Pay also needs Stripe's domain association file: copy it from that page
+  into the deployment's `APPLE_PAY_DOMAIN_ASSOCIATION` secret and your storefront serves it at
+  `/.well-known/apple-developer-merchantid-domain-association`.
+- Add a Turnstile widget (`turnstileSiteKey` in your registry) so each press of **Pay** passes a challenge.

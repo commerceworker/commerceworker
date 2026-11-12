@@ -177,10 +177,35 @@ export type HostedChange =
   | { ok: false; error: string; checkout?: HostedCheckout; changed?: true };
 
 /**
+ * The answer to a buyer's card payment: as `HostedChange`, or (`authenticate`) the bank wants the
+ * buyer to confirm first: the browser runs Stripe.js's `handleNextAction` with `clientSecret`, then
+ * asks the engine to confirm. The session stays claimed, with the hold recorded, until it does.
+ */
+export type HostedPayment =
+  | HostedChange
+  | { ok: true; checkout: HostedCheckout; authenticate: { clientSecret: string } };
+
+/** What a buyer's page sends to pay by card: the Stripe confirmation token it made, and what it showed. */
+export type HostedPayInput = { version: number; total: number; confirmationToken: string };
+
+/** A Stripe confirmation token as Stripe.js makes one. */
+export const HOSTED_CONFIRMATION_TOKEN = /^ctoken_[A-Za-z0-9_]{6,200}$/;
+
+/** The most card payments one hosted session takes: a cap against card testing on a stolen link. */
+export const HOSTED_PAY_ATTEMPTS = 5;
+
+/**
  * What the storefront may know of the settings: whether hosted checkout is on, what a buyer may
- * edit, and whether payments are only recorded (`testPayments`: PAYMENTS_MODE "mock"), where the
- * page offers a test order and no card.
+ * edit, whether payments are only recorded (`testPayments`: PAYMENTS_MODE "mock"), where the page
+ * offers a test order and no card, and (`publishableKey`) the Stripe publishable key the page
+ * takes a card with: set only when payments are live and a key is configured, so the page offers
+ * a card exactly when the engine can take one.
  */
 export type HostedCheckoutSettings = {
-  checkout: { enabled: boolean; editLines: boolean; testPayments: boolean };
+  checkout: {
+    enabled: boolean;
+    editLines: boolean;
+    testPayments: boolean;
+    publishableKey: string | null;
+  };
 };

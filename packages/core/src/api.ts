@@ -17,7 +17,13 @@ import type {
 import type { ErasureResult, SubjectExport } from './erasure';
 import type { EdgeState, GraphIssue } from './graph';
 import type { HealthReport } from './health';
-import type { HostedChange, HostedCheckout, HostedCheckoutSettings } from './hosted-checkout';
+import type {
+  HostedChange,
+  HostedCheckout,
+  HostedCheckoutSettings,
+  HostedPayInput,
+  HostedPayment,
+} from './hosted-checkout';
 import type { BuyerOrderView } from './order-confirmation';
 import type {
   PluginCase,
@@ -578,6 +584,38 @@ export interface StorefrontRpc {
     actor: SignedActor,
     shown?: { version: number; total: number },
   ): Promise<HostedChange | null>;
+  /**
+   * Pays the buyer's session by card (PAYMENTS_MODE "stripe"): `confirmationToken` is the Stripe
+   * confirmation token the page made from its Payment Element, and `version` and `total` what the
+   * page showed (a session at another version or priced differently now is `changed`, and nothing
+   * is created). The engine prices again, claims the session, makes and confirms a PaymentIntent
+   * for the quote's own total (never the page's), manual capture and no redirects, and starts the
+   * order adopting it. The hold is the buyer's own: never an account, credit or a saved card. A
+   * decline or a refusal reopens the session with the reason; a card that needs the buyer's bank
+   * answers `authenticate`. Null as `checkout`; refused in test mode (use `completeCheckout`).
+   */
+  payCheckout(
+    checkoutId: string,
+    secret: string,
+    actor: SignedActor,
+    pay: HostedPayInput,
+  ): Promise<HostedPayment | null>;
+  /**
+   * Finishes a card payment the buyer authenticated: retrieves the session's PaymentIntent, checks
+   * it is for this checkout and the quoted amount and is an open authorization, and places the
+   * order. A payment the bank refused releases the hold and reopens the session.
+   */
+  confirmCheckoutPayment(
+    checkoutId: string,
+    secret: string,
+    actor: SignedActor,
+  ): Promise<HostedChange | null>;
+  /**
+   * The file Apple Pay's domain verification fetches from the storefront
+   * (`/.well-known/apple-developer-merchantid-domain-association`), or null when the deployment
+   * has none. Public text; changes rarely, so callers may cache it.
+   */
+  applePayDomainAssociation(): Promise<string | null>;
   /** The cart as its agent holds it, or null unless `actor` is that external cart's buyer. */
   cartSnapshot(cartId: string, actor: SignedActor): Promise<CartState | null>;
   /** The name of the cart's customer, for its page, or null. */

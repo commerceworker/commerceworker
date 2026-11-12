@@ -346,7 +346,7 @@ describe('the buyer’s session', () => {
       await sf.updateCheckout(b.id, { buyer: { email: 'a@example.com' } }, b.secret, b.actor),
     ).toBeNull();
     expect(await sf.storefrontSettings()).toEqual({
-      checkout: { enabled: false, editLines: false, testPayments: true },
+      checkout: { enabled: false, editLines: false, testPayments: true, publishableKey: null },
     });
     await setting({});
     expect(await sf.checkout(b.id, b.secret, b.actor)).not.toBeNull();
@@ -446,7 +446,7 @@ describe('what a buyer changes', () => {
 
     await setting({ editLines: true });
     expect(await sf.storefrontSettings()).toEqual({
-      checkout: { enabled: true, editLines: true, testPayments: true },
+      checkout: { enabled: true, editLines: true, testPayments: true, publishableKey: null },
     });
     const next = ok(
       await sf.updateCheckout(
@@ -872,7 +872,7 @@ describe('placing the order in test mode', () => {
       const r = await sf.completeCheckout(b.id, b.secret, b.actor);
       expect(r).toMatchObject({
         ok: false,
-        error: 'Card payment is not available on this page yet.',
+        error: 'This checkout is paid by card.',
         checkout: { status: 'ready_for_complete' },
       });
     } finally {

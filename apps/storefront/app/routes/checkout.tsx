@@ -6,10 +6,14 @@
  * posting to its own action, so it works without a script: an update redirects back to the page
  * (a reload repeats nothing), a change the buyer's page didn't know of (`version`) is said and the
  * checkout shown as it is now, and in test mode "Place order" completes it and goes to the order
- * page. A card payment is not taken here yet.
+ * page. With live payments the page takes a card with Stripe's Payment Element (components/
+ * card-payment.tsx), which needs a script and says so without one: Pay posts only the confirmation
+ * token Stripe.js made, with the version and total the page showed, after Turnstile and the
+ * payment budgets; the engine prices again and holds the card. A card the bank must confirm comes
+ * back as `authenticate` and the page then asks the engine to confirm (`intent=confirm`).
  */
 
-import { HOSTED_ID, type HostedCheckout } from '@commerceworker/core';
+import { HOSTED_CONFIRMATION_TOKEN, HOSTED_ID, type HostedCheckout } from '@commerceworker/core';
 import { Alert, AlertDescription, AlertTitle } from '@commerceworker/ui/alert';
 import { CircleAlert, Info } from 'lucide-react';
 import { useEffect, useRef } from 'react';
@@ -19,6 +23,7 @@ import { CheckoutRefusal } from '~/components/checkout-refusal';
 import { type FieldErrors, type FormValues, patchFromForm, valuesOf } from '~/lib/checkout-form';
 import { engine } from '~/lib/env.server';
 import {
+  cardPageNotes,
   checkoutBuyer,
   checkoutRefusal,
   PRIVATE_HEADERS,
@@ -26,6 +31,7 @@ import {
   storefrontSettings,
 } from '~/lib/hosted-checkout.server';
 import { overBudget } from '~/lib/rate-limit';
+import { checkPayTurnstile, turnstileSiteKey } from '~/lib/turnstile.server';
 import type { Route } from './+types/checkout';
 
 export const meta = () => [
@@ -54,13 +60,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   if (!checkout) throw checkoutRefusal('This checkout doesn’t exist.', 404);
   if (checkout.status === 'completed')
     return redirect(orderPlaced(params.id), { status: 303, headers: PRIVATE_HEADERS });
+  // A card is taken when payments are live and the engine has a key to take it with.
+  const publishableKey = settings.checkout.testPayments ? null : settings.checkout.publishableKey;
+  const turnstileKey = publishableKey ? turnstileSiteKey() : null;
   return data(
     {
       checkout,
       testPayments: settings.checkout.testPayments,
       editLines: settings.checkout.editLines,
+      publishableKey,
+      turnstileKey,
     },
-    { headers: PRIVATE_HEADERS },
+    { headers: { ...PRIVATE_HEADERS, ...cardPageNotes(!!publishableKey, !!turnstileKey) } },
   );
 }
 
@@ -68,6 +79,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 type Refusal = {
   /** Which button was pressed, so the alert says what did not happen. */
   intent: 'update' | 'place';
+  /** The card needs the buyer's bank: Stripe.js finishes it with this, then the page asks to confirm. */
+  authenticate?: string | undefined;
   /** Say this at the top. */
   error: string;
   /** The session moved under the buyer: say so, and draw it as it is. */
@@ -84,7 +97,10 @@ const refusal = (r: Refusal, status: number) => data(r, { status, headers: PRIVA
 export async function action({ request, params }: Route.ActionArgs) {
   const { buyer, settings } = await authorize(request, params.id);
   const form = await request.formData();
-  const intent = form.get('intent') === 'place' ? 'place' : 'update';
+  const wanted = form.get('intent');
+  const step = wanted === 'place' || wanted === 'pay' || wanted === 'confirm' ? wanted : 'update';
+  // What the alert says did not happen: a change, or an order.
+  const intent = step === 'update' ? 'update' : 'place';
   // A form with no version asks for no conflict check; one with a version that is no number is
   // never the session's, so it is a conflict (`Number('')` would have been 0).
   const version = form.has('version') ? Number(form.get('version')) : undefined;
@@ -94,6 +110,73 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (!current) throw checkoutRefusal('This checkout doesn’t exist.', 404);
   if (current.status === 'completed')
     return redirect(orderPlaced(params.id), { status: 303, headers: PRIVATE_HEADERS });
+
+  // The bank's step is done in the buyer's browser: the engine reads the payment and says how it
+  // went. Nothing else in the form is read, and nothing can be changed while it is claimed.
+  if (step === 'confirm') {
+    let done: Awaited<ReturnType<ReturnType<typeof engine>['confirmCheckoutPayment']>>;
+    try {
+      done = await engine().confirmCheckoutPayment(...call, buyer.actor);
+    } catch {
+      return refusal(
+        {
+          intent,
+          error: 'We couldn’t confirm your payment. Nothing was charged. Try again.',
+          changed: false,
+          checkout: current,
+        },
+        503,
+      );
+    }
+    if (!done) throw checkoutRefusal('This checkout doesn’t exist.', 404);
+    if (!done.ok)
+      return refusal(
+        {
+          intent,
+          error: done.error,
+          changed: !!done.changed,
+          checkout: done.checkout ?? current,
+        },
+        done.changed ? 409 : 422,
+      );
+    return redirect(orderPlaced(params.id), { status: 303, headers: PRIVATE_HEADERS });
+  }
+
+  // Each press of Pay can try a card: a budget per cookie and per address, the confirmation token
+  // (a script made it), and Turnstile, all before anything is written or held.
+  let confirmationToken = '';
+  if (step === 'pay') {
+    const limited =
+      (await overBudget('PAY_LIMIT', `pay:${buyer.budgetKey}`)) ??
+      (await overBudget(
+        'PAY_LIMIT',
+        `pay:ip:${request.headers.get('cf-connecting-ip') ?? 'unknown'}`,
+      ));
+    if (limited) throw limited;
+    const token = form.get('confirmationToken');
+    if (!settings.checkout.publishableKey || settings.checkout.testPayments)
+      return refusal(
+        { intent, error: 'Card payment isn’t available here.', changed: false, checkout: current },
+        422,
+      );
+    if (typeof token !== 'string' || !HOSTED_CONFIRMATION_TOKEN.test(token))
+      return refusal(
+        {
+          intent,
+          error: 'Card payment needs JavaScript. Turn it on, or contact the business to pay.',
+          changed: false,
+          checkout: current,
+        },
+        422,
+      );
+    const unchecked = await checkPayTurnstile(request, form);
+    if (unchecked)
+      return refusal(
+        { intent, error: unchecked.error, changed: false, checkout: current },
+        unchecked.status,
+      );
+    confirmationToken = token;
+  }
 
   // What the page can tell wrong without asking the engine: an email that isn't one, a quantity.
   const { patch, errors } = patchFromForm(form, current, settings.checkout);
@@ -136,7 +219,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       },
       changed.changed ? 409 : 422,
     );
-  if (intent === 'update')
+  if (step === 'update')
     return redirect(`/checkout/${params.id}`, { status: 303, headers: PRIVATE_HEADERS });
 
   // Place the order: only a checkout that is ready, and only in test mode (the engine checks both).
@@ -144,19 +227,59 @@ export async function action({ request, params }: Route.ActionArgs) {
     return refusal(
       {
         intent,
-        error: 'Finish the details marked below, then place your order.',
+        error: `Finish the details marked below, then ${step === 'pay' ? 'pay' : 'place your order'}.`,
         changed: false,
         checkout: changed.checkout,
       },
       422,
     );
+  // The version the update just made and the total the page showed: nothing else is placed or held.
+  const shown = {
+    version: changed.checkout.version,
+    total: form.has('total') ? Number(form.get('total')) : Number.NaN,
+  };
+  if (step === 'pay') {
+    let paid: Awaited<ReturnType<ReturnType<typeof engine>['payCheckout']>>;
+    try {
+      paid = await engine().payCheckout(...call, buyer.actor, { ...shown, confirmationToken });
+    } catch {
+      // The payment failed after the checkout was claimed; the engine opened it again.
+      return refusal(
+        {
+          intent,
+          error: 'We couldn’t take your payment. Nothing was charged. Try again.',
+          changed: false,
+          checkout: changed.checkout,
+        },
+        503,
+      );
+    }
+    if (!paid) throw checkoutRefusal('This checkout doesn’t exist.', 404);
+    if (!paid.ok)
+      return refusal(
+        {
+          intent,
+          error: paid.error,
+          changed: !!paid.changed,
+          checkout: paid.checkout ?? changed.checkout,
+        },
+        paid.changed ? 409 : 422,
+      );
+    if ('authenticate' in paid) {
+      const bank: Refusal = {
+        intent,
+        error: '',
+        changed: false,
+        checkout: paid.checkout,
+        authenticate: paid.authenticate.clientSecret,
+      };
+      return data(bank, { headers: PRIVATE_HEADERS });
+    }
+    return redirect(orderPlaced(params.id), { status: 303, headers: PRIVATE_HEADERS });
+  }
   let placed: Awaited<ReturnType<ReturnType<typeof engine>['completeCheckout']>>;
   try {
-    placed = await engine().completeCheckout(...call, buyer.actor, {
-      // The version the update just made and the total the page showed: nothing else is placed.
-      version: changed.checkout.version,
-      total: form.has('total') ? Number(form.get('total')) : Number.NaN,
-    });
+    placed = await engine().completeCheckout(...call, buyer.actor, shown);
   } catch {
     // The order failed after the checkout was claimed; the engine opened it again.
     return refusal(
@@ -183,8 +306,8 @@ export async function action({ request, params }: Route.ActionArgs) {
   return redirect(orderPlaced(params.id), { status: 303, headers: PRIVATE_HEADERS });
 }
 
-export function headers({ errorHeaders }: Route.HeadersArgs) {
-  return privateHeaders({ errorHeaders });
+export function headers({ errorHeaders, loaderHeaders }: Route.HeadersArgs) {
+  return privateHeaders({ errorHeaders, loaderHeaders });
 }
 
 export const ErrorBoundary = CheckoutRefusal;
@@ -206,7 +329,8 @@ export default function CheckoutPage() {
   // What the engine said last is as new as the loader's, unless the loader has run since.
   const checkout = result?.checkout ?? loaded.checkout;
   const ended = checkout.status === 'canceled';
-  const claimed = checkout.status === 'complete_in_progress';
+  // Being paid, and not at the bank's step: its own alert says what is going on there.
+  const claimed = checkout.status === 'complete_in_progress' && !result?.authenticate;
   const reviewing = checkout.status === 'requires_escalation';
   const alertRef = useRef<HTMLDivElement>(null);
   const last = useRef<{ name: string; value: string } | null>(null);
@@ -297,12 +421,22 @@ export default function CheckoutPage() {
       <CheckoutForm
         checkout={checkout}
         testPayments={loaded.testPayments}
+        card={
+          loaded.publishableKey
+            ? {
+                publishableKey: loaded.publishableKey,
+                turnstileKey: loaded.turnstileKey,
+                authenticate: result?.authenticate,
+                answer: result,
+              }
+            : null
+        }
         editLines={loaded.editLines}
         values={result?.values}
         errors={result?.errors}
         attempted={!!result}
         busy={navigation.state !== 'idle'}
-        placing={navigation.formData?.get('intent') === 'place'}
+        placing={['place', 'pay'].includes(String(navigation.formData?.get('intent')))}
         changed={!!result?.changed}
       />
     </main>

@@ -7,11 +7,14 @@
  * buyer's personal data, as an erasure request would remove it (`eraseOrders`); the commercial
  * record stays, and the customer addresses last shipped to before then are deleted. Orders started before customer
  * addresses were kept add theirs (`backfillAddresses`). Stored
- * secrets are resealed under the current `DATA_KEY` (`resealSecrets`).
+ * secrets are resealed under the current `DATA_KEY` (`resealSecrets`). Hosted card payments that
+ * began and never finished are settled (`settleOrphanedHolds`): the order placed if its hold is open,
+ * the hold released otherwise.
  */
 
 import * as uc from '@commerceworker/application/commerce';
 import { auditRetentionDays, personalDataRetentionDays, RETENTION } from '@commerceworker/core';
+import { settleOrphanedHolds } from './checkout/hosted';
 import { pruneConfirmations } from './confirmations';
 import { backfillAddresses } from './customer-addresses';
 import { resealSecrets } from './data-key';
@@ -36,6 +39,7 @@ export async function sweep(env: Env, now = Date.now()) {
     confirmations: await pruneConfirmations(env, now),
     aiUsageDays: await pruneUsage(env, now),
     secrets: await resealSecrets(env),
+    cardHolds: await settleOrphanedHolds(env, now),
     ...pruned,
   };
 }

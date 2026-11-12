@@ -11,7 +11,18 @@ import { StripeError } from '../stripe';
 
 export type Authorized =
   | { ok: true; payment?: OrderPayment }
-  | { ok: false; code: string; content: string };
+  | { ok: false; code: string; content: string }
+  /**
+   * The card needs the buyer's bank before it can be held: the intent is recorded on the session
+   * (which stays claimed) and its client secret goes to the buyer's browser, which finishes the
+   * step and asks the engine to confirm. Nothing is held yet, and nothing is released.
+   */
+  | {
+      ok: false;
+      code: 'requires_action';
+      content: string;
+      action: { intentId: string; clientSecret: string };
+    };
 
 export const declined = (content: string): Authorized => ({
   ok: false,
@@ -29,17 +40,25 @@ export type PaymentAuthorizer = {
   authorize: (s: CheckoutSession) => Promise<Authorized>;
 };
 
+/** The states of an intent we made that nothing has captured: each can be canceled. */
+const RELEASABLE = [
+  'requires_capture',
+  'requires_action',
+  'requires_confirmation',
+  'requires_payment_method',
+];
+
 /**
- * Releases a hold no order took: the order failed before (or instead of) adopting it. Idempotent;
- * an intent already captured or canceled is left alone.
+ * Releases a hold no order took: the order failed before (or instead of) adopting it, or the buyer
+ * never finished authenticating it. Idempotent; an intent already captured or canceled is left alone.
  */
 export async function releaseHold(env: Env, intentId: string) {
   if (!stripeMode(env)) return;
   const stripe = stripeFor(env);
   try {
     const pi = await stripe.paymentIntents.retrieve(intentId);
-    if (pi.status === 'requires_capture')
-      await stripe.paymentIntents.cancel(intentId, {}, `ucp_release_${intentId}`);
+    if (RELEASABLE.includes(pi.status))
+      await stripe.paymentIntents.cancel(intentId, {}, `release_${intentId}`);
   } catch (err) {
     if (!(err instanceof StripeError) || err.isRetryable) throw err;
   }

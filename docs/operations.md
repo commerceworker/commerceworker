@@ -33,7 +33,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 |---|---|---|
 | `id` | required | Lowercase letters, digits and dashes; matches the file name. Names that would read as part of CommerceWorker (`api`, `app`, `docs`, `www`, `staging` and the rest of `RESERVED` in `scripts/fleet.ts`) are refused unless the entry sets `domain` |
 | `ring` | required | `staging`, `internal`, `canary` or `general`: when CI deploys it (see [Rings](#rings)) |
-| `slot` | required | A number from 1 to 999, unique across the fleet. Rate-limit namespaces are per account, so the web Worker's are `<slot>001` through `<slot>005` (slot 1: `1001` to `1005`) and the storefront's `<slot>006` to `<slot>009` (`1006` to `1009`); the content Workers' sit at 500 above (`<slot>501` to `<slot>506`: slot 1 `1501` to `1506`) so no counter is shared |
+| `slot` | required | A number from 1 to 999, unique across the fleet. Rate-limit namespaces are per account, so the web Worker's are `<slot>001` through `<slot>005` (slot 1: `1001` to `1005`) and the storefront's `<slot>006` to `<slot>010` (`1006` to `1010`); the content Workers' sit at 500 above (`<slot>501` to `<slot>506`: slot 1 `1501` to `1506`) so no counter is shared |
 | `domain` | `<id>.commerceworker.com` | The web app's custom domain |
 | `catalogDomain` | `catalog.<domain>` | The public catalog API's custom domain, served by `commerceworker-delivery` (a host name; anything else is refused). Rendered into its `routes`, and into the deploy's `CATALOG_DOMAIN`, which the smoke test requests |
 | `storefrontDomain` | `shop.<domain>` | The storefront's custom domain, served by `commerceworker-storefront` (a host name; anything else is refused): buyers' cart pages, their cart's files and product search, and UCP's `/.well-known/ucp` and `/ucp/*`. Rendered into its `routes`, into the engine's `STOREFRONT_ORIGIN` (where an external cart's start link is) and `OWN_HOSTS` (a cart's return never posts to it), into the web Worker's `STOREFRONT_ORIGIN` (where a plugin may send a buyer) and into the deploy's `STOREFRONT_DOMAIN`, which the smoke test requests |
@@ -54,7 +54,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `logRetentionDays` | `400`, or `personalDataRetentionDays` when set | Whole days (at least 30; refused below or fractional, and refused above `personalDataRetentionDays` when that is set) the logs bucket `commerceworker-logs<suffix>` keeps the Workers' trace events Logpush writes there. `provision.sh` replaces the bucket's lifecycle rule `logs` (prefix `workers/`) with that expiry on every run ([Logs](#logs)) |
 | `aiPersonalData` | `redact` | `redact` or `send` (anything else is refused). `send` lets the workflow AI nodes and the assistant's `assess_order` see buyers' contact details, names and addresses; see [Personal data](data-model.md#personal-data). Rendered into the engine's `AI_PERSONAL_DATA` |
 | `payments` | `mock` | `mock` or `stripe` (anything else is refused; a demo can't be `stripe`). `stripe` takes payments through Stripe with the environment's `STRIPE_SECRET_KEY`, and a deploy without that secret stops before it migrates anything. Rendered into the engine's `PAYMENTS_MODE` |
-| `stripePublishableKey` | none | The Stripe publishable key (`pk_test_…` or `pk_live_…`) of the same account and mode as `STRIPE_SECRET_KEY`; only with `payments` `stripe`, and a deploy whose secret key is in the other mode stops. Agentic checkout gives it to platforms to tokenize cards with. Rendered into the engine's `STRIPE_PUBLISHABLE_KEY` |
+| `stripePublishableKey` | none | The Stripe publishable key (`pk_test_…` or `pk_live_…`) of the same account and mode as `STRIPE_SECRET_KEY`; only with `payments` `stripe`, and a deploy whose secret key is in the other mode stops. Agentic checkout gives it to platforms to tokenize cards with, and the storefront's hosted checkout takes cards with it, so the entry also needs a `turnstileSiteKey` (the fleet refuses it without one). Rendered into the engine's `STRIPE_PUBLISHABLE_KEY` |
 | `assistantDailyTokens` | `1000000` | Whole number of model tokens each person's assistant conversations may use per UTC day; `0` is no limit (negative or fractional is refused). Rendered into the engine's `ASSISTANT_DAILY_TOKENS` |
 | `aiGatewayLogs` | `false` | `true` or `false` (a boolean). Whether the deployment's AI Gateway keeps request logs (model, tokens, cost, duration and metadata, until they're deleted). They never hold the prompts or responses: every call sends `cf-aig-collect-log-payload: false`. Reviewers' verdicts on AI gates are sent as feedback on these entries ([Architecture](architecture.md)), so with logs off there is nothing to evaluate models against. Rendered into the engine's `AI_GATEWAY_LOGS`, which every model call sends as the gateway's `collectLog`; `provision.sh` also sets it as the default of a gateway it creates |
 | `fxCurrencies` | none | A list of ISO 4217 codes other than `USD`, such as `["EUR", "GBP", "CAD"]`. The currencies the deployment sells in: the engine's daily cron (`30 3 * * *`) fetches the ECB's reference rates (`https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml`, public, no account) and writes these currencies' rates per one USD into `fx_rates`, adding a currency that had none. A feed that can't be fetched or read, or whose US dollar is outside 0.5–2 per euro (`USD_PER_EUR_BOUNDS`, a bad publish rather than a market move), leaves the rates as they were. The refresh runs whatever the cron's other daily jobs do, and a failure of any of them still fails the invocation. Rendered into the engine's `FX_CURRENCIES`. Orders in a currency without a rate are refused, so naming one here is what lets them through (from the day after it's added). An admin can set a rate by hand (the Commerce page's Exchange rates table, `POST /api/v1/fx-rates/:currency` or MCP's `set_fx_rate`; only for a currency that has a rate or is named here, never USD, within `FX_RATE_BOUNDS`). A rate a person set on the Commerce page, over REST or MCP holds until someone changes it: the refresh skips it and keeps the other currencies current (`REFRESH_OVERWRITES` in `packages/core/src/fx.ts`).; a rate for a currency not named here is never refreshed and holds until changed. Orders already priced keep their `fxRate` either way |
@@ -736,8 +736,11 @@ email keeps the link without its token, so staff reading `messages` never see on
 
 ## Turnstile
 
-Password sign-in and `/setup` can ask for a [Turnstile](https://developers.cloudflare.com/turnstile/)
-challenge, so bots can't stuff passwords or race a new deployment's first admin. It is per
+Password sign-in, `/setup` and a card payment on the storefront's hosted checkout can ask for a
+[Turnstile](https://developers.cloudflare.com/turnstile/) challenge, so bots can't stuff passwords,
+race a new deployment's first admin or test stolen cards. The one widget serves all three (it covers
+`shop.<domain>` as a subdomain, and the storefront checks the `checkout_pay` action on its own host);
+the storefront needs the same `TURNSTILE_SECRET_KEY`, which the deploy writes to it too. It is per
 deployment and off until the registry has a site key. Passkeys, single sign-on and the two-factor
 step aren't gated: the first two can't be stuffed, and the two-factor page is reached only through
 a password sign-in that passed the challenge. How the check works is under `TURNSTILE_SITE_KEY` in
@@ -766,6 +769,56 @@ the Worker keeps the secret unused. To rotate the secret, rotate it in the dashb
 value in the environment and redeploy: tokens fail with `invalid-input-secret` (logged as
 `turnstile_refused`) in between. The web Worker logs `turnstile_misconfigured` when it has a site
 key but no secret, and refuses every attempt.
+
+## Card payment on the hosted checkout
+
+A hosted checkout takes a card on the storefront with [Stripe's Payment Element](https://docs.stripe.com/payments/payment-element)
+(card, Apple Pay, Google Pay and Link; no redirect or asynchronous method) when the deployment's
+payments are live. The card goes from the buyer's browser to Stripe; the engine holds the quoted total
+on it (authorize, capture later) and the order's authorize step adopts that hold. Turning it on, as
+the owner:
+
+1. **Live payments.** In the registry file set `"payments": "stripe"` and `"stripePublishableKey":
+   "pk_…"`, and add `STRIPE_SECRET_KEY` (same mode, test or live) to the deployment's GitHub
+   environment. The deploy refuses a mismatched pair. Without a publishable key the page offers no
+   card ("Card payment isn't set up here").
+2. **Radar stays on.** Leave Stripe Radar at its defaults (it is on by default for card payments) and
+   don't switch off CVC or postal-code checks in the Payment Element's settings: card testing is
+   guarded by Radar, Turnstile (below), the per-address and per-cookie `PAY_LIMIT`, and a cap of five
+   attempts on each checkout.
+3. **Turnstile (required).** Set up the widget as in [Turnstile](#turnstile) and add `turnstileSiteKey`
+   to the registry. The fleet refuses a registry entry with a `stripePublishableKey` and no
+   `turnstileSiteKey`: hosted checkout is switched on at runtime, and without the check a stolen link
+   is guarded only by the limits and Radar.
+4. **Payment methods.** In the Stripe Dashboard (**Settings** > **Payments** > **Payment methods**)
+   enable cards, Apple Pay, Google Pay and Link. The page offers only card and Link (its wallets
+   appear under card), and the engine creates every PaymentIntent with `allow_redirects: never`, so a
+   method that needs a redirect never shows, whatever is enabled.
+5. **Register the storefront's domain for wallets.** Apple Pay and Google Pay on a custom domain
+   need it registered with Stripe, for `shop.<your domain>` (the registry's `storefrontDomain`) and
+   not the admin's host: **Settings** > **Payments** > **Payment method domains** > **Add a new
+   domain**, or `POST /v1/payment_method_domains` with `domain_name` set to the storefront's host.
+   This is an owner step, not part of provisioning: it is Stripe account state (one domain per
+   account and mode, so a test-mode and a live-mode registration are two steps) that
+   `scripts/provision.sh` can't check or undo safely. Registration fetches the Apple Pay file below,
+   so do step 6 first.
+6. **The Apple Pay file.** On the same page Stripe offers **Download** for the domain association
+   file (named `apple-developer-merchantid-domain-association`). Copy its contents into the
+   deployment's GitHub environment as the secret `APPLE_PAY_DOMAIN_ASSOCIATION` (it is public text,
+   kept there so the deploy has somewhere to read it from) and let the deploy run: the storefront
+   serves it at `https://shop.<domain>/.well-known/apple-developer-merchantid-domain-association`
+   (cached five minutes; check it with `curl`). Then press **Validate** (or add the domain) in
+   Stripe. Without the file Apple Pay shows no button; cards and Google Pay still work.
+7. **Check with a test card** in test mode: `4242 4242 4242 4242` is held and the order adopts it;
+   `4000 0025 0000 3155` asks for 3-D Secure; `4000 0000 0000 9995` is declined. The hold shows in
+   Stripe as **Uncaptured** until the flow's capture step runs.
+
+A payment that began and never finished (the buyer left their bank's page, or a Worker died between
+the hold and the order) is found by the engine's hourly job and its daily retention sweep: a checkout
+claimed for more than 15 minutes whose hold is open becomes its order, and anything else is released
+(the PaymentIntent canceled and the checkout reopened). The sweep logs `card holds` with what it
+placed and released, and `orphaned_hold_failed` for a checkout it could not settle (tried again next
+run). A hold that nothing ever settles still expires with the card network, in about seven days.
 
 ### Provisioning (SCIM)
 

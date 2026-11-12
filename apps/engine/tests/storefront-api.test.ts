@@ -77,14 +77,17 @@ describe('the storefront entrypoint', () => {
     expect(methods).toEqual(
       [
         'addCartFile',
+        'applePayDomainAssociation',
         'cartCustomerName',
         'cartSnapshot',
         'checkout',
         'completeCheckout',
+        'confirmCheckoutPayment',
         'fetch',
         'health',
         'keepCartOpen',
         'orderReceipt',
+        'payCheckout',
         'readCartFile',
         'redeemCartStart',
         'redeemCheckoutStart',

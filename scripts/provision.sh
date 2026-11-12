@@ -447,8 +447,9 @@ for KEY in $KEYS; do
     echo "Set $KEY on $ENVIRONMENT"
   fi
 done
-# The Turnstile widget on password sign-in and /setup (docs/operations.md, "Turnstile"): managed,
-# for the deployment's domain alone, and named like its web Worker, so each deployment on a shared
+# The Turnstile widget on password sign-in, /setup and the storefront's card payment
+# (docs/operations.md, "Turnstile"): managed, for the deployment's domain alone (its subdomains,
+# `shop.` included, are covered), and named like its web Worker, so each deployment on a shared
 # account finds its own. Its site key is public: it goes in the registry, which turns the check on.
 # Its secret goes from the API straight into the environment, as TURNSTILE_SECRET_KEY, and nowhere
 # else: never printed, never on disk. Set it before the registry has the key, or the deploy stops.
