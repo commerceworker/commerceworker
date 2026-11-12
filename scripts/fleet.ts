@@ -324,11 +324,14 @@ export type Deployment = {
    */
   turnstileSiteKey?: string;
   /**
-   * How the engine takes payments: `mock` (the default) records them without taking money;
-   * `stripe` authorizes, captures and refunds through Stripe with the environment's
-   * STRIPE_SECRET_KEY, which a deploy then requires.
+   * How the engine takes payments: `mock` records them without taking money; `stripe` authorizes,
+   * captures and refunds through Stripe with the environment's STRIPE_SECRET_KEY, which a deploy
+   * then requires. Written explicitly on every canary or general deployment and on every one with
+   * a `storefrontDomain` that isn't a demo (`paymentsProblem`); elsewhere an unset field is `mock`.
    */
   payments: 'mock' | 'stripe';
+  /** Whether the registry file wrote `payments` itself (see `paymentsProblem`). */
+  paymentsSet: boolean;
   /**
    * The Stripe publishable key (pk_…) of the same account and mode as STRIPE_SECRET_KEY. Agentic
    * checkout's Stripe payment handler gives it to platforms to tokenize cards with; without it no
@@ -633,7 +636,9 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
       `${file}: turnstileSiteKey ${turnstile.slice(0, 2)}… is a Cloudflare test key, which only a demo may use; use the widget's own (0x…)`,
     );
   if (raw.payments !== undefined && raw.payments !== 'mock' && raw.payments !== 'stripe')
-    throw new Error(`${file}: payments must be "mock" or "stripe"`);
+    throw new Error(
+      `${file}: payments must be "mock" or "stripe" (got ${JSON.stringify(raw.payments)})`,
+    );
   const payments = raw.payments === 'stripe' ? 'stripe' : 'mock';
   if (payments === 'stripe' && raw.demo === true)
     throw new Error(`${file}: a demo takes no real payments; leave payments "mock"`);
@@ -843,6 +848,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
       : {}),
     ...(turnstile !== undefined ? { turnstileSiteKey: turnstile as string } : {}),
     payments,
+    paymentsSet: raw.payments !== undefined,
     ...(pk !== undefined ? { stripePublishableKey: pk as string } : {}),
     plugins: plugins as Deployment['plugins'],
     ...(store ? { secretsStore: { storeId: (store as { storeId: string }).storeId } } : {}),
@@ -850,13 +856,48 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   };
 }
 
+/**
+ * A deployment that serves buyers must say how it takes payments: an unset `payments` renders
+ * `PAYMENTS_MODE=mock`, which records payments without taking money. So `payments` is required
+ * (not defaulted) on the canary and general rings and wherever `storefrontDomain` is set, except
+ * on a demo. `mock` there is a deliberate choice, and refused outright on the general ring.
+ * Returns the problem, or null.
+ */
+export function paymentsProblem(d: Deployment, raw: { storefrontDomain?: unknown }): string | null {
+  if (d.demo) return null;
+  const serves = d.ring === 'canary' || d.ring === 'general' || raw.storefrontDomain !== undefined;
+  if (serves && !d.paymentsSet)
+    return `${d.id}: set "payments" in deployments/${d.id}.jsonc to "stripe" (takes money through Stripe) or "mock" (records payments, takes no money; staging only). An unset payments mode renders mock, and ring ${d.ring}${raw.storefrontDomain !== undefined ? ' with a storefrontDomain' : ''} must choose`;
+  if (d.ring === 'general' && d.payments === 'mock')
+    return `${d.id}: payments "mock" takes no money and is refused on the general ring; set "payments": "stripe", or move the deployment to the internal or canary ring`;
+  return null;
+}
+
+/** Every Cloudflare resource id a registry entry names: no two deployments may share one. */
+export function resourceIds(d: Deployment): [field: string, id: string][] {
+  const ids: [string, string | undefined][] = [
+    ['d1Id', d.d1Id],
+    ['catalogKvId', d.catalogKvId],
+    ['contentD1Id', d.contentD1Id],
+    ['contentKvId', d.contentKvId],
+    ...Object.entries(d.plugins).map(([p, v]): [string, string | undefined] => [
+      `plugins.${p}.d1Id`,
+      v?.d1Id,
+    ]),
+  ];
+  return ids.filter((x): x is [string, string] => typeof x[1] === 'string' && x[1] !== '');
+}
+
 export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
   const list = readdirSync(dir)
     .filter((f) => f.endsWith('.jsonc'))
     .sort()
     .map((f) => {
-      const d = toDeployment(readJsonc(join(dir, f)), f);
+      const raw = readJsonc(join(dir, f));
+      const d = toDeployment(raw, f);
       if (`${d.id}.jsonc` !== f) throw new Error(`${f}: id "${d.id}" must match the file name`);
+      const problem = paymentsProblem(d, raw);
+      if (problem) throw new Error(`${f}: ${problem}`);
       return d;
     });
   for (const key of ['slot', 'domain', 'suffix'] as const) {
@@ -867,6 +908,18 @@ export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
       seen.set(d[key], d.id);
     }
   }
+  // One resource id in two entries (a copied file with a stale id) points a customer at another's
+  // data, and CI would migrate it. Within one entry too: a D1 id can't also be its KV id.
+  const idOwner = new Map<string, string>();
+  for (const d of list)
+    for (const [field, id] of resourceIds(d)) {
+      const other = idOwner.get(id);
+      if (other)
+        throw new Error(
+          `${d.id} ${field} ${JSON.stringify(id)} is already used by ${other}: every deployment needs its own resources (run scripts/provision.sh ${d.id})`,
+        );
+      idOwner.set(id, `${d.id} ${field}`);
+    }
   // No host serves two deployments (a content host only counts on a deployment with content).
   const hostOwner = new Map<string, string>();
   for (const d of list)
