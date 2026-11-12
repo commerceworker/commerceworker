@@ -17,6 +17,7 @@ import {
   inboundEmails,
   nodeRuns,
   orders,
+  orderViewTokens,
   paymentEvents,
   sessions,
   ucpIdempotency,
@@ -28,47 +29,55 @@ export function d1RetentionStore(d1: D1Database): RetentionStore {
   const d = createDb(d1);
   return {
     async prune(now, policy) {
-      const [s, deliveries, runs, emails, receipts, events, replays, checkouts] = await d.batch([
-        d.delete(sessions).where(lt(sessions.expiresAt, now)).returning({ id: sessions.tokenHash }),
-        d
-          .delete(webhookDeliveries)
-          .where(
-            and(
-              lt(webhookDeliveries.createdAt, now - policy.webhookDeliveriesMs),
-              ne(webhookDeliveries.status, 'pending'),
-            ),
-          )
-          .returning({ id: webhookDeliveries.id }),
-        d
-          .delete(nodeRuns)
-          .where(lt(nodeRuns.endedAt, now - policy.nodeRunsMs))
-          .returning({ id: nodeRuns.nodeId }),
-        d
-          .delete(inboundEmails)
-          .where(lt(inboundEmails.receivedAt, now - policy.inboundEmailsMs))
-          .returning({ id: inboundEmails.id }),
-        d
-          .delete(webhookReceipts)
-          .where(lt(webhookReceipts.receivedAt, now - policy.webhookReceiptsMs))
-          .returning({ id: webhookReceipts.id }),
-        d
-          .delete(paymentEvents)
-          .where(lt(paymentEvents.receivedAt, now - policy.paymentEventsMs))
-          .returning({ id: paymentEvents.id }),
-        d
-          .delete(ucpIdempotency)
-          .where(lt(ucpIdempotency.createdAt, now - policy.ucpIdempotencyMs))
-          .returning({ key: ucpIdempotency.key }),
-        d
-          .delete(checkoutSessions)
-          .where(
-            and(
-              isNull(checkoutSessions.orderId),
-              lt(checkoutSessions.expiresAt, now - policy.abandonedCheckoutsMs),
-            ),
-          )
-          .returning({ id: checkoutSessions.id }),
-      ]);
+      const [s, deliveries, runs, emails, receipts, events, replays, checkouts, views] =
+        await d.batch([
+          d
+            .delete(sessions)
+            .where(lt(sessions.expiresAt, now))
+            .returning({ id: sessions.tokenHash }),
+          d
+            .delete(webhookDeliveries)
+            .where(
+              and(
+                lt(webhookDeliveries.createdAt, now - policy.webhookDeliveriesMs),
+                ne(webhookDeliveries.status, 'pending'),
+              ),
+            )
+            .returning({ id: webhookDeliveries.id }),
+          d
+            .delete(nodeRuns)
+            .where(lt(nodeRuns.endedAt, now - policy.nodeRunsMs))
+            .returning({ id: nodeRuns.nodeId }),
+          d
+            .delete(inboundEmails)
+            .where(lt(inboundEmails.receivedAt, now - policy.inboundEmailsMs))
+            .returning({ id: inboundEmails.id }),
+          d
+            .delete(webhookReceipts)
+            .where(lt(webhookReceipts.receivedAt, now - policy.webhookReceiptsMs))
+            .returning({ id: webhookReceipts.id }),
+          d
+            .delete(paymentEvents)
+            .where(lt(paymentEvents.receivedAt, now - policy.paymentEventsMs))
+            .returning({ id: paymentEvents.id }),
+          d
+            .delete(ucpIdempotency)
+            .where(lt(ucpIdempotency.createdAt, now - policy.ucpIdempotencyMs))
+            .returning({ key: ucpIdempotency.key }),
+          d
+            .delete(checkoutSessions)
+            .where(
+              and(
+                isNull(checkoutSessions.orderId),
+                lt(checkoutSessions.expiresAt, now - policy.abandonedCheckoutsMs),
+              ),
+            )
+            .returning({ id: checkoutSessions.id }),
+          d
+            .delete(orderViewTokens)
+            .where(lt(orderViewTokens.expiresAt, now))
+            .returning({ id: orderViewTokens.tokenHash }),
+        ]);
       return {
         sessions: s.length,
         webhookDeliveries: deliveries.length,
@@ -78,6 +87,7 @@ export function d1RetentionStore(d1: D1Database): RetentionStore {
         paymentEvents: events.length,
         ucpIdempotency: replays.length,
         abandonedCheckouts: checkouts.length,
+        orderViewTokens: views.length,
       };
     },
 

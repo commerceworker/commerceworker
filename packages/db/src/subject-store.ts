@@ -36,6 +36,7 @@ import {
   inboundEmails,
   messages,
   orders,
+  orderViewTokens,
   purchaseOrders,
   quotes,
   taxCertificates,
@@ -269,6 +270,8 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
             .where(eq(checkoutSessions.id, r.id));
         }
         await d.delete(documents).where(inArray(documents.orderId, c));
+        // The receipt link in a confirmation email shows the order to whoever holds it.
+        await d.delete(orderViewTokens).where(inArray(orderViewTokens.orderId, c));
         await d.delete(webhookDeliveries).where(inArray(webhookDeliveries.orderId, c));
         msgs += (
           await d

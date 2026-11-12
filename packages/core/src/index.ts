@@ -46,6 +46,7 @@ export * from './logic';
 export * from './marketplace';
 export * from './mcp-skills';
 export * from './money';
+export * from './order-confirmation';
 export * from './order-index';
 export * from './order-report';
 export * from './order-schemas';

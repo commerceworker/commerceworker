@@ -58,6 +58,7 @@ import { recordAudit } from './audit';
 import { loadFlowVersion } from './flows';
 import { orderAgent } from './namespaces';
 import { EXECUTORS, type NodeResult, ROLLBACKS, scaled } from './nodes';
+import { confirmsByEmail, orderConfirmation } from './order-confirmation';
 import { instanceExists } from './orders';
 import { emit, orderSummary } from './outbox';
 import { voidAuthorizations } from './payments';
@@ -72,6 +73,8 @@ export type OrderWorkflowParams = {
   generation: number;
   order: Order;
   vars: Record<string, unknown>;
+  /** The idempotency key the order started under, when it had one. */
+  key?: string;
 };
 
 type Outcome =
@@ -301,6 +304,7 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
     await snapshot('running');
 
     let end: Extract<Outcome, { kind: 'end' }> | null = null;
+    let confirmed = false;
     while (!end) {
       const { ready } = readyNodes(flow, plan);
       if (!ready.length) break;
@@ -351,6 +355,23 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         return { continuedAs: p.generation + 1 };
       }
       await snapshot('running');
+      // A hosted checkout's buyer is mailed once the card is authorized: the order is confirmed
+      // then, priced and paid for, not when its flow ends (a return window can keep it open for
+      // weeks). After the snapshot, so the mail shows the order as priced.
+      if (
+        !confirmed &&
+        !end &&
+        confirmsByEmail(ctx.order, p.key) &&
+        flow.nodes.some(
+          (n) =>
+            n.type === 'commerce.authorize_payment' &&
+            plan.nodes[n.id]?.status === 'succeeded' &&
+            plan.nodes[n.id]?.branches?.includes('ok'),
+        )
+      ) {
+        confirmed = true;
+        await this.confirmByEmail(step, p, 'authorize');
+      }
     }
 
     const outcome = end?.outcome ?? 'completed';
@@ -393,6 +414,10 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
     // An End node that fails the order announced it itself, in its own step.
     if (outcome === 'failed') failure.endAnnounced = true;
     await snapshot(outcome, { reason });
+    // A flow with no card authorization confirms when it completes. After the outcome is recorded,
+    // so a mail problem can't change it.
+    if (outcome === 'completed' && !confirmed && confirmsByEmail(ctx.order, p.key))
+      await this.confirmByEmail(step, p, end?.nodeId ?? 'end');
     if (outcome === 'failed') {
       // Fails the instance; Workflows then runs every registered rollback in reverse order.
       throw new NonRetryableError(reason || 'Order failed');
@@ -483,6 +508,51 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
         return voided;
       },
     );
+  }
+
+  /**
+   * Mails the buyer the order's confirmation (once its card is authorized, or when the order ends
+   * for a flow with none), as one step (`order:confirmation`). The send is keyed
+   * by the order (`messages`, once per order and kind), so a retry or a replay mails nothing more.
+   * Only a refusal by Email Sending retries; a deployment without email, or an order with no
+   * address, says so on the timeline and moves on. Nothing here fails the order: it has completed.
+   */
+  private async confirmByEmail(step: WorkflowStep, p: OrderWorkflowParams, nodeId: string) {
+    const env = this.env;
+    const fx = effectKey(p.generation, 'confirmation');
+    let note: string | null = null;
+    try {
+      const outcome = await step.do(
+        'order:confirmation',
+        { retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+        async () => {
+          const r = await orderConfirmation.send(env, p.orderId);
+          if (r.status === 'failed') throw new Error(r.error);
+          return r.status;
+        },
+      );
+      if (outcome === 'not_configured')
+        note = 'its confirmation email was not sent: email sending is not configured';
+      if (outcome === 'no_recipient')
+        note = 'its confirmation email was not sent: the order has no email address';
+    } catch (err) {
+      note = `its confirmation email was not sent: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (!note) return;
+    try {
+      await orderAgent(env, p.orderId).report({
+        generation: p.generation,
+        log: {
+          at: Date.now(),
+          nodeId,
+          kind: 'order',
+          message: capReason(`Completed, but ${note}`, 400),
+          key: `${fx}:unsent`,
+        },
+      });
+    } catch (err) {
+      console.warn('confirmation report failed', err);
+    }
   }
 
   /**

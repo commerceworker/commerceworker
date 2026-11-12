@@ -183,6 +183,7 @@ async function restartOf(env: Env, orderId: string) {
     ucp: _ucp,
     cart: _cart,
     plugin: _plugin,
+    hosted: _hosted,
     ...meta
   } = prev.order.meta ?? {};
   const input: OrderInput = {

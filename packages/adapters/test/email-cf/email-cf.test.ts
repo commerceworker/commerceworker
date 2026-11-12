@@ -63,6 +63,22 @@ describe('createCfEmailSender', () => {
     expect(r.error).toBe('E_SENDER_NOT_VERIFIED: sender domain is not verified');
   });
 
+  it('refuses a recipient that is not an address, sending nothing', async () => {
+    const { binding, sent } = fakeBinding();
+    const email = createCfEmailSender(binding, { from: 'x@example.com' });
+    for (const to of [
+      'not an address',
+      'a@b',
+      'Bob <b@example.com>',
+      'a@example.com\nBcc: z@example.com',
+    ])
+      expect(await email.send({ to: ['ok@example.com', to], subject: 's', text: 't' })).toEqual({
+        delivered: false,
+        error: 'Not an email address',
+      });
+    expect(sent).toEqual([]);
+  });
+
   it('refuses messages with no or too many recipients', async () => {
     const { binding, sent } = fakeBinding();
     const email = createCfEmailSender(binding, { from: 'x@example.com', maxRecipients: 2 });

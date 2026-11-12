@@ -18,6 +18,7 @@ import type { ErasureResult, SubjectExport } from './erasure';
 import type { EdgeState, GraphIssue } from './graph';
 import type { HealthReport } from './health';
 import type { HostedChange, HostedCheckout, HostedCheckoutSettings } from './hosted-checkout';
+import type { BuyerOrderView } from './order-confirmation';
 import type {
   PluginCase,
   PluginCaseResult,
@@ -599,6 +600,13 @@ export interface StorefrontRpc {
   ): Promise<{ body: ReadableStream } | null>;
   /** Counts a request from the buyer (a file download, say) as activity (`extendedCartExpiry`). */
   keepCartOpen(cartId: string, actor: SignedActor): Promise<void>;
+  /**
+   * An order as its buyer may see it (`BuyerOrderView`: no timeline, audit or notes), or null unless
+   * `credential` is one of the order's live order-view credentials, as the confirmation email's
+   * link carries it. Unknown, expired and wrong all answer null, so a caller learns nothing about
+   * which orders exist.
+   */
+  orderReceipt(orderId: string, credential: string): Promise<BuyerOrderView | null>;
   /** Finds products to add to the cart by SKU or name, as `EngineRpc.searchCartProducts` does. */
   searchCartProducts(
     cartId: string,

@@ -84,6 +84,7 @@ describe('the storefront entrypoint', () => {
         'fetch',
         'health',
         'keepCartOpen',
+        'orderReceipt',
         'readCartFile',
         'redeemCartStart',
         'redeemCheckoutStart',

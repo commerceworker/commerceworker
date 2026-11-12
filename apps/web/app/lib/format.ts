@@ -174,7 +174,7 @@ export const waitingForLabel = (s: string | null | undefined): string =>
   ].join(', ');
 
 /** A short, sayable reference that tells look-alike orders apart: "ord_mv65gsxyqcs34m" → "#qcs34m". */
-export const orderRef = (id: string) => `#${id.slice(-6)}`;
+export { orderRef } from '@commerceworker/core';
 
 /** An event key a flow names (`return.requested`), as it appears in older timeline lines. */
 const EVENT_KEY = /([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)/;

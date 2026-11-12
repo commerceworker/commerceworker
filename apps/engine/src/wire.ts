@@ -5,6 +5,7 @@
  */
 
 import { createCatalogEdgeReader } from '@commerceworker/adapters/catalog-edge';
+import { createCfEmailSender } from '@commerceworker/adapters/email-cf';
 import type { ApprovalPorts } from '@commerceworker/application/commerce';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { createDb, probeDb } from '@commerceworker/db';
@@ -27,6 +28,7 @@ import { d1IntakeLog, d1PaymentEventLog, d1UsageStore } from '@commerceworker/db
 import { d1MarketplaceStore } from '@commerceworker/db/marketplace-store';
 import { d1OrderQueries } from '@commerceworker/db/order-queries';
 import { d1OrderRecords } from '@commerceworker/db/order-records';
+import { d1OrderViewTokens } from '@commerceworker/db/order-view-tokens';
 import { d1PaymentLedger } from '@commerceworker/db/payment-ledger';
 import { d1PluginInstallStore } from '@commerceworker/db/plugin-install-store';
 import { d1PriceBookStore } from '@commerceworker/db/price-book-store';
@@ -42,7 +44,7 @@ import { d1TaxCertificateStore } from '@commerceworker/db/tax-certificate-store'
 import { d1UcpStore } from '@commerceworker/db/ucp-store';
 import { d1WebhookOutbox } from '@commerceworker/db/webhook-outbox';
 import { d1WorkspaceStore } from '@commerceworker/db/workspace-store';
-import type { Clock } from '@commerceworker/ports';
+import type { Clock, EmailSender } from '@commerceworker/ports';
 import type {
   AddressBook,
   AuditArchive,
@@ -70,6 +72,7 @@ import type {
   OrderQueries,
   OrderRecords,
   OrderRuntime,
+  OrderViewTokens,
   PaymentEventLog,
   PaymentLedger,
   PluginInstallStore,
@@ -213,6 +216,27 @@ export function messageStore(env: Pick<Env, 'DB'>): MessageStore {
   }
   return store;
 }
+
+/**
+ * Cloudflare Email Sending over the `EMAIL` send_email binding, from `EMAIL_FROM` (an address on a
+ * domain onboarded to Email Sending). Undefined unless both are set: the registry's `email` sets
+ * them together, and a deployment without it mails nothing. An unusable `EMAIL_FROM` throws, so
+ * callers that mail (`orderConfirmation`) catch it and record the send as failed.
+ */
+export function emailSender(env: {
+  EMAIL?: SendEmail;
+  EMAIL_FROM: string;
+  EMAIL_FROM_NAME: string;
+}): EmailSender | undefined {
+  if (!env.EMAIL || !env.EMAIL_FROM) return undefined;
+  return createCfEmailSender(env.EMAIL, {
+    from: env.EMAIL_FROM,
+    ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
+  });
+}
+
+/** The credentials an order-confirmation email's receipt link carries, as hashes with an expiry. */
+export const orderViewTokens = (env: Pick<Env, 'DB'>): OrderViewTokens => d1OrderViewTokens(env.DB);
 
 const paymentLedgers = new WeakMap<D1Database, PaymentLedger>();
 

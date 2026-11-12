@@ -179,7 +179,13 @@
     "ASSISTANT_DAILY_TOKENS": "1000000",
     // "on": the assistant may draft business-rule plugins for an admin to approve (logic only,
     // sandboxed). The registry's pluginInstalls.assistant sets it; this is app.commerceworker.com's.
-    "ASSISTANT_PLUGINS": "on"
+    "ASSISTANT_PLUGINS": "on",
+    // The sender of order-confirmation email: an address on a domain onboarded to Email Sending
+    // (docs/operations.md, "Email sending"), with an optional display name. Both empty sends no
+    // email. `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the registry
+    // sets `email`, which sets these too; a bound EMAIL with no EMAIL_FROM sends nothing.
+    "EMAIL_FROM": "",
+    "EMAIL_FROM_NAME": ""
   }
   // Secrets: INTAKE_ALLOWLIST — extra senders allowed to start orders by email, comma-separated
   // addresses or @domains (customers' own addresses are always allowed).

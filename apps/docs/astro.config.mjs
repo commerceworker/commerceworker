@@ -105,6 +105,7 @@ export default defineConfig({
             { label: 'Inbound orders', slug: 'guides/inbound-orders' },
             { label: 'Channel adapters', slug: 'guides/channel-adapters' },
             { label: 'Email intake', slug: 'guides/email-intake' },
+            { label: 'Order emails', slug: 'guides/order-emails' },
             { label: 'Outbound webhooks', slug: 'guides/outbound-webhooks' },
             { label: 'AI nodes and the assistant', slug: 'guides/ai' },
             { label: 'The assistant', slug: 'guides/assistant' },

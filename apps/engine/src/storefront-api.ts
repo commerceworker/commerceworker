@@ -40,6 +40,7 @@ import {
   updateHosted,
 } from './checkout/hosted';
 import { cartAgent } from './namespaces';
+import { orderConfirmation } from './order-confirmation';
 import { guestActor } from './principal';
 import { ucpProfile, ucpSettings } from './ucp/config';
 import { handleUcp } from './ucp/rest';
@@ -216,6 +217,11 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
   async keepCartOpen(cartId: string, signed: SignedActor) {
     const found = await buyerOf(this.env, cartId, signed);
     if (found) await keepCartOpen(this.env, cartId, found.actor);
+  }
+
+  orderReceipt(orderId: string, credential: string) {
+    if (typeof orderId !== 'string' || typeof credential !== 'string') return Promise.resolve(null);
+    return orderConfirmation.receipt(this.env, orderId, credential);
   }
 
   async searchCartProducts(cartId: string, q: string, signed: SignedActor) {

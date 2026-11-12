@@ -43,6 +43,8 @@ export * from './order-queries';
 export * from './order-queries-contract';
 export * from './order-records';
 export * from './order-records-contract';
+export * from './order-view-tokens';
+export * from './order-view-tokens-contract';
 export * from './passkey-store';
 export * from './passkey-store-contract';
 export * from './payment-ledger';

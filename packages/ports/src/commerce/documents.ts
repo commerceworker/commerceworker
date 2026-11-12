@@ -2,7 +2,8 @@
  * An order's documents and messages. `DocumentStore` files a document (the body in a blob store,
  * its record beside the order) under `orders/<orderId>/<kind>/<name>`, so filing the same name
  * again replaces the body and keeps one record. `MessageStore` is the order's outbox of messages,
- * one per order and step. `d1DocumentStore` / `d1MessageStore` (packages/db, D1 and R2) and the
+ * one per order and step (an order's confirmation email is its `confirmation` step, recording when it
+ * went). `d1DocumentStore` / `d1MessageStore` (packages/db, D1 and R2) and the
  * in-memory stores (packages/test-kit) implement them, held to one contract.
  */
 
@@ -42,6 +43,13 @@ export interface MessageRecord {
   readonly recipient: string;
   readonly subject: string;
   readonly body: string;
+  /**
+   * When Email Sending took the message (ms), or null: a `commerce.notify` message is only queued
+   * here, and an email confirmation is null until it has gone.
+   */
+  readonly sentAt: number | null;
+  /** Why the last send didn't go, or null. */
+  readonly error: string | null;
 }
 
 /** A message's id: `msg_<orderId>_<stepKey>`, anything but word characters and `-` as `_`. */
@@ -57,4 +65,10 @@ export interface MessageStore {
   ): Promise<{ messageId: string; recipient: string; subject: string }>;
   /** The order's messages, by id. */
   messages(orderId: string): Promise<MessageRecord[]>;
+  /** One message by order and step, or undefined. */
+  find(orderId: string, stepKey: string): Promise<MessageRecord | undefined>;
+  /** Records that the message went out at `at`: the first time stands, and it clears the error. */
+  markSent(messageId: string, at: number): Promise<void>;
+  /** Records why a send didn't go; a message already sent keeps its sent state. */
+  markFailed(messageId: string, error: string): Promise<void>;
 }

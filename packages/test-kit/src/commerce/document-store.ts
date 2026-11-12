@@ -54,7 +54,8 @@ export class InMemoryMessageStore implements MessageStore {
     m: { recipient: string; subject: string; body: string },
   ) {
     const id = messageId(orderId, stepKey);
-    if (!this.rows.has(id)) this.rows.set(id, { messageId: id, orderId, ...m });
+    if (!this.rows.has(id))
+      this.rows.set(id, { messageId: id, orderId, ...m, sentAt: null, error: null });
     return { messageId: id, recipient: m.recipient, subject: m.subject };
   }
 
@@ -62,5 +63,19 @@ export class InMemoryMessageStore implements MessageStore {
     return [...this.rows.values()]
       .filter((r) => r.orderId === orderId)
       .sort(byKey((r) => r.messageId));
+  }
+
+  async find(orderId: string, stepKey: string) {
+    return this.rows.get(messageId(orderId, stepKey));
+  }
+
+  async markSent(id: string, at: number) {
+    const r = this.rows.get(id);
+    if (r && r.sentAt === null) this.rows.set(id, { ...r, sentAt: at, error: null });
+  }
+
+  async markFailed(id: string, error: string) {
+    const r = this.rows.get(id);
+    if (r && r.sentAt === null) this.rows.set(id, { ...r, error: error.slice(0, 500) });
   }
 }

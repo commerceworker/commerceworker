@@ -99,11 +99,23 @@ second entrypoint, and the only one the public storefront is bound to. It exists
 else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
 calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
 its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
-`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout` and `completeCheckout` (see [Hosted checkout](#hosted-checkout)), and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout` and `completeCheckout` (see [Hosted checkout](#hosted-checkout)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
 (anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
 an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
 whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
-no staff cart. **Which key signs what:** the storefront holds `storefrontKey(PRINCIPAL_KEY)` (an HMAC of it under the label
+no staff cart. `orderReceipt(orderId, credential)` is the one order method on it, and takes no actor: its credential is an order-view token the
+engine minted (random, stored as a hash with an expiry in `order_view_tokens`, compared in constant time over the order's
+live hashes), not anything the storefront signed, and it answers the buyer-safe `BuyerOrderView` (lines, totals, status,
+ship-to, tracking; never the timeline, audit or notes) or `null` for an unknown order, a wrong credential and an expired one alike.
+The storefront renders it at `/orders/:orderId?t=<token>` (`apps/storefront/app/routes/order-receipt.tsx`), which is also where
+UCP's default `orderPermalink` points; the page is `no-store`, `no-referrer` and `noindex`.
+The credential is emailed by the order confirmation (`orderConfirmation.send` in `apps/engine/src/order-confirmation.ts`, over
+`sendOrderConfirmation` in `packages/application/src/commerce/order-confirmation.ts`): the Workflow calls it, in its own step
+(`order:confirmation`, so a mail problem never changes the order), for an order on the `web`
+channel that started under a `hosted:` idempotency key (`confirmsByEmail`; `hosted:` is a reserved key prefix, so only the engine's own
+start can use it, and `meta.hosted` from a caller is dropped by `fromOutside`, `PluginHost.startOrder` and a restart, and ignored
+anyway). Hosted checkout's `completeHosted` (`apps/engine/src/checkout/hosted.ts`) starts its orders under `hosted:<session id>` on the `web` channel, so every hosted-checkout order is mailed, once the flow's card authorization succeeds (the order is then priced and paid for; a flow with no authorize node confirms when it completes), not when the flow ends, which a return window can hold open for weeks. See [Email sending](operations.md#email-sending).
+**Which key signs what:** the storefront holds `storefrontKey(PRINCIPAL_KEY)` (an HMAC of it under the label
 `commerceworker-storefront`) and never `PRINCIPAL_KEY`. The engine derives the same key and takes the storefront's envelopes
 (a cart's buyer `g1`, a UCP platform `u1`, a guest's `a1` actor; the storefront's own cookie `gs1` is checked only by the
 storefront) under it alone, and the staff envelopes (`v1` principals, staff `a1` actors) under `PRINCIPAL_KEY` alone

@@ -13,7 +13,7 @@ import type { AuditRow, PruneCounts, RetentionStore } from '@commerceworker/port
 
 export interface RetentionFixture {
   /**
-   * Prunable rows. `at` is what each table's retention reads: a session's expiry, a delivery's
+   * Prunable rows. `at` is what each table's retention reads: a session's or order-view token's expiry, a delivery's
    * creation, a run's end, a receipt's arrival, a checkout's expiry.
    */
   rows?: {
@@ -63,6 +63,7 @@ export class InMemoryRetentionStore implements RetentionStore {
     const due = (r: Fixture['rows'][number]) => {
       switch (r.table) {
         case 'sessions':
+        case 'orderViewTokens':
           return r.at < now;
         case 'webhookDeliveries':
           return r.at < now - policy.webhookDeliveriesMs && !r.pending;
@@ -89,6 +90,7 @@ export class InMemoryRetentionStore implements RetentionStore {
       paymentEvents: 0,
       ucpIdempotency: 0,
       abandonedCheckouts: 0,
+      orderViewTokens: 0,
     };
     this.f.rows = this.f.rows.filter((r) => {
       if (!due(r)) return true;

@@ -85,6 +85,27 @@ test('the composition root does bind the catalog edge', () => {
   assert.match(src, EDGE_BINDING);
 });
 
+// Cloudflare adapters (Email Sending today) are bound there too: every other engine file takes the
+// port (`emailSender` in wire.ts), so a send can be swapped for a fake and one place reads `EMAIL`.
+const CF_ADAPTERS = /from '@commerceworker\/adapters(?:\/[\w-]+)?'/;
+
+test('only the composition root binds a Cloudflare adapter in the engine', () => {
+  const binding = files(ROOT)
+    .filter((f) => f !== COMPOSITION_ROOT)
+    .filter((f) => CF_ADAPTERS.test(readFileSync(f, 'utf8')))
+    .map((f) => relative('.', f));
+  assert.deepEqual(binding, [], `Take the port from ${COMPOSITION_ROOT}:\n${binding.join('\n')}`);
+  assert.match(readFileSync(COMPOSITION_ROOT, 'utf8'), CF_ADAPTERS);
+});
+
+test('the engine reads the EMAIL binding only in the composition root', () => {
+  const reading = files(ROOT)
+    .filter((f) => f !== COMPOSITION_ROOT)
+    .filter((f) => /\benv\.EMAIL\b/.test(readFileSync(f, 'utf8')))
+    .map((f) => relative('.', f));
+  assert.deepEqual(reading, []);
+});
+
 // The web app follows the same rule: its composition root is apps/web/app/lib/wire.server.ts, the
 // one web file that imports the D1 adapters (`@commerceworker/db` or a subpath), calls `createDb` or
 // touches the `DB` binding. Everything else asks the root for a port.

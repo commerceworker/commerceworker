@@ -7,6 +7,7 @@ import {
   type CartTyping,
   type ExternalCartInput,
   MAX_EXTERNAL_CART_MS,
+  type OrderState,
   PRINCIPAL_HEADER,
   signCartGuest,
   signPrincipal,
@@ -300,6 +301,30 @@ describe('the plugin host API', () => {
     expect(
       (await hostFor('example').startOrder({ ...req, key: '' })) as { ok: boolean },
     ).toMatchObject({ ok: false });
+  });
+
+  it('drops meta.hosted from an order a plugin starts, so it can never trigger mail', async () => {
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.disableRetryDelays();
+    });
+    const started = await hostFor('example').startOrder({
+      key: `po-${crypto.randomUUID()}`,
+      flowId: 'tpl-b2b-order',
+      input: {
+        model: 'b2b',
+        channel: 'web',
+        customerId: 'cus_northwind',
+        lines: [{ sku: 'WID-100', qty: 1 }],
+        meta: { hosted: true, keep: 1 },
+      },
+    });
+    if (!started.ok) throw new Error(started.error);
+    const meta = ((await env.ORDER_AGENT.getByName(started.orderId).snapshot()) as OrderState).order
+      ?.meta;
+    expect(meta).toMatchObject({ keep: 1 });
+    expect(meta).not.toHaveProperty('hosted');
   });
 
   it('cancels only an order it started, by its key, once', async () => {

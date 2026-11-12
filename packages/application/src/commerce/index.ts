@@ -9,6 +9,7 @@ export * from './credit';
 export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';
+export * from './order-confirmation';
 export * from './payments';
 export * from './price-books';
 export * from './price-order';
