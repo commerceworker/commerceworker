@@ -5,6 +5,10 @@
 Report a vulnerability privately through GitHub: open the repository's **Security** tab and choose
 **Report a vulnerability**. Please don't open a public issue, pull request or discussion for it.
 
+The same channel is published as `/.well-known/security.txt` ([RFC 9116](https://www.rfc-editor.org/rfc/rfc9116))
+on the admin and API host, the storefront, the studio and the documentation site, so a scanner or a
+researcher who starts from a host finds it.
+
 Include what you found, where (a URL, an endpoint or a file in this repository), how to reproduce
 it, and what an attacker could do with it. A proof of concept helps, but keep it to the minimum
 that shows the problem.

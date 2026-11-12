@@ -12,6 +12,7 @@
     "./origin": "./src/origin.ts",
     "./principal": "./src/principal.ts",
     "./roles": "./src/roles.ts",
+    "./security-txt": "./src/security-txt.ts",
     "./turnstile": "./src/turnstile.ts"
   },
   "scripts": {
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@commerceworker/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },

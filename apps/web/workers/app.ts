@@ -11,6 +11,7 @@ import {
 } from '@commerceworker/core';
 import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
+import { SECURITY_TXT_PATH, securityTxtResponse } from '@commerceworker/security/security-txt';
 import { createRequestHandler, RouterContextProvider } from 'react-router';
 import { handleShopifyOrder, handleSignedEvent, handleSignedOrder } from '../app/lib/api.server';
 import { apiRoute } from '../app/lib/api-route.server';
@@ -165,6 +166,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   const url = new URL(request.url);
   if (url.pathname === '/health') return Response.json({ ok: true, service: 'commerceworker-web' });
   if (url.pathname === '/health/deep') return deepHealth(env);
+  // Public to anyone who finds a vulnerability, so ahead of the setup gate and the demo lock.
+  if (url.pathname === SECURITY_TXT_PATH) return securityTxtResponse(request);
   // The deploy smoke test's writes: signed by CI alone, ahead of setup and the demo lock, since a
   // new or demo deployment's stores must take writes too.
   if (url.pathname === HEALTH_WRITE_PATH && request.method === 'POST') return writeHealth(request);

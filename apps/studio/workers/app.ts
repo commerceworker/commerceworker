@@ -1,3 +1,4 @@
+import { SECURITY_TXT_PATH, securityTxtResponse } from '@commerceworker/security/security-txt';
 import { createRequestHandler } from 'react-router';
 import { awaitingSetup, principal, sessionId, setupDue } from '../app/lib/auth.server';
 import { withSecurityHeaders } from '../app/lib/csp';
@@ -45,6 +46,9 @@ async function route(request: Request, env: Env, _ctx: ExecutionContext): Promis
   if (url.pathname === '/health')
     return Response.json({ ok: true, service: 'commerceworker-studio' });
   if (url.pathname === '/health/deep') return deepHealth(env);
+  // The studio's own, never the api's (gateway.server.ts leaves it out of `isApiPath`), and
+  // public, so ahead of the setup gate.
+  if (url.pathname === SECURITY_TXT_PATH) return securityTxtResponse(request);
 
   // The api's own surfaces (REST, GraphQL, delivery, preview, MCP, OAuth, media, docs), forwarded
   // with a signed principal or the caller's bearer token (app/lib/gateway.server.ts). A bearer
