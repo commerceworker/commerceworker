@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { palette } from '../src/tokens';
 import { contrast, hueApart, hueOf, linearSrgb, srgb } from './color';
 
-// The CommerceWorker accent (ROADMAP P9, docs/brand/messaging.md "Visual accent"): an inked cobalt.
+// The CommerceWorker accent (ROADMAP P9, docs/brand/messaging.md "Visual accent"): Arizona turquoise.
 // Each claim DESIGN.md makes about it is a number here, in both themes: text on it, it as text, it
 // on its own tint, its focus edge, and how far its hue sits from the link and status hues.
 
@@ -60,9 +60,9 @@ describe('the brand accent is its own hue', () => {
     const p = palette(scheme);
     const brand = hueOf(p.brand);
 
-    it(`${scheme}: it is cobalt, about hue 255`, () => {
+    it(`${scheme}: it is turquoise, about hue 195`, () => {
       expect(brand).not.toBeNull();
-      expect(hueApart(brand!, 255)).toBeLessThanOrEqual(10);
+      expect(hueApart(brand!, 195)).toBeLessThanOrEqual(10);
     });
 
     it(`${scheme}: it sits ${MIN_APART} degrees or more from the link blue`, () => {
@@ -74,9 +74,10 @@ describe('the brand accent is its own hue', () => {
         expect(hueApart(brand!, hueOf(p[t])!), `brand near ${t}`).toBeGreaterThanOrEqual(MIN_APART);
     });
 
-    it(`${scheme}: it is more saturated than the link, so the two differ in chroma as well`, () => {
-      const chroma = (c: string) => Number(/^oklch\([\d.]+ ([\d.]+)/.exec(c)![1]);
-      expect(chroma(p.brand)).toBeGreaterThan(chroma(p.link));
+    // Turquoise can't out-saturate the link inside sRGB at text contrast (it tops out near 0.09 at
+    // L 0.5), so the two are kept apart by hue instead: well past the 20-degree floor above.
+    it(`${scheme}: it sits 35 degrees or more from the link blue, so the two never read as one`, () => {
+      expect(hueApart(brand!, hueOf(p.link)!)).toBeGreaterThanOrEqual(35);
     });
   }
 });
@@ -103,7 +104,7 @@ describe('the accent in flat assets', () => {
   const dark = hex(palette('dark').brand);
 
   it('the hex we ship is the token, light and dark', () => {
-    expect([light, dark]).toEqual(['#0e49bc', '#77a4f6']);
+    expect([light, dark]).toEqual(['#007373', '#3bcfcf']);
   });
 
   for (const app of ['marketing', 'docs', 'studio'] as const) {

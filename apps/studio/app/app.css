@@ -10,7 +10,7 @@
 @source "../node_modules/streamdown/dist/*.js";
 
 /* Ledger, on shadcn's base-luma preset: neutral greys with no tint, Inter, generous radii and pill
-   controls (buttons and one-line fields are fully round). One accent, the brand cobalt of the mark
+   controls (buttons and one-line fields are fully round). One accent, the brand turquoise of the mark
    (where you are, what you chose, focus); a model's work in violet; one sky blue for links and work in
    progress; and signal colours reserved for order and step status. Green means "succeeded" and
    nothing else; it is never the brand. Light is the default; dark is chosen with the theme switch. */
@@ -126,15 +126,15 @@
   --rule: oklch(0.922 0 0);
   --border: var(--rule);
   --input: oklch(0.922 0 0);
-  /* The brand: Ledger's one accent, the cobalt (hue 262) of CommerceWorker's mark. It marks where you are and
+  /* The brand: Ledger's one accent, the turquoise (hue 195) of CommerceWorker's mark. It marks where you are and
      what you chose (the mark, the current page, focus, checked controls, the selection and the
      caret). Never a status, never a large fill: a primary button stays ink. `brand-subtle` is its
      tint for a chosen chip. The link blue sits 27 degrees away (hue 235) so the two never read as one;
      a model's work (`ai`) keeps its own violet. Set so its edge holds 3:1 and its words 4.5:1 on paper and on
      muted fills, in both themes. */
-  --brand: oklch(0.45 0.19 262);
+  --brand: oklch(0.5 0.09 195);
   --brand-foreground: oklch(0.985 0 0);
-  --brand-subtle: oklch(0.955 0.02 262);
+  --brand-subtle: oklch(0.955 0.02 195);
   /* Links and live work. Focus is the brand, on fields and buttons and as the page-wide outline. */
   --link: oklch(0.47 0.105 235);
   --ring: var(--brand);
@@ -207,9 +207,9 @@
   --bad: oklch(0.71 0.16 28);
   --undo: oklch(0.76 0.13 50);
   --idle: oklch(0.67 0 0);
-  --brand: oklch(0.72 0.13 262);
+  --brand: oklch(0.78 0.12 195);
   --brand-foreground: oklch(0.145 0 0);
-  --brand-subtle: oklch(0.27 0.06 262);
+  --brand-subtle: oklch(0.27 0.05 195);
   --ai: oklch(0.75 0.09 305);
 
   /* The preset keeps its light ramp in dark, where the dark end disappears on a dark card; here
