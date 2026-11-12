@@ -3029,6 +3029,8 @@ export type ErasureProgress = {
   companyMembers: number;
   purchaseOrders: number;
   quotes: number;
+  shopperSignIns: number;
+  shopperSessions: number;
   /** The address is also a team member’s; remove them on the team page */
   teamMember: boolean;
 };
@@ -3059,6 +3061,10 @@ export type SubjectExport = {
   companyMembers: { [key: string]: unknown }[];
   purchaseOrders: { [key: string]: unknown }[];
   quotes: { [key: string]: unknown }[];
+  /** Codes sent to the address as a storefront shopper */
+  shopperSignIns: { [key: string]: unknown }[];
+  /** Where the address is signed in on the storefront */
+  shopperSessions: { [key: string]: unknown }[];
   /** There were more orders than one export holds */
   truncated: boolean;
   /** The address also belongs to a person on your team */

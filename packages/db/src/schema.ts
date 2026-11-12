@@ -102,6 +102,7 @@ export const orders = sqliteTable(
     index('orders_model').on(t.model, t.updatedAt),
     index('orders_created').on(t.createdAt),
     index('orders_updated').on(t.updatedAt),
+    index('orders_contact_email').on(sql`lower(${t.contactEmail})`),
     index('orders_channel_external')
       .on(t.channel, t.externalId)
       .where(sql`${t.externalId} IS NOT NULL`),
@@ -956,6 +957,48 @@ export const orderViewTokens = sqliteTable(
   (t) => [
     index('order_view_tokens_order').on(t.orderId),
     index('order_view_tokens_expiry').on(t.expiresAt),
+  ],
+);
+
+/**
+ * A storefront shopper's pending sign-in: one live row per address, replaced when they ask again.
+ * Hashes only: the code's HMAC (under a key the engine holds) and the link token's SHA-256.
+ * Failures carry across codes (`attempts`, `last_attempt_at`); `created_at` holds the cooldown and
+ * `day_started_at` with `sent_today` the daily cap.
+ */
+export const shopperSignIns = sqliteTable(
+  'shopper_sign_ins',
+  {
+    email: text('email').primaryKey(),
+    codeHash: text('code_hash').notNull(),
+    linkHash: text('link_hash').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    lastAttemptAt: integer('last_attempt_at'),
+    usedAt: integer('used_at'),
+    createdAt: integer('created_at').notNull(),
+    dayStartedAt: integer('day_started_at').notNull(),
+    sentToday: integer('sent_today').notNull().default(1),
+  },
+  (t) => [
+    uniqueIndex('shopper_sign_ins_link').on(t.linkHash),
+    index('shopper_sign_ins_expiry').on(t.expiresAt),
+  ],
+);
+
+/** A signed-in shopper; the cookie holds a random secret and only its SHA-256 is stored. */
+export const shopperSessions = sqliteTable(
+  'shopper_sessions',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    email: text('email').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    lastSeenAt: integer('last_seen_at'),
+  },
+  (t) => [
+    index('shopper_sessions_email').on(t.email),
+    index('shopper_sessions_expiry').on(t.expiresAt),
   ],
 );
 

@@ -39,6 +39,7 @@ import { d1QuoteStore } from '@commerceworker/db/quote-store';
 import { d1RetentionStore } from '@commerceworker/db/retention-store';
 import { d1SealedSecrets } from '@commerceworker/db/sealed-secrets';
 import { d1ShippingStore } from '@commerceworker/db/shipping-store';
+import { d1ShopperAuth } from '@commerceworker/db/shopper-auth';
 import { d1SubjectStore } from '@commerceworker/db/subject-store';
 import { d1TaxCertificateStore } from '@commerceworker/db/tax-certificate-store';
 import { d1UcpStore } from '@commerceworker/db/ucp-store';
@@ -84,6 +85,7 @@ import type {
   RetentionStore,
   SealedSecretStore,
   ShippingStore,
+  ShopperAuth,
   SubjectCarts,
   SubjectStore,
   TaxCertificateStore,
@@ -420,6 +422,9 @@ export const identityStore = (env: Pick<Env, 'DB'>): IdentityStore => d1Identity
 /** One-time codes that confirm an action over MCP. */
 export const confirmationStore = (env: Pick<Env, 'DB'>): ConfirmationStore =>
   d1ConfirmationStore(env.DB);
+
+/** A storefront shopper's emailed sign-in and the session it starts. */
+export const shopperAuth = (env: Pick<Env, 'DB'>): ShopperAuth => d1ShopperAuth(env.DB);
 
 /** Agentic checkout's idempotency keys and platform profiles. */
 export const ucpStore = (env: Pick<Env, 'DB'>): UcpStore => d1UcpStore(env.DB);

@@ -1,12 +1,12 @@
 /**
  * Cloudflare Turnstile's server side, shared by the Workers that gate a form with it (the admin's
- * sign-in and setup, the storefront's card payment): Siteverify, and what a form's refusal says.
+ * sign-in and setup, the storefront's card payment and its request for a shopper's sign-in code): Siteverify, and what a form's refusal says.
  * Each Worker names its own site key, secret and widget action; this checks the token the widget
  * wrote into the form, with Siteverify, before anything else the form does.
  */
 
 /** What each form's widget says it protects; Siteverify must echo it back. */
-export type TurnstileAction = 'login' | 'setup' | 'checkout_pay';
+export type TurnstileAction = 'login' | 'setup' | 'checkout_pay' | 'shop_sign_in';
 
 /** The form field the widget fills with its token. */
 export const TOKEN_FIELD = 'cf-turnstile-response';

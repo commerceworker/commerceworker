@@ -21,6 +21,15 @@ candidate finding that still needs a concrete attacker before it is reported.
   `orderReceipt`, a bearer-token read: check it keeps the hashed, expiring, constant-time token,
   the buyer-safe view only, `no-store` / `no-referrer` / `noindex`, and that mail is triggered by
   the reserved `hosted:` key, not by `meta`.
+- A shopper's sign-in (`apps/engine/src/shopper.ts`, `packages/application/src/commerce/shopper.ts`): does
+  every method still take the guest actor signed for `shopper` (and refuse anything else) *and* a secret the
+  engine hashes, so a stored hash presented as a secret finds nothing? Is the code still stored only as the
+  HMAC under `shopperCodeKey`, the attempt counted before it is compared, the use one guarded write (a race of
+  two redemptions mints one session), and the link redeemed only by POST? Does asking still never read orders
+  (same answer for any address), pass Turnstile before the engine, keep the per-address cooldown, the failures
+  counted across codes and the daily cap, leave the link usable after a lockout, ask before one link replaces a
+  signed-in shopper, set the unprefixed cookie only on localhost,
+  and send only escaped text? Does a new `shopper_*` column reach export, erasure and the retention sweep?
 - Does anything widen `PRINCIPAL_TTL_MS`, accept a missing `exp`, or fall back to
   `DEV_PRINCIPAL_KEY` outside local dev?
 - Does a new socket method re-check the principal or session it needs, rather than trusting the

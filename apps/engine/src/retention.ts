@@ -9,7 +9,8 @@
  * addresses were kept add theirs (`backfillAddresses`). Stored
  * secrets are resealed under the current `DATA_KEY` (`resealSecrets`). Hosted card payments that
  * began and never finished are settled (`settleOrphanedHolds`): the order placed if its hold is open,
- * the hold released otherwise.
+ * the hold released otherwise. Expired storefront sign-ins and sessions are deleted
+ * (`pruneShopperAuth`).
  */
 
 import * as uc from '@commerceworker/application/commerce';
@@ -20,7 +21,7 @@ import { backfillAddresses } from './customer-addresses';
 import { resealSecrets } from './data-key';
 import { eraseIfErased, eraseOrders } from './subjects';
 import { pruneUsage } from './usage';
-import { auditArchive, cartRuntime, retentionStore } from './wire';
+import { auditArchive, cartRuntime, retentionStore, shopperAuth } from './wire';
 
 // The policy and the archive's keys are core rules, kept importable from here.
 export { auditArchiveKey, RETENTION } from '@commerceworker/core';
@@ -37,6 +38,7 @@ export async function sweep(env: Env, now = Date.now()) {
     membersExpired: await expireMembers(env, now),
     addressesBackfilled: await backfillAddresses(env, now),
     confirmations: await pruneConfirmations(env, now),
+    shopperAuth: await uc.pruneShopperAuth({ shoppers: shopperAuth(env) }, now),
     aiUsageDays: await pruneUsage(env, now),
     secrets: await resealSecrets(env),
     cardHolds: await settleOrphanedHolds(env, now),

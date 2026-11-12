@@ -77,7 +77,26 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    authenticated; the engine's sweep settles holds nothing finished (`apps/engine/src/checkout/hosted.ts`).
    Each completes only the version and total the buyer's page showed (else `changed`, no order), and
    re-checks the flow it loads with `checkoutFlowProblem` (no card authorization, or an order carried on
-   account, is refused); a payment-less authorizer throws outside test mode. REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
+   account, is refused); a payment-less authorizer throws outside test mode.
+   **A shopper's sign-in follows the same rule: the engine owns every credential, the storefront presents a
+   secret it never mints.** A shopper is a verified email address (never a `customers` row; guest checkout
+   stays on). Redeeming an emailed code or link makes the engine mint a 32-byte session secret and keep only its
+   SHA-256 (`shopper_sessions`); the storefront carries it in `__Host-cw_shop` (`HttpOnly`, `Secure`,
+   `SameSite=Lax`) and presents it with each call; every one of `startShopperSignIn`, `redeemShopperCode`,
+   `redeemShopperLink`, `shopper` and `shopperSignOut` also takes a guest `a1` actor signed for `shopper` as
+   `guest:shopper` (`apps/engine/src/shopper.ts` `fromStorefront`), so the storefront key alone mints no
+   shopper, a secret alone reaches no method, an actor signed for a cart or a checkout opens none of it, and a
+   stored hash presented as the secret matches nothing (`apps/engine/tests/shopper.test.ts`). The code is
+   stored only as an HMAC under `shopperCodeKey(PRINCIPAL_KEY)`, which the storefront never holds; it lives ten
+   minutes, is capped at five counted tries (counted before they are compared, in constant time) and used once
+   by one guarded `UPDATE ... RETURNING`, as the link is, which opens only by POST and still works after the
+   code is locked; failures count per address across codes (never five a code), the fifth locks the address out
+   of new codes for fifteen minutes from its last try, and at most twenty codes go to an address a day; the
+   confirm page names the address (masked) and asks before replacing a signed-in shopper (login CSRF); the
+   cookie is `__Host-` everywhere but localhost, and no session is set over plain http elsewhere. Asking never reads orders, so its answer can't show whether an
+   address has any; it is Turnstile-checked (`shop_sign_in`) and budgeted per address and per client. Erasure
+   and export of the address cover `shopper_*` (ending every session), and retention sweeps them.
+   REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
    `POST /api/v1/storefront/settings` accept an admin API token with no person-confirm, though their
    tools are in `PERSON_CONFIRMS_TOOLS` (over MCP, A2A and the app a person confirms on a card). They
    are hand-written REST like the rest of the admin routes: the call is the admin's own deliberate

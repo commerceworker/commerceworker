@@ -101,6 +101,7 @@ export default defineConfig({
             { label: 'Approvals and events', slug: 'guides/approvals-and-events' },
             { label: 'Carts', slug: 'guides/carts' },
             { label: 'Hosted checkout', slug: 'guides/hosted-checkout' },
+            { label: 'Customer accounts', slug: 'guides/customer-accounts' },
             { label: 'Punchout', slug: 'guides/punchout' },
             { label: 'Inbound orders', slug: 'guides/inbound-orders' },
             { label: 'Channel adapters', slug: 'guides/channel-adapters' },

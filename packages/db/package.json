@@ -45,7 +45,8 @@
     "./product-index-store": "./src/product-index-store.ts",
     "./audit-log": "./src/audit-log.ts",
     "./auth-store": "./src/auth-store.ts",
-    "./passkey-store": "./src/passkey-store.ts"
+    "./passkey-store": "./src/passkey-store.ts",
+    "./shopper-auth": "./src/shopper-auth.ts"
   },
   "scripts": {
     "lint": "biome check .",

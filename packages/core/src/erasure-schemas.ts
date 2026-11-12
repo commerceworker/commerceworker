@@ -35,6 +35,8 @@ export const subjectExportSchema = z.object({
   companyMembers: records,
   purchaseOrders: records,
   quotes: records,
+  shopperSignIns: records.describe('Codes sent to the address as a storefront shopper'),
+  shopperSessions: records.describe('Where the address is signed in on the storefront'),
   truncated: z.boolean().describe('There were more orders than one export holds'),
   teamMember: z.boolean().describe('The address also belongs to a person on your team'),
 });
@@ -54,6 +56,8 @@ export const erasureDoneSchema = z.object({
   companyMembers: count,
   purchaseOrders: count,
   quotes: count,
+  shopperSignIns: count,
+  shopperSessions: count,
   teamMember: z
     .boolean()
     .describe('The address is also a team member’s; remove them on the team page'),

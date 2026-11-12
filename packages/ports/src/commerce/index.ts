@@ -35,6 +35,7 @@ export * from './retention';
 export * from './scim-directory';
 export * from './sealed-secrets';
 export * from './shipping';
+export * from './shoppers';
 export * from './subjects';
 export * from './tax-certificates';
 export * from './ucp';

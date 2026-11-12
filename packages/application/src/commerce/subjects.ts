@@ -18,6 +18,7 @@ import {
 import type {
   ObjectStore,
   OrderRuntime,
+  ShopperAuth,
   Subject,
   SubjectCarts,
   SubjectStore,
@@ -33,6 +34,8 @@ export type SubjectPorts = {
   readonly files: ObjectStore;
   readonly orders: OrderRuntime;
   readonly carts: SubjectCarts;
+  /** Their storefront sign-ins and sessions. */
+  readonly shoppers: ShopperAuth;
 };
 
 /** The subject's words to erase: their email and their accounts' names. */
@@ -69,6 +72,7 @@ export async function exportDataSubject(
     s,
     list.map((o) => o.id),
   );
+  const shopper = await ports.shoppers.exportFor(s.email);
   const carts = await Promise.all([
     ...(await ports.subjects.buyerCarts(s.email, EXPORT_MAX)).map((id) =>
       ports.carts.subjectExport(id),
@@ -117,6 +121,8 @@ export async function exportDataSubject(
     purchaseOrders: held.purchaseOrders,
     // Who in the team made a quote is theirs, not the subject's.
     quotes: held.quotes.map(({ createdBy: _by, ...q }) => q),
+    shopperSignIns: shopper.signIns,
+    shopperSessions: shopper.sessions,
     truncated: rows.length > EXPORT_MAX,
     teamMember: s.teamMember,
   };
@@ -160,8 +166,16 @@ export async function eraseDataSubject(
     companyMembers: 0,
     purchaseOrders: 0,
     quotes: 0,
+    shopperSignIns: 0,
+    shopperSessions: 0,
     teamMember: s.teamMember,
   };
+
+  // Signed in as them anywhere: every session ends now, whatever else is left to do. Idempotent,
+  // so each batch of a long erasure repeats it.
+  const shopper = await ports.shoppers.eraseFor(s.email);
+  result.shopperSignIns = shopper.signIns;
+  result.shopperSessions = shopper.sessions;
 
   // Their external carts: each loses their messages and files, and stops naming them.
   for (const id of await ports.subjects.buyerCarts(s.email, EXPORT_MAX)) {

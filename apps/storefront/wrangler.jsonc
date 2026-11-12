@@ -52,7 +52,15 @@
     { "name": "CATALOG_LIMIT", "namespace_id": "1009", "simple": { "limit": 120, "period": 60 } },
     // Card payments on a hosted checkout, per cookie and per client address: the first guard against
     // card testing (the session's own attempt cap and Turnstile are the others).
-    { "name": "PAY_LIMIT", "namespace_id": "1010", "simple": { "limit": 10, "period": 60 } }
+    { "name": "PAY_LIMIT", "namespace_id": "1010", "simple": { "limit": 10, "period": 60 } },
+    // A shopper's sign-in (app/lib/shopper.server.ts), asking for a code and trying one: per email
+    // address and per client address. Tight, since a code is mail the deployment sends and a guess.
+    {
+      "name": "SIGNIN_EMAIL_LIMIT",
+      "namespace_id": "1011",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    { "name": "SIGNIN_IP_LIMIT", "namespace_id": "1012", "simple": { "limit": 20, "period": 60 } }
   ]
   // Secrets (set by the deploy, `scripts/fleet.ts secrets storefront`): TURNSTILE_SECRET_KEY — the
   // widget's secret, only on a deployment with a turnstileSiteKey. STOREFRONT_KEY — signs what

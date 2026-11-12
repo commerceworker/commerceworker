@@ -156,6 +156,9 @@ export type ErasureResult =
        * for their member rows. Name, status, version, expiry and lines (amounts) stay.
        */
       quotes: number;
+      /** Sign-in codes and signed-in sessions of the address, deleted: every session ends. */
+      shopperSignIns: number;
+      shopperSessions: number;
       /** The address is also a team member's; remove them on the team page. */
       teamMember: boolean;
     }
@@ -188,6 +191,9 @@ export type SubjectExport = {
   purchaseOrders: Record<string, unknown>[];
   /** Quotes of their accounts' companies and those for their member rows. */
   quotes: Record<string, unknown>[];
+  /** Sign-ins and sessions of the address as a storefront shopper (never the secrets or their hashes). */
+  shopperSignIns: Record<string, unknown>[];
+  shopperSessions: Record<string, unknown>[];
   /** True when there were more orders than one export holds. */
   truncated: boolean;
   teamMember: boolean;

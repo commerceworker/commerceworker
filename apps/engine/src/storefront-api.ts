@@ -11,6 +11,10 @@
  * storefront signed for `checkout:<id>` (`hostedCall`), so the storefront's key alone mints no
  * buyer and a cookie alone reaches no session; a UCP platform's session is never one of these.
  *
+ * A shopper's sign-in (`startShopperSignIn` and the five after it) is the same shape: the engine mints
+ * the session secret and keeps only its SHA-256, the storefront presents it from its `__Host-cw_shop`
+ * cookie with an actor signed for `shopper`, and neither alone is a shopper (./shopper.ts).
+ *
  * Each cart call names its buyer as an actor the storefront signed for `cart:<cartId>`
  * (`signGuestActor`); `buyer` admits it only to an external cart that buyer was admitted to, so one
  * cart's signature opens no other cart, and no staff cart at all.
@@ -46,6 +50,14 @@ import {
 import { cartAgent } from './namespaces';
 import { orderConfirmation } from './order-confirmation';
 import { guestActor } from './principal';
+import {
+  redeemShopperCode,
+  redeemShopperLink,
+  shopperLinkPreview,
+  shopperOf,
+  shopperSignOut,
+  startShopperSignIn,
+} from './shopper';
 import { ucpProfile, ucpSettings } from './ucp/config';
 import { handleUcp } from './ucp/rest';
 import { d1Reachable, pricingStore, ucpStore } from './wire';
@@ -238,6 +250,30 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
   orderReceipt(orderId: string, credential: string) {
     if (typeof orderId !== 'string' || typeof credential !== 'string') return Promise.resolve(null);
     return orderConfirmation.receipt(this.env, orderId, credential);
+  }
+
+  startShopperSignIn(email: string, actor: SignedActor) {
+    return startShopperSignIn(this.env, email, actor);
+  }
+
+  redeemShopperCode(email: string, code: string, actor: SignedActor) {
+    return redeemShopperCode(this.env, email, code, actor);
+  }
+
+  redeemShopperLink(token: string, actor: SignedActor) {
+    return redeemShopperLink(this.env, token, actor);
+  }
+
+  shopperLinkPreview(token: string, actor: SignedActor) {
+    return shopperLinkPreview(this.env, token, actor);
+  }
+
+  shopper(secret: string, actor: SignedActor) {
+    return shopperOf(this.env, secret, actor);
+  }
+
+  shopperSignOut(secret: string, actor: SignedActor) {
+    return shopperSignOut(this.env, secret, actor);
   }
 
   async searchCartProducts(cartId: string, q: string, signed: SignedActor) {

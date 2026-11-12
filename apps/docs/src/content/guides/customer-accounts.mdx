@@ -1,0 +1,68 @@
+---
+title: Customer accounts
+description: Let a shopper sign in on your storefront with an emailed code or link, no password. What they get, what protects it, and what happens to their data.
+---
+
+A shopper can sign in on your storefront (`shop.<your domain>`) with an email address and nothing else: no
+password to set, forget or leak. Signing in is optional. **Guest checkout stays on**; nobody has to sign in to
+buy.
+
+A signed-in shopper is **a verified email address**, not a customer account. Whoever can read the mailbox can
+sign in as it, and the orders that address placed are the ones that belong to them. Signing in doesn't create
+or change a [customer](/guides/commerce-models/) in your workspace.
+
+:::note
+This is the first part of customer accounts. Today a shopper can sign in, see which address they are signed in
+as, and sign out. Their orders and saved details come next, and passkeys after that.
+:::
+
+## What a shopper does
+
+1. They open **Sign in** on your storefront (`/account/sign-in`) and enter their email address.
+2. We email them a **six-digit code** and a **link**. The same email carries both, and either one signs them in.
+3. They type the code on the next page, or open the link on the device they want to sign in on and tap **Sign
+   in**. The link asks first, and signs in only when they tap, so a mail app or a security scanner that opens
+   links ahead of them doesn't use it up.
+4. They land on **Your account**, which shows the address they are signed in as and a **Sign out** button.
+
+Every address gets the same answer, whether or not it has ever ordered: signing in never tells anyone which
+addresses are your customers.
+
+The pages are plain forms, so they work without script, and they're laid out for a phone and a tablet, in
+Safari and installed to the Home Screen. The one exception is the spam check below, which needs script when you
+turn it on.
+
+## How long it lasts
+
+- A code and its link work **once**, for **ten minutes**. Using either one ends the other.
+- Asking for another code replaces the first: its code and its link stop working. An address can be sent a new
+  code once a minute.
+- Wrong tries count against the **address**, not the code: five in a window, however many codes were sent, and then
+  that address can't be sent a new code for fifteen minutes from its last try. Asking again never gives back tries.
+  The link in the email you already have still works while the code is locked.
+- An address can be sent at most twenty codes a day.
+- A signed-in browser stays signed in for **30 days** from signing in, or until the shopper signs out. Signing out
+  ends the session on our side too, not only in the browser.
+
+## What protects it
+
+- **Only we can issue a session.** The code and the link are checked by the engine, which hands the storefront a
+  random secret for the browser to keep in a cookie that scripts can't read. We store only a hash of it, so
+  reading the database doesn't sign anyone in. Codes are stored as a keyed hash too.
+- **A forwarded link can't swap someone's session.** The link's page names the address it signs in (masked, like
+  `p***@example.com`) before anything happens, and someone already signed in must confirm replacing their session.
+- **Mail is rate limited.** Each address and each visitor has a budget on asking for codes and on trying them,
+  and an address gets at most one code a minute.
+- **A spam check on asking.** When your workspace administrator has set up a Cloudflare Turnstile widget for the
+  deployment, the sign-in form asks for it before anything is sent, so the form can't be used to mail strangers.
+  Without a widget the form works without one, but turn it on for any live storefront.
+- **Email Sending has to be set up.** Codes go out through the same email sending as
+  [order emails](/guides/order-emails/). On a deployment without it, the sign-in page says that signing in isn't
+  available.
+
+## Privacy
+
+A shopper's sign-ins and sessions are personal data. An erasure request for their address deletes them and ends
+every session they have, and the export for that address lists when they were sent a code and where they are
+signed in (never a code or a secret); both are in [data subject requests](/reference/rest-api/#data-subject-requests).
+Expired sessions and sign-ins are deleted by the daily clean-up.

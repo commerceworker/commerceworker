@@ -986,6 +986,8 @@ describe('data subjects', () => {
       companyMembers: [],
       purchaseOrders: [],
       quotes: [],
+      shopperSignIns: [],
+      shopperSessions: [],
       truncated: false,
       teamMember: false,
     });
@@ -1008,6 +1010,8 @@ describe('data subjects', () => {
       companyMembers: 1,
       purchaseOrders: 0,
       quotes: 0,
+      shopperSignIns: 0,
+      shopperSessions: 0,
       teamMember: false,
     });
     await expectResponse(
