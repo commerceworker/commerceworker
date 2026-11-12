@@ -7,6 +7,8 @@ import {
   Scripts,
   ScrollRestoration,
 } from 'react-router';
+import { storefrontSettings } from '~/lib/hosted-checkout.server';
+import { storeNameOf } from '~/lib/store-name';
 import type { Route } from './+types/root';
 // Inter (one variable file for every weight) and IBM Plex Mono, served from this origin (no
 // render-blocking third-party stylesheet). Each file's unicode-range means a browser fetches only
@@ -26,8 +28,20 @@ export const links: Route.LinksFunction = () => [
   { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
 ];
 
-export const meta: Route.MetaFunction = () => [
-  { title: 'CommerceWorker' },
+/**
+ * The merchant's store name, for every page's heading and title. A settings read that fails costs
+ * the name, not the page: buyer pages then name no one.
+ */
+export async function loader() {
+  const storeName = await storefrontSettings()
+    .then((s) => s.storeName)
+    .catch(() => null);
+  return { storeName };
+}
+
+export const meta: Route.MetaFunction = ({ matches }) => [
+  // The routes set their own titles; this one is for a page that has none (an error).
+  { title: storeNameOf(matches) ?? 'Checkout' },
   { name: 'format-detection', content: 'telephone=no' },
 ];
 

@@ -25,10 +25,11 @@ import {
   shopperSecret,
   toSignIn,
 } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/account';
 
-export const meta = () => [
-  { title: 'Your orders · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Your orders') },
   { name: 'robots', content: 'noindex' },
 ];
 

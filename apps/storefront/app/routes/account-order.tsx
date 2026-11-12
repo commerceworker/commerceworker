@@ -13,12 +13,13 @@ import { AccountShell } from '~/components/account-shell';
 import { OrderView } from '~/components/order-view';
 import { engine } from '~/lib/env.server';
 import { accountCall, accountHeaders, PRIVATE_HEADERS } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/account-order';
 
 const ORDER_ID = /^[A-Za-z0-9_-]{1,100}$/;
 
-export const meta = ({ loaderData: d }: Route.MetaArgs) => [
-  { title: `${d ? `Order ${d.ref}` : 'Order'} · CommerceWorker` },
+export const meta: Route.MetaFunction = ({ loaderData: d, matches }) => [
+  { title: pageTitle(matches, d ? `Order ${d.ref}` : 'Order') },
   { name: 'robots', content: 'noindex' },
 ];
 

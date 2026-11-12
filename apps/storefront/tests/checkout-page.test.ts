@@ -14,6 +14,7 @@ const payCheckout = vi.fn();
 const confirmCheckoutPayment = vi.fn();
 const storefrontSettings = vi.fn();
 const settings = (over: Record<string, unknown> = {}) => ({
+  storeName: null,
   checkout: { enabled: true, editLines: false, testPayments: true, publishableKey: null, ...over },
 });
 
@@ -36,6 +37,7 @@ const page = await import('../app/routes/checkout');
 const placed = await import('../app/routes/checkout-placed');
 const lib = await import('../app/lib/hosted-checkout.server');
 const { CheckoutForm } = await import('../app/components/checkout-form');
+const { drawPage, MARKUP_NAME, rootMatches } = await import('./draw-page');
 
 const SECRET = 'a1'.repeat(32);
 const COOKIE = `__Host-cw_chk_chk_1=${SECRET}`;
@@ -861,5 +863,77 @@ describe('what the action is told by the form, and how often', () => {
       303,
     );
     delete env.PROMO_LIMIT;
+  });
+});
+
+describe('the merchant’s store name on the checkout pages', () => {
+  const checkoutData = {
+    checkout: view(),
+    saved: null,
+    testPayments: true,
+    editLines: false,
+    publishableKey: null,
+    turnstileKey: null,
+  };
+
+  it('shows the merchant’s store name, never CommerceWorker', () => {
+    const html = drawPage(page.default as never, checkoutData, 'Acme Supply');
+    expect(html).toContain('>Acme Supply</p>');
+    expect(html).toContain('>Checkout</h1>');
+    expect(html).not.toMatch(/commerceworker/i);
+  });
+
+  it('draws the name as text, never as markup', () => {
+    for (const html of [
+      drawPage(page.default as never, checkoutData, MARKUP_NAME),
+      drawPage(placed.default as never, { orderId: 'ord_1', testPayments: true }, MARKUP_NAME),
+    ]) {
+      expect(html).toContain('Acme &lt;b&gt;Supply&lt;/b&gt; &amp; &quot;Sons&quot;');
+      expect(html).not.toContain('<b>Supply');
+    }
+  });
+
+  it('names no store when none is set, and not the platform in its place', () => {
+    const html = drawPage(page.default as never, checkoutData, null);
+    expect(html).toContain('>Checkout</h1>');
+    expect(html).not.toMatch(/commerceworker/i);
+    expect(html).not.toMatch(/tracking-title">[^<]*<\/p>\s*<h1/);
+  });
+
+  it('puts it on the order-placed page', () => {
+    const data = { orderId: 'ord_1', testPayments: false };
+    const named = drawPage(placed.default as never, data, 'Acme Supply');
+    expect(named).toContain('>Acme Supply</p>');
+    expect(named).toContain('Order placed');
+    expect(named).not.toMatch(/commerceworker/i);
+    const unset = drawPage(placed.default as never, data, null);
+    expect(unset).toContain('Order placed');
+    expect(unset).not.toMatch(/commerceworker/i);
+  });
+
+  it('puts it in the page titles, after the page’s own, or leaves the title as the page', () => {
+    const title = (m: { meta: (a: never) => { title?: string }[] }, name: string | null) =>
+      m.meta({ matches: rootMatches(name) } as never).find((d) => d.title)?.title;
+    for (const [route, own] of [
+      [page, 'Checkout'],
+      [placed, 'Order placed'],
+    ] as const) {
+      expect(title(route as never, 'Acme Supply')).toBe(`${own} · Acme Supply`);
+      expect(title(route as never, null)).toBe(own);
+    }
+  });
+
+  it('asks the engine for the name through the settings the root route loads, never failing the page for it', async () => {
+    const { loader } = await import('../app/root');
+    storefrontSettings.mockResolvedValue(
+      settings({}) && { ...settings(), storeName: 'Acme Supply' },
+    );
+    expect(await loader()).toEqual({ storeName: 'Acme Supply' });
+    lib.forgetStorefrontSettings();
+    storefrontSettings.mockResolvedValue(settings());
+    expect(await loader()).toEqual({ storeName: null });
+    lib.forgetStorefrontSettings();
+    storefrontSettings.mockRejectedValue(new Error('engine down'));
+    expect(await loader()).toEqual({ storeName: null });
   });
 });

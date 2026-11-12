@@ -11,8 +11,10 @@ import { Empty } from '@commerceworker/ui/page';
 import { Receipt } from 'lucide-react';
 import { data, isRouteErrorResponse, useLoaderData, useRouteError } from 'react-router';
 import { OrderView } from '~/components/order-view';
+import { StoreName } from '~/components/store-name';
 import { engine } from '~/lib/env.server';
 import { overBudget } from '~/lib/rate-limit';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/order-receipt';
 
 const ORDER_ID = /^[A-Za-z0-9_-]{1,100}$/;
@@ -23,8 +25,8 @@ const PRIVATE = {
   'x-robots-tag': 'noindex, nofollow',
 };
 
-export const meta = ({ loaderData: d }: Route.MetaArgs) => [
-  { title: `${d ? `Order ${d.ref}` : 'Order'} · CommerceWorker` },
+export const meta: Route.MetaFunction = ({ loaderData: d, matches }) => [
+  { title: pageTitle(matches, d ? `Order ${d.ref}` : 'Order') },
   { name: 'robots', content: 'noindex' },
   { name: 'referrer', content: 'no-referrer' },
 ];
@@ -72,6 +74,7 @@ export default function OrderReceiptPage() {
   const o = useLoaderData<typeof loader>();
   return (
     <main id="main" className="mx-auto max-w-2xl px-6 pt-safe-12 pb-safe-12">
+      <StoreName className="mb-6" />
       <OrderView order={o} />
     </main>
   );

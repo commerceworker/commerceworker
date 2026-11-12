@@ -2520,6 +2520,8 @@ export type SetPromotionStatusResult = {
 
 /** Turn hosted checkout on or off, and set what a buyer may do on it (admin) (request) */
 export type SetStorefrontSettingsInput = {
+  /** The store’s name on buyer pages (checkout, receipts, the account), up to 60 characters of plain text. Leave it out to keep the current name; null clears it */
+  storeName?: string | null;
   checkout?: {
     /** Whether buyers can open a hosted checkout; off, every link stops working */
     enabled?: boolean;
@@ -2532,6 +2534,8 @@ export type SetStorefrontSettingsInput = {
 
 export type SetStorefrontSettingsResult = {
   settings: {
+    /** The store’s name on buyer pages (checkout, receipts, the account), up to 60 characters of plain text; null shows no name */
+    storeName: string | null;
     checkout: {
       /** Whether buyers can open a hosted checkout; off, every link stops working */
       enabled: boolean;
@@ -3658,6 +3662,8 @@ export type TimelineEntry = {
 };
 
 export type StorefrontSettings = {
+  /** The store’s name on buyer pages (checkout, receipts, the account), up to 60 characters of plain text; null shows no name */
+  storeName: string | null;
   checkout: {
     /** Whether buyers can open a hosted checkout; off, every link stops working */
     enabled: boolean;

@@ -590,14 +590,20 @@ A hosted checkout is the same checkout behind a second front: the buyer's own pa
 by the `storefront` setting's `checkoutFlowId` or, unset, UCP's checkout flow.
 
 **Settings.** The workspace setting `storefront` (`storefrontSettingsSchema`, next to UCP's in
-`packages/core/src/ucp/profile.ts`) holds `checkout.enabled` (default `false`), `checkoutFlowId` and
-`editLines` (whether the buyer may change the lines; default `false`). With it off the engine refuses every
+`packages/core/src/ucp/profile.ts`) holds `storeName` (the merchant's name on buyer pages: one trimmed line of text, at most `STORE_NAME_MAX`
+characters, no control or format characters, `null` by default), `checkout.enabled` (default `false`),
+`checkoutFlowId` and `editLines` (whether the buyer may change the lines; default `false`). The name is the
+only place the storefront learns who the merchant is: the root route loads it from `storefrontSettings()` (a
+failed read means no name, never a failed page), and every buyer page draws it as text in its heading and
+`<title>`. Unset, checkout, the order-placed page and the receipt show no name and the account pages say "Your
+account": the platform's name is on no buyer page, and no email names it either (the sender's display name is the
+registry's `email.fromName`). With it off the engine refuses every
 hosted call and `create_checkout` makes no link. The storefront keeps `storefrontSettings()` for 30 seconds
 per isolate, like UCP's `ucpCheckoutOn`, and it also says whether payments are only recorded
 (`testPayments`: `PAYMENTS_MODE` `mock`). An admin sets it with `set_storefront_settings` (below).
 
 **Setting it.** `set_storefront_settings` (admin, confirmed, in `PERSON_CONFIRMS_TOOLS` so a typed A2A skill never runs
-it) takes the whole `storefrontSettingsSchema` and replaces it, `get_storefront_settings` reads it. Its
+it) takes `storefrontSettingsInputSchema`, the whole `storefrontSettingsSchema` with `storeName` optional (left out keeps the current name, `null` clears it), and replaces the rest, `get_storefront_settings` reads it. Its
 REST twins are `GET /api/v1/storefront` and `POST /api/v1/storefront/settings` (hand-written like UCP's
 in `apps/web/app/lib/api.server.ts`, so an admin API token can call them); both run the use-cases in
 `packages/application/src/commerce/storefront.ts`, as does the **Hosted checkout** section of the Team page

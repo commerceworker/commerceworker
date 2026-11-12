@@ -25,7 +25,8 @@ async function setup(ucpFlow?: string) {
   return { flows, workspace };
 }
 
-const on = (checkoutFlowId: string | null, editLines = false) => ({
+const on = (checkoutFlowId: string | null, editLines = false, storeName: string | null = null) => ({
+  storeName,
   checkout: { enabled: true, checkoutFlowId, editLines },
 });
 
@@ -62,6 +63,8 @@ describe('hosted checkout’s settings', () => {
           fromFlow: null,
           editLines: true,
           wasEnabled: false,
+          storeName: null,
+          fromStoreName: null,
         },
       },
     });
@@ -76,6 +79,42 @@ describe('hosted checkout’s settings', () => {
       audit: { detail: { enabled: false, wasEnabled: true, fromFlow: 'tpl-card' } },
     });
     expect(await readStorefrontAdminSettings(ports)).toEqual(STOREFRONT_OFF);
+  });
+
+  it('keep the store name beside the switches, and audit what it was', async () => {
+    const ports = await setup();
+    const named = on('tpl-card', false, 'Acme Supply');
+    expect(await changeStorefrontSettings(ports, named, 'ann')).toMatchObject({
+      ok: true,
+      audit: { detail: { storeName: 'Acme Supply', fromStoreName: null } },
+    });
+    expect(await readStorefrontAdminSettings(ports)).toEqual(named);
+    // Left out, the name is kept (and audited as unchanged); null clears it; a string sets it.
+    const { storeName: _left, ...without } = on('tpl-card', true);
+    expect(await planStorefrontSettings(ports, without)).toMatchObject({
+      next: { storeName: 'Acme Supply' },
+    });
+    expect(await changeStorefrontSettings(ports, without, 'ann')).toMatchObject({
+      ok: true,
+      settings: { storeName: 'Acme Supply' },
+      audit: { detail: { storeName: 'Acme Supply', fromStoreName: 'Acme Supply' } },
+    });
+    expect((await readStorefrontAdminSettings(ports)).storeName).toBe('Acme Supply');
+    // Renaming is audited from the old name; clearing it goes back to a nameless storefront.
+    expect(
+      await changeStorefrontSettings(ports, on('tpl-card', false, 'Acme & Sons'), 'ann'),
+    ).toMatchObject({
+      audit: { detail: { storeName: 'Acme & Sons', fromStoreName: 'Acme Supply' } },
+    });
+    await changeStorefrontSettings(ports, on('tpl-card'), 'ann');
+    expect((await readStorefrontAdminSettings(ports)).storeName).toBeNull();
+    // An explicit null clears it, where a left-out name did not.
+    // A refused change (no card on the flow) leaves the name alone too.
+    await changeStorefrontSettings(ports, named, 'ann');
+    expect(
+      await changeStorefrontSettings(ports, on('tpl-no-card', false, 'Other'), 'ann'),
+    ).toMatchObject({ ok: false });
+    expect((await readStorefrontAdminSettings(ports)).storeName).toBe('Acme Supply');
   });
 
   it('refuse a flow that is unknown, unpublished or never holds a card, and write nothing', async () => {

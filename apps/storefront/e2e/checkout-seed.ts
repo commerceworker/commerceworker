@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
  * them: the session owned by the SHA-256 of a cookie secret the test then presents. The page only
  * reads and draws it, so the quote and the shipping options it holds are what the page shows.
  */
+/** The merchant's name the device tests expect on the buyer pages, in the seeded settings. */
+export const STORE_NAME = 'E2E Supply';
 export const CHECKOUT_ID = 'chk_e2e_page';
 export const CHECKOUT_SECRET = 'c0'.repeat(32);
 
@@ -153,6 +155,7 @@ const row = (s: typeof session) =>
 /** Writes the rows into the device tests' database (`.wrangler/e2e`, as playwright.config.ts names it). */
 export function seedCheckout() {
   const settings = JSON.stringify({
+    storeName: STORE_NAME,
     checkout: { enabled: true, checkoutFlowId: null, editLines: false },
   });
   const sql = [

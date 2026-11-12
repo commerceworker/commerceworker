@@ -22,10 +22,11 @@ import {
   PRIVATE_HEADERS,
   toSignIn,
 } from '~/lib/shopper.server';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/account-addresses';
 
-export const meta = () => [
-  { title: 'Your addresses · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Your addresses') },
   { name: 'robots', content: 'noindex' },
 ];
 

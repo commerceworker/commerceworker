@@ -196,12 +196,14 @@ export const HOSTED_PAY_ATTEMPTS = 5;
 
 /**
  * What the storefront may know of the settings: whether hosted checkout is on, what a buyer may
- * edit, whether payments are only recorded (`testPayments`: PAYMENTS_MODE "mock"), where the page
+ * edit, the merchant's store name, whether payments are only recorded (`testPayments`: PAYMENTS_MODE "mock"), where the page
  * offers a test order and no card, and (`publishableKey`) the Stripe publishable key the page
  * takes a card with: set only when payments are live and a key is configured, so the page offers
  * a card exactly when the engine can take one.
  */
 export type HostedCheckoutSettings = {
+  /** The merchant's name for buyer pages, or null when none is set. */
+  storeName: string | null;
   checkout: {
     enabled: boolean;
     editLines: boolean;

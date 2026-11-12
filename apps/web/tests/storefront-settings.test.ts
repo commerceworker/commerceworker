@@ -39,7 +39,10 @@ const form = (settings: Parameters<typeof StorefrontSettingsForm>[0]['settings']
 
 describe('the hosted checkout section of the settings page', () => {
   it('shows hosted checkout off, with no Save until something changes', () => {
-    const html = form({ checkout: { enabled: false, checkoutFlowId: null, editLines: false } });
+    const html = form({
+      storeName: null,
+      checkout: { enabled: false, checkoutFlowId: null, editLines: false },
+    });
     expect(html).toContain('Hosted checkout');
     expect(html).toContain('Turn on hosted checkout');
     expect(html).toContain('Let buyers change the lines');
@@ -55,6 +58,7 @@ describe('the hosted checkout section of the settings page', () => {
 
   it('shows what is saved: on, its flow, and whether buyers may change lines', () => {
     const html = form({
+      storeName: null,
       checkout: { enabled: true, checkoutFlowId: 'tpl-b2b', editLines: true },
     });
     expect(html).toMatch(/id="hosted-enabled"[^>]*checked/);
@@ -62,11 +66,64 @@ describe('the hosted checkout section of the settings page', () => {
     expect(html).toMatch(/<option[^>]*value="tpl-b2b"[^>]*selected=""[^>]*>B2B order/);
   });
 
-  it('sends the tool what the form holds, the agentic flow as null', () => {
-    expect(storefrontInput({ enabled: true, flowId: '', editLines: false })).toEqual({
-      checkout: { enabled: true, checkoutFlowId: null, editLines: false },
+  it('shows the saved store name in its own field, described, and sends it trimmed (blank is none)', () => {
+    const html = form({
+      storeName: 'Acme <b>Supply</b>',
+      checkout: { enabled: false, checkoutFlowId: null, editLines: false },
     });
-    expect(storefrontInput({ enabled: false, flowId: 'tpl-card', editLines: true })).toEqual({
+    expect(html).toContain('Store name');
+    // Rendered as an attribute value, escaped: never markup.
+    expect(html).toMatch(/id="store-name"[^>]*value="Acme &lt;b&gt;Supply&lt;\/b&gt;"/);
+    expect(html).not.toContain('<b>Supply');
+    expect(html).toMatch(/id="store-name"[^>]*maxLength="60"|maxLength="60"[^>]*id="store-name"/);
+    expect(html).toMatch(/aria-describedby="store-name-hint"/);
+    expect(html).toContain('id="store-name-hint"');
+    // Unset, the field is empty.
+    expect(
+      form({
+        storeName: null,
+        checkout: { enabled: false, checkoutFlowId: null, editLines: false },
+      }),
+    ).toMatch(/id="store-name"[^>]*value=""/);
+    expect(
+      storefrontInput({
+        storeName: '  Acme Supply  ',
+        enabled: false,
+        flowId: '',
+        editLines: false,
+      }).storeName,
+    ).toBe('Acme Supply');
+    expect(
+      storefrontInput({ storeName: '   ', enabled: false, flowId: '', editLines: false }).storeName,
+    ).toBeNull();
+  });
+
+  it('keeps the store name through a save, and records it in the audit', async () => {
+    const r = await setStorefrontSettings(
+      {
+        storeName: 'Acme Supply',
+        checkout: { enabled: false, checkoutFlowId: null, editLines: false },
+      },
+      'ann@example.com',
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      audit: { detail: { storeName: 'Acme Supply', fromStoreName: null } },
+    });
+    expect((await storefrontAdmin()).storeName).toBe('Acme Supply');
+  });
+
+  it('sends the tool what the form holds, the agentic flow as null', () => {
+    expect(storefrontInput({ storeName: '', enabled: true, flowId: '', editLines: false })).toEqual(
+      {
+        storeName: null,
+        checkout: { enabled: true, checkoutFlowId: null, editLines: false },
+      },
+    );
+    expect(
+      storefrontInput({ storeName: '', enabled: false, flowId: 'tpl-card', editLines: true }),
+    ).toEqual({
+      storeName: null,
       checkout: { enabled: false, checkoutFlowId: 'tpl-card', editLines: true },
     });
   });
@@ -84,15 +141,22 @@ describe('saving the settings', () => {
 
   it('is off until saved, and turned on for a flow that takes cards', async () => {
     expect(await storefrontAdmin()).toEqual({
+      storeName: null,
       checkout: { enabled: false, checkoutFlowId: null, editLines: false },
     });
-    const next = { checkout: { enabled: true, checkoutFlowId: 'tpl-card', editLines: true } };
+    const next = {
+      storeName: null,
+      checkout: { enabled: true, checkoutFlowId: 'tpl-card', editLines: true },
+    };
     expect(await setStorefrontSettings(next, 'ann@example.com')).toMatchObject({ ok: true });
     expect(await storefrontAdmin()).toEqual(next);
   });
 
   it('refuses a flow that cannot take a card when turning it on, and saves nothing', async () => {
-    const next = { checkout: { enabled: true, checkoutFlowId: 'tpl-no-card', editLines: false } };
+    const next = {
+      storeName: null,
+      checkout: { enabled: true, checkoutFlowId: 'tpl-no-card', editLines: false },
+    };
     expect(await setStorefrontSettings(next, 'ann')).toEqual({
       ok: false,
       error: 'The checkout flow must authorize the payment (commerce.authorize_payment).',
@@ -102,8 +166,11 @@ describe('saving the settings', () => {
 });
 
 describe('Save', () => {
-  const form = { enabled: true, flowId: 'tpl-card', editLines: false };
-  const input = { checkout: { enabled: true, checkoutFlowId: 'tpl-card', editLines: false } };
+  const form = { storeName: '', enabled: true, flowId: 'tpl-card', editLines: false };
+  const input = {
+    storeName: null,
+    checkout: { enabled: true, checkoutFlowId: 'tpl-card', editLines: false },
+  };
 
   it('asks the assistant to set it, with the form’s choices, and says it saved', async () => {
     const act = vi.fn(async () => ({ done: 'Saved hosted checkout' }));
@@ -136,6 +203,7 @@ describe('Save', () => {
 describe('a flow that is saved but no longer published', () => {
   it('stays in the list, marked, and is the chosen one', () => {
     const html = form({
+      storeName: null,
       checkout: { enabled: true, checkoutFlowId: 'tpl-gone', editLines: false },
     });
     expect(html).toMatch(
@@ -146,7 +214,10 @@ describe('a flow that is saved but no longer published', () => {
 
 describe('the section’s descriptions', () => {
   it('are tied to the controls they describe', () => {
-    const html = form({ checkout: { enabled: false, checkoutFlowId: null, editLines: false } });
+    const html = form({
+      storeName: null,
+      checkout: { enabled: false, checkoutFlowId: null, editLines: false },
+    });
     for (const [control, hint] of [
       ['hosted-enabled', 'hosted-enabled-hint'],
       ['hosted-flow', 'hosted-flow-hint'],

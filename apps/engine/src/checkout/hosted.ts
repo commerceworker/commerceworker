@@ -75,8 +75,10 @@ const testPayments = (env: Env) => String(env.PAYMENTS_MODE ?? 'mock') === 'mock
  * engine can take one.
  */
 export async function publicSettings(env: Env): Promise<HostedCheckoutSettings> {
-  const { enabled, editLines } = (await storefrontSettings(env)).checkout;
+  const { storeName, checkout } = await storefrontSettings(env);
+  const { enabled, editLines } = checkout;
   return {
+    storeName,
     checkout: {
       enabled,
       editLines,

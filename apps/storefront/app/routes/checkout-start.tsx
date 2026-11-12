@@ -20,6 +20,7 @@ import {
   storefrontSettings,
 } from '~/lib/hosted-checkout.server';
 import { overBudget } from '~/lib/rate-limit';
+import { pageTitle } from '~/lib/store-name';
 import type { Route } from './+types/checkout-start';
 
 export async function loader({ params }: Route.LoaderArgs) {
@@ -59,8 +60,8 @@ export function headers({ errorHeaders }: Route.HeadersArgs) {
 
 export const ErrorBoundary = CheckoutRefusal;
 
-export const meta = () => [
-  { title: 'Continue to checkout · CommerceWorker' },
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: pageTitle(matches, 'Continue to checkout') },
   { name: 'robots', content: 'noindex' },
 ];
 

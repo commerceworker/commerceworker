@@ -135,11 +135,34 @@ export type UcpPlatformRef = { id: string; name: string; profileUrl: string };
 /** The workspace setting (`workspace_settings`) holding `StorefrontSettings` as JSON. */
 export const STOREFRONT_SETTINGS_KEY = 'storefront';
 
+/** The longest store name: it is a heading on a phone and the start of a page title. */
+export const STORE_NAME_MAX = 60;
+
+/**
+ * The merchant's name as buyers see it on the storefront's pages and titles: trimmed, one line of
+ * text, never markup (the pages render it as text). No name is null, never an empty string.
+ */
+export const storeNameSchema = z
+  .string()
+  .trim()
+  // No control, line-separator or format characters (a right-to-left override would reorder the
+  // heading around it), so what is saved is what a buyer reads.
+  .regex(/^[^\p{Cc}\p{Zl}\p{Zp}\p{Cf}]*$/u, 'The store name must be one line of plain text')
+  .min(1)
+  .max(STORE_NAME_MAX);
+
 /**
  * What the public storefront offers buyers. Hosted checkout is off until an admin turns it on:
  * with it off the engine refuses every hosted call and `create_checkout` makes no link.
  */
 export const storefrontSettingsSchema = z.object({
+  /** The buyer-facing name; unset, buyer pages name no one rather than the platform. */
+  storeName: storeNameSchema
+    .nullable()
+    .default(null)
+    .describe(
+      `The store’s name on buyer pages (checkout, receipts, the account), up to ${STORE_NAME_MAX} characters of plain text; null shows no name`,
+    ),
   checkout: z
     .object({
       enabled: z
@@ -163,6 +186,21 @@ export const storefrontSettingsSchema = z.object({
     .default({ enabled: false, checkoutFlowId: null, editLines: false }),
 });
 export type StorefrontSettings = z.infer<typeof storefrontSettingsSchema>;
+
+/**
+ * What a change to the settings takes: the shape the settings are stored in, except `storeName`,
+ * which may be left out to keep the current one (`null` clears it, a string sets it). The other
+ * fields replace, as ever, so a call that only turns checkout off doesn't wipe the merchant's name.
+ */
+export const storefrontSettingsInputSchema = storefrontSettingsSchema.extend({
+  storeName: storeNameSchema
+    .nullable()
+    .optional()
+    .describe(
+      `The store’s name on buyer pages (checkout, receipts, the account), up to ${STORE_NAME_MAX} characters of plain text. Leave it out to keep the current name; null clears it`,
+    ),
+});
+export type StorefrontSettingsInput = z.infer<typeof storefrontSettingsInputSchema>;
 
 /** Hosted checkout's settings as the admin API shows them (`GET /api/v1/storefront`). */
 export const storefrontAdminSchema = z.object({ settings: storefrontSettingsSchema });

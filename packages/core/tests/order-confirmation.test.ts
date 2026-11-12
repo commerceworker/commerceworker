@@ -92,6 +92,17 @@ describe('confirmationEmail', () => {
   });
 });
 
+describe('the confirmation email’s wording', () => {
+  it('never names the platform: it is the merchant’s mail, and the sender’s name is theirs to set', () => {
+    const v = buyerOrderView(
+      { orderId: 'ord_mv65gsxyqcs34m', status: 'running', order: order() },
+      [],
+    )!;
+    const m = confirmationEmail(v, 'https://s.example/orders/o?t=abc');
+    expect([m.subject, m.text, m.html].join('\n')).not.toMatch(/commerceworker/i);
+  });
+});
+
 describe('order-view credentials', () => {
   it('are 64 hex characters, never repeated, and stored as a hash', async () => {
     const a = newOrderViewToken();
