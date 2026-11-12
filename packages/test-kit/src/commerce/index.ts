@@ -19,6 +19,8 @@ export * from './company-directory';
 export * from './company-directory-contract';
 export * from './confirmation-store';
 export * from './confirmation-store-contract';
+export * from './database-copy';
+export * from './database-copy-contract';
 export * from './document-store';
 export * from './document-store-contract';
 export * from './flow-store';

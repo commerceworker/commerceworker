@@ -27,7 +27,9 @@ import {
   pluginKey,
   pluginOwnSecrets,
   postWriteCheck,
+  REDUNDANCY_PARTS,
   RESERVED_PATH_SEGMENTS,
+  redundancySchedules,
   renderApi,
   renderCatalog,
   renderDelivery,
@@ -2266,6 +2268,8 @@ test('the registry refuses two deployments that share a resource id', () => {
       contentD1Id: 'cd1-a',
       contentKvId: kv('b'),
       plugins: { punchout: { d1Id: 'p-a' } },
+      redundancy: true,
+      standbyD1Id: 'sb-a',
     };
     const write = (name: string, v: object) => writeFileSync(join(dir, name), JSON.stringify(v));
     const plugin = 'punchout';
@@ -2278,12 +2282,14 @@ test('the registry refuses two deployments that share a resource id', () => {
       contentD1Id: 'cd1-b',
       contentKvId: kv('d'),
       plugins: { [plugin]: { d1Id: 'p-b' } },
+      standbyD1Id: 'sb-b',
     };
     write('aa.jsonc', a);
     write('bb.jsonc', b);
     assert.doesNotThrow(() => loadDeployments(dir));
     const cases: [string, object][] = [
       ['d1Id', { d1Id: 'd1-a' }],
+      ['standbyD1Id', { standbyD1Id: 'sb-a' }],
       ['catalogKvId', { catalogKvId: kv('a') }],
       ['contentD1Id', { contentD1Id: 'cd1-a' }],
       ['contentKvId', { contentKvId: kv('b') }],
@@ -2304,4 +2310,212 @@ test('the registry refuses two deployments that share a resource id', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- Redundancy ---
+
+const STANDBY = '00000000-0000-0000-0000-000000000001';
+const protectedAcme = (redundancy: unknown = true, more: Record<string, unknown> = {}) =>
+  toDeployment({ ...acme, standbyD1Id: STANDBY, redundancy, ...more });
+/** A binding in a rendered wrangler config. */
+type Entry = {
+  binding: string;
+  name?: string;
+  class_name?: string;
+  schedules?: string[];
+  database_name?: string;
+  database_id?: string;
+  bucket_name?: string;
+  jurisdiction?: string;
+};
+const REDUNDANCY_BINDINGS = (c: Record<string, Entry[]>) => ({
+  databases: c.d1_databases!.map((db) => db.binding),
+  buckets: c.r2_buckets!.map((b) => b.binding),
+  workflows: c.workflows!.map((w) => w.binding),
+});
+
+test('redundancy is off unless the registry sets it, and true takes the defaults', () => {
+  assert.equal(acme.redundancy, undefined);
+  assert.equal(toDeployment({ ...acme, redundancy: false }).redundancy, undefined);
+  assert.deepEqual(protectedAcme().redundancy, {
+    backupDays: 35,
+    backupHourUtc: 1,
+    drill: 'weekly',
+    except: [],
+  });
+  const tuned = protectedAcme({
+    backupDays: 60,
+    backupHourUtc: 4,
+    drill: 'monthly',
+    except: ['canary', 'canary', 'readReplicas'],
+    alerts: { webhook: 'https://hooks.example.com/x', pagerduty: 'rk' },
+    offsite: { provider: 'gcs', bucket: 'acme-offsite', region: 'europe-west1' },
+  }).redundancy;
+  assert.deepEqual(tuned, {
+    backupDays: 60,
+    backupHourUtc: 4,
+    drill: 'monthly',
+    except: ['canary', 'readReplicas'],
+    alerts: { webhook: 'https://hooks.example.com/x', pagerduty: 'rk' },
+    offsite: { provider: 'gcs', bucket: 'acme-offsite', region: 'europe-west1' },
+  });
+  assert.equal(REDUNDANCY_PARTS.includes('d1Backup'), true);
+});
+
+test('bad redundancy entries are refused', () => {
+  const refuse = (redundancy: unknown, why: RegExp, more: Record<string, unknown> = {}) =>
+    assert.throws(() => toDeployment({ ...acme, redundancy, ...more }), why);
+  refuse('yes', /redundancy must be true or/);
+  refuse([], /redundancy must be true or/);
+  refuse({ backups: 3 }, /redundancy has no backups/);
+  refuse({ except: ['d1Backup', 'tape'] }, /names tape/);
+  refuse({ except: 'd1Backup' }, /must be a list/);
+  // Shorter than Time Travel's 30 days adds nothing; longer than the personal data they hold keeps what was erased.
+  refuse({ backupDays: 30 }, /at least 31/);
+  refuse({ backupDays: 35.5 }, /backupDays/);
+  // `acme` carries the default logRetentionDays (400), which these retentions are shorter than.
+  refuse(
+    { backupDays: 400 },
+    /redundancy.backupDays \(400\) can't be longer than personalDataRetentionDays \(365\)/,
+    {
+      personalDataRetentionDays: 365,
+      logRetentionDays: undefined,
+    },
+  );
+  refuse({}, /personalDataRetentionDays 30 is too short/, {
+    personalDataRetentionDays: 30,
+    logRetentionDays: undefined,
+  });
+  refuse({ backupHourUtc: 24 }, /0 to 23/);
+  refuse({ drill: 'daily' }, /weekly" or "monthly/);
+  refuse({ offsite: { provider: 'ftp', bucket: 'b', region: 'r' } }, /one of s3, gcs, azure/);
+  refuse({ offsite: { provider: 's3', bucket: 'b' } }, /offsite.region/);
+  refuse({ offsite: { provider: 's3', bucket: 'b', region: 'r', key: 'k' } }, /offsite has no key/);
+  refuse({ alerts: { webhook: 'http://insecure.example.com' } }, /https URL/);
+  refuse({ alerts: { sms: '1' } }, /alerts has no sms/);
+  // A demo holds nothing worth a backup.
+  refuse(true, /a demo has no data to keep/, { demo: true });
+  assert.throws(
+    () => toDeployment({ ...acme, standbyD1Id: STANDBY }),
+    /standbyD1Id needs redundancy/,
+  );
+  assert.throws(() => protectedAcme(true, { standbyD1Id: 'd1-acme' }), /the live database/);
+});
+
+test('a personalDataRetentionDays under the default keeps the backups under it', () => {
+  const personal = (days: number) =>
+    protectedAcme(true, { personalDataRetentionDays: days, logRetentionDays: undefined });
+  assert.equal(personal(32).redundancy?.backupDays, 32);
+  assert.equal(personal(400).redundancy?.backupDays, 35);
+});
+
+test('the engine renders the standby, the backups bucket and the two Workflows with the flag on', () => {
+  const c = renderEngine(base('engine'), protectedAcme({ backupHourUtc: 4, drill: 'monthly' }));
+  assert.deepEqual(REDUNDANCY_BINDINGS(c), {
+    databases: ['DB', 'STANDBY_DB'],
+    buckets: ['DOCS', 'BACKUPS'],
+    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE'],
+  });
+  // DB keeps its own id: the standby is rendered apart, never mapped onto it.
+  assert.deepEqual(
+    c.d1_databases.map((db: Entry) => [db.binding, db.database_name, db.database_id]),
+    [
+      ['DB', 'commerceworker-acme', 'd1-acme'],
+      ['STANDBY_DB', 'commerceworker-standby-acme', STANDBY],
+    ],
+  );
+  assert.deepEqual(
+    c.r2_buckets.map((b: Entry) => [b.binding, b.bucket_name, b.jurisdiction]),
+    [
+      ['DOCS', 'commerceworker-docs-acme', 'eu'],
+      ['BACKUPS', 'commerceworker-backups-acme', 'eu'],
+    ],
+  );
+  const flows = Object.fromEntries(c.workflows.map((w: Entry) => [w.binding, w]));
+  assert.equal(flows.D1_BACKUP.name, 'commerceworker-d1-backup-acme');
+  assert.equal(flows.D1_RESTORE.name, 'commerceworker-d1-restore-acme');
+  assert.deepEqual(flows.D1_BACKUP.schedules, ['0 4 * * *']);
+  assert.deepEqual(flows.D1_RESTORE.schedules, ['0 10 1 * *']);
+  assert.equal(flows.D1_BACKUP.class_name, 'D1Backup');
+  assert.deepEqual(redundancySchedules(protectedAcme().redundancy!), {
+    backup: '0 1 * * *',
+    restore: '0 7 * * 0',
+  });
+  assert.equal(
+    redundancySchedules(protectedAcme({ backupHourUtc: 20 }).redundancy!).restore,
+    '0 2 * * 0',
+  );
+  // Only the engine carries any of it.
+  for (const [app, render] of [
+    ['web', renderWeb],
+    ['catalog', renderCatalog],
+  ] as const)
+    assert.deepEqual(
+      REDUNDANCY_BINDINGS({
+        ...render(base(app), protectedAcme()),
+        workflows: [],
+      }).databases.filter((b: string) => b === 'STANDBY_DB'),
+      [],
+    );
+});
+
+test('a deployment without redundancy has the engine bindings stripped, and keeps the rest', () => {
+  const off = renderEngine(base('engine'), acme);
+  assert.deepEqual(REDUNDANCY_BINDINGS(off), {
+    databases: ['DB'],
+    buckets: ['DOCS'],
+    workflows: ['ORDER_WORKFLOW', 'REPLENISH'],
+  });
+  const on = renderEngine(base('engine'), protectedAcme());
+  // What the flag adds is exactly those four bindings.
+  assert.deepEqual(
+    { ...on, d1_databases: off.d1_databases, r2_buckets: off.r2_buckets, workflows: off.workflows },
+    off,
+  );
+  // d1Backup as an exception turns the same bindings off.
+  assert.deepEqual(
+    REDUNDANCY_BINDINGS(renderEngine(base('engine'), protectedAcme({ except: ['d1Backup'] }))),
+    REDUNDANCY_BINDINGS(off),
+  );
+  // And a demo or a held-back standby needs no id.
+  assert.doesNotThrow(() =>
+    renderEngine(base('engine'), toDeployment({ ...acme, id: 'acme-demo', demo: true })),
+  );
+});
+
+test('rendering with redundancy needs the standby database provisioned', () => {
+  const d = toDeployment({ ...acme, redundancy: true });
+  assert.throws(
+    () => renderEngine(base('engine'), d),
+    /no standbyD1Id: run scripts\/provision.sh acme/,
+  );
+  assert.throws(() => matrix([d]), /standbyD1Id/);
+  assert.doesNotThrow(() => matrix([toDeployment({ ...acme, redundancy: true, hold: true })]));
+  assert.doesNotThrow(() => matrix([protectedAcme()]));
+  assert.doesNotThrow(() =>
+    matrix([toDeployment({ ...acme, redundancy: { except: ['d1Backup'] } })]),
+  );
+});
+
+test('provision.sh is told the backups bucket, the standby and the retention only with redundancy', () => {
+  const on = shellVars(protectedAcme({ backupDays: 60 }));
+  assert.deepEqual(
+    [on.BACKUPS_R2, on.STANDBY_D1, on.BACKUP_DAYS],
+    ['commerceworker-backups-acme', 'commerceworker-standby-acme', '60'],
+  );
+  const off = shellVars(acme);
+  assert.deepEqual([off.BACKUPS_R2, off.STANDBY_D1, off.BACKUP_DAYS], ['', '', '']);
+  assert.equal(shellVars(protectedAcme({ except: ['d1Backup'] })).BACKUPS_R2, '');
+  assert.equal(names(acme).backups, 'commerceworker-backups-acme');
+});
+
+test('commerceworker has redundancy on, and the base engine config carries what it binds', () => {
+  const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
+  assert.deepEqual(d.redundancy, { backupDays: 35, backupHourUtc: 1, drill: 'weekly', except: [] });
+  assert.deepEqual(REDUNDANCY_BINDINGS(base('engine')).workflows.slice(-2), [
+    'D1_BACKUP',
+    'D1_RESTORE',
+  ]);
+  for (const x of loadDeployments().filter((y) => y.id !== 'commerceworker'))
+    assert.equal(x.redundancy, undefined, `${x.id} stays as it was`);
 });

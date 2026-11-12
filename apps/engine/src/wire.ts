@@ -17,6 +17,7 @@ import { d1CartRecords } from '@commerceworker/db/cart-records';
 import { d1CheckoutSessions } from '@commerceworker/db/checkout-sessions';
 import { d1CompanyDirectory } from '@commerceworker/db/company-directory';
 import { d1ConfirmationStore } from '@commerceworker/db/confirmation-store';
+import { d1DatabaseExport, d1RestoreTarget } from '@commerceworker/db/database-copy';
 import { d1DocumentStore, d1MessageStore } from '@commerceworker/db/document-store';
 import { d1FlowStore } from '@commerceworker/db/flow-store';
 import { d1FulfillmentStore } from '@commerceworker/db/fulfillment-store';
@@ -58,6 +59,8 @@ import type {
   CheckoutSessionStore,
   CompanyDirectory,
   ConfirmationStore,
+  DatabaseExport,
+  DatabaseRestoreTarget,
   DocumentStore,
   FlowStore,
   FulfillmentStore,
@@ -302,6 +305,17 @@ export function checkoutSessions(env: Pick<Env, 'DB'>): CheckoutSessionStore {
 
 /** What the retention sweep finds and deletes across the deployment's tables. */
 export const retentionStore = (env: Pick<Env, 'DB'>): RetentionStore => d1RetentionStore(env.DB);
+
+/** The live database, read a page at a time for the daily backup (d1-backup.ts). */
+export const databaseExport = (env: Pick<Env, 'DB'>): DatabaseExport => d1DatabaseExport(env.DB);
+
+/**
+ * Where a restore lands: the standby database, never `DB`. Its audit trail is what the drill's
+ * hash-chain check reads. A deployment without a standby has no restore Workflow either.
+ */
+export const restoreTarget = (env: Pick<Env, 'STANDBY_DB'>): DatabaseRestoreTarget =>
+  d1RestoreTarget(env.STANDBY_DB);
+export const standbyAudit = (env: Pick<Env, 'STANDBY_DB'>): AuditLog => d1AuditLog(env.STANDBY_DB);
 
 /** Audit events archived to R2 (`DOCS`, under `audit/`, which the bucket locks). */
 export function auditArchive(env: Pick<Env, 'DOCS'>): AuditArchive {

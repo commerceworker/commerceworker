@@ -13,6 +13,10 @@
   "suffix": "",
   "environment": "production",
   "d1Id": "00000000-0000-0000-0000-000000000000",
+  // Redundancy (docs/operations.md, "Redundancy"): a daily backup of the commerce D1 and a weekly
+  // restore drill into the standby database. The standby id is written by scripts/provision.sh.
+  "redundancy": true,
+  "standbyD1Id": "00000000-0000-0000-0000-000000000001",
   "catalogKvId": "00000000000000000000000000000000",
   "docs": true,
   // Written out because the entry has a storefront: an unset mode would silently be mock. Mock
