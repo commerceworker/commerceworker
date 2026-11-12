@@ -613,9 +613,12 @@ whose code, loaded with no network and no capabilities (a dry run), answers with
 than the one sealed in it. A bundle that passes is stored in `DOCS` at `plugins/<id>/<sha>.json` (a prefix
 `provision.sh` locks indefinitely, so no bundle a rollback may load can be deleted; see
 [Operations](operations.md#bucket-locks)) and
-recorded `pending` in `installed_plugins` (through the plugin installs port, `@commerceworker/db/plugin-install-store`). It doesn't run: its nodes read as not installed. An id's
-first install (or its first since an uninstall) wipes the id's storage first, so it never reads what
-a removed registry plugin or an earlier install of that id left.
+recorded `pending` in `installed_plugins` (through the plugin installs port, `@commerceworker/db/plugin-install-store`). It doesn't run: its nodes read as not installed. An upload never
+touches the id's storage (it is unreviewed and needs no step-up), so a plugin whose id once ran from the
+registry finds its data again once the id is approved from a file. Whose data that is rests on the
+rules above: another publisher's id is refused while any version is installed, and an uninstall
+deletes the data (after exporting it), so the only data an upload can meet is the registry-era
+data of an id the deployment's own publisher now installs.
 
 **Review and approve.** The page shows what the pending upload adds and reaches (its nodes, events,
 pages, egress hosts, secrets and whether it asks for buyer details), signed by whom. Its secrets can
@@ -654,8 +657,15 @@ install's buyer-details grant) never applies to a registry plugin of the same id
 **Afterwards.** Turn it off and on (`setPluginEnabled`: off, it drops out of the pins and its nodes
 read as not installed); roll back to any `superseded` version (`rollbackPlugin`; its bundle is still
 in `DOCS`); uninstall (`uninstallPlugin`), refused while `pluginUsage` lists a published flow, a
-running order or a label not yet voided, which then wipes its storage, marks its rows `uninstalled`
-(kept, for the record) and deletes its secrets; the wipe goes first, so a failure can be retried.
+running order or a label not yet voided, which then exports its storage as NDJSON to `DOCS` at `plugin-exports/<id>/<time>.ndjson`
+(each table's schema, then its rows), deletes the storage only once that file is written, marks its rows
+`uninstalled` (kept, for the record) and deletes its secrets; a failure at the export or the delete
+leaves the plugin installed with its data, so it can be retried. The export and the delete are audited
+(`plugin.data_exported`, `plugin.data_wiped`). The export prefix isn't under a bucket lock, and the daily retention sweep
+deletes an export once it is 30 days old (or `PERSONAL_DATA_RETENTION_DAYS`, if shorter), so download
+or re-import it within that time. It holds the plugin's own data, which a data-subject erasure
+(`eraseDataSubject`) can't match to an address in the NDJSON or in the live storage; the expiry is what
+removes it.
 A call already running when it is turned off finishes. A rollback runs the older code
 against the storage as the newer version's migrations left it (migrations only go forward). Every action, and every refusal, is in the audit
 log (`plugin.*`).

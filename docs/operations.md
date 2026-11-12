@@ -267,7 +267,11 @@ A sandboxed plugin is installed the same way with `"runtime": "sandboxed"`: ther
 provision (`provision.sh` skips it) and no Worker or database to delete on removal; take it out of
 `plugins` and merge, and the engine stops loading it. Its pinned bundles stay in the `DOCS` bucket
 as `plugins/<plugin>/<sha>.json`; delete them by hand if you want them gone. Its storage (the engine's
-`PluginStorage` object for that id) stays too, so reinstalling finds its data. Worker Loader, which
+`PluginStorage` object for that id) stays too, so installing the id from a file finds its data; an
+upload never deletes it. Uninstalling it from the Plugins page exports the storage to `DOCS` as
+`plugin-exports/<plugin>/<time>.ndjson` and only then deletes it (audited as `plugin.data_exported` and
+`plugin.data_wiped`). Exports aren't under a bucket lock; the daily retention sweep deletes them
+at 30 days (sooner if `PERSONAL_DATA_RETENTION_DAYS` is shorter), so download or re-import one within that time. Worker Loader, which
 runs sandboxed plugins, is in open beta and needs Workers Paid; the engine's `LOADER` binding is
 declared in every deployment and unused until one is installed. Cloudflare enforces the per-call CPU
 and subrequest limits; local workerd does not.

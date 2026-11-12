@@ -530,6 +530,32 @@ export class PluginStorage extends DurableObject<Env> {
     return this.#run(statement);
   }
 
+  /**
+   * Uninstall's first half: every table's schema and rows as NDJSON (`{"table","schema"}` then
+   * `{"table","row"}` lines; a blob is `{"$base64"}`), for the engine to keep in `DOCS` before
+   * `destroy`. Reached only by the engine (not `PluginDb`).
+   */
+  async export(): Promise<string> {
+    const sql = this.ctx.storage.sql;
+    const lines: string[] = [];
+    const tables = sql
+      .exec<{ name: string; sql: string }>(
+        `SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ESCAPE '\\' AND name NOT LIKE '_cf_%' ESCAPE '\\' ORDER BY name`,
+      )
+      .toArray();
+    const text = (v: unknown) =>
+      v instanceof ArrayBuffer ? { $base64: btoa(String.fromCharCode(...new Uint8Array(v))) } : v;
+    for (const t of tables) {
+      lines.push(JSON.stringify({ table: t.name, schema: t.sql }));
+      for (const row of sql.exec(`SELECT * FROM "${t.name.replaceAll('"', '""')}"`)) {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(row)) out[k] = text(v);
+        lines.push(JSON.stringify({ table: t.name, row: out }));
+      }
+    }
+    return lines.length ? `${lines.join('\n')}\n` : '';
+  }
+
   /** Uninstall: the plugin's whole database, gone. Reached only by the engine (not `PluginDb`). */
   async destroy() {
     await this.ctx.storage.deleteAll();

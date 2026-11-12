@@ -358,7 +358,7 @@ export async function runPlugin(env: Env, p: Principal, c: PluginChange, trail: 
       };
     }
     case 'uninstall_plugin': {
-      await answer(() => installs.uninstallPlugin(env, c.pluginId));
+      await answer(() => installs.uninstallPlugin(env, c.pluginId, by));
       await recordAudit(env, 'plugin.uninstalled', { actor: p, target: c.pluginId, detail: trail });
       return { done: `${c.pluginId} is uninstalled`, href: '/plugins', id: c.pluginId };
     }

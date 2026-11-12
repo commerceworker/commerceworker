@@ -348,8 +348,8 @@ export class EngineApi extends WorkerEntrypoint<Env> implements EngineRpc {
     return installs.refusable(() => installs.rollbackPlugin(this.env, id, sha));
   }
 
-  uninstallPlugin(id: string) {
-    return installs.refusable(() => installs.uninstallPlugin(this.env, id));
+  uninstallPlugin(id: string, by: string) {
+    return installs.refusable(() => installs.uninstallPlugin(this.env, id, by));
   }
 
   runPluginCases(id: string, sha: string, cases: PluginCase[], _by: string) {

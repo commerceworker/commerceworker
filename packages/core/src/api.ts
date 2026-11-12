@@ -400,7 +400,7 @@ export interface EngineRpc {
   ): Promise<Refusable<{ id: string; name: string }>>;
   setPluginEnabled(id: string, enabled: boolean): Promise<Refusable<{ id: string }>>;
   rollbackPlugin(id: string, sha: string): Promise<Refusable<{ id: string; version: string }>>;
-  uninstallPlugin(id: string): Promise<Refusable<{ id: string }>>;
+  uninstallPlugin(id: string, by: string): Promise<Refusable<{ id: string }>>;
   /** Opens a staff cart, or says why it can't: the flow must price orders, the customer exist. */
   createCart(
     input: CreateCartInput,

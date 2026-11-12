@@ -32,6 +32,7 @@ import {
   verifyBundleSignature,
 } from '@commerceworker/core';
 import type { PluginInstallRecord } from '@commerceworker/ports/commerce';
+import { recordAudit } from './audit';
 import { sealSecret } from './data-key';
 import { pluginStorage } from './namespaces';
 import { runCases } from './plugin-cases';
@@ -299,9 +300,9 @@ export async function stageBundle(
       `${file.id} ${file.version} was uploaded before with other contents: give this one a new version`,
     );
   await dryRun(env, file.id, file.sha, bundle.code, manifest);
-  // Its first install (or the first since an uninstall): whatever the id stored before, under a
-  // registry plugin of that id since removed, or an earlier install, is gone.
-  if (!installed.length) await pluginStorage(env, file.id).destroy();
+  // Storage is never touched here: an upload is unreviewed and needs no step-up. What a registry
+  // plugin of this id stored before is found again on approval; an earlier install's was exported
+  // and deleted when it was uninstalled. A publisher change with rows installed is refused above.
   await env.DOCS.put(`plugins/${file.id}/${file.sha}.json`, body, {
     httpMetadata: { contentType: 'application/json' },
   });
@@ -452,12 +453,13 @@ export async function rollbackPlugin(env: Env, id: string, sha: string) {
 /**
  * Uninstalls a runtime-installed plugin, once nothing uses it (`pluginUsage`): its rows are kept as
  * `uninstalled` for the record, its secrets and its storage deleted. Its bundles stay in R2. The
- * storage goes first, so a failure leaves it installed and the uninstall can be retried. Other
- * isolates may run it for up to their cache's 15 seconds after; a later install of the id wipes
- * whatever that wrote. A flow published in the moment between the usage check and the uninstall
+ * storage is exported to `DOCS` (`plugin-exports/<id>/<time>.ndjson`) first and deleted only once
+ * that is written, so a failure at either step leaves it installed with its data and the uninstall
+ * can be retried. Other isolates may run it for up to their cache's 15 seconds after; what that
+ * writes is what a later install of the id finds. A flow published in the moment between the usage check and the uninstall
  * fails at the plugin's node, as one using any removed plugin does.
  */
-export async function uninstallPlugin(env: Env, id: string) {
+export async function uninstallPlugin(env: Env, id: string, by: string) {
   const rows = (await rowsOf(env, id)).filter((r) => r.status !== 'uninstalled');
   if (!rows.length) throw new InstallRefused(`${id} is not installed at runtime`);
   const usage = await pluginUsage(env, id);
@@ -465,7 +467,19 @@ export async function uninstallPlugin(env: Env, id: string) {
     throw new InstallRefused(
       `${id} is still in use: ${usage.flows.length} published flows, ${usage.orders.length} running orders, ${usage.labels.length} labels not voided`,
     );
-  await pluginStorage(env, id).destroy();
+  const actor = { kind: 'user', id: by, name: by };
+  const storage = pluginStorage(env, id);
+  const exported = await storage.export();
+  const key = `plugin-exports/${id}/${new Date().toISOString()}.ndjson`;
+  await env.DOCS.put(key, exported, { httpMetadata: { contentType: 'application/x-ndjson' } });
+  const records = exported.split('\n').filter((l) => l.includes('"row"')).length;
+  await recordAudit(env, 'plugin.data_exported', {
+    actor,
+    target: id,
+    detail: { key, rows: records, bytes: exported.length },
+  });
+  await storage.destroy();
+  await recordAudit(env, 'plugin.data_wiped', { actor, target: id, detail: { export: key } });
   await pluginInstalls(env).uninstall(id);
   dropInstallsCache();
   knownManifests.delete(id);
