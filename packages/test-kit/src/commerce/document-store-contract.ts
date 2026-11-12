@@ -75,5 +75,28 @@ export function describeDocumentStoreContract(
         ['msg_dc_o3_notify_1_seller', 'On its way'],
       ]);
     });
+
+    it('records when a message went out, once, and why one did not', async () => {
+      const { messages } = await make();
+      const m = { recipient: 'a@example.com', subject: 'Confirmed', body: 'Thanks' };
+      const { messageId } = await messages.send('dc_o5', 'confirmation', m);
+      expect(await messages.find('dc_o5', 'confirmation')).toMatchObject({
+        messageId,
+        sentAt: null,
+        error: null,
+      });
+      await messages.markFailed(messageId, 'Email sending is not configured');
+      expect((await messages.find('dc_o5', 'confirmation'))?.error).toBe(
+        'Email sending is not configured',
+      );
+      await messages.markSent(messageId, 1000);
+      await messages.markSent(messageId, 2000);
+      await messages.markFailed(messageId, 'late failure');
+      expect(await messages.find('dc_o5', 'confirmation')).toMatchObject({
+        sentAt: 1000,
+        error: null,
+      });
+      expect(await messages.find('dc_o5', 'none')).toBeUndefined();
+    });
   });
 }

@@ -15,4 +15,7 @@ export default [
   route('carts/:cartId/attachments', 'routes/cart-attachments.ts'),
   route('carts/:cartId/attachments/:attachmentId', 'routes/cart-attachment.ts'),
   route('carts/:cartId/products', 'routes/cart-products.ts'),
+  // An order's receipt for its buyer: the link a confirmation email carries, and what UCP's
+  // default `orderPermalink` points at. Its credential is a bearer secret (routes/order-receipt.tsx).
+  route('orders/:orderId', 'routes/order-receipt.tsx'),
 ] satisfies RouteConfig;

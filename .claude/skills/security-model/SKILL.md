@@ -53,7 +53,7 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    verifies those under the storefront key only, and `v1` principals and staff `a1` actors under
    `PRINCIPAL_KEY` only (`storefrontKeysOf`, `rpcActor`, `guestActor` in
    `apps/engine/src/principal.ts`), so every envelope kind has exactly one key. The storefront is
-   bound to `StorefrontApi` (`StorefrontRpc`), not `EngineApi`: no method without an actor, and
+   bound to `StorefrontApi` (`StorefrontRpc`), not `EngineApi`: no method without an actor (bar the one exception below), and
    its `fetch` serves only `/agents/cart-agent/*` and `/ucp/*`. A new method on it must take a
    buyer signed for the cart and admit them only to that cart (`buyerOf`); a new envelope the
    storefront signs goes under the storefront key. A hosted checkout's buyer is named twice, because
@@ -79,6 +79,13 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    audited (`ucp.settings`, `checkout.settings`) with the token as actor. `runOperation` (the generic
    REST path) does refuse a token a person-confirmed tool; keep any new settings route consistent with
    `set_ucp_settings`, whichever path it takes.
+   **The other exception is `orderReceipt`:** a bearer-token read with no signed buyer actor, guarded by
+   an order-view token the engine minted (random, stored only as a hash, expiring in 30 days, compared
+   in constant time over the order's live hashes, revoked by erasure), answering only the buyer-safe
+   `BuyerOrderView` (`null` alike for unknown, wrong and expired); its page is `no-store`,
+   `no-referrer` and `noindex`. Don't add another such method without the same guards. The mail that
+   carries the token is triggered only by the engine's own `hosted:` idempotency key (reserved), never
+   by anything a caller sets in `meta`.
 3. **`/mcp`, `/a2a` and `/api/v1` are separate OAuth resources** (RFC 8707, `apps/web/app/lib/oauth.server.ts`):
    a token works only at the endpoint it was granted for. An OAuth grant at `/api/v1` carries its `grant`
    and is never a `person` (no step-up, no confirmation of what a person confirms), as over MCP. A consent grants a role no higher than

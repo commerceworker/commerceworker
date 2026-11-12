@@ -17,7 +17,10 @@ candidate finding that still needs a concrete attacker before it is reported.
   `u1`, guest `a1` and `gs1` under the storefront key (`storefrontKeysOf`). A new storefront
   envelope or method belongs on `StorefrontApi`, with the buyer checked against the cart
   (`buyerOf`; a hosted checkout's also by the cookie secret, `hosted.ts`), and the storefront still binds no D1, `DOCS` or `EngineApi`
-  (`scripts/composition-root.test.ts`, `scripts/fleet.test.ts`).
+  (`scripts/composition-root.test.ts`, `scripts/fleet.test.ts`). The one exception is
+  `orderReceipt`, a bearer-token read: check it keeps the hashed, expiring, constant-time token,
+  the buyer-safe view only, `no-store` / `no-referrer` / `noindex`, and that mail is triggered by
+  the reserved `hosted:` key, not by `meta`.
 - Does anything widen `PRINCIPAL_TTL_MS`, accept a missing `exp`, or fall back to
   `DEV_PRINCIPAL_KEY` outside local dev?
 - Does a new socket method re-check the principal or session it needs, rather than trusting the

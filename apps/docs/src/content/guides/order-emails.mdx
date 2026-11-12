@@ -1,0 +1,62 @@
+---
+title: Order emails
+description: The confirmation email a buyer gets for a hosted checkout order, the receipt page it links to, and what happens when email sending is not set up.
+---
+
+When a buyer completes a hosted checkout, CommerceWorker emails them one confirmation for the
+order, as soon as their payment is authorized. It is a transactional message, sent once per order through Cloudflare Email Sending from the
+sender address your administrator set up for the workspace.
+
+## What the email says
+
+The confirmation has a plain-text part and a simple HTML part. It shows:
+
+- the order reference (`#` and the last six characters of the order id), which is also its subject:
+  `Your order #abc123 is confirmed`
+- each line with its quantity and amount
+- subtotal, shipping and tax where there are any, and the total
+- where the order ships
+- a link to the order's receipt page
+
+Everything in it is text. A product title or a buyer's name that contains markup, such as
+`<script>`, is shown as those characters and never run.
+
+The email goes to the customer's email address, or the order's contact address when it has no
+customer. An order with neither is not mailed, and its timeline says so.
+
+## The receipt page
+
+The link opens `/orders/<order id>?t=<token>` on the storefront. The page shows the order's lines,
+totals, status, the ship-to address and tracking numbers once a shipment has one. It never shows the
+order's timeline, audit trail or any note a team member wrote.
+
+The `t` token is a secret that belongs to that one email:
+
+- Anyone who has the link can open the page, so a buyer should treat it like a password reset link.
+  The page is never cached, sends no referrer and is kept out of search engines.
+- The token works for 30 days from the day the email was sent. After that, or for a wrong or
+  unknown token, the page says the link isn't valid or has expired, and says nothing about whether
+  the order exists.
+- Erasing a person's data, or the workspace's retention period erasing an order's buyer, ends the
+  order's links at once.
+
+The receipt page is also where an order's permalink points for [UCP](/reference/ucp/) platforms
+that don't set their own.
+
+## Once per order
+
+A confirmation is filed under the order and sent only once: if the checkout's completion is
+repeated, or the order is confirmed again, nothing more is sent. The message appears on the order
+among its messages.
+
+The messages a flow's **Notify** node writes are different: they are recorded for the order and
+are not emailed yet.
+
+## When email sending isn't set up
+
+If your administrator hasn't set up a sender, nothing is mailed. The order still completes; its
+confirmation is recorded as not sent with the reason *Email sending is not configured on this
+deployment*, and the order's timeline carries a line that says so. The same happens when Email
+Sending refuses the message, for example because the sender's domain isn't verified; the reason is
+kept on the message. Ask your administrator to set up the sender (the domain must be onboarded to
+Cloudflare Email Sending), after which the order's confirmation can be sent.

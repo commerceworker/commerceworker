@@ -2065,3 +2065,33 @@ test("the catalog knows the assets service's origin only on a content deployment
     'https://assets.shop.example.com',
   );
 });
+
+test("a customer's email sets the engine's send_email binding and its sender", () => {
+  const mailing = toDeployment({
+    ...acme,
+    email: { from: 'orders@mail.acme.example', fromName: 'Acme Orders' },
+  });
+  const c = renderEngine(base('engine'), mailing);
+  assert.deepEqual(c.send_email, [{ name: 'EMAIL' }]);
+  assert.equal(c.vars.EMAIL_FROM, 'orders@mail.acme.example');
+  assert.equal(c.vars.EMAIL_FROM_NAME, 'Acme Orders');
+  // Without it no binding is rendered, and the vars are empty, so nothing is sent and one
+  // deployment's sender never carries over.
+  const plain = renderEngine(base('engine'), acme);
+  assert.equal(plain.send_email, undefined);
+  assert.equal(plain.vars.EMAIL_FROM, '');
+  assert.equal(plain.vars.EMAIL_FROM_NAME, '');
+  assert.equal(
+    renderEngine(base('engine'), toDeployment({ ...acme, email: { from: 'a@b.example' } })).vars
+      .EMAIL_FROM_NAME,
+    '',
+  );
+  for (const bad of ['orders', 'orders@localhost', 'Acme <orders@mail.acme.example>', '', 42])
+    assert.throws(() => toDeployment({ ...acme, email: { from: bad } }), /email\.from/);
+  for (const bad of ['', 'Acme\nBcc: x@y.example', '<Acme>', 7])
+    assert.throws(
+      () => toDeployment({ ...acme, email: { from: 'a@b.example', fromName: bad } }),
+      /fromName/,
+    );
+  assert.throws(() => toDeployment({ ...acme, email: 'orders@x.example' }), /email must be/);
+});

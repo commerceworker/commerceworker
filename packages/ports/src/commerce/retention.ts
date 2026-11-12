@@ -17,6 +17,7 @@ export interface PruneCounts {
   readonly paymentEvents: number;
   readonly ucpIdempotency: number;
   readonly abandonedCheckouts: number;
+  readonly orderViewTokens: number;
 }
 
 /** An audit event as archived: every column, its chain place (`seq`) null before the chain. */

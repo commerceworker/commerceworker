@@ -11,7 +11,7 @@ import {
   type MessageStore,
   messageId,
 } from '@commerceworker/ports/commerce';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { createDb } from './index';
 import { documents, messages } from './schema';
 
@@ -63,6 +63,15 @@ export function d1DocumentStore(d1: D1Database, bucket: R2Bucket, clock: Clock):
 
 export function d1MessageStore(d1: D1Database, clock: Clock): MessageStore {
   const d = createDb(d1);
+  const record = {
+    messageId: messages.id,
+    orderId: messages.orderId,
+    recipient: messages.recipient,
+    subject: messages.subject,
+    body: messages.body,
+    sentAt: messages.sentAt,
+    error: messages.error,
+  };
   return {
     async send(orderId, stepKey, m) {
       const id = messageId(orderId, stepKey);
@@ -75,16 +84,32 @@ export function d1MessageStore(d1: D1Database, clock: Clock): MessageStore {
 
     async messages(orderId) {
       return d
-        .select({
-          messageId: messages.id,
-          orderId: messages.orderId,
-          recipient: messages.recipient,
-          subject: messages.subject,
-          body: messages.body,
-        })
+        .select(record)
         .from(messages)
         .where(eq(messages.orderId, orderId))
         .orderBy(asc(messages.id));
+    },
+
+    async find(orderId, stepKey) {
+      const [row] = await d
+        .select(record)
+        .from(messages)
+        .where(eq(messages.id, messageId(orderId, stepKey)));
+      return row;
+    },
+
+    async markSent(id, at) {
+      await d
+        .update(messages)
+        .set({ sentAt: at, error: null })
+        .where(and(eq(messages.id, id), isNull(messages.sentAt)));
+    },
+
+    async markFailed(id, error) {
+      await d
+        .update(messages)
+        .set({ error: error.slice(0, 500) })
+        .where(and(eq(messages.id, id), isNull(messages.sentAt)));
     },
   };
 }

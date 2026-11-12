@@ -22,6 +22,7 @@
     "./payment-ledger": "./src/payment-ledger.ts",
     "./invoice-store": "./src/invoice-store.ts",
     "./order-records": "./src/order-records.ts",
+    "./order-view-tokens": "./src/order-view-tokens.ts",
     "./back-office": "./src/back-office.ts",
     "./cart-records": "./src/cart-records.ts",
     "./checkout-sessions": "./src/checkout-sessions.ts",

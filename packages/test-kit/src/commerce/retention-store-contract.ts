@@ -22,6 +22,7 @@ const tables: (keyof PruneCounts)[] = [
   'paymentEvents',
   'ucpIdempotency',
   'abandonedCheckouts',
+  'orderViewTokens',
 ];
 
 export const RETENTION_FIXTURE: RetentionFixture = {
@@ -29,7 +30,11 @@ export const RETENTION_FIXTURE: RetentionFixture = {
     // One past its retention and one inside it, per table.
     ...tables.flatMap((table) => [
       { table, id: `rc_${table}_old`, at: old },
-      { table, id: `rc_${table}_new`, at: table === 'sessions' ? now + DAY : now },
+      {
+        table,
+        id: `rc_${table}_new`,
+        at: table === 'sessions' || table === 'orderViewTokens' ? now + DAY : now,
+      },
     ]),
     // Kept: a delivery still being retried, and a checkout that placed an order.
     { table: 'webhookDeliveries', id: 'rc_pending', at: old, pending: true },

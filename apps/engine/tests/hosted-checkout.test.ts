@@ -28,6 +28,7 @@ import {
   checkoutSessions as checkoutSessionsTable,
   createDb,
   invoices,
+  messages,
   orders,
   workspaceSettings,
 } from '@commerceworker/db';
@@ -635,6 +636,38 @@ describe('placing the order in test mode', () => {
     expect(order?.customerId).toBeNull();
     expect(JSON.stringify(done)).not.toMatch(/customerId|ownerId|hosted:/);
     expect(await sf.checkout(b.id, b.secret, b.actor)).toMatchObject({ status: 'completed' });
+  });
+
+  it('sends the buyer one confirmation when the order completes, and none for a repeat press', async () => {
+    const mail: { to: unknown; subject: string; text?: string }[] = [];
+    const e = env as { EMAIL?: unknown; EMAIL_FROM?: string };
+    const before = { EMAIL: e.EMAIL, EMAIL_FROM: e.EMAIL_FROM };
+    e.EMAIL = {
+      send: async (m: (typeof mail)[number]) => {
+        mail.push(m);
+        return { messageId: `m${mail.length}` };
+      },
+    };
+    e.EMAIL_FROM = 'orders@mail.shop.test';
+    try {
+      await runOrders();
+      const b = await ready();
+      const done = ok(await sf.completeCheckout(b.id, b.secret, b.actor));
+      ok(await sf.completeCheckout(b.id, b.secret, b.actor));
+      const row = async () =>
+        (await db().select().from(messages).where(eq(messages.orderId, done.orderId!))).find((m) =>
+          m.id.endsWith('_confirmation'),
+        );
+      for (let i = 0; i < 300 && !(await row())?.sentAt; i++)
+        await new Promise((r) => setTimeout(r, 100));
+      expect(await row()).toMatchObject({ recipient: 'ada@example.com', error: null });
+      expect(mail).toHaveLength(1);
+      expect(mail[0]).toMatchObject({ to: 'ada@example.com' });
+      expect(mail[0]?.text).toContain(`/orders/${done.orderId}?t=`);
+    } finally {
+      e.EMAIL = before.EMAIL;
+      e.EMAIL_FROM = before.EMAIL_FROM;
+    }
   });
 
   it('is answered again as it is, with no second order, when it is pressed twice', async () => {

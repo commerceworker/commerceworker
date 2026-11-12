@@ -61,7 +61,8 @@ afterEach(async () => {
 });
 
 /** A B2B order over its credit limit, waiting on the sales approval. */
-async function waitingOrder() {
+async function waitingOrder(meta: Record<string, unknown> = {}) {
+  await introspector?.dispose();
   introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
   await introspector.modifyAll(async (m) => {
     await m.disableSleeps();
@@ -73,7 +74,7 @@ async function waitingOrder() {
     currency: 'USD',
     customerId: 'cus_contoso',
     lines: [{ sku: 'WID-200', qty: 100 }],
-    meta: {},
+    meta,
   };
   const { orderId } = await startOrder(env, { flowId: 'tpl-b2b-order', input });
   await until(async () => {
@@ -833,6 +834,16 @@ describe('assistant socket', () => {
     expect((await state(restarted.output.orderId)).order?.meta).toMatchObject({
       restartedFrom: waiting,
     });
+
+    // A restart never carries `meta.hosted`, even from an order that somehow held it.
+    const marked = await waitingOrder({ hosted: true, keep: 'yes' });
+    const again2 = await answer('restart_order', { orderId: marked });
+    const second = (await panel.call('resolve', [again2.callId, true])).result as {
+      output: { orderId: string };
+    };
+    const secondMeta = (await state(second.output.orderId)).order?.meta;
+    expect(secondMeta).toMatchObject({ keep: 'yes', restartedFrom: marked });
+    expect(secondMeta).not.toHaveProperty('hosted');
 
     const cart = (
       await panel.call('act', ['create_cart', { title: 'To cancel', flowId: 'tpl-b2b-order' }])

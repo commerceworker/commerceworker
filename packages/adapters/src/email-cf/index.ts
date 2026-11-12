@@ -58,6 +58,8 @@ export function createCfEmailSender(
     async send(message: EmailMessage): Promise<EmailSendResult> {
       const to = [...new Set(message.to.map((t) => t.trim()).filter(Boolean))];
       if (to.length === 0) return { delivered: false, error: 'No recipients' };
+      const bad = to.find((t) => !ADDRESS.test(t));
+      if (bad) return { delivered: false, error: 'Not an email address' };
       if (to.length > max) {
         return { delivered: false, error: `At most ${max} recipients per message` };
       }

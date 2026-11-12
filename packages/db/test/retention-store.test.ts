@@ -14,6 +14,7 @@ import {
   inboundEmails,
   nodeRuns,
   orders,
+  orderViewTokens,
   paymentEvents,
   sessions,
   ucpIdempotency,
@@ -36,6 +37,7 @@ async function seed(f: RetentionFixture) {
     paymentEvents,
     ucpIdempotency,
     checkoutSessions,
+    orderViewTokens,
     carts,
     orders,
     customerAddresses,
@@ -104,6 +106,11 @@ async function seed(f: RetentionFixture) {
         await db
           .insert(ucpIdempotency)
           .values({ ownerId: 'rc_platform', key: r.id, requestHash: 'h', createdAt: r.at });
+        break;
+      case 'orderViewTokens':
+        await db
+          .insert(orderViewTokens)
+          .values({ tokenHash: r.id, orderId: 'rc_order', createdAt: 0, expiresAt: r.at });
         break;
       case 'abandonedCheckouts':
         await db.insert(checkoutSessions).values({

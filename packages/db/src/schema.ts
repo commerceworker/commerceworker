@@ -933,8 +933,30 @@ export const messages = sqliteTable(
     subject: text('subject').notNull(),
     body: text('body').notNull(),
     createdAt: integer('created_at').notNull(),
+    /** When Email Sending took it (ms); null for a message only queued (the notify node). */
+    sentAt: integer('sent_at'),
+    /** Why the last send didn't go. */
+    error: text('error'),
   },
   (t) => [index('messages_order').on(t.orderId)],
+);
+
+/**
+ * The credentials a confirmation email's receipt link carries, as SHA-256 hashes with an expiry
+ * (ms): never the token itself.
+ */
+export const orderViewTokens = sqliteTable(
+  'order_view_tokens',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    orderId: text('order_id').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [
+    index('order_view_tokens_order').on(t.orderId),
+    index('order_view_tokens_expiry').on(t.expiresAt),
+  ],
 );
 
 /**

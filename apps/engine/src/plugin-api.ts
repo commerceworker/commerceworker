@@ -121,7 +121,7 @@ export class PluginHost extends WorkerEntrypoint<Env, { id: string }> implements
       };
     // Keys the core gives meaning to are the core's to set: a plugin can't make its order look
     // like a UCP checkout's (whose platform would be sent it) or a cart's.
-    const { ucp: _ucp, cart: _cart, plugin: _plugin, ...meta } = input.meta;
+    const { ucp: _ucp, cart: _cart, plugin: _plugin, hosted: _hosted, ...meta } = input.meta;
     try {
       const started = await startOrderOnce(this.env, {
         flowId: parsed.data.flowId,

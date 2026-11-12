@@ -59,6 +59,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `aiGatewayLogs` | `false` | `true` or `false` (a boolean). Whether the deployment's AI Gateway keeps request logs (model, tokens, cost, duration and metadata, until they're deleted). They never hold the prompts or responses: every call sends `cf-aig-collect-log-payload: false`. Reviewers' verdicts on AI gates are sent as feedback on these entries ([Architecture](architecture.md)), so with logs off there is nothing to evaluate models against. Rendered into the engine's `AI_GATEWAY_LOGS`, which every model call sends as the gateway's `collectLog`; `provision.sh` also sets it as the default of a gateway it creates |
 | `fxCurrencies` | none | A list of ISO 4217 codes other than `USD`, such as `["EUR", "GBP", "CAD"]`. The currencies the deployment sells in: the engine's daily cron (`30 3 * * *`) fetches the ECB's reference rates (`https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml`, public, no account) and writes these currencies' rates per one USD into `fx_rates`, adding a currency that had none. A feed that can't be fetched or read, or whose US dollar is outside 0.5–2 per euro (`USD_PER_EUR_BOUNDS`, a bad publish rather than a market move), leaves the rates as they were. The refresh runs whatever the cron's other daily jobs do, and a failure of any of them still fails the invocation. Rendered into the engine's `FX_CURRENCIES`. Orders in a currency without a rate are refused, so naming one here is what lets them through (from the day after it's added). An admin can set a rate by hand (the Commerce page's Exchange rates table, `POST /api/v1/fx-rates/:currency` or MCP's `set_fx_rate`; only for a currency that has a rate or is named here, never USD, within `FX_RATE_BOUNDS`). A rate a person set on the Commerce page, over REST or MCP holds until someone changes it: the refresh skips it and keeps the other currencies current (`REFRESH_OVERWRITES` in `packages/core/src/fx.ts`).; a rate for a currency not named here is never refreshed and holds until changed. Orders already priced keep their `fxRate` either way |
 | `sso` | none | `{ "issuer": "https://…", "clientId": "…", "trustEmail"?: true }`: the customer's OpenID Connect identity provider and this deployment's client id; the issuer must be an https URL and the client id non-empty (refused otherwise). `trustEmail` (for Entra ID, which leaves out `email_verified`) lets a token without the claim match people by email. Rendered into the web Worker's `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_TRUST_EMAIL`; the client secret is the environment's `OIDC_CLIENT_SECRET`. See [Single sign-on](#single-sign-on) |
+| `email` | none | `{ "from": "orders@mail.example.com", "fromName"?: "Example Shop" }`: where the engine's email goes from. `from` must be an address (anything else is refused) on a domain onboarded to Email Sending ([Email sending](#email-sending)); `fromName` a plain display name. Renders the engine's `send_email` binding (`EMAIL`) and its `EMAIL_FROM` and `EMAIL_FROM_NAME` (always set, empty without `email`). Without it the engine sends no email, and an order's confirmation is recorded unsent and says so |
 | `turnstileSiteKey` | none | The public site key (`0x…`; Cloudflare's `1x`–`3x` test keys, which pass or fail whoever solves them, only on a `demo`; anything else is refused) of the deployment's Turnstile widget. Rendered into the web Worker's `TURNSTILE_SITE_KEY` (always, empty without one), which puts a Turnstile challenge on password sign-in and `/setup`. A deploy stops before it migrates anything when the environment lacks `TURNSTILE_SECRET_KEY`. See [Turnstile](#turnstile) |
 | `plugins` | none | `{ "<plugin id>": { "alias": "/<segment>/", "d1Id": "…", "personalData": "send", "capabilities": ["orders:start"], "runtime": "sandboxed", "secrets": ["API_KEY"] } }`: the plugins (`plugins/<id>/`) this deployment installs. `runtime` is `worker` (the default) or `sandboxed`. A `worker` plugin is its own Worker `commerceworker-plugin-<id><suffix>` and D1 database of the same name, bound to the engine and web Workers as `PLUGIN_<ID>`; `d1Id` is written by `scripts/provision.sh` (`fleet.ts set-plugin-d1`) and required to deploy. A `sandboxed` plugin has no Worker, binding or database: CI publishes its bundle and the engine loads it (Worker Loader), and a `d1Id` on one is refused. `personalData` is optional and can only be `"send"`: it grants the plugin buyer details, which its manifest can ask for but not give itself; it is rendered into the engine's `PLUGIN_GRANTS`. `alias` is another path the plugin's pages answer at, besides `/plugins/<id>/` (commerceworker.com gives punchout `/punchout/`): one lowercase segment, not one of the app's own top-level paths (`RESERVED_PATH_SEGMENTS` in `scripts/fleet.ts`, which `fleet.test.ts` checks against `apps/web/app/routes.ts` and `apps/web/workers/app.ts`) and not another plugin's; it is rendered into the web Worker's `PLUGIN_ALIASES` (see [Aliases](plugins.md#aliases)). `capabilities` grants what the plugin may ask the core to do through its `COMMERCEWORKER` binding (`carts:external`, `orders:start`, `orders:cancel`, each at most once; see [The host API](plugins.md#the-host-api)): a plugin whose manifest asks for one not listed is refused; it is rendered into `PLUGIN_GRANTS` too, and gives a `worker` plugin its `COMMERCEWORKER` service binding. `secrets` lists the plugin's secret names (upper case, not `PLUGIN_KEY`, `PLUGIN_KEY_PREVIOUS`, `DB`, `SECRETS` or `STORAGE`) and is needed only with `secretsStore`, because Secrets Store bindings are per secret. Any other key, an unknown `runtime`, ids that aren't plugin ids or are the engine's own variable names (`bundles`, `secrets`, `grants`, `key`, `storage`, `dev-bundles`, `publishers`), the `example` and `fixture-carrier` fixtures, and ids without `plugins/<id>/wrangler.jsonc` are refused. A `worker` plugin's `wrangler.jsonc` may hold only vars and one D1 binding `DB`, or rendering refuses it. See [Plugins](plugins.md) |
 | `secretsStore` | none | `{ "storeId": "<32 hex characters>" }` (anything else is refused): the Cloudflare Secrets Store of a deployment on its own Cloudflare account, where its plugins' secrets live as `PLUGIN_<ID>_<NAME>` instead of in the GitHub environment. Leave it out on a shared account (one store and 100 secrets an account). Rendered as `secrets_store_secrets` bindings for each plugin's listed `secrets`. See [Plugin secrets](#plugin-secrets) |
@@ -694,6 +695,44 @@ configured provider), so passwords and passkeys work again; people single sign-o
 password and need an admin to reset one for them.
 A person disabled at the provider keeps their session until it ends; an admin disabling them on the
 Team page ends it now, or the provider can do it through SCIM (below).
+
+## Email sending
+
+The engine mails a buyer once, when their order is confirmed: a hosted checkout's order (channel
+`web`, started under the engine's reserved `hosted:` key, as every hosted checkout's is) gets a transactional confirmation (lines, totals, ship-to and a
+link to its receipt on the storefront). It goes through [Cloudflare Email
+Sending](https://developers.cloudflare.com/email-service/) over the engine's `send_email` binding,
+with no API key. Nothing else in the engine sends mail yet: `commerce.notify` still only queues a
+message in `messages`, and intake's acknowledgement goes through Email Routing.
+
+To turn it on for a deployment:
+
+1. **Onboard a sending domain** on the deployment's Cloudflare account, one the owner controls and
+   whose DNS Cloudflare serves. The domain, or a subdomain such as `mail.<domain>`, must be enabled
+   for sending: `npx wrangler email sending enable mail.example.com`, or **Email** > **Email
+   Sending** in the dashboard. Cloudflare adds the SPF and DKIM records; add a DMARC record too
+   (`v=DMARC1; p=quarantine; rua=mailto:…`), or confirmations may reach the spam folder. A send from
+   a domain that isn't onboarded is refused (`E_SENDER_NOT_VERIFIED`).
+2. **Set the sender in the registry**: `"email": { "from": "orders@mail.example.com", "fromName":
+   "Example Shop" }`, on that domain, and merge. The deploy renders the binding and `EMAIL_FROM`.
+3. **Check one order.** Complete a hosted checkout with a real address you control. The order's
+   message (`messages`, `msg_<orderId>_confirmation`) has `sent_at` set; if not, its `error` says
+   why, and the order's timeline has a line (`Completed, but its confirmation email was not sent: …`).
+
+A deployment without `email` sends nothing: each confirmation is recorded unsent with
+`Email sending is not configured on this deployment`, and no receipt credential is minted. Once the
+binding is there, the next call for that order (the order's authorization step calls it) sends it;
+nothing retries on its own after the order has ended, so an unsent one is found with
+`sent_at IS NULL` on a `confirmation` message. A send is keyed by the order, so a repeat sends
+nothing once `sent_at` is set; only a crash between Email Sending accepting a message and the row
+being marked can send one twice, because the binding has no idempotency key.
+
+The receipt link (`<storefront>/orders/<id>?t=<token>`) carries a random credential that is stored
+only as a hash and expires after 30 days. It is a bearer secret: anyone holding the link sees the
+order's lines, totals, status, ship-to and tracking (never its timeline, audit or notes), so the
+page is never cached, sends no referrer and is kept out of search. Erasing a data subject, or the
+retention sweep erasing an order's buyer, deletes the order's credentials. The stored copy of the
+email keeps the link without its token, so staff reading `messages` never see one.
 
 ## Turnstile
 

@@ -31,8 +31,9 @@ export function fromOutside<T extends StartOrderInput>(req: T): T {
   // point an order at a PO it names, so it goes. A `record` is the web app's own, for an inbound PO.
   const out: T = req.purchaseOrder && 'link' in req.purchaseOrder ? withoutLink(req) : req;
   const meta = out.input.meta;
-  if (!meta || !('ucp' in meta || 'cart' in meta || 'plugin' in meta)) return out;
-  const { ucp: _ucp, cart: _cart, plugin: _plugin, ...rest } = meta;
+  if (!meta || !('ucp' in meta || 'cart' in meta || 'plugin' in meta || 'hosted' in meta))
+    return out;
+  const { ucp: _ucp, cart: _cart, plugin: _plugin, hosted: _hosted, ...rest } = meta;
   return { ...out, input: { ...out.input, meta: rest } };
 }
 
@@ -137,7 +138,7 @@ async function start(
       const flow = await loadFlowVersion(env, row.flowId, row.flowVersion);
       if (!flow) throw new Error(`Flow ${row.flowId} v${row.flowVersion} not found`);
       const po = await tiePurchaseOrder(env, req, row.id, row.createdAt);
-      await launch(env, req, flow, row.id, row.createdAt, po);
+      await launch(env, req, flow, row.id, row.createdAt, po, key);
     }
     return { orderId: row.id, replayed: true };
   };
@@ -200,7 +201,7 @@ async function start(
     console.error(JSON.stringify({ type: 'customer_address_failed', orderId, error: String(err) }));
   }
   const po = await tiePurchaseOrder(env, req, orderId, now);
-  await launch(env, req, flow, orderId, now, po);
+  await launch(env, req, flow, orderId, now, po, key);
   return { orderId };
 }
 
@@ -214,6 +215,7 @@ async function launch(
   orderId: string,
   createdAt: number,
   po?: { id: string; poNumber: string | null },
+  key?: string,
 ) {
   const input = orderInputSchema.parse(req.input);
   const order: Order = {
@@ -254,6 +256,8 @@ async function launch(
     generation: 1,
     order,
     vars: req.vars ?? {},
+    // What marks a hosted checkout's order (`confirmsByEmail`): the engine's own key, never meta.
+    ...(key ? { key } : {}),
   };
   try {
     await env.ORDER_WORKFLOW.create({ id: instanceId, params });

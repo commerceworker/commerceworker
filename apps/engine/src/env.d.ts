@@ -1,5 +1,10 @@
 // Secrets set with `wrangler secret put`; `wrangler types` can't see them.
 interface Env {
+  /**
+   * Cloudflare Email Sending (a `send_email` binding), added per deployment by scripts/fleet.ts
+   * when the registry sets `email`; unbound, no email is sent. Mail goes from `EMAIL_FROM`.
+   */
+  EMAIL?: SendEmail;
   /** Extra senders allowed to start orders by email: addresses or @domains, comma-separated. */
   INTAKE_ALLOWLIST?: string;
   /** Live shipping carriers' credentials: JSON of carrier id → Authorization header value. */

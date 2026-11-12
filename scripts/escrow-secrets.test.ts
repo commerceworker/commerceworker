@@ -57,7 +57,9 @@ const encrypt = (env: Record<string, string>) => {
 };
 
 test('every secret a Worker receives is escrowed, except those derived from another', () => {
-  const held = new Set<string>([...Object.values(SECRETS), ...Object.values(CONTENT_SECRETS)].flat());
+  const held = new Set<string>(
+    [...Object.values(SECRETS), ...Object.values(CONTENT_SECRETS)].flat(),
+  );
   for (const name of Object.keys(DERIVED)) held.delete(name);
   assert.ok(held.has('DATA_KEY'));
   assert.deepEqual(names(workflow).sort(), [...held].sort());

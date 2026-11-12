@@ -20,6 +20,7 @@ export * from './logs';
 export * from './marketplace';
 export * from './order-board';
 export * from './order-queries';
+export * from './order-views';
 export * from './orders';
 export * from './outbox';
 export * from './passkeys';

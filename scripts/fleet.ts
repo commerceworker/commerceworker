@@ -304,6 +304,14 @@ export type Deployment = {
    */
   sso?: { issuer: string; clientId: string; trustEmail?: boolean };
   /**
+   * Cloudflare Email Sending for the engine: the address mail goes from (`from`, on a domain
+   * onboarded to Email Sending with `wrangler email sending enable <domain>`) and an optional
+   * display name. It adds the engine's `send_email` binding (EMAIL) and sets EMAIL_FROM and
+   * EMAIL_FROM_NAME. Without it the engine sends no email: an order confirmation is recorded
+   * unsent and says so.
+   */
+  email?: { from: string; fromName?: string };
+  /**
    * The site key of this deployment's Turnstile widget (public; scripts/provision.sh creates the
    * widget and prints it). With it, password sign-in and /setup ask for a Turnstile check, which
    * the web Worker verifies with the environment's TURNSTILE_SECRET_KEY: a deploy then requires
@@ -589,6 +597,23 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     if (sso.trustEmail !== undefined && typeof sso.trustEmail !== 'boolean')
       throw new Error(`${file}: sso.trustEmail must be true or false`);
   }
+  const email = raw.email as Record<string, unknown> | undefined;
+  if (email !== undefined) {
+    if (typeof email !== 'object' || email === null)
+      throw new Error(`${file}: email must be { "from", "fromName"? }`);
+    // The same shape the sender adapter accepts, so a typo fails here and not at the first order.
+    if (typeof email.from !== 'string' || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email.from))
+      throw new Error(
+        `${file}: email.from must be an address on a domain onboarded to Email Sending`,
+      );
+    if (
+      email.fromName !== undefined &&
+      (typeof email.fromName !== 'string' ||
+        !email.fromName.trim() ||
+        /[\r\n<>]/.test(email.fromName))
+    )
+      throw new Error(`${file}: email.fromName must be a plain display name`);
+  }
   const turnstile = raw.turnstileSiteKey;
   // Real keys are 0x…, Cloudflare's test keys 1x…–3x…; anything else is a paste of something else.
   // A test key always passes (or always fails) whoever solves it, so only a demo may have one:
@@ -794,6 +819,14 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
             issuer: sso.issuer as string,
             clientId: sso.clientId as string,
             ...(sso.trustEmail === true ? { trustEmail: true } : {}),
+          },
+        }
+      : {}),
+    ...(email
+      ? {
+          email: {
+            from: (email.from as string).trim(),
+            ...(email.fromName ? { fromName: (email.fromName as string).trim() } : {}),
           },
         }
       : {}),
@@ -1282,6 +1315,14 @@ export function renderEngine(base: Config, d: Deployment): Config {
   if (d.auditRetentionDays)
     config.vars = { ...config.vars, AUDIT_RETENTION_DAYS: String(d.auditRetentionDays) };
   config.vars = { ...config.vars, AI_PERSONAL_DATA: d.aiPersonalData };
+  // Email Sending: the binding and its sender only where the registry sets `email`. The vars are
+  // always set, so a deployment without one never keeps another's sender.
+  if (d.email) config.send_email = [...(config.send_email ?? []), { name: 'EMAIL' }];
+  config.vars = {
+    ...config.vars,
+    EMAIL_FROM: d.email?.from ?? '',
+    EMAIL_FROM_NAME: d.email?.fromName ?? '',
+  };
   if (d.assistantDailyTokens !== undefined)
     config.vars = { ...config.vars, ASSISTANT_DAILY_TOKENS: String(d.assistantDailyTokens) };
   // Durable Objects keep data where D1 and R2 do.
