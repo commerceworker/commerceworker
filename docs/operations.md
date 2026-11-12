@@ -159,7 +159,9 @@ Turning it on for an existing deployment: set `"content": true`, run `./scripts/
    `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` or `OIDC_CLIENT_SECRET` ([single sign-on](#single-sign-on)) there if the customer uses them (Stripe also
    needs `"payments": "stripe"` in the registry file, and invoices through Stripe need
    the [Stripe webhook](deploy.md#stripe-webhook)). To gate this customer's deploys, add a required reviewer to the
-   environment.
+   environment. For `production`, then run the `Escrow secrets` workflow so the keys survive losing
+   the environment ([Escrowing secrets](content/backup-and-restore.md#escrowing-secrets); it refuses
+   until the owner has pinned the escrow key, and plugin secrets aren't in it).
 4. Commit the registry file and merge. CI deploys the customer in its ring, and the custom domain
    creates its DNS record in the `commerceworker.com` zone.
 5. Send the customer's first admin `https://<domain>/setup` and the code from

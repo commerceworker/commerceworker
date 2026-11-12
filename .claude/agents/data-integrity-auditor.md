@@ -213,7 +213,7 @@ the side effect; don't assess from naming or docs alone.
   asset bytes, and deleting an environment removes the bytes), one person's conversations. Which
   of these work without rolling back everyone else in the deployment?
 - **Keys are data.** `DATA_KEY`, `TOKEN_PEPPER` and `PASSWORD_PEPPER` must be escrowed; losing one
-  loses what it protects. Is there any evidence of escrow, and does rotation keep old data readable?
+  loses what it protects. The `Escrow secrets` workflow (`.github/workflows/escrow-secrets.yml`, docs/content/backup-and-restore.md) does it once the owner has pinned `ESCROW_RECIPIENT`: is the pin real (not the placeholder), has it run since the last rotation, and does rotation keep old data readable?
 - **Backup contents:** does retained history hold personal data the retention rules say should be
   gone?
 
