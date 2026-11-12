@@ -110,4 +110,13 @@ candidate finding that still needs a concrete attacker before it is reported.
   from forks, no untrusted input interpolated into `run:` (`${{ github.event.* }}`).
 - Does a hosted checkout's payment use the buyer's own instrument? Never on-account, never the
   customer's credit or saved cards, unless the operator explicitly allows it
-  (`apps/engine/src/checkout/complete.ts`, where a hosted completion will go).
+  (`apps/engine/src/checkout/complete.ts`; `completeHosted` in `hosted.ts` completes only in test mode, with a
+  test authorizer that holds and takes nothing, until a card is taken). When a card is taken (S3), also:
+  - a live hosted authorizer returns the buyer's own `payment.intentId` for the order to adopt, and a
+    live completion without one is refused (`holdsNothingOnlyInTestMode` throws);
+  - a flow that carries the order on account (`commerce.invoice` with `onAccount`, `commerce.charge`) is
+    refused, as one that doesn't authorize a card is (`checkoutFlowProblem`);
+  - the flow is loaded and re-checked at completion, not trusted from when the setting was saved
+    (`completeHosted`, and UCP's `completeCheckout`);
+  - completion is for the version and total the buyer saw (`completeCheckout`'s `shown`), so an
+    order is never placed at a price they were not shown.

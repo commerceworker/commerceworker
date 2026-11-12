@@ -55,13 +55,22 @@ export const HOSTED_ID = /^chk_[A-Za-z0-9_-]{1,64}$/;
 /** The start link's path on the storefront. */
 export const hostedStartPath = (id: string, token: string) => `/checkout/start/${id}/${token}`;
 
+/** The longest each field of a buyer's page may be, and the most codes: the page and the schemas below share them. */
+export const HOSTED_LIMITS = {
+  email: 254,
+  name: 100,
+  phone: 40,
+  promoCode: 60,
+  promoCodes: 10,
+} as const;
+
 /** Who is buying, as the merchant's call or the buyer's page gives it. */
 export const hostedBuyerSchema = z
   .object({
-    email: z.string().trim().email().max(254).optional(),
-    firstName: z.string().trim().max(100).optional(),
-    lastName: z.string().trim().max(100).optional(),
-    phone: z.string().trim().max(40).optional(),
+    email: z.string().trim().email().max(HOSTED_LIMITS.email).optional(),
+    firstName: z.string().trim().max(HOSTED_LIMITS.name).optional(),
+    lastName: z.string().trim().max(HOSTED_LIMITS.name).optional(),
+    phone: z.string().trim().max(HOSTED_LIMITS.phone).optional(),
   })
   .strict();
 
@@ -72,7 +81,9 @@ const hostedPatchFields = {
   shippingOption: z.string().max(MAX_SHIPPING_OPTION_ID).nullable(),
   fulfillment: z.enum(['ship', 'pickup']),
   pickupLocationId: z.string().min(1).max(100).nullable(),
-  promoCodes: z.array(z.string().trim().min(1).max(60)).max(10),
+  promoCodes: z
+    .array(z.string().trim().min(1).max(HOSTED_LIMITS.promoCode))
+    .max(HOSTED_LIMITS.promoCodes),
 } as const;
 
 /** A buyer's change of a session (`CheckoutPatch` without lines, strict: an unknown key is refused). */
@@ -156,10 +167,20 @@ export const hostedView = (s: CheckoutSession): HostedCheckout =>
     version: s.version,
   });
 
-/** The answer to a buyer's change: the session as it is now, or why it wasn't made. */
+/**
+ * The answer to a buyer's change: the session as it is now, or why it wasn't made. `changed` is set
+ * when the session moved under the request (the page showed an older version, or another write won
+ * the race): the page says so and shows `checkout`, the session as it is.
+ */
 export type HostedChange =
   | { ok: true; checkout: HostedCheckout }
-  | { ok: false; error: string; checkout?: HostedCheckout };
+  | { ok: false; error: string; checkout?: HostedCheckout; changed?: true };
 
-/** What the storefront may know of the settings: whether hosted checkout is on, and what a buyer may edit. */
-export type HostedCheckoutSettings = { checkout: { enabled: boolean; editLines: boolean } };
+/**
+ * What the storefront may know of the settings: whether hosted checkout is on, what a buyer may
+ * edit, and whether payments are only recorded (`testPayments`: PAYMENTS_MODE "mock"), where the
+ * page offers a test order and no card.
+ */
+export type HostedCheckoutSettings = {
+  checkout: { enabled: boolean; editLines: boolean; testPayments: boolean };
+};

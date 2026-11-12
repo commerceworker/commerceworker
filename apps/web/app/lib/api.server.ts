@@ -53,6 +53,9 @@
  *   POST   /api/v1/ucp/platforms                { name, profileUrl } → API key, once
  *   DELETE /api/v1/ucp/platforms/:id            revoke
  *
+ *   GET    /api/v1/storefront                   hosted checkout: its settings (admin)
+ *   POST   /api/v1/storefront/settings          { checkout: { enabled, checkoutFlowId, editLines } }
+ *
  * Signed webhooks (an integration's key, no token; see `readSigned`):
  *   POST /api/v1/webhooks/events                { orderId, event, payload? }
  *   POST /api/v1/webhooks/orders                { model, channel, externalId, lines, … }
@@ -100,6 +103,7 @@ import {
   signatureKeyId,
   staffCartActor,
   startOrderSchema,
+  storefrontSettingsSchema,
   subjectTarget,
   toStartRequest,
   ucpSettingsSchema,
@@ -149,6 +153,7 @@ import { pluginStatuses } from './plugins.server';
 import { decider, signedActor } from './principal.server';
 import { overBudget } from './rate-limit';
 import { matchOperation, operationRole, queryInput } from './rest-operations';
+import { setStorefrontSettings, storefrontAdmin } from './storefront.server';
 import { addPlatform, revokePlatform, setUcpSettings, ucpAdmin } from './ucp.server';
 import {
   createSubscription,
@@ -247,6 +252,8 @@ export async function handleApi(request: Request, caller: Caller): Promise<Respo
       return need('admin') ?? (await handleIntegrations(request, caller, parts, body));
     if (parts[0] === 'ucp')
       return need('admin') ?? (await handleUcpAdmin(request, caller, parts, body));
+    if (parts[0] === 'storefront')
+      return need('admin') ?? (await handleStorefrontAdmin(request, caller, parts, body));
     if (parts[0] === 'catalog') return await handleCatalog(request, caller, parts);
     if (parts[0] === 'data-subjects')
       return need('admin') ?? (await handleDataSubjects(request, caller, parts, body));
@@ -714,6 +721,26 @@ async function handleIntegrations(
       detail: revoked.audit.detail,
     });
     return json({ ok: true });
+  }
+  return json({ error: 'Not found' }, 404);
+}
+
+async function handleStorefrontAdmin(
+  request: Request,
+  caller: Principal,
+  parts: string[],
+  body: () => Promise<unknown>,
+): Promise<Response> {
+  if (parts.length === 1 && request.method === 'GET')
+    return json({ settings: await storefrontAdmin() });
+  if (parts[1] === 'settings' && parts.length === 2 && request.method === 'POST') {
+    const parsed = storefrontSettingsSchema.safeParse(await body());
+    if (!parsed.success)
+      return json({ error: 'Invalid settings', issues: parsed.error.issues }, 400);
+    const changed = await setStorefrontSettings(parsed.data, actor(caller));
+    if (!changed.ok) return json({ error: changed.error }, 422);
+    await audit(request, changed.audit.action, { actor: caller, detail: changed.audit.detail });
+    return json({ settings: changed.settings });
   }
   return json({ error: 'Not found' }, 404);
 }

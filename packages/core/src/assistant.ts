@@ -184,6 +184,8 @@ export type AssistantTool =
   | 'get_ucp_settings'
   | 'set_ucp_settings'
   | 'revoke_ucp_platform'
+  | 'get_storefront_settings'
+  | 'set_storefront_settings'
   | 'draft_cart_reply'
   | 'set_assistant_routing';
 
@@ -1172,6 +1174,22 @@ export const ASSISTANT_TOOLS: Record<
     description:
       'Set agentic checkout: the flow a completed checkout starts (null turns it off), the legal links and the order page URL with {id}. Replaces all three. The flow must authorize a card payment.',
   },
+  get_storefront_settings: {
+    role: 'admin',
+    confirm: false,
+    label: 'Read hosted checkout settings',
+    title: 'Get hosted checkout settings',
+    description:
+      'Hosted checkout, the page a buyer pays on: whether it is on, the flow that prices it (null uses agentic checkout’s) and whether the buyer may change the lines.',
+  },
+  set_storefront_settings: {
+    role: 'admin',
+    confirm: true,
+    label: 'Change hosted checkout settings',
+    title: 'Change hosted checkout settings',
+    description:
+      'Set hosted checkout: turn it on or off, the flow that prices it and places its order (null uses agentic checkout’s), and whether the buyer may change the lines. Replaces all three. Turning it on needs a flow that authorizes a card payment; while it is off, links already made stop working.',
+  },
   revoke_ucp_platform: {
     role: 'admin',
     confirm: true,
@@ -1273,6 +1291,8 @@ export const PERSON_CONFIRMS_TOOLS: readonly AssistantTool[] = [
   'revoke_integration',
   'revoke_ucp_platform',
   'set_ucp_settings',
+  // Whether the public storefront takes buyers at all.
+  'set_storefront_settings',
   // Who may do what: only a person on the Team page decides it.
   'set_member_role',
   'set_approval_separation',

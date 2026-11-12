@@ -80,6 +80,7 @@ describe('the storefront entrypoint', () => {
         'cartCustomerName',
         'cartSnapshot',
         'checkout',
+        'completeCheckout',
         'fetch',
         'health',
         'keepCartOpen',

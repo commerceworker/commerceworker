@@ -9,6 +9,7 @@ export default [
   // checkout itself, outside any app shell and sign-in (lib/hosted-checkout.server.ts).
   route('checkout/start/:id/:token', 'routes/checkout-start.tsx'),
   route('checkout/:id', 'routes/checkout.tsx'),
+  route('checkout/:id/placed', 'routes/checkout-placed.tsx'),
   // A cart's files and its product search, for the cart's buyer; staff reach theirs on the admin
   // (lib/cart-files.server.ts, packages/cart/src/files.ts).
   route('carts/:cartId/attachments', 'routes/cart-attachments.ts'),

@@ -105,7 +105,13 @@ export type CheckoutQuote = {
     ships: boolean;
     /** The unit price before promotions, when the flow has a discount step. */
     listPrice?: number;
+    /** What the line costs: `unitPrice` times `qty`, worked out by the quote (set on every quote it prices). */
+    total?: number;
+    /** The line before promotions (`listPrice` times `qty`; its `total` without a discount step). */
+    listTotal?: number;
   }[];
+  /** The lines before promotions: the sum of their `listTotal` (set by the quote, like them). */
+  listSubtotal?: number;
   subtotal: number;
   shipping: number;
   tax: number;

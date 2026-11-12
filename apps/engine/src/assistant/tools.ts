@@ -12,6 +12,7 @@ import {
   listIntegrations,
   listWebhookDeliveries,
   listWebhookSubscriptions,
+  readStorefrontAdminSettings,
   verifyAuditTrail,
 } from '@commerceworker/application/commerce';
 import {
@@ -168,6 +169,7 @@ export const ACTION_TOOLS: ActionTool[] = [
   'revoke_integration',
   'set_ucp_settings',
   'revoke_ucp_platform',
+  'set_storefront_settings',
 ];
 
 export const isActionTool = (name: AssistantTool): name is ActionTool =>
@@ -416,6 +418,8 @@ export async function runTool<T extends AssistantTool>(
       };
     case 'get_ucp_settings':
       return getUcpAdmin({ workspace: workspaceStore(env), ucp: ucpStore(env) });
+    case 'get_storefront_settings':
+      return { settings: await readStorefrontAdminSettings({ workspace: workspaceStore(env) }) };
     case 'start_scenario':
       return startScenario(
         env,

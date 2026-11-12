@@ -90,7 +90,7 @@ import { PROMOTION_KINDS, PROMOTION_STACKING } from './promotions';
 import { RETURN_NOTE_MAX, RETURN_REASON_CODES, type ReturnReason } from './returns';
 import { ROLES } from './roles';
 import { FULFILLMENT_METHODS, ORDER_CHANNELS, ORDER_MODELS, ORDER_STATUSES } from './types';
-import { ucpSettingsSchema } from './ucp/profile';
+import { storefrontAdminSchema, storefrontSettingsSchema, ucpSettingsSchema } from './ucp/profile';
 
 /**
  * The flow draft a publish or test is held to: `get_flow`'s `draft`. Over REST it is required (a
@@ -851,6 +851,9 @@ export const TOOL_INPUTS = {
   // The REST body, exactly: one schema holds both transports to the same bounds.
   set_ucp_settings: ucpSettingsSchema,
   revoke_ucp_platform: z.object({ platformId: z.string().min(1).max(60) }),
+  get_storefront_settings: z.object({}),
+  // The REST body, exactly, as set_ucp_settings'.
+  set_storefront_settings: storefrontSettingsSchema,
   publish_catalog: z.object({
     keys: z.array(productKey).min(1).max(500).describe('Product keys whose staged edits publish'),
   }),
@@ -1370,6 +1373,8 @@ export const TOOL_OUTPUTS = {
   }),
   set_ucp_settings: actionOutput,
   revoke_ucp_platform: actionOutput,
+  get_storefront_settings: storefrontAdminSchema,
+  set_storefront_settings: actionOutput,
   list_fx_rates: row({
     base: z.string().describe('The base currency every rate is per one of'),
     rates: z.array(

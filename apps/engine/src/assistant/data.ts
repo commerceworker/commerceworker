@@ -90,6 +90,7 @@ import {
   previewCatalogWrite,
   runCatalogWrite,
 } from './catalog-writes';
+import { previewStorefrontSettings, runStorefrontSettings } from './checkouts';
 import {
   type PromotionInput,
   previewCertificate,
@@ -541,6 +542,7 @@ export type ActionInput = {
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
+  set_storefront_settings: ToolInput<'set_storefront_settings'>;
   revoke_ucp_platform: ToolInput<'revoke_ucp_platform'>;
 } & CatalogWrite;
 export type ActionTool = keyof ActionInput;
@@ -884,6 +886,12 @@ export async function previewAction<T extends ActionTool>(
         );
       case 'set_ucp_settings':
         return await previewUcpSettings(env, input as ActionInput['set_ucp_settings'], roleBlock);
+      case 'set_storefront_settings':
+        return await previewStorefrontSettings(
+          env,
+          input as ActionInput['set_storefront_settings'],
+          roleBlock,
+        );
       case 'put_catalog_products':
       case 'delete_catalog_products':
       case 'delete_catalog_type':
@@ -1245,6 +1253,8 @@ export async function runAction<T extends ActionTool>(
       return runRevokePlatform(env, p, input as ActionInput['revoke_ucp_platform'], trail);
     case 'set_ucp_settings':
       return runUcpSettings(env, p, input as ActionInput['set_ucp_settings'], trail);
+    case 'set_storefront_settings':
+      return runStorefrontSettings(env, p, input as ActionInput['set_storefront_settings'], trail);
     case 'put_catalog_products':
     case 'delete_catalog_products':
     case 'delete_catalog_type':

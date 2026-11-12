@@ -94,15 +94,30 @@ export const STOREFRONT_SETTINGS_KEY = 'storefront';
 export const storefrontSettingsSchema = z.object({
   checkout: z
     .object({
-      enabled: z.boolean().default(false),
+      enabled: z
+        .boolean()
+        .default(false)
+        .describe('Whether buyers can open a hosted checkout; off, every link stops working'),
       /** The flow a hosted checkout is priced by and places its order on; UCP's when unset. */
-      checkoutFlowId: z.string().min(1).max(100).nullable().default(null),
+      checkoutFlowId: z
+        .string()
+        .min(1)
+        .max(100)
+        .nullable()
+        .default(null)
+        .describe('The published flow that prices a hosted checkout; null uses agentic checkout’s'),
       /** Whether the buyer may change the lines on their page; off, only the merchant's call does. */
-      editLines: z.boolean().default(false),
+      editLines: z
+        .boolean()
+        .default(false)
+        .describe('Whether the buyer may change the lines on their page'),
     })
     .default({ enabled: false, checkoutFlowId: null, editLines: false }),
 });
 export type StorefrontSettings = z.infer<typeof storefrontSettingsSchema>;
+
+/** Hosted checkout's settings as the admin API shows them (`GET /api/v1/storefront`). */
+export const storefrontAdminSchema = z.object({ settings: storefrontSettingsSchema });
 
 export const STOREFRONT_OFF: StorefrontSettings = storefrontSettingsSchema.parse({});
 

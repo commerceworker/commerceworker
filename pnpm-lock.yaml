@@ -755,6 +755,9 @@ importers:
         specifier: 'catalog:'
         version: 8.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
     devDependencies:
+      '@axe-core/playwright':
+        specifier: 'catalog:'
+        version: 4.14.0(playwright-core@1.65.0)
       '@babel/plugin-proposal-decorators':
         specifier: 'catalog:'
         version: 8.0.2(@babel/core@8.0.7)

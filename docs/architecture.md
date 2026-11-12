@@ -99,7 +99,7 @@ second entrypoint, and the only one the public storefront is bound to. It exists
 else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
 calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
 its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
-`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout` and `updateCheckout` (see [Hosted checkout](#hosted-checkout)), and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout` and `completeCheckout` (see [Hosted checkout](#hosted-checkout)), and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
 (anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
 an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
 whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
@@ -487,16 +487,25 @@ second front (a hosted checkout page) adds a caller, not a second checkout.
 ### Hosted checkout
 
 A hosted checkout is the same checkout behind a second front: the buyer's own page on the storefront
-(`apps/storefront/app/routes/checkout.tsx`, a placeholder until the page is built) instead of a
-platform's API. Its caller (`apps/engine/src/checkout/hosted.ts`) is `channel: 'web'`, prefix `hosted`, priced
+(`apps/storefront/app/routes/checkout.tsx`) instead of a platform's API. Its caller (`apps/engine/src/checkout/hosted.ts`) is `channel: 'web'`, prefix `hosted`, priced
 by the `storefront` setting's `checkoutFlowId` or, unset, UCP's checkout flow.
 
 **Settings.** The workspace setting `storefront` (`storefrontSettingsSchema`, next to UCP's in
 `packages/core/src/ucp/profile.ts`) holds `checkout.enabled` (default `false`), `checkoutFlowId` and
 `editLines` (whether the buyer may change the lines; default `false`). With it off the engine refuses every
 hosted call and `create_checkout` makes no link. The storefront keeps `storefrontSettings()` for 30 seconds
-per isolate, like UCP's `ucpCheckoutOn`. Nothing in the app sets it yet: it is written to
-`workspace_settings` directly until an admin screen or tool exists.
+per isolate, like UCP's `ucpCheckoutOn`, and it also says whether payments are only recorded
+(`testPayments`: `PAYMENTS_MODE` `mock`). An admin sets it with `set_storefront_settings` (below).
+
+**Setting it.** `set_storefront_settings` (admin, confirmed, in `PERSON_CONFIRMS_TOOLS` so a typed A2A skill never runs
+it) takes the whole `storefrontSettingsSchema` and replaces it, `get_storefront_settings` reads it. Its
+REST twins are `GET /api/v1/storefront` and `POST /api/v1/storefront/settings` (hand-written like UCP's
+in `apps/web/app/lib/api.server.ts`, so an admin API token can call them); both run the use-cases in
+`packages/application/src/commerce/storefront.ts`, as does the **Hosted checkout** section of the Team page
+(`apps/web/app/components/storefront-settings.tsx`, saved through the assistant's confirm card). Turning it on is
+refused unless the flow that would price it (the chosen one, else UCP's) is published and passes
+`checkoutFlowProblem`; a flow saved while it is off is checked when it is turned on. It is audited as
+`checkout.settings` with the enabled flag, flow, the previous flow (`fromFlow`), `editLines` and whether it was on. No step-up: UCP's settings need none.
 
 **Creating.** `create_checkout` (operator, REST `POST /api/v1/checkouts`, MCP, the assistant; audited
 `checkout.created`, never with the link) takes lines, an optional buyer, ship-to and customer, prices the
@@ -525,11 +534,37 @@ reaches no engine. The buyer sees an explicit projection of the session (`hosted
 shipping option, fulfillment, store and promo codes; with `editLines`, `hostedPatchWithLinesSchema` adds lines,
 each a SKU and a quantity): an unknown key (a price, `quote`, `ownerId`, `status`, `payment`) is refused, not
 ignored. The session is priced again by the flow on every write and written over the version it read.
-`payment?: { intentId, state }` on the session is unused until payment is taken.
+`payment?: { intentId, state }` on the session is unused until payment is taken. `updateCheckout` also takes the
+`version` the buyer's page showed: if it is no longer the session's, nothing is written and the answer is
+`{ ok: false, changed: true, checkout }` with the session as it is; a write that loses the race to another says the
+same (`HostedChange.changed`).
+
+**Completing (test mode).** `completeCheckout` (`completeHosted`) takes the same secret and actor as every call, and
+the `{ version, total }` the buyer's page showed (a session at another version, or priced differently now, is `changed`
+and places nothing). It loads the flow and re-checks it with `checkoutFlowProblem` (so does UCP's completion), and places the order through the shared `completeSession` only while `PAYMENTS_MODE` is `mock`, with a test authorizer
+that holds nothing and takes nothing (UCP's test handler's twin). The order is on the web channel, keyed
+`hosted:<session id>`, started by the session's owner, so a second press (or two at once) places one order and answers
+the completed session again. A session that isn't ready is shown with what is missing and nothing is claimed; with real
+payments the answer is a refusal and nothing is claimed or placed. It never reaches the customer's account, credit or a
+saved card. Taking a card is the next slice.
 
 **Storefront.** `checkout/start/:id/:token` redeems and redirects (`no-store`, `no-referrer`);
-`checkout/:id` reads the session under `API_LIMIT` per cookie. The Worker's cross-origin check already
-refuses a browser's cross-site POST to both.
+`checkout/:id` is the page: its loader reads the buyer view and its action posts the form (`intent=update` or
+`place`) under `API_LIMIT` per cookie; `checkout/:id/placed` is the order's reference until the confirmation page. The
+Worker's cross-origin check refuses a browser's cross-site POST to them, and every response is `no-store`,
+`no-referrer` and `frame-ancestors 'none'`, with nothing personal in a URL.
+The page is one plain `<form>` (it works without a script): contact (email validated before the engine is asked),
+the ship-to with `shipping …` autocomplete tokens, the quote's shipping options, a store to collect from where the
+flow offers pickup (`pickupStores`), promo codes (applied and refused, from the quote), the total as rows
+(`totalRows`; every amount is the quote's own: each line's `total` and `listTotal` and the quote's `listSubtotal` come
+from the pricing, and the page adds nothing up) and the buttons. `lib/checkout-form.ts` builds the patch from the form (a change of address clears the
+shipping option; only what the page showed is sent; no price field exists) and maps issues to sections by their
+`path`; what is merely still to fill in shows only once the buyer has tried to continue. A change made since the page
+was drawn (the form carries `version`) or a lost race answers 409 with "This checkout changed" and the session as it
+is. An update redirects back (303); placing updates first, then completes, and goes to the order page. With real
+payments the page says card payment is coming and has no button that completes. Fields are 44px tall and 16px; the
+react-router `headers` export returns the private headers whichever of loader, action or boundary answered
+(`privateHeaders`).
 
 **Boundary.** A platform is not a `Principal`: it has no role and acts only on its own checkouts
 and orders. The storefront Worker (`ucpFetch`, `apps/storefront/app/lib/ucp.server.ts`; platforms are registered on the admin) finds it by key (`X-API-Key` or `Bearer`, `cmw_ucp_`; only the key's SHA-256 leaves the Worker, to `StorefrontApi.ucpPlatform`, which looks it up in `ucp_platforms.key_hash`, revoked rows excluded, and records its use), requires `UCP-Agent` to equal the

@@ -5,7 +5,9 @@ const env: Record<string, unknown> = { STOREFRONT_KEY: 'storefront-test-key' };
 const engineFetch = vi.fn(async (_r: Request) => new Response('ok'));
 const redeemCheckoutStart = vi.fn();
 const checkout = vi.fn();
-const storefrontSettings = vi.fn(async () => ({ checkout: { enabled: true, editLines: false } }));
+const storefrontSettings = vi.fn(async () => ({
+  checkout: { enabled: true, editLines: false, testPayments: true },
+}));
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
@@ -39,7 +41,9 @@ async function refusal(run: () => Promise<unknown>) {
 beforeEach(() => {
   vi.clearAllMocks();
   lib.forgetStorefrontSettings();
-  storefrontSettings.mockResolvedValue({ checkout: { enabled: true, editLines: false } });
+  storefrontSettings.mockResolvedValue({
+    checkout: { enabled: true, editLines: false, testPayments: true },
+  });
   delete env.API_LIMIT;
 });
 
@@ -62,7 +66,14 @@ describe('a hosted checkout’s start link: a GET only shows a page', () => {
     expect(JSON.stringify(res.data)).not.toContain('tok');
     expect(redeemCheckoutStart).not.toHaveBeenCalled();
     expect(storefrontSettings).not.toHaveBeenCalled();
-    expect(start.headers({ loaderHeaders: headers } as never)).toBe(headers);
+    // React Router hands `headers` all three sets, the unused ones empty: the page is private anyway.
+    const sent = start.headers({
+      loaderHeaders: headers,
+      actionHeaders: new Headers(),
+      errorHeaders: undefined,
+    } as never);
+    expect(sent.get('cache-control')).toBe('no-store');
+    expect(sent.get('referrer-policy')).toBe('no-referrer');
   });
 
   it('refuses a malformed id and still redeems nothing', async () => {
@@ -135,13 +146,18 @@ describe('redeeming a hosted checkout’s start link by POST', () => {
     expect(r.message).toMatch(/used or has expired/);
     expect(r.headers.get('cache-control')).toBe('no-store');
     expect(r.headers.has('set-cookie')).toBe(false);
-    expect(start.headers({ errorHeaders: r.headers, loaderHeaders: new Headers() } as never)).toBe(
-      r.headers,
-    );
+    const sent = start.headers({
+      errorHeaders: r.headers,
+      loaderHeaders: new Headers(),
+      actionHeaders: new Headers(),
+    } as never);
+    expect(sent.get('cache-control')).toBe('no-store');
   });
 
   it('refuses while hosted checkout is off without asking the engine to redeem', async () => {
-    storefrontSettings.mockResolvedValue({ checkout: { enabled: false, editLines: false } });
+    storefrontSettings.mockResolvedValue({
+      checkout: { enabled: false, editLines: false, testPayments: true },
+    });
     expect((await refusal(() => redeem())).status).toBe(404);
     expect(redeemCheckoutStart).not.toHaveBeenCalled();
   });
@@ -170,7 +186,7 @@ describe('the buyer’s checkout page', () => {
       params: { id: 'chk_1' },
       request: pageRequest(cookie),
     } as never)) as unknown as { data: unknown; init: ResponseInit };
-    expect(res.data).toEqual({ checkout: session });
+    expect(res.data).toEqual({ checkout: session, testPayments: true, editLines: false });
     const headers = new Headers(res.init.headers);
     expect(headers.get('cache-control')).toBe('no-store');
     expect(headers.get('referrer-policy')).toBe('no-referrer');
@@ -217,7 +233,9 @@ describe('the buyer’s checkout page', () => {
         )
       ).status,
     ).toBe(404);
-    storefrontSettings.mockResolvedValue({ checkout: { enabled: false, editLines: false } });
+    storefrontSettings.mockResolvedValue({
+      checkout: { enabled: false, editLines: false, testPayments: true },
+    });
     lib.forgetStorefrontSettings();
     checkout.mockClear();
     expect(
@@ -257,7 +275,7 @@ describe('the buyer’s checkout page', () => {
       params: { id: 'chk_1' },
       request: pageRequest(cookie),
     } as never)) as unknown as { data: unknown };
-    expect(ok.data).toEqual({ checkout: session });
+    expect(ok.data).toMatchObject({ checkout: session });
     expect(used.get(`checkout:chk_1:${await hostedHash(SECRET)}`)).toBe(1);
     expect(used.get(`checkout:chk_1:${await hostedHash('b'.repeat(64))}`)).toBe(4);
   });

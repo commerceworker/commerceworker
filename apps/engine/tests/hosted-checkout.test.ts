@@ -5,6 +5,7 @@
  * link opens once, a UCP platform's session is never a hosted buyer's, the setting off refuses
  * everything, and a buyer can set no price.
  */
+import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { listAuditEvents } from '@commerceworker/application/commerce';
 import {
@@ -20,17 +21,22 @@ import {
   type SignedActor,
   STOREFRONT_SETTINGS_KEY,
   type StorefrontSettings,
+  storefrontOrderFlow,
 } from '@commerceworker/core';
 import {
+  balanceEntries,
   checkoutSessions as checkoutSessionsTable,
   createDb,
+  invoices,
+  orders,
   workspaceSettings,
 } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EngineApi } from '../src/api';
+import { holdsNothingOnlyInTestMode } from '../src/checkout/hosted';
 import { ensureTemplates } from '../src/flows';
-import { auditLog, checkoutSessions } from '../src/wire';
+import { auditLog, checkoutSessions, flowStore, paymentLedger } from '../src/wire';
 import { signedActor, signedGuest, storefrontApi } from './principal';
 import { enableUcp, monitorCheckout, platform, ucp } from './ucp-helpers';
 
@@ -97,6 +103,20 @@ beforeAll(async () => {
   await enableUcp();
 });
 beforeEach(() => setting({}));
+
+/** Orders run their flow: with its waits compressed, and the run disposed after each test. */
+let introspector: Awaited<ReturnType<typeof introspectWorkflow>> | undefined;
+afterEach(async () => {
+  await introspector?.dispose();
+  introspector = undefined;
+});
+async function runOrders() {
+  introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
+  await introspector.modifyAll(async (m) => {
+    await m.disableSleeps();
+    await m.disableRetryDelays();
+  });
+}
 
 describe('making a hosted checkout', () => {
   it('returns its id and a one-time link on the storefront, priced, for an operator', async () => {
@@ -325,7 +345,7 @@ describe('the buyer’s session', () => {
       await sf.updateCheckout(b.id, { buyer: { email: 'a@example.com' } }, b.secret, b.actor),
     ).toBeNull();
     expect(await sf.storefrontSettings()).toEqual({
-      checkout: { enabled: false, editLines: false },
+      checkout: { enabled: false, editLines: false, testPayments: true },
     });
     await setting({});
     expect(await sf.checkout(b.id, b.secret, b.actor)).not.toBeNull();
@@ -369,6 +389,16 @@ describe('what a buyer changes', () => {
       version: 2,
     });
     expect(next.quote?.total).toBeGreaterThan(0);
+    // The quote works out each line's total and the subtotal before promotions, so no page adds up.
+    const q = next.quote!;
+    for (const l of q.lines) {
+      expect(l.total).toBeCloseTo(l.unitPrice * l.qty, 2);
+      expect(l.listTotal).toBeGreaterThanOrEqual(l.total!);
+    }
+    expect(q.listSubtotal).toBeCloseTo(
+      q.lines.reduce((n, l) => n + l.listTotal!, 0),
+      2,
+    );
     expect(next).not.toHaveProperty('ownerId');
     expect(await sf.checkout(b.id, b.secret, b.actor)).toMatchObject({ version: 2 });
   });
@@ -414,7 +444,9 @@ describe('what a buyer changes', () => {
     expect((await sf.checkout(b.id, b.secret, b.actor))?.lines[0]?.qty).toBe(1);
 
     await setting({ editLines: true });
-    expect(await sf.storefrontSettings()).toEqual({ checkout: { enabled: true, editLines: true } });
+    expect(await sf.storefrontSettings()).toEqual({
+      checkout: { enabled: true, editLines: true, testPayments: true },
+    });
     const next = ok(
       await sf.updateCheckout(
         b.id,
@@ -485,5 +517,337 @@ describe('what a buyer changes', () => {
       expect(r).toMatchObject({ error: expect.stringContaining('changed') });
     const now = await sf.checkout(b.id, b.secret, b.actor);
     expect(['a@example.com', 'b@example.com']).toContain(now?.buyer.email);
+  });
+});
+
+describe('a page that changed under the buyer', () => {
+  const email = (e: string) => ({ buyer: { email: e } });
+
+  it('refuses a change made from an older version, shows the session as it is, and writes nothing', async () => {
+    const b = await redeemed();
+    const first = ok(await sf.updateCheckout(b.id, email('a@example.com'), b.secret, b.actor, 1));
+    expect(first.version).toBe(2);
+    // A page still showing version 1 posts its change: the buyer has not seen version 2.
+    const stale = await sf.updateCheckout(b.id, email('b@example.com'), b.secret, b.actor, 1);
+    expect(stale).toMatchObject({
+      ok: false,
+      changed: true,
+      error: expect.stringContaining('changed'),
+      checkout: { version: 2, buyer: { email: 'a@example.com' } },
+    });
+    expect(await sf.checkout(b.id, b.secret, b.actor)).toMatchObject({
+      version: 2,
+      buyer: { email: 'a@example.com' },
+    });
+    // From the current version it goes through; no version at all is the engine's own check alone.
+    expect(
+      ok(await sf.updateCheckout(b.id, email('c@example.com'), b.secret, b.actor, 2)),
+    ).toMatchObject({
+      version: 3,
+    });
+    expect(
+      ok(await sf.updateCheckout(b.id, email('d@example.com'), b.secret, b.actor)),
+    ).toMatchObject({
+      version: 4,
+    });
+    // A version that is no number is no version the session has.
+    expect(
+      await sf.updateCheckout(b.id, email('e@example.com'), b.secret, b.actor, 'x' as never),
+    ).toMatchObject({ ok: false, changed: true });
+  });
+
+  it('says so, and only so, when a write raced it', async () => {
+    const b = await redeemed();
+    const results = await Promise.all([
+      sf.updateCheckout(b.id, email('a@example.com'), b.secret, b.actor, 1),
+      sf.updateCheckout(b.id, email('b@example.com'), b.secret, b.actor, 1),
+    ]);
+    expect(results.filter((r) => r?.ok)).toHaveLength(1);
+    expect(results.find((r) => r && !r.ok)).toMatchObject({ changed: true });
+  });
+
+  it('is not set for a refusal about the change itself', async () => {
+    const b = await redeemed();
+    const r = await sf.updateCheckout(b.id, { total: 1 }, b.secret, b.actor, 1);
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining('not allowed') });
+    expect(r).not.toHaveProperty('changed');
+  });
+});
+
+describe('placing the order in test mode', () => {
+  const ship = {
+    name: 'Ada Lovelace',
+    line1: '500 Congress Ave',
+    city: 'Austin',
+    region: 'TX',
+    postalCode: '78701',
+    country: 'US',
+  };
+  const ready = async (input?: Record<string, unknown>) => {
+    const b = await redeemed(input);
+    ok(
+      await sf.updateCheckout(
+        b.id,
+        { buyer: { email: 'ada@example.com', firstName: 'Ada' }, shipTo: ship },
+        b.secret,
+        b.actor,
+      ),
+    );
+    return b;
+  };
+  const rows = (id: string) =>
+    db()
+      .select()
+      .from(orders)
+      .where(eq(orders.idempotencyKey, `hosted:${id}`))
+      .all();
+
+  it('is offered while payments are only recorded, and not otherwise', async () => {
+    expect(await sf.storefrontSettings()).toMatchObject({ checkout: { testPayments: true } });
+    const mode = (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE;
+    try {
+      (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE = 'stripe';
+      expect(await sf.storefrontSettings()).toMatchObject({ checkout: { testPayments: false } });
+    } finally {
+      (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE = mode;
+    }
+  });
+
+  it('places an order on the web channel, keyed by the checkout, and says it is completed', async () => {
+    await runOrders();
+    const b = await ready();
+    const done = ok(await sf.completeCheckout(b.id, b.secret, b.actor));
+    expect(done).toMatchObject({
+      id: b.id,
+      status: 'completed',
+      orderId: expect.stringMatching(/^ord_/),
+    });
+    const [order, ...more] = await rows(b.id);
+    expect(more).toEqual([]);
+    expect(order).toMatchObject({
+      id: done.orderId,
+      channel: 'web',
+      externalId: b.id,
+      idempotencyKey: `hosted:${b.id}`,
+      startedBy: hostedOwner(b.hash),
+    });
+    // No customer was named, so none is on the order, and the buyer's answer names none either.
+    expect(order?.customerId).toBeNull();
+    expect(JSON.stringify(done)).not.toMatch(/customerId|ownerId|hosted:/);
+    expect(await sf.checkout(b.id, b.secret, b.actor)).toMatchObject({ status: 'completed' });
+  });
+
+  it('is answered again as it is, with no second order, when it is pressed twice', async () => {
+    await runOrders();
+    const b = await ready();
+    const first = ok(await sf.completeCheckout(b.id, b.secret, b.actor));
+    const second = ok(await sf.completeCheckout(b.id, b.secret, b.actor));
+    expect(second.orderId).toBe(first.orderId);
+    expect(await rows(b.id)).toHaveLength(1);
+  });
+
+  it('places one order when two presses race, and the other is told it changed or is placed', async () => {
+    await runOrders();
+    const b = await ready();
+    const results = await Promise.all([
+      sf.completeCheckout(b.id, b.secret, b.actor),
+      sf.completeCheckout(b.id, b.secret, b.actor),
+    ]);
+    expect(results.some((r) => r?.ok)).toBe(true);
+    for (const r of results)
+      if (r && !r.ok)
+        expect(r.changed === true || /being completed|completed/.test(r.error)).toBe(true);
+    expect(await rows(b.id)).toHaveLength(1);
+  });
+
+  it('keeps the customer off the buyer’s view, and takes nothing from their credit, account invoices or saved cards', async () => {
+    await runOrders();
+    const b = await ready({ lines, customerId: 'cus_northwind' });
+    const view = await sf.checkout(b.id, b.secret, b.actor);
+    expect(JSON.stringify(view)).not.toMatch(/cus_northwind|customerId/);
+    const done = ok(await sf.completeCheckout(b.id, b.secret, b.actor));
+    expect(JSON.stringify(done)).not.toMatch(/cus_northwind|customerId/);
+    const [order] = await rows(b.id);
+    // Priced for them, as the session was; the order carries them.
+    expect(order).toMatchObject({ customerId: 'cus_northwind', channel: 'web' });
+    // Let the order's flow reach its payment step, then look at everything that could be charged.
+    await vi.waitFor(
+      async () =>
+        expect((await paymentLedger(env).forOrder(done.orderId!)).length).toBeGreaterThan(0),
+      { timeout: 20_000 },
+    );
+    const paid = await paymentLedger(env).forOrder(done.orderId!);
+    // Only the test mode's recorded payment: no processor, no saved card (nothing off session).
+    expect(paid.every((p) => p.provider === 'mock')).toBe(true);
+    expect(JSON.stringify(paid)).not.toMatch(/off_session|pm_|cus_northwind/);
+    // No hold on the customer's credit, and no invoice on account for the order.
+    const entries = await db()
+      .select()
+      .from(balanceEntries)
+      .where(eq(balanceEntries.orderId, done.orderId!))
+      .all();
+    expect(entries).toEqual([]);
+    expect(
+      await db().select().from(invoices).where(eq(invoices.orderId, done.orderId!)).all(),
+    ).toEqual([]);
+  });
+
+  it('refuses to complete on a flow version that no longer authorizes a card, placing no order', async () => {
+    const card = { ...storefrontOrderFlow(), id: 'tpl-hosted-recheck' } as never;
+    await flowStore(env).publish(card);
+    await setting({ checkoutFlowId: 'tpl-hosted-recheck' });
+    const b = await ready();
+    // A later version drops the payment step: the setting was saved before it, and still names the flow.
+    await flowStore(env).publish({ ...(card as object), nodes: [], edges: [] } as never);
+    expect(await sf.completeCheckout(b.id, b.secret, b.actor)).toMatchObject({
+      ok: false,
+      error: 'Checkout is not set up for this business.',
+    });
+    expect(await rows(b.id)).toEqual([]);
+    expect((await sf.checkout(b.id, b.secret, b.actor))?.status).not.toBe('completed');
+  });
+
+  it('completes only the version and total the buyer saw', async () => {
+    await runOrders();
+    const b = await ready();
+    const seen = (await sf.checkout(b.id, b.secret, b.actor))!;
+    const shown = { version: seen.version, total: seen.quote!.total };
+    // Something changes between the page and the press.
+    ok(await sf.updateCheckout(b.id, { promoCodes: ['NOPE'] }, b.secret, b.actor));
+    const stale = await sf.completeCheckout(b.id, b.secret, b.actor, shown);
+    expect(stale).toMatchObject({
+      ok: false,
+      changed: true,
+      checkout: { version: seen.version + 1 },
+    });
+    expect(await rows(b.id)).toEqual([]);
+    // A total the buyer was not shown is refused too, with the session priced as it is.
+    const now = (await sf.checkout(b.id, b.secret, b.actor))!;
+    const wrongTotal = await sf.completeCheckout(b.id, b.secret, b.actor, {
+      version: now.version,
+      total: now.quote!.total + 1,
+    });
+    expect(wrongTotal).toMatchObject({ ok: false, changed: true });
+    expect(await rows(b.id)).toEqual([]);
+    const again = (await sf.checkout(b.id, b.secret, b.actor))!;
+    expect(again.status).toBe('ready_for_complete');
+    // What they saw, now: it goes through.
+    ok(
+      await sf.completeCheckout(b.id, b.secret, b.actor, {
+        version: again.version,
+        total: again.quote!.total,
+      }),
+    );
+    expect(await rows(b.id)).toHaveLength(1);
+    // Nonsense is no version or total anyone was shown.
+    const c = await ready();
+    for (const bad of [
+      { version: 'x', total: 1 },
+      { version: 1, total: 'x' },
+      { version: 1, total: NaN },
+    ])
+      expect(await sf.completeCheckout(c.id, c.secret, c.actor, bad as never)).toMatchObject({
+        ok: false,
+        changed: true,
+      });
+  });
+
+  it('places no payment-less order outside test mode', async () => {
+    const guarded = holdsNothingOnlyInTestMode(env, {
+      refusal: null,
+      authorize: async () => ({ ok: true }),
+    });
+    const s = {} as never;
+    expect(await guarded.authorize(s)).toEqual({ ok: true });
+    const mode = (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE;
+    try {
+      (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE = 'stripe';
+      await expect(guarded.authorize(s)).rejects.toThrow(/needs the buyer’s own payment/);
+      // The buyer's own payment, for the order to adopt, is allowed live.
+      const own = holdsNothingOnlyInTestMode(env, {
+        refusal: null,
+        authorize: async () => ({
+          ok: true,
+          payment: { provider: 'stripe', intentId: 'pi_buyer' },
+        }),
+      });
+      expect(await own.authorize(s)).toMatchObject({ ok: true });
+    } finally {
+      (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE = mode;
+    }
+  });
+
+  it('shows what is missing and claims nothing for a checkout that is not ready', async () => {
+    const b = await redeemed();
+    const r = await sf.completeCheckout(b.id, b.secret, b.actor);
+    expect(r).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Finish the details'),
+      checkout: { status: 'incomplete' },
+    });
+    expect(await rows(b.id)).toEqual([]);
+    // It is still open: the buyer can finish it.
+    expect(
+      ok(
+        await sf.updateCheckout(
+          b.id,
+          { buyer: { email: 'ada@example.com' }, shipTo: ship },
+          b.secret,
+          b.actor,
+        ),
+      ).status,
+    ).toBe('ready_for_complete');
+  });
+
+  it('is the buyer’s alone: no one else’s cookie or actor, nor a final or closed session, nor while off', async () => {
+    const b = await ready();
+    const other = await redeemed();
+    expect(await sf.completeCheckout(b.id, other.secret, other.actor)).toBeNull();
+    expect(await sf.completeCheckout(b.id, b.secret, other.actor)).toBeNull();
+    expect(await sf.completeCheckout('chk_nope', b.secret, b.actor)).toBeNull();
+    expect(await sf.completeCheckout(b.id, 'not-a-secret', b.actor)).toBeNull();
+
+    const s = (await checkoutSessions(env).load(hostedOwner(b.hash), b.id))!;
+    await checkoutSessions(env).save(
+      { ...s, status: 'canceled', version: s.version + 1 },
+      s.version,
+    );
+    expect(await sf.completeCheckout(b.id, b.secret, b.actor)).toMatchObject({
+      ok: false,
+      error: 'The checkout is canceled.',
+    });
+    expect(await rows(b.id)).toEqual([]);
+
+    const c = await ready();
+    await setting({ enabled: false });
+    expect(await sf.completeCheckout(c.id, c.secret, c.actor)).toBeNull();
+    expect(await rows(c.id)).toEqual([]);
+  });
+
+  it('is a UCP platform’s session never: it is not a hosted buyer’s to complete', async () => {
+    const alpha = await platform('alpha-complete');
+    const { body } = await ucp(alpha, 'POST', '/ucp/v1/checkout-sessions', monitorCheckout);
+    const b = await buyer(body.id, 'ab'.repeat(32));
+    expect(await sf.completeCheckout(body.id, b.secret, b.actor)).toBeNull();
+  });
+
+  it('refuses when payments are real, without claiming the session or placing an order', async () => {
+    const b = await ready();
+    const mode = (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE;
+    try {
+      (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE = 'stripe';
+      const r = await sf.completeCheckout(b.id, b.secret, b.actor);
+      expect(r).toMatchObject({
+        ok: false,
+        error: 'Card payment is not available on this page yet.',
+        checkout: { status: 'ready_for_complete' },
+      });
+    } finally {
+      (env as { PAYMENTS_MODE?: string }).PAYMENTS_MODE = mode;
+    }
+    expect(await rows(b.id)).toEqual([]);
+    expect(await sf.checkout(b.id, b.secret, b.actor)).toMatchObject({
+      status: 'ready_for_complete',
+    });
   });
 });

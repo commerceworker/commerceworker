@@ -235,18 +235,28 @@ export async function quoteCheckout(
     }
   }
   const o = ctx.order;
+  const cents = (n: number) => Math.round(n * 100) / 100;
+  const quoted = o.lines.map((l, i) => {
+    const unitPrice = l.unitPrice ?? 0;
+    const listPrice = listed ? (listed[i]?.unitPrice ?? unitPrice) : undefined;
+    return {
+      id: s.lines[i]!.id,
+      sku: l.sku,
+      title: l.name ?? products.get(l.sku)?.name ?? l.sku,
+      qty: l.qty,
+      unitPrice,
+      ships: products.get(l.sku)?.kind !== 'digital',
+      ...(listPrice !== undefined ? { listPrice } : {}),
+      // Worked out here, once, so no page adds prices up itself.
+      total: cents(unitPrice * l.qty),
+      listTotal: cents((listPrice ?? unitPrice) * l.qty),
+    };
+  });
   return {
     quote: {
       currency: o.currency || BASE_CURRENCY,
-      lines: o.lines.map((l, i) => ({
-        id: s.lines[i]!.id,
-        sku: l.sku,
-        title: l.name ?? products.get(l.sku)?.name ?? l.sku,
-        qty: l.qty,
-        unitPrice: l.unitPrice ?? 0,
-        ships: products.get(l.sku)?.kind !== 'digital',
-        ...(listed ? { listPrice: listed[i]?.unitPrice ?? l.unitPrice ?? 0 } : {}),
-      })),
+      lines: quoted,
+      listSubtotal: cents(quoted.reduce((n, l) => n + l.listTotal, 0)),
       subtotal: o.subtotal,
       shipping: o.shipping ?? 0,
       tax: o.tax,

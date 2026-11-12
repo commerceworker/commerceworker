@@ -12,17 +12,20 @@ import { HOSTED_ID, hostedHash } from '@commerceworker/core';
 import { data, redirect } from 'react-router';
 import { CheckoutRefusal } from '~/components/checkout-refusal';
 import { engine } from '~/lib/env.server';
-import { checkoutCookie, checkoutRefusal, storefrontSettings } from '~/lib/hosted-checkout.server';
+import {
+  checkoutCookie,
+  checkoutRefusal,
+  PRIVATE_HEADERS,
+  privateHeaders,
+  storefrontSettings,
+} from '~/lib/hosted-checkout.server';
 import { overBudget } from '~/lib/rate-limit';
 import type { Route } from './+types/checkout-start';
-
-/** Never cached or shared, and the link's token never leaves in a Referer. */
-const PRIVATE = { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' };
 
 export async function loader({ params }: Route.LoaderArgs) {
   if (!HOSTED_ID.test(params.id)) throw checkoutRefusal('This link is not valid.', 404);
   // Reads nothing and changes nothing: the token is not even looked at.
-  return data({ id: params.id }, { headers: PRIVATE });
+  return data({ id: params.id }, { headers: PRIVATE_HEADERS });
 }
 
 export async function action({ params, request }: Route.ActionArgs) {
@@ -45,13 +48,13 @@ export async function action({ params, request }: Route.ActionArgs) {
     status: 303,
     headers: {
       'set-cookie': checkoutCookie(request, params.id, redeemed.secret, redeemed.expiresAt),
-      ...PRIVATE,
+      ...PRIVATE_HEADERS,
     },
   });
 }
 
-export function headers({ errorHeaders, loaderHeaders, actionHeaders }: Route.HeadersArgs) {
-  return errorHeaders ?? actionHeaders ?? loaderHeaders;
+export function headers({ errorHeaders }: Route.HeadersArgs) {
+  return privateHeaders({ errorHeaders });
 }
 
 export const ErrorBoundary = CheckoutRefusal;

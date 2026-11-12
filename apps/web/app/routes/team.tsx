@@ -47,6 +47,7 @@ import {
 import { CopyButton } from '~/components/copy-button';
 import { FormSheet, useFormSheet } from '~/components/form-sheet';
 import { StepUpField } from '~/components/step-up-field';
+import { StorefrontSettingsForm } from '~/components/storefront-settings';
 import { useAssistant } from '~/lib/assistant';
 import { audit } from '~/lib/audit.server';
 import {
@@ -56,6 +57,7 @@ import {
   stepUp,
   stepUpMethod,
 } from '~/lib/auth.server';
+import { publishedFlows } from '~/lib/orders.server';
 import { SCIM_PATH, SCIM_TOKEN_MS } from '~/lib/scim';
 import {
   createScimToken,
@@ -74,6 +76,7 @@ import {
 } from '~/lib/settings.server';
 import { parseDomains, type SsoSettings } from '~/lib/sso';
 import { linkedToSso, ssoConfig } from '~/lib/sso.server';
+import { storefrontAdmin } from '~/lib/storefront.server';
 import {
   addUser,
   createFirstAdmin,
@@ -101,16 +104,27 @@ export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request, 'admin');
   const stepUp = await stepUpMethod(me);
   // One clock for the page, so the server and the hydrating browser agree on each token's state.
-  const [team, twoFactorRequired, separated, routing, sso, scimToken, scimGroups] =
-    await Promise.all([
-      listTeam(),
-      twoFactorRequirement(),
-      approvalSeparation(),
-      assistantRouting(),
-      ssoSettings(),
-      scimTokenSet(),
-      scimGroupsWithRoles(),
-    ]);
+  const [
+    team,
+    twoFactorRequired,
+    separated,
+    routing,
+    sso,
+    scimToken,
+    scimGroups,
+    storefront,
+    flows,
+  ] = await Promise.all([
+    listTeam(),
+    twoFactorRequirement(),
+    approvalSeparation(),
+    assistantRouting(),
+    ssoSettings(),
+    scimTokenSet(),
+    scimGroupsWithRoles(),
+    storefrontAdmin(),
+    publishedFlows(),
+  ]);
   const provider = ssoConfig();
   // The address a new person signs in at, to send along with their temporary password.
   const signInUrl = new URL('/login', request.url).href;
@@ -119,6 +133,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     twoFactorRequired,
     separated,
     routing,
+    storefront,
+    flows: flows.map((f) => ({ id: f.id, name: f.name })),
     sso: provider
       ? { issuer: provider.issuer, settings: sso, linked: await linkedToSso(me.id) }
       : null,
@@ -393,6 +409,8 @@ export default function Team() {
     twoFactorRequired,
     separated,
     routing,
+    storefront,
+    flows,
     sso,
     scim,
     signInUrl,
@@ -709,6 +727,7 @@ export default function Team() {
 
           <ApprovalSeparationForm separated={separated} />
           <AssistantRoutingForm routing={routing} />
+          <StorefrontSettingsForm settings={storefront} flows={flows} />
         </div>
 
         <aside aria-label="Roles" className="min-w-0">
@@ -1202,6 +1221,7 @@ function SsoForm({
             <input
               id="sso-only"
               type="checkbox"
+              aria-describedby="sso-only-hint"
               name="only"
               value="on"
               defaultChecked={settings.ssoOnly}
@@ -1210,7 +1230,7 @@ function SsoForm({
               <FieldLabel htmlFor="sso-only" className="font-normal">
                 Single sign-on only: turn off passwords and passkeys
               </FieldLabel>
-              <FieldDescription className="text-xs">
+              <FieldDescription id="sso-only-hint" className="text-xs">
                 With single sign-on only, your identity provider handles two-factor sign-in, and a
                 person disabled there can’t sign in here once their session ends; disable them here
                 to end it now.
@@ -1265,6 +1285,7 @@ function ApprovalSeparationForm({ separated }: { separated: boolean }) {
             <NativeSelect
               id="separated"
               name="separated"
+              aria-describedby="separated-hint"
               value={chosen}
               onChange={(e) => setChosen(e.target.value)}
               className="h-9 w-full"
@@ -1272,7 +1293,7 @@ function ApprovalSeparationForm({ separated }: { separated: boolean }) {
               <NativeSelectOption value="off">May approve it</NativeSelectOption>
               <NativeSelectOption value="on">Can’t approve it</NativeSelectOption>
             </NativeSelect>
-            <FieldDescription className="text-xs">
+            <FieldDescription id="separated-hint" className="text-xs">
               Separates duties: the person or API token that started an order can’t approve or
               reject its steps, so a second person always decides. Orders from channels, email and
               the stock review have no starter, and anyone with the Approver role may decide them.
@@ -1326,6 +1347,7 @@ function AssistantRoutingForm({ routing }: { routing: boolean }) {
             <FieldLabel htmlFor="routing">Exact requests</FieldLabel>
             <NativeSelect
               id="routing"
+              aria-describedby="routing-hint"
               value={chosen}
               onChange={(e) => setChosen(e.target.value)}
               className="h-9 w-full"
@@ -1335,7 +1357,7 @@ function AssistantRoutingForm({ routing }: { routing: boolean }) {
                 Run on fixed rules when the decision model is sure
               </NativeSelectOption>
             </NativeSelect>
-            <FieldDescription className="text-xs">
+            <FieldDescription id="routing-hint" className="text-xs">
               Saves model cost. A request such as “cancel this order” or “list open carts” is read
               by fixed rules; the decision model checks that the request asks for exactly that, and
               only then does it run without the chat model. Anything else goes to the chat model as
@@ -1384,6 +1406,7 @@ function TwoFactorRequirementForm({
             <FieldLabel htmlFor="tf-required">Required for</FieldLabel>
             <NativeSelect
               id="tf-required"
+              aria-describedby="tf-required-hint"
               name="required"
               defaultValue={required}
               className="h-9 w-full"
@@ -1394,7 +1417,7 @@ function TwoFactorRequirementForm({
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <FieldDescription className="text-xs">
+            <FieldDescription id="tf-required-hint" className="text-xs">
               People in these roles without two-factor sign-in can only use their Account page until
               they set it up, and can’t turn it off. API tokens aren’t affected.
               {required !== 'off' && missing

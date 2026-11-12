@@ -58,6 +58,8 @@ import {
   sendEventResultSchema,
   startOrderResultSchema,
   startOrderSchema,
+  storefrontAdminSchema,
+  storefrontSettingsSchema,
   subjectExportSchema,
   subscriptionSecretSchema,
   subscriptionsSchema,
@@ -247,6 +249,8 @@ const COMPONENTS = {
   UcpPlatform: ucpPlatformSchema,
   UcpSettings: ucpSettingsSchema,
   UcpAdmin: ucpAdminSchema,
+  StorefrontSettings: storefrontSettingsSchema,
+  StorefrontAdmin: storefrontAdminSchema,
   UcpPlatformKey: ucpPlatformKeySchema,
 } as const;
 
@@ -496,6 +500,8 @@ const OPERATION_IDS: Record<string, string> = {
   'get /api/v1/plugins/{id}/usage': 'get_plugin_usage',
   'get /api/v1/ucp': 'get_ucp',
   'post /api/v1/ucp/settings': 'set_ucp_settings',
+  'get /api/v1/storefront': 'get_storefront',
+  'post /api/v1/storefront/settings': 'set_storefront_settings',
   'post /api/v1/ucp/platforms': 'add_ucp_platform',
   'delete /api/v1/ucp/platforms/{id}': 'revoke_ucp_platform',
 };
@@ -1460,6 +1466,28 @@ export function openApiDocument(serverUrl: string) {
           requestBody: body(ucpSettingsSchema),
           responses: {
             '200': okJson('The settings as saved', z.object({ settings: ucpSettingsSchema })),
+            '422': ok('The flow cannot take checkouts', '#/components/schemas/Error'),
+            ...errors,
+          },
+        },
+      },
+      '/api/v1/storefront': {
+        get: {
+          summary: 'Hosted checkout: its settings (admin)',
+          responses: { '200': ok('The settings as stored', ref('StorefrontAdmin')), ...errors },
+        },
+      },
+      '/api/v1/storefront/settings': {
+        post: {
+          summary: 'Turn hosted checkout on or off, and set what a buyer may do on it (admin)',
+          description:
+            'Hosted checkout is the page a buyer pays on, opened from a one-time link `POST /api/v1/checkouts` makes. `checkoutFlowId` is the published flow that prices it and places its order (null uses agentic checkout’s); turning it on needs a flow that authorizes a card payment. `editLines` lets the buyer change the lines on their page. Turning it off stops every link and page at once. Replaces all three.',
+          requestBody: body(storefrontSettingsSchema),
+          responses: {
+            '200': okJson(
+              'The settings as saved',
+              z.object({ settings: storefrontSettingsSchema }),
+            ),
             '422': ok('The flow cannot take checkouts', '#/components/schemas/Error'),
             ...errors,
           },

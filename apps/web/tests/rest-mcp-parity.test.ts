@@ -7,6 +7,7 @@
 import {
   cartOpSchema,
   REST_OPERATION_TOOLS,
+  storefrontSettingsSchema,
   TOOL_INPUTS,
   ucpSettingsSchema,
 } from '@commerceworker/core';
@@ -143,6 +144,12 @@ const PAIRS: {
     tool: 'set_ucp_settings',
     // The one schema: REST parses its body with it and MCP takes it as the tool's input.
     body: ucpSettingsSchema,
+    path: [],
+  },
+  {
+    rest: 'POST /storefront/settings',
+    tool: 'set_storefront_settings',
+    body: storefrontSettingsSchema,
     path: [],
   },
   // The removals and revocations take only the id in the path.

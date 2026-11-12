@@ -267,12 +267,13 @@ test('the storefront config binds the engine’s narrow entrypoint and its own h
       'ai',
     ])
       assert.equal(config[binding], undefined, `the storefront binds ${binding}`);
-  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 and <slot>007.
+  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006, <slot>007 and <slot>008.
   assert.deepEqual(
     c.ratelimits.map((r: { name: string; namespace_id: string }) => [r.name, r.namespace_id]),
     [
       ['API_LIMIT', '2006'],
       ['AGENT_LIMIT', '2007'],
+      ['PROMO_LIMIT', '2008'],
     ],
   );
   // No two Workers of the fleet share a rate-limit namespace.

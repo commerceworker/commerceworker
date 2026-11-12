@@ -32,7 +32,13 @@ import {
 import { routeAgents } from './agent-routes';
 import { cartSnapshot, keepCartOpen, redeemCartStart } from './cart/carts';
 import { searchCartProducts } from './cart/search';
-import { publicSettings, readHosted, redeemHostedStart, updateHosted } from './checkout/hosted';
+import {
+  completeHosted,
+  publicSettings,
+  readHosted,
+  redeemHostedStart,
+  updateHosted,
+} from './checkout/hosted';
 import { cartAgent } from './namespaces';
 import { guestActor } from './principal';
 import { ucpProfile, ucpSettings } from './ucp/config';
@@ -119,12 +125,27 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
     return redeemHostedStart(this.env, checkoutId, token);
   }
 
-  checkout(checkoutId: string, tokenHash: string, actor: SignedActor) {
-    return readHosted(this.env, checkoutId, tokenHash, actor);
+  checkout(checkoutId: string, secret: string, actor: SignedActor) {
+    return readHosted(this.env, checkoutId, secret, actor);
   }
 
-  updateCheckout(checkoutId: string, patch: unknown, tokenHash: string, actor: SignedActor) {
-    return updateHosted(this.env, checkoutId, patch, tokenHash, actor);
+  updateCheckout(
+    checkoutId: string,
+    patch: unknown,
+    secret: string,
+    actor: SignedActor,
+    version?: number,
+  ) {
+    return updateHosted(this.env, checkoutId, patch, secret, actor, version);
+  }
+
+  completeCheckout(
+    checkoutId: string,
+    secret: string,
+    actor: SignedActor,
+    shown?: { version: number; total: number },
+  ) {
+    return completeHosted(this.env, checkoutId, secret, actor, shown);
   }
 
   redeemCartStart(cartId: string, token: string) {

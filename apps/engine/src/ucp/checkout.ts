@@ -11,7 +11,9 @@
 import {
   type CheckoutPatch,
   type CheckoutSession,
+  checkoutFlowProblem,
   checkoutPatch,
+  type FlowGraph,
   type FlowVersion,
   FULFILLMENT_CAPABILITY,
   isFinalCheckout,
@@ -186,7 +188,9 @@ export async function completeCheckout(
 
   const settings = await ucpSettings(env);
   const flow = await checkoutFlow(env, settings);
-  if (!flow) return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
+  // Checked on the version loaded now: a later publish may no longer authorize a card.
+  if (!flow || checkoutFlowProblem(flow as unknown as FlowGraph))
+    return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
   const caller: CheckoutCaller = {
     ...callerOf(ctx),
     meta: { ucp: { platformId: ctx.caller.id, checkoutId: s.id, origin: ctx.caller.origin } },

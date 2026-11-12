@@ -37,7 +37,10 @@
   // registry's `limits` changes them per deployment, as it does the web Worker's.
   "ratelimits": [
     { "name": "API_LIMIT", "namespace_id": "1006", "simple": { "limit": 600, "period": 60 } },
-    { "name": "AGENT_LIMIT", "namespace_id": "1007", "simple": { "limit": 300, "period": 60 } }
+    { "name": "AGENT_LIMIT", "namespace_id": "1007", "simple": { "limit": 300, "period": 60 } },
+    // Promo-code changes on a hosted checkout, per cookie, on top of API_LIMIT: guessing codes is the one
+    // thing a buyer can do here that is worth a budget of its own.
+    { "name": "PROMO_LIMIT", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } }
   ]
   // Secrets (set by the deploy, `scripts/fleet.ts secrets storefront`): STOREFRONT_KEY — signs what
   // this Worker forwards to the engine (a cart's buyer, a UCP platform) and the cookie a start link

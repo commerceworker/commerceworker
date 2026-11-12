@@ -89,10 +89,24 @@ export async function checkoutBuyer(request: Request, id: string) {
   };
 }
 
+/** What every hosted checkout page sends: never cached or shared, and nothing of it in a Referer. */
+export const PRIVATE_HEADERS = { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' };
+
+/**
+ * The `headers` export of a hosted checkout route: `PRIVATE_HEADERS` whichever of its loader, action
+ * or error boundary answered, with anything a refusal sent of its own (a 429's `Retry-After`). React
+ * Router hands a route all three header sets, empty when unused, so choosing one with `??` would pick
+ * an empty one and let the page fall to the Worker's `private, no-cache`.
+ */
+export function privateHeaders({ errorHeaders }: { errorHeaders?: Headers | undefined }) {
+  const out = new Headers(PRIVATE_HEADERS);
+  errorHeaders?.forEach((value, key) => {
+    out.set(key, value);
+  });
+  return out;
+}
+
 /** Why a buyer can't have a checkout page, thrown from its loader and shown by `CheckoutRefusal`. */
 export function checkoutRefusal(message: string, status: number) {
-  return data(message, {
-    status,
-    headers: { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
-  });
+  return data(message, { status, headers: PRIVATE_HEADERS });
 }

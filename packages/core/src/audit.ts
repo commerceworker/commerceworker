@@ -18,6 +18,7 @@ export const BUSINESS_AUDIT_ACTIONS = {
   'cart.changed': 'Changed a cart',
   'cart.canceled': 'Cancelled a cart',
   'checkout.created': 'Made a hosted checkout link',
+  'checkout.settings': 'Changed hosted checkout settings',
   'flow.saved': 'Saved a flow draft',
   'flow.published': 'Published a flow',
   'flow.archived': 'Archived a flow draft',

@@ -167,6 +167,7 @@ A2A skills. Only a signed-in person verifies a certificate, never an API token.
 | `revoke_integration` | `admin` | Revokes an integration's signing keys at once. The card shows its name and when it was last used |
 | `revoke_ucp_platform` | `admin` | Revokes an AI shopping platform's key; its checkouts and orders stay. The card shows its name and when it was last used |
 | `set_ucp_settings` | `admin` | Sets agentic checkout's flow (none turns it off), legal links and order page URL, as the REST API does; refused for a flow that never authorizes a card |
+| `set_storefront_settings` | `admin` | Turns [hosted checkout](/guides/hosted-checkout/) on or off, names the flow that prices it and whether buyers may change the lines, as the REST API does; refused to turn on with a flow that never authorizes a card. A person confirms it, never a typed A2A skill |
 | `publish_catalog` | `operator` | Publishes up to 500 products' staged edits to the live catalog, each product all or none. The card lists each product and its staged fields, and is held to them |
 | `test_flow` | `operator` | Publishes a flow's saved draft when it changed since the live version, then starts a test order with a demo input; the card says which |
 

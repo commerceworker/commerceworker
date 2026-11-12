@@ -42,6 +42,8 @@ import {
   sendEventResultSchema,
   signWebhook,
   startOrderResultSchema,
+  storefrontAdminSchema,
+  storefrontOrderFlow,
   subjectExportSchema,
   subscriptionSecretSchema,
   subscriptionsSchema,
@@ -1237,6 +1239,50 @@ describe('agentic checkout', () => {
     expect((after.platforms as { revokedAt: number | null }[])[0]?.revokedAt).toEqual(
       expect.any(Number),
     );
+  });
+});
+
+describe('hosted checkout’s settings', () => {
+  it('are off until saved, saved only for a flow that takes cards, and read back as saved', async () => {
+    const off = await expectResponse(await call('GET', 'storefront'), 200, storefrontAdminSchema);
+    expect(off.settings).toEqual({
+      checkout: { enabled: false, checkoutFlowId: null, editLines: false },
+    });
+    const card = { ...storefrontOrderFlow(), id: 'tpl-card' };
+    const noCard = { ...storefrontOrderFlow(), id: 'tpl-no-card', nodes: [], edges: [] };
+    await stores.flows.seed([card, noCard] as never);
+
+    // Turning it on needs a flow that authorizes a card: unknown, or one that doesn't, is a 422.
+    for (const checkoutFlowId of ['tpl-missing', 'tpl-no-card', null]) {
+      const refused = await call('POST', 'storefront/settings', {
+        checkout: { enabled: true, checkoutFlowId, editLines: false },
+      });
+      expect(refused.status, String(checkoutFlowId)).toBe(422);
+      expect(
+        storefrontAdminSchema.safeParse(await (await call('GET', 'storefront')).json()).success,
+      ).toBe(true);
+    }
+    const saved = {
+      checkout: { enabled: true, checkoutFlowId: 'tpl-card', editLines: true },
+    };
+    const set = await expectResponse(
+      await call('POST', 'storefront/settings', saved),
+      200,
+      storefrontAdminSchema,
+    );
+    expect(set.settings).toEqual(saved);
+    const read = await expectResponse(await call('GET', 'storefront'), 200, storefrontAdminSchema);
+    expect(read.settings).toEqual(saved);
+    // Off needs no flow, and is audited with what it was.
+    await expectResponse(
+      await call('POST', 'storefront/settings', {
+        checkout: { enabled: false, checkoutFlowId: null, editLines: false },
+      }),
+      200,
+      storefrontAdminSchema,
+    );
+    const trail = await stores.audit.list({ limit: 10 });
+    expect(trail.filter((e) => e.action === 'checkout.settings')).toHaveLength(2);
   });
 });
 

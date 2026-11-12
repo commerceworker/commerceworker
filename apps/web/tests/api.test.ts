@@ -112,6 +112,9 @@ const ucp = {
 };
 vi.mock('~/lib/ucp.server', () => ucp);
 
+const storefront = { storefrontAdmin: vi.fn(), setStorefrontSettings: vi.fn() };
+vi.mock('~/lib/storefront.server', () => storefront);
+
 const { handleApi, handleSignedEvent } = await import('~/lib/api.server');
 const { signWebhook } = await import('@commerceworker/core');
 
@@ -139,6 +142,8 @@ describe('starting orders over REST', () => {
       'po:x',
       // A quote's own start.
       'quote:x',
+      // A hosted checkout's own start: a REST caller must not pre-empt its order.
+      'hosted:abc',
     ]) {
       const res = await handleApi(
         new Request('https://app.test/api/v1/orders', {
@@ -860,6 +865,46 @@ describe('removing a webhook subscription over REST', () => {
     webhooks.deleteSubscription.mockResolvedValueOnce({ ok: false, error: 'No such one.' });
     expect((await del('webhook-subscriptions/whs_nope')).status).toBe(404);
     expect((await del('webhook-subscriptions/whs_1', operator)).status).toBe(403);
+    expect(audit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('hosted checkout’s settings over REST', () => {
+  beforeEach(() => audit.mockReset());
+  const settings = {
+    checkout: { enabled: true, checkoutFlowId: 'tpl-checkout', editLines: false },
+  };
+
+  it('shows the settings, to an admin only', async () => {
+    storefront.storefrontAdmin.mockResolvedValueOnce(settings);
+    const res = await handleApi(new Request('https://app.test/api/v1/storefront'), admin);
+    expect(await res.json()).toEqual({ settings });
+    expect(
+      (await handleApi(new Request('https://app.test/api/v1/storefront'), operator)).status,
+    ).toBe(403);
+  });
+
+  it('saves them and audits what changed, or refuses with 422 and audits nothing', async () => {
+    storefront.setStorefrontSettings.mockResolvedValueOnce({
+      ok: true,
+      settings,
+      audit: { action: 'checkout.settings', detail: { enabled: true } },
+    });
+    const ok = await post('storefront/settings', settings, admin);
+    expect(await ok.json()).toEqual({ settings });
+    expect(storefront.setStorefrontSettings).toHaveBeenCalledWith(settings, expect.any(String));
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'checkout.settings', {
+      actor: admin,
+      detail: { enabled: true },
+    });
+    storefront.setStorefrontSettings.mockResolvedValueOnce({ ok: false, error: 'Needs a card.' });
+    const refused = await post('storefront/settings', settings, admin);
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toEqual({ error: 'Needs a card.' });
+    expect(
+      (await post('storefront/settings', { checkout: { enabled: 'yes' } }, admin)).status,
+    ).toBe(400);
+    expect((await post('storefront/settings', settings, operator)).status).toBe(403);
     expect(audit).toHaveBeenCalledTimes(1);
   });
 });
