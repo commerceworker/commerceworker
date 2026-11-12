@@ -44,6 +44,13 @@ export type Principal = {
 
 /** A session ends this long after sign-in, whatever happens. */
 export const SESSION_MAX_MS = 30 * 86_400_000;
+/**
+ * A session that single sign-on started ends this long after sign-in, sooner than `SESSION_MAX_MS`:
+ * the engine can't ask the identity provider whether the person is still there, so someone
+ * disabled at the provider (with no SCIM to say so) is signed out at the latest by this, and
+ * signs in at the provider again to continue. Passwords and passkeys keep `SESSION_MAX_MS`.
+ */
+export const SESSION_SSO_MAX_MS = 12 * 3_600_000;
 /** A session also ends after this long without a request, on a page or the order page's socket. */
 export const SESSION_IDLE_MS = 7 * 86_400_000;
 /** An admin's, sooner: an admin's browser left signed in can change who has access. */

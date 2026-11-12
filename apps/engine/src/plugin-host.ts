@@ -52,6 +52,14 @@ const SANDBOX_COMPAT_DATE = '2026-10-01';
 /** Redirects the egress gateway follows for a plugin, each checked again. */
 const MAX_REDIRECTS = 5;
 
+/**
+ * How long one egress hop may take before the gateway gives up on it. A hung upstream would
+ * otherwise hold the plugin's call (and the order's step behind it) until the step itself times
+ * out; the plugin's own CPU cap doesn't count time spent waiting. Shorter than Stripe's 15 s,
+ * since a plugin makes up to 20 subrequests in a call and each hop gets its own limit.
+ */
+export const EGRESS_TIMEOUT_MS = 10_000;
+
 /** The bundles the deployment's registry pins (CI, `PLUGIN_BUNDLES`), by plugin id. */
 export function deploymentBundles(env: Env): Record<string, string> {
   const raw = (env as unknown as Vars).PLUGIN_BUNDLES;
@@ -408,7 +416,7 @@ export function egressRefusal(manifest: Pick<PluginManifest, 'egress'>, url: URL
  * Every outbound request a sandboxed plugin makes (`globalOutbound`): refused unless it is https
  * to a public host in the manifest's `egress`, with the plugin's `inject` secrets added for their
  * host. Redirects are followed here, at most `MAX_REDIRECTS`, each checked again, and an injected
- * credential never follows a redirect to another host.
+ * credential never follows a redirect to another host. Each hop is held to `EGRESS_TIMEOUT_MS`.
  */
 export class PluginEgress extends WorkerEntrypoint<Env, Pinned> {
   override async fetch(request: Request): Promise<Response> {
@@ -438,7 +446,20 @@ export class PluginEgress extends WorkerEntrypoint<Env, Pinned> {
         const value = await resolveSecret(this.env, id, s.name);
         if (value) headers.set(s.inject.header, s.inject.format.replace('{}', value));
       }
-      const res = await fetch(url, { method, headers, body: payload, redirect: 'manual' });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method,
+          headers,
+          body: payload,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(EGRESS_TIMEOUT_MS),
+        });
+      } catch (e) {
+        if (e instanceof Error && e.name === 'TimeoutError')
+          return refuse(id, url.toString(), `no answer within ${EGRESS_TIMEOUT_MS / 1000} s`, 504);
+        throw e;
+      }
       const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
       if (!location) return res;
       const next = new URL(location, url);

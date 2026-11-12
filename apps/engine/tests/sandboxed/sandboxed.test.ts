@@ -16,7 +16,13 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { EngineApi } from '../../src/api';
 import { ensureTemplates } from '../../src/flows';
 import { startOrder } from '../../src/orders';
-import { egressRefusal, knownManifests, limitsFor, pluginStub } from '../../src/plugin-host';
+import {
+  EGRESS_TIMEOUT_MS,
+  egressRefusal,
+  knownManifests,
+  limitsFor,
+  pluginStub,
+} from '../../src/plugin-host';
 import { manifests, pluginStatuses } from '../../src/plugins';
 import { edge, node, probeFlow, settled, stampFlow, stampInput } from '../plugin-helpers';
 
@@ -102,6 +108,7 @@ beforeAll(async () => {
     plain: 'http://api.carrier.test/',
     private: 'https://10.0.0.7/',
     redirect: 'https://eu.allowed.test/redirect',
+    hang: 'https://eu.allowed.test/hang',
   };
   for (const [name, url] of Object.entries(urls))
     await publishFlow(db(), fetchFlow(`test-sbx-fetch-${name}`, url));
@@ -237,6 +244,15 @@ describe('a sandboxed plugin', () => {
       expect(r.output?.status).toBe(403);
       expect(r.output?.body).toMatch(why);
     }
+  });
+
+  it('is refused, not left waiting, when an upstream never answers', async () => {
+    const started = Date.now();
+    const r = await fetched('test-sbx-fetch-hang');
+    expect(r.output?.status).toBe(504);
+    expect(r.output?.body).toMatch(/no answer within 10 s/);
+    // Cut off by the gateway's limit, not by the step or the test's own timeout.
+    expect(Date.now() - started).toBeLessThan(EGRESS_TIMEOUT_MS + 5_000);
   });
 
   it('can’t write one of its secrets into the timeline or its logs', async () => {

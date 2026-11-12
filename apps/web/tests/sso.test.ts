@@ -24,6 +24,7 @@ vi.mock('~/lib/wire.server', () => ({ authStore: () => store }));
 vi.mock('cloudflare:workers', () => ({ env }));
 vi.mock('~/lib/audit.server', () => ({ audit: vi.fn() }));
 vi.mock('~/lib/settings.server', () => ({ ssoSettings: async () => DEFAULT_SSO }));
+const startSession = vi.fn(async (..._args: unknown[]) => '__Host-cmw_session=new');
 vi.mock('~/lib/auth.server', () => ({
   cookie: (request: Request, name: string) =>
     request.headers
@@ -32,7 +33,7 @@ vi.mock('~/lib/auth.server', () => ({
       .find((c) => c.startsWith(`${name}=`))
       ?.slice(name.length + 1),
   forgetUserCount: vi.fn(),
-  startSession: vi.fn(async () => '__Host-cmw_session=new'),
+  startSession,
 }));
 
 const {
@@ -135,6 +136,8 @@ describe('linking an identity to someone with a password', () => {
   it('links someone without a password at once', async () => {
     store = new InMemoryAuthStore({ users: [ann] });
     expect(await signInWithSso(request(), identity)).toEqual({ session: '__Host-cmw_session=new' });
+    // Its session is the capped kind (`SESSION_SSO_MAX_MS`), so the provider is asked again.
+    expect(startSession).toHaveBeenLastCalledWith(expect.anything(), 'usr_1', { sso: true });
     expect(await subOf('usr_1')).toBe('idp|ann');
   });
 

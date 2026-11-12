@@ -26,6 +26,8 @@ async function carrierUpstream(request: Request): Promise<Response> {
   if (url.hostname.endsWith('allowed.test')) {
     if (url.pathname === '/redirect')
       return new Response(null, { status: 302, headers: { location: 'https://evil.test/' } });
+    // Never answers: the gateway's limit has to cut it off.
+    if (url.pathname === '/hang') return new Promise<Response>(() => {});
     return new Response(`ok ${request.headers.get('authorization') ?? 'no auth'}`);
   }
   return new Response('unexpected upstream', { status: 599 });

@@ -24,6 +24,7 @@ import {
   type Role,
   SESSION_IDLE_MS,
   SESSION_MAX_MS,
+  SESSION_SSO_MAX_MS,
   SESSION_TOUCH_MS,
   secretContext,
   sessionIdleMs,
@@ -362,8 +363,8 @@ export async function requireUser(request: Request, min: Role = 'viewer'): Promi
   return p;
 }
 
-const sessionCookie = (token: string) =>
-  `${SESSION}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_MS / 1000}`;
+const sessionCookie = (token: string, lifetimeMs: number) =>
+  `${SESSION}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${lifetimeMs / 1000}`;
 
 // Compared against when the email is unknown, so a miss costs the same PBKDF2 work as a hit.
 let decoy: Promise<string> | null = null;
@@ -467,7 +468,7 @@ export async function signInToLink(
           },
           detail: { method: 'sso-link' },
         });
-      return startSession(request, user.id);
+      return startSession(request, user.id, { sso: true });
     },
   };
 }
@@ -542,19 +543,28 @@ async function checkCredentials(
   };
 }
 
-/** Creates a session for a user and returns the cookie to set. */
-export async function startSession(request: Request, userId: string): Promise<string> {
+/**
+ * Creates a session for a user and returns the cookie to set. One that single sign-on started
+ * (`sso`) is capped at `SESSION_SSO_MAX_MS`, so the provider is asked again soon enough to notice
+ * a person it has disabled.
+ */
+export async function startSession(
+  request: Request,
+  userId: string,
+  { sso = false }: { sso?: boolean } = {},
+): Promise<string> {
   const token = randomToken();
   const now = Date.now();
+  const lifetime = sso ? SESSION_SSO_MAX_MS : SESSION_MAX_MS;
   await authStore().startSession({
     tokenHash: await sha256Hex(token),
     userId,
     createdAt: now,
-    expiresAt: now + SESSION_MAX_MS,
+    expiresAt: now + lifetime,
     ip: clientIp(request),
     userAgent: request.headers.get('user-agent')?.slice(0, 300) ?? null,
   });
-  return sessionCookie(token);
+  return sessionCookie(token, lifetime);
 }
 
 /**

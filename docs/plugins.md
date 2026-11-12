@@ -538,7 +538,7 @@ A sandboxed plugin, in `apps/engine/src/plugin-host.ts`:
   checked again; when one leaves the origin, `authorization`, `cookie` and `proxy-authorization`
   are dropped. A secret declared `inject: { host, header, format }` (an exact host, never `*.`) is
   added for that host as `header` (`format` with `{}` for the value) and stripped from anything
-  else, so the plugin never sees it. A request body over 10 MiB is refused with `413`. A refusal is
+  else, so the plugin never sees it. A request body over 10 MiB is refused with `413`. A hop that gets no answer within 10 s (`EGRESS_TIMEOUT_MS`) is refused with a `504`. A refusal is
   a `403` the plugin sees, and a log line naming the plugin, the origin and path (no query).
 - **Limits per call** (`limitsFor`): the manifest's `limits`, within `PLUGIN_LIMIT_CAPS`: 200 ms of
   CPU and 20 subrequests for a node, provider op or compensation; 1,000 ms for a page or delivery.
