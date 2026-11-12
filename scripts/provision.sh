@@ -229,6 +229,50 @@ jq -n --argjson audit "$audit_lock" '{rules: [
 wrangler r2 bucket lock set "$R2" --file "$locks" --force ${j[@]+"${j[@]}"}
 echo "Locked audit/ (${AUDIT_ARCHIVE_DAYS:-indefinitely}${AUDIT_ARCHIVE_DAYS:+ days}) and plugins/ (indefinitely) in $R2"
 
+# Redundancy (docs/operations.md, "Redundancy"): the commerce D1's daily backups in a bucket of their
+# own, and the standby database the restore drill rebuilds the newest one in. Both are read before
+# they are created, so a re-run changes nothing but the retention. Empty without `redundancy`.
+# redundancy:begin
+if [ -n "${BACKUPS_R2:-}" ]; then
+  if wrangler r2 bucket info "$BACKUPS_R2" ${j[@]+"${j[@]}"} >/dev/null 2>&1; then
+    echo "R2 bucket $BACKUPS_R2 already exists"
+  else
+    wrangler r2 bucket create "$BACKUPS_R2" ${j[@]+"${j[@]}"}
+  fi
+  # Backups expire after backupDays, and nothing deletes or overwrites one before then: a lock of
+  # the same age on d1/, so the lifecycle rule and the lock never disagree (the catalog's backups
+  # work the same way). The drills' evidence under drills/ is kept. `lock set` replaces the
+  # bucket's whole lock configuration: this is the backups bucket's only rule.
+  wrangler r2 bucket lifecycle remove "$BACKUPS_R2" --name d1-backups ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+  wrangler r2 bucket lifecycle add "$BACKUPS_R2" d1-backups d1/ --expire-days "$BACKUP_DAYS" \
+    --force ${j[@]+"${j[@]}"}
+  backup_locks=$(mktemp)
+  jq -n --argjson d "$BACKUP_DAYS" '{rules: [
+    {id: "d1-backups", enabled: true, prefix: "d1/", condition: {type: "Age", maxAgeSeconds: ($d * 86400)}}
+  ]}' >"$backup_locks"
+  wrangler r2 bucket lock set "$BACKUPS_R2" --file "$backup_locks" --force ${j[@]+"${j[@]}"}
+  rm -f "$backup_locks"
+  echo "D1 backups in $BACKUPS_R2 kept and locked $BACKUP_DAYS days"
+
+  # Looked up by name in the account's list: `d1 info <name>` resolves the name against the
+  # engine's own config first, whose STANDBY_DB would answer with its placeholder id.
+  standby_id() { wrangler d1 list --json | jq -er --arg n "$STANDBY_D1" '.[] | select(.name == $n) | .uuid'; }
+  if standby=$(standby_id 2>/dev/null); then
+    echo "D1 database $STANDBY_D1 already exists"
+  else
+    wrangler d1 create "$STANDBY_D1" ${j[@]+"${j[@]}"}
+    standby=$(standby_id)
+  fi
+  # A restore wipes this database: it must never be the live one.
+  if [ "$standby" = "$uuid" ]; then
+    echo "$STANDBY_D1 is the live database ($uuid): a restore would wipe it" >&2
+    exit 1
+  fi
+  node scripts/fleet.ts set-standby-d1 "$id" "$standby"
+  echo "Recorded standbyD1Id $standby in deployments/$id.jsonc"
+fi
+# redundancy:end
+
 # The AI Gateway every model call goes through: the same settings as commerceworker's own
 # (docs/deploy.md, "Settings for production").
 if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then

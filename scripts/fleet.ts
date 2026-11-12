@@ -26,6 +26,7 @@
  *   node scripts/fleet.ts logpush-token <id> <account> [check <group id>]  the Logpush R2 token to
  *                                                 create (permission groups on stdin), or check one (token on stdin)
  *   node scripts/fleet.ts set-d1 <id> <uuid>      record the D1 database id in the registry
+ *   node scripts/fleet.ts set-standby-d1 <id> <uuid>  record the standby D1 database id (with redundancy)
  *   node scripts/fleet.ts set-catalog-kv <id> <kv id>  record the catalog's card KV namespace id
  *   node scripts/fleet.ts set-plugin-d1 <id> <plugin> <uuid>  record a plugin's D1 database id
  *   node scripts/fleet.ts set-content-d1 <id> <uuid>  record the content database id (content only)
@@ -209,6 +210,40 @@ export function keysProblem(env: Record<string, string | undefined>): string | n
 /** Days a deployment keeps its catalog backups when its registry doesn't say. */
 export const CATALOG_BACKUP_DAYS = 90;
 
+/** What `redundancy` can switch off one by one (`except`); later slices act on the others. */
+export const REDUNDANCY_PARTS = [
+  'd1Backup',
+  'objectBackup',
+  'r2Replica',
+  'kvBackup',
+  'queues',
+  'email',
+  'intake',
+  'aiFallback',
+  'alerts',
+  'canary',
+  'readReplicas',
+] as const;
+export type RedundancyPart = (typeof REDUNDANCY_PARTS)[number];
+
+export const OFFSITE_PROVIDERS = ['s3', 'gcs', 'azure'] as const;
+export type OffsiteProvider = (typeof OFFSITE_PROVIDERS)[number];
+
+/** The registry's `redundancy`, with its defaults. `alerts` and `offsite` are checked but not acted on yet. */
+export type Redundancy = {
+  /** Days the commerce D1 backups are kept and locked: at least 31, at most `personalDataRetentionDays`. Default 35. */
+  backupDays: number;
+  /** The hour (UTC) the daily backup starts. Default 1. */
+  backupHourUtc: number;
+  /** How often the restore drill runs: Sundays or the 1st of the month. Default weekly. */
+  drill: 'weekly' | 'monthly';
+  except: RedundancyPart[];
+  alerts?: { webhook?: string; pagerduty?: string };
+  offsite?: { provider: OffsiteProvider; bucket: string; region: string };
+};
+
+export const REDUNDANCY_BACKUP_DAYS = 35;
+
 /**
  * Days the logs bucket keeps Workers' pushed logs when the registry doesn't say: past a year, so an
  * incident found at an annual review still has its logs, and the same as audit retention.
@@ -253,6 +288,17 @@ export type Deployment = {
   environment: string;
   /** Set by scripts/provision.sh; required to render or deploy. */
   d1Id?: string;
+  /**
+   * The standby D1 database (`commerceworker-standby<suffix>`) the restore drill rebuilds the
+   * newest backup in, and the database to promote after a loss. Set by scripts/provision.sh;
+   * required to render with `redundancy`, and never the same database as `d1Id`.
+   */
+  standbyD1Id?: string;
+  /**
+   * Redundancy: daily D1 backups and a restore drill (docs/operations.md, "Redundancy"). Off
+   * (undefined) renders, provisions and deploys what a deployment without it always did.
+   */
+  redundancy?: Redundancy;
   /** The catalog's card KV namespace id. Set by scripts/provision.sh; required like d1Id. */
   catalogKvId?: string;
   /** The content database (`commerceworker-content<suffix>`). Set by scripts/provision.sh; required with `content`. */
@@ -474,6 +520,118 @@ const CONTENT_HOSTS = {
 } as const;
 const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
 
+/** The registry's `redundancy` and `standbyD1Id`, validated, with the defaults filled in. */
+function redundancyOf(
+  raw: Record<string, unknown>,
+  file: string,
+  personal: number | undefined,
+): Redundancy | undefined {
+  const r = raw.redundancy;
+  if (raw.standbyD1Id !== undefined) {
+    if (typeof raw.standbyD1Id !== 'string' || !raw.standbyD1Id)
+      throw new Error(`${file}: standbyD1Id must be the standby D1 database's id`);
+    if (raw.standbyD1Id === raw.d1Id)
+      throw new Error(`${file}: standbyD1Id is the live database (d1Id): a restore would wipe it`);
+  }
+  if (r === undefined || r === false) {
+    if (raw.standbyD1Id !== undefined) throw new Error(`${file}: standbyD1Id needs redundancy`);
+    return undefined;
+  }
+  if (r !== true && (typeof r !== 'object' || r === null || Array.isArray(r)))
+    throw new Error(
+      `${file}: redundancy must be true or { "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`,
+    );
+  if (raw.demo === true) throw new Error(`${file}: a demo has no data to keep: drop redundancy`);
+  const o = r === true ? {} : (r as Record<string, unknown>);
+  const known = ['backupDays', 'backupHourUtc', 'drill', 'except', 'alerts', 'offsite'];
+  const unknown = Object.keys(o).filter((k) => !known.includes(k));
+  if (unknown.length)
+    throw new Error(
+      `${file}: redundancy has no ${unknown.join(', ')} (it has ${known.join(', ')})`,
+    );
+
+  // Keeping a backup longer than the personal data its rows hold would keep what erasure removed.
+  const days =
+    o.backupDays ??
+    (personal === undefined ? REDUNDANCY_BACKUP_DAYS : Math.min(REDUNDANCY_BACKUP_DAYS, personal));
+  if (!Number.isInteger(days) || (days as number) < 31)
+    throw new Error(
+      `${file}: redundancy.backupDays must be a whole number of days, at least 31${personal !== undefined && personal < 31 ? ` (personalDataRetentionDays ${personal} is too short to keep backups under it)` : ''}`,
+    );
+  if (personal !== undefined && (days as number) > personal)
+    throw new Error(
+      `${file}: redundancy.backupDays (${days}) can't be longer than personalDataRetentionDays (${personal}): backups would keep personal data the sweep erased`,
+    );
+  const hour = o.backupHourUtc ?? 1;
+  if (!Number.isInteger(hour) || (hour as number) < 0 || (hour as number) > 23)
+    throw new Error(`${file}: redundancy.backupHourUtc must be a whole hour from 0 to 23 (UTC)`);
+  const drill = o.drill ?? 'weekly';
+  if (drill !== 'weekly' && drill !== 'monthly')
+    throw new Error(`${file}: redundancy.drill must be "weekly" or "monthly"`);
+  const except = o.except ?? [];
+  if (!Array.isArray(except))
+    throw new Error(`${file}: redundancy.except must be a list of ${REDUNDANCY_PARTS.join(', ')}`);
+  const bad = except.filter((e) => !(REDUNDANCY_PARTS as readonly unknown[]).includes(e));
+  if (bad.length)
+    throw new Error(
+      `${file}: redundancy.except names ${bad.map(String).join(', ')}, which isn't one of ${REDUNDANCY_PARTS.join(', ')}`,
+    );
+
+  let alerts: Redundancy['alerts'];
+  if (o.alerts !== undefined) {
+    const a = o.alerts as Record<string, unknown>;
+    if (typeof a !== 'object' || a === null || Array.isArray(a))
+      throw new Error(`${file}: redundancy.alerts must be { "webhook"?, "pagerduty"? }`);
+    const extra = Object.keys(a).filter((k) => k !== 'webhook' && k !== 'pagerduty');
+    if (extra.length) throw new Error(`${file}: redundancy.alerts has no ${extra.join(', ')}`);
+    if (
+      a.webhook !== undefined &&
+      (typeof a.webhook !== 'string' || !/^https:\/\/\S+$/.test(a.webhook))
+    )
+      throw new Error(`${file}: redundancy.alerts.webhook must be an https URL`);
+    if (a.pagerduty !== undefined && (typeof a.pagerduty !== 'string' || !a.pagerduty.trim()))
+      throw new Error(`${file}: redundancy.alerts.pagerduty must be a routing key`);
+    alerts = a as Redundancy['alerts'];
+  }
+  let offsite: Redundancy['offsite'];
+  if (o.offsite !== undefined) {
+    const f = o.offsite as Record<string, unknown>;
+    if (typeof f !== 'object' || f === null || Array.isArray(f))
+      throw new Error(`${file}: redundancy.offsite must be { "provider", "bucket", "region" }`);
+    const extra = Object.keys(f).filter((k) => !['provider', 'bucket', 'region'].includes(k));
+    if (extra.length) throw new Error(`${file}: redundancy.offsite has no ${extra.join(', ')}`);
+    if (!(OFFSITE_PROVIDERS as readonly unknown[]).includes(f.provider))
+      throw new Error(
+        `${file}: redundancy.offsite.provider must be one of ${OFFSITE_PROVIDERS.join(', ')}`,
+      );
+    for (const k of ['bucket', 'region'] as const)
+      if (typeof f[k] !== 'string' || !(f[k] as string).trim())
+        throw new Error(`${file}: redundancy.offsite.${k} must be a non-empty string`);
+    offsite = f as Redundancy['offsite'];
+  }
+  return {
+    backupDays: days as number,
+    backupHourUtc: hour as number,
+    drill,
+    except: [...new Set(except as RedundancyPart[])],
+    ...(alerts ? { alerts } : {}),
+    ...(offsite ? { offsite } : {}),
+  };
+}
+
+/** Whether the commerce D1 is backed up and drilled: `redundancy` on, `d1Backup` not an exception. */
+export const backsUpD1 = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('d1Backup');
+
+/** The two Workflows' cron schedules: the backup daily, the drill six hours later on Sundays or the 1st. */
+export function redundancySchedules(r: Redundancy) {
+  const drillHour = (r.backupHourUtc + 6) % 24;
+  return {
+    backup: `0 ${r.backupHourUtc} * * *`,
+    restore: r.drill === 'monthly' ? `0 ${drillHour} 1 * *` : `0 ${drillHour} * * 0`,
+  };
+}
+
 export function toDeployment(raw: Record<string, unknown>, file = 'deployment'): Deployment {
   const id = raw.id;
   if (typeof id !== 'string' || !/^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){1,30}$/.test(id))
@@ -577,6 +735,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   const backupDays = raw.catalogBackupDays;
   if (backupDays !== undefined && (!Number.isInteger(backupDays) || (backupDays as number) < 31))
     throw new Error(`${file}: catalogBackupDays must be a whole number of days, at least 31`);
+  const redundancy = redundancyOf(raw, file, personal as number | undefined);
   const logDays = raw.logRetentionDays;
   if (
     logDays !== undefined &&
@@ -809,6 +968,8 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
     suffix: typeof raw.suffix === 'string' ? raw.suffix : `-${id}`,
     environment: typeof raw.environment === 'string' ? raw.environment : `deploy-${id}`,
     ...(raw.d1Id ? { d1Id: raw.d1Id as string } : {}),
+    ...(raw.standbyD1Id ? { standbyD1Id: raw.standbyD1Id as string } : {}),
+    ...(redundancy ? { redundancy } : {}),
     ...(raw.catalogKvId ? { catalogKvId: raw.catalogKvId as string } : {}),
     ...(raw.mediaScope
       ? { mediaScope: raw.mediaScope as NonNullable<Deployment['mediaScope']> }
@@ -877,6 +1038,7 @@ export function paymentsProblem(d: Deployment, raw: { storefrontDomain?: unknown
 export function resourceIds(d: Deployment): [field: string, id: string][] {
   const ids: [string, string | undefined][] = [
     ['d1Id', d.d1Id],
+    ['standbyD1Id', d.standbyD1Id],
     ['catalogKvId', d.catalogKvId],
     ['contentD1Id', d.contentD1Id],
     ['contentKvId', d.contentKvId],
@@ -955,6 +1117,9 @@ export const names = (d: Deployment) => ({
   productIndex: `commerceworker-products${d.suffix}`,
   catalog: `commerceworker-catalog${d.suffix}`,
   catalogR2: `commerceworker-catalog${d.suffix}`,
+  /** The commerce D1 backups and drill evidence (`redundancy`), and the database a drill restores into. */
+  backups: `commerceworker-backups${d.suffix}`,
+  standbyD1: `commerceworker-standby${d.suffix}`,
   catalogKv: `commerceworker-catalog-cards${d.suffix}`,
   catalogFeedParts: `commerceworker-catalog-feed-parts${d.suffix}`,
   catalogFeedPartsDlq: `commerceworker-catalog-feed-parts-dlq${d.suffix}`,
@@ -1309,16 +1474,56 @@ type Config = Record<string, any>;
 function storage(config: Config, d: Deployment) {
   if (!d.d1Id) throw new Error(`${d.id} has no d1Id: run scripts/provision.sh ${d.id}`);
   const n = names(d);
-  config.d1_databases = config.d1_databases.map((db: Config) => ({
-    ...db,
-    database_name: n.d1,
-    database_id: d.d1Id,
-  }));
-  config.r2_buckets = config.r2_buckets.map((b: Config) => ({
-    ...b,
-    bucket_name: n.r2,
-    ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
-  }));
+  // Only DB and DOCS: the engine's redundancy bindings (STANDBY_DB, BACKUPS) are rendered apart.
+  config.d1_databases = config.d1_databases.map((db: Config) =>
+    db.binding === 'DB' ? { ...db, database_name: n.d1, database_id: d.d1Id } : db,
+  );
+  config.r2_buckets = config.r2_buckets.map((b: Config) =>
+    b.binding === 'DOCS'
+      ? { ...b, bucket_name: n.r2, ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}) }
+      : b,
+  );
+}
+
+/**
+ * The engine's redundancy bindings: the base config carries them (commerceworker has the flag on),
+ * so a deployment without `redundancy`, or with `d1Backup` an exception, has them stripped, as
+ * ASSISTANT_PLUGINS is. With them: the standby database, the backups bucket in the deployment's
+ * jurisdiction, and the two Workflows at the registry's hour.
+ */
+function redundancyBindings(config: Config, d: Deployment) {
+  const workflows = ['D1_BACKUP', 'D1_RESTORE'];
+  if (!backsUpD1(d)) {
+    config.d1_databases = config.d1_databases.filter((db: Config) => db.binding !== 'STANDBY_DB');
+    config.r2_buckets = config.r2_buckets.filter((b: Config) => b.binding !== 'BACKUPS');
+    config.workflows = config.workflows.filter((w: Config) => !workflows.includes(w.binding));
+    return;
+  }
+  if (!d.standbyD1Id)
+    throw new Error(`${d.id} has no standbyD1Id: run scripts/provision.sh ${d.id}`);
+  const n = names(d);
+  const cron = redundancySchedules(d.redundancy);
+  config.d1_databases = config.d1_databases.map((db: Config) =>
+    db.binding === 'STANDBY_DB'
+      ? { ...db, database_name: n.standbyD1, database_id: d.standbyD1Id }
+      : db,
+  );
+  config.r2_buckets = config.r2_buckets.map((b: Config) =>
+    b.binding === 'BACKUPS'
+      ? {
+          ...b,
+          bucket_name: n.backups,
+          ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
+        }
+      : b,
+  );
+  config.workflows = config.workflows.map((w: Config) =>
+    w.binding === 'D1_BACKUP'
+      ? { ...w, schedules: [cron.backup] }
+      : w.binding === 'D1_RESTORE'
+        ? { ...w, schedules: [cron.restore] }
+        : w,
+  );
 }
 
 export function renderEngine(base: Config, d: Deployment): Config {
@@ -1327,6 +1532,7 @@ export function renderEngine(base: Config, d: Deployment): Config {
   // Workflow names are unique per account, so each deployment's carry its suffix.
   config.workflows = config.workflows.map((w: Config) => ({ ...w, name: `${w.name}${d.suffix}` }));
   storage(config, d);
+  redundancyBindings(config, d);
   // The product index ai.extract reads. A demo mocks every model, so it has none (and
   // scripts/provision.sh creates none).
   if (d.demo) delete config.vectorize;
@@ -1812,6 +2018,7 @@ export function matrix(list: Deployment[]): Record<Ring, Deployment[]> {
       (d) =>
         !d.hold &&
         (!d.d1Id ||
+          (backsUpD1(d) && !d.standbyD1Id) ||
           !d.catalogKvId ||
           workerPlugins(d).some((p) => !d.plugins[p]!.d1Id) ||
           (d.content && (!d.contentD1Id || !d.contentKvId))),
@@ -1819,7 +2026,7 @@ export function matrix(list: Deployment[]): Record<Ring, Deployment[]> {
     .map((d) => d.id);
   if (unprovisioned.length)
     throw new Error(
-      `not provisioned (no d1Id, catalogKvId or plugin d1Id, or with content no contentD1Id or contentKvId): ${unprovisioned.join(', ')}; provision or hold them`,
+      `not provisioned (no d1Id, catalogKvId or plugin d1Id, with redundancy no standbyD1Id, or with content no contentD1Id or contentKvId): ${unprovisioned.join(', ')}; provision or hold them`,
     );
   return Object.fromEntries(
     RINGS.map((ring) => [ring, list.filter((d) => d.ring === ring && !d.hold)]),
@@ -2072,6 +2279,11 @@ export function shellVars(d: Deployment): Record<string, string> {
     // The product index (Vectorize); empty for a demo, which has none.
     PRODUCT_INDEX: d.demo ? '' : n.productIndex,
     CATALOG_R2: n.catalogR2,
+    // The commerce D1 backups: the bucket, the standby database and how long a backup is kept and
+    // locked. All empty without `redundancy` (or with `d1Backup` an exception).
+    BACKUPS_R2: backsUpD1(d) ? n.backups : '',
+    STANDBY_D1: backsUpD1(d) ? n.standbyD1 : '',
+    BACKUP_DAYS: backsUpD1(d) ? String(d.redundancy.backupDays) : '',
     CATALOG_KV: n.catalogKv,
     CATALOG_FEED_PARTS: n.catalogFeedParts,
     CATALOG_FEED_PARTS_DLQ: n.catalogFeedPartsDlq,
@@ -2172,7 +2384,7 @@ function shellNames(id: string | undefined) {
 /** Writes one field into deployments/<id>.jsonc, keeping its comments. */
 function setField(
   id: string | undefined,
-  field: 'd1Id' | 'catalogKvId' | 'contentD1Id' | 'contentKvId',
+  field: 'd1Id' | 'standbyD1Id' | 'catalogKvId' | 'contentD1Id' | 'contentKvId',
   value: string,
 ) {
   const d = byId(id);
@@ -2204,6 +2416,14 @@ function setPluginD1(id: string | undefined, plugin: string | undefined, uuid: s
 function setD1(id: string | undefined, uuid: string | undefined) {
   if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('set-d1 <id> <uuid>');
   setField(id, 'd1Id', uuid);
+}
+
+function setStandbyD1(id: string | undefined, uuid: string | undefined) {
+  if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('set-standby-d1 <id> <uuid>');
+  const d = byId(id);
+  if (!backsUpD1(d))
+    throw new Error(`${d.id} has no redundancy: set it before recording standbyD1Id`);
+  setField(id, 'standbyD1Id', uuid);
 }
 
 function setCatalogKv(id: string | undefined, kvId: string | undefined) {
@@ -2337,6 +2557,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'logpush-foreign') logpushForeign(args[0]);
     else if (cmd === 'logpush-token') logpushTokenCmd(args[0], args[1], args[2], args[3]);
     else if (cmd === 'set-d1') setD1(args[0], args[1]);
+    else if (cmd === 'set-standby-d1') setStandbyD1(args[0], args[1]);
     else if (cmd === 'set-catalog-kv') setCatalogKv(args[0], args[1]);
     else if (cmd === 'set-plugin-d1') setPluginD1(args[0], args[1], args[2]);
     else if (cmd === 'set-content-d1') setContentD1(args[0], args[1]);
@@ -2345,7 +2566,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|logpush-foreign|logpush-token|set-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|logpush-foreign|logpush-token|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);

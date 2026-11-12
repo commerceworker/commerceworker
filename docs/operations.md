@@ -44,6 +44,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `suffix` | `-<id>` | Added to every resource name. `commerceworker` uses `""`, so its resources keep the base names |
 | `environment` | `deploy-<id>` | The GitHub environment holding the deployment's secrets. `commerceworker` uses `production` |
 | `d1Id` | none | The D1 database's id, written by `scripts/provision.sh`. Every resource id in the registry (`d1Id`, `catalogKvId`, `contentD1Id`, `contentKvId` and each plugin's `d1Id`) belongs to one deployment: the fleet refuses to load two entries, or one entry twice, that share an id, which is what a copied registry file with a stale id would do. Provision the new deployment instead of copying ids |
+| `standbyD1Id` | none | The standby D1 database's id (`commerceworker-standby<suffix>`), written by `scripts/provision.sh` (`fleet.ts set-standby-d1`). Only with `redundancy`, and never the same database as `d1Id` (refused: a restore wipes it). Required to render the engine's config or to deploy with `redundancy` (the plan stops without it, like `d1Id`) |
 | `catalogKvId` | none | The id (32 hex characters; anything else is refused) of the catalog's KV namespace of listing cards, written by `scripts/provision.sh` (`fleet.ts set-catalog-kv`). Like `d1Id` (which the catalog's config also binds as its `DB`), required to render the catalog's config or to deploy |
 | `jurisdiction` | none | `eu` or `fedramp`: where D1 and R2 (the docs and the catalog's buckets) keep data, set when they are created, and where the engine's Durable Objects (`OrderAgent`, `AssistantAgent`, `A2AAgent`) and the catalog's (`CatalogShard`, `CatalogMeta`, `CatalogFeeds`, `ListingIndexer`, `SearchShard`, `CatalogPublisher`) are created. Rendered into the engine's and the catalog's `DATA_JURISDICTION`; `renderEngine` and `renderCatalog` omit it when unset, leaving the base `""`. KV has no jurisdictions. Fixed for a deployment's life: see [Data residency](data-model.md#data-residency) |
 | `limits` | none | Requests a minute per caller, replacing the base budgets it names: `api` (`/api/v1`, 600), `agents` (each of `/mcp` and `/a2a`, and each UCP platform's checkout calls, 300), `catalog` (each UCP platform's catalog search and lookup, 120), `webhooks` (each integration, 1,200). For example `"limits": { "webhooks": 6000 }` for a customer whose ERP sends in bursts |
@@ -51,6 +52,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `personalDataRetentionDays` | none (kept) | Whole days after an order finishes that the daily sweep erases its buyer's personal data; at least 30 (refused below). Rendered into the engine's `PERSONAL_DATA_RETENTION_DAYS`; see [Retention](data-model.md#personal-data-on-finished-orders) |
 | `auditArchiveDays` | none (kept) | Whole days (at least 1; refused below) the R2 archive keeps audit events. `provision.sh` replaces the bucket's lifecycle rule `audit-archive` (prefix `audit/`) with that expiry on every run, and removes it when unset. It also locks `audit/` for the same number of days, or indefinitely when unset ([Bucket locks](#bucket-locks)) |
 | `catalogBackupDays` | `90` | Whole days (at least 31, so a backup outlives Durable Objects' 30 days of point-in-time recovery; refused below or fractional) the catalog's daily backups are kept. `provision.sh` replaces the catalog bucket's lifecycle rule `backups` (prefix `backups/`) with that expiry, and its lock rule `catalog-backups` with the same age, on every run ([Catalog backups](#catalog-backups), [Bucket locks](#bucket-locks)) |
+| `redundancy` | none (off) | `true`, or `{ "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`. Turns on the commerce D1's daily backup and its restore drill ([Redundancy](#redundancy)); off, the deployment renders, provisions and deploys exactly what it did before the field existed. `backupDays`: whole days (default 35, at least 31 so a backup outlives Time Travel's 30; refused above `personalDataRetentionDays`, which would keep personal data the sweep erased; the default is lowered to `personalDataRetentionDays` when that is shorter) a backup is kept and locked. `backupHourUtc`: the hour, 0 to 23 UTC, the daily backup starts (default 1). `drill`: `weekly` (Sundays) or `monthly` (the 1st), six hours after the backup's hour (default `weekly`). `except`: parts to leave off, from `d1Backup`, `objectBackup`, `r2Replica`, `kvBackup`, `queues`, `email`, `intake`, `aiFallback`, `alerts`, `canary`, `readReplicas`; today only `d1Backup` does anything (it turns off the backup, the drill, the bucket and the standby), and the rest are reserved for what comes later. `alerts` (`{ "webhook"?: "https://…", "pagerduty"?: "<routing key>" }`) and `offsite` (`{ "provider": "s3" \| "gcs" \| "azure", "bucket", "region" }`) are parsed and validated now but **not acted on yet**. An unknown key or `except` name, a `backupDays` out of range, an `offsite.provider` that is none of those three, and the field on a `demo` are refused. `commerceworker` sets `true` |
 | `logRetentionDays` | `400`, or `personalDataRetentionDays` when set | Whole days (at least 30; refused below or fractional, and refused above `personalDataRetentionDays` when that is set) the logs bucket `commerceworker-logs<suffix>` keeps the Workers' trace events Logpush writes there. `provision.sh` replaces the bucket's lifecycle rule `logs` (prefix `workers/`) with that expiry on every run ([Logs](#logs)) |
 | `aiPersonalData` | `redact` | `redact` or `send` (anything else is refused). `send` lets the workflow AI nodes and the assistant's `assess_order` see buyers' contact details, names and addresses; see [Personal data](data-model.md#personal-data). Rendered into the engine's `AI_PERSONAL_DATA` |
 | `payments` | `mock` on staging and internal entries with no `storefrontDomain`; otherwise required | `stripe` or `mock` (anything else is refused). `stripe` takes payments through Stripe with the environment's `STRIPE_SECRET_KEY`, and a deploy without that secret stops before it migrates anything. `mock` records payments without taking money. An unset field renders `mock`, so the fleet refuses to load an entry that leaves it out when it is on the `canary` or `general` ring, or has a `storefrontDomain` (a demo is exempt and is always `mock`): the error names the file and the two choices. `mock` is a deliberate choice for staging and internal deployments and canary trials, and is refused on `general`. A demo can't be `stripe`. Rendered into the engine's `PAYMENTS_MODE`. There is no `none` for an on-account deployment with no cards yet |
@@ -76,10 +78,10 @@ With the suffix, deployment `acme` gets these resource names:
 | Engine Worker | `commerceworker-engine-acme` (the web and storefront Workers' `ENGINE` bindings point at it; the web app's use entrypoint `EngineApi`, the storefront's `StorefrontApi`) |
 | Catalog Worker | `commerceworker-catalog-acme` |
 | Delivery Worker (the catalog's public API, content off) | `commerceworker-delivery-acme`, at `catalog.acme.commerceworker.com` |
-| Workflows | `commerceworker-order-acme`, `commerceworker-replenish-acme`, `commerceworker-catalog-feed-acme`, `commerceworker-catalog-backup-acme`, `commerceworker-catalog-restore-acme` (Workflow names are unique per account) |
+| Workflows | `commerceworker-order-acme`, `commerceworker-replenish-acme`, `commerceworker-catalog-feed-acme`, `commerceworker-catalog-backup-acme`, `commerceworker-catalog-restore-acme`, and with `redundancy` `commerceworker-d1-backup-acme` and `commerceworker-d1-restore-acme` (Workflow names are unique per account) |
 | Plugin Worker and D1 | `commerceworker-plugin-<id>-acme` for each installed plugin (the Worker and its database share the name) |
-| D1 | `commerceworker-acme` (bound by the engine, web and catalog Workers; the catalog writes variant names and prices into `products`) |
-| R2 | `commerceworker-docs-acme`, `commerceworker-catalog-acme` (the catalog's published documents, feed files and backups), `commerceworker-logs-acme` (the Workers' logs, from Logpush) |
+| D1 | `commerceworker-acme` (bound by the engine, web and catalog Workers; the catalog writes variant names and prices into `products`); with `redundancy`, also `commerceworker-standby-acme` (bound by the engine only, as `STANDBY_DB`; id in `standbyD1Id`) |
+| R2 | `commerceworker-docs-acme`, `commerceworker-catalog-acme` (the catalog's published documents, feed files and backups), `commerceworker-logs-acme` (the Workers' logs, from Logpush); with `redundancy`, `commerceworker-backups-acme` (the commerce D1's backups and the drills' evidence) |
 | Logpush | job `commerceworker-workers-acme` (`workers_trace_events`, filtered to the deployment's Workers) and the R2 API token it writes with, `commerceworker-logpush-acme` ([Logs](#logs)) |
 | Queues | `commerceworker-catalog-feed-parts-acme` and its dead-letter queue `commerceworker-catalog-feed-parts-dlq-acme`; the purge queue `commerceworker-catalog-purge-acme` and its dead-letter queue `commerceworker-catalog-purge-dlq-acme`; the listing-changes queue `commerceworker-catalog-changes-acme` and its dead-letter queue `commerceworker-catalog-changes-dlq-acme` (queue names are unique per account) |
 | Analytics Engine | dataset `commerceworker_catalog_delivery_acme` (dashes in the suffix become underscores) |
@@ -149,6 +151,7 @@ Turning it on for an existing deployment: set `"content": true`, run `./scripts/
    bucket's lock rule `catalog-backups` on `backups/` for `catalogBackupDays` days
    ([Bucket locks](#bucket-locks)).
    It creates the logs bucket `commerceworker-logs<suffix>` (in the jurisdiction), replaces its lifecycle rule `logs` with a `logRetentionDays` expiry, and creates or updates the deployment's Logpush job ([Logs](#logs)); the job needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and without them it says it skipped it.
+   With `redundancy` it also creates the backups bucket and the standby D1 database, each only if it isn't there, and writes `standbyD1Id` ([Redundancy](#redundancy)).
    It also sets the R2 lifecycle rule that expires the audit archive after `auditArchiveDays`, or removes it when that is unset, and the docs bucket's lock rules ([Bucket locks](#bucket-locks)); re-run it after changing the number.
    With `"content": true` it also creates the content stack's resources, each found or created so a re-run changes nothing: the content D1 database (read replication turned on through the API when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set, else it says where in the dashboard) with its id written as `contentD1Id`; the content cache KV namespace (`contentKvId`); the assets bucket, with lifecycle rules `imports` (`imports/`, 7 days), `dlq` (`dlq/`, 30 days), `zips` (`zips/`, 2 days) and `abort-multipart` (unfinished multipart uploads, 2 days), replaced on each run; the Vectorize index `commerceworker-vectors<suffix>` (768 dimensions, cosine) with metadata indexes on `spaceId` and `environmentId`, unless a demo; the ten content queues, each keeping messages 14 days; and the R2 notification that announces every object written to the assets bucket on the asset-events queue (asset ingest). It also generates `TOKEN_PEPPER` and `MEDIA_SIGNING_SECRET`, and never a `TOKEN_PEPPER` the api Worker already holds. A commerce-only deployment gets none of this.
    It sets the environment's `PRINCIPAL_KEY`, `DATA_KEY` and `PASSWORD_PEPPER` (`openssl rand -hex 32`, never written to disk) when it lacks them, for a deployment that already runs too, since a deploy fails without the first two. It never replaces a `DATA_KEY` or `PASSWORD_PEPPER` the web Worker already holds: when the environment has lost one, it stops and asks for the deployment's own value, since a new one would leave every secret sealed under the old key, or every password hashed with the old pepper, unreadable. It writes `d1Id` into the registry file and sets the environment's `SETUP_TOKEN`, the one-time setup code. New values are generated and saved in `.secrets/<id>/` (gitignored; the code is `.secrets/<id>/setup-code`); a secret
@@ -609,11 +612,95 @@ the republish takes down what the backup doesn't have, and their product id coun
 back. Its `undo` bookmarks rewind the objects to just before the load, while that is within 30
 days.
 
+## Redundancy
+
+`redundancy` in a deployment's registry entry turns on protection for the commerce database beyond Time Travel. Today that is one thing: a daily backup of the commerce D1 into a bucket of its own, and a restore drill that proves each backup by rebuilding it in a second database. Later changes add the rest of what `except` names; `alerts` and `offsite` are accepted and checked now and **do nothing yet**. A deployment without the field renders, provisions and deploys exactly as it did before. `commerceworker` has it on.
+
+**Set it** in `deployments/<id>.jsonc`: `"redundancy": true` for the defaults, or an object ([The registry](#the-registry)). It must be provisioned before the merge that carries it: `./scripts/provision.sh <id>` creates the backups bucket `commerceworker-backups<suffix>` (in the deployment's jurisdiction, with a lifecycle rule and a bucket lock on `d1/` for `backupDays`, [Bucket locks](#bucket-locks)) and the standby D1 database `commerceworker-standby<suffix>`, and writes `standbyD1Id` into the entry (commit it). Each is read before it is created, so a re-run changes nothing but the retention, and it stops if the standby it finds is the live database. A deployment with `redundancy` and no `standbyD1Id` fails to render and stops the deploy plan, like one without `d1Id`; hold it (`"hold": true`) until it is provisioned.
+
+**What runs.** The engine gets two Workflows, started by their `schedules`:
+
+| Workflow | When | Does |
+|---|---|---|
+| `commerceworker-d1-backup<suffix>` (`D1Backup`) | daily at `backupHourUtc` (default 01:00 UTC) | Copies every table of record to `commerceworker-backups<suffix>` |
+| `commerceworker-d1-restore<suffix>` (`D1Restore`) | Sundays (`weekly`) or the 1st of the month (`monthly`), six hours after the backup's hour; or by hand | Rebuilds the newest backup, or the one it is given, in the standby database and checks it |
+
+**The backup** (`apps/engine/src/d1-backup.ts`, the logic in `packages/application/src/commerce/database-backup.ts`) reads the database through its binding a table at a time, in pages of up to 1,000 rows (about 4 MB), and writes each as a gzipped NDJSON chunk, one Workflow step a chunk:
+
+| Key | Holds |
+|---|---|
+| `d1/<yyyy-mm-dd>/<table>/<n>.ndjson.gz` | A page of one table, a JSON object a row, with its SHA-256 and row count in the object's metadata |
+| `d1/<yyyy-mm-dd>/manifest.json` | Written last: the date, `startedAt` and `finishedAt`, the newest applied migration (`migrationHead`), the schema (every table's `CREATE` statement and columns, in load order; indexes, triggers and views; the search index), and each table's chunks with their hashes and row counts. A day without one is a backup that hasn't finished |
+| `drills/<yyyy-mm-dd>.json` | A drill's evidence: `outcome`, the backup it restored, `minutes` taken and each check's result |
+
+A second run on a day that has a manifest copies nothing; a run that failed resumes after the chunks already stored, and every write skips a key that exists, as the lock needs. Rows are read a page at a time while writes go on, so a backup is not one instant across tables: `startedAt` and `finishedAt` bound it. The manifest has no Time Travel bookmark (a Worker can't read one): `timeTravelBookmark` is always `null`, and `wrangler d1 time-travel info DB --timestamp=<startedAt>` finds the bookmark for a backup's start. Not copied: SQLite's and D1's own tables, and the `products_search` keyword index with its shadow tables (D1 can't export a virtual table either): its definition and settings are in the manifest and a restore rebuilds it from `products`. A backup refuses a value it can't carry (a BLOB). Workflows allow 10,000 steps an instance and a restore takes about two steps for each chunk, so the copy suits a database up to a few million rows; past that, the page size must be raised first (a drill fails at the step limit rather than restoring less).
+
+**The drill** restores into `STANDBY_DB` and nowhere else; the engine has no other restore target. It:
+
+1. finds the newest backup that finished (or the `date` it was given) and refuses a day with no manifest;
+2. checks every chunk against the manifest's hash, **before anything is wiped**, and refuses one that is missing or doesn't match;
+3. empties the standby (which must be empty, or have been made by an earlier restore: it refuses a database holding other tables, so a binding pointed at the live database wipes nothing), creates the tables from the manifest's schema, loads the chunks in foreign-key order, then creates indexes, triggers and views and rebuilds the search index;
+4. checks the result against the manifest: the tables present, each table's row count, the newest migration (`d1_migrations`), `PRAGMA foreign_key_check` (no violations), the audit trail's hash chain (verified end to end) and that the search index holds every product;
+5. writes `drills/<date>.json`. A failed drill sets `outcome` to `failed`, says why in `error`, writes the line `d1 restore drill failed` with `console.error` and fails the Workflow instance.
+
+The schema comes from the backup's manifest, not from `packages/db/migrations`, so a backup restores into the schema it was taken with even after the repo has moved on; the migration check compares the restored database's `d1_migrations` with the manifest's `migrationHead`. A failed drill is a problem with the backup, not a reason to wait: read the evidence and the instance's error, and fix it before the next backup replaces the one before it. Nothing else alerts on a failed drill yet beyond the failed Workflow instance and the error-level log line, which [Workers Issues](#alerting) groups.
+
+**Check the latest** (add `--jurisdiction eu` for an EU deployment; `--remote` reads the real bucket):
+
+```bash
+wrangler r2 object get commerceworker-backups<suffix>/drills/<yyyy-mm-dd>.json --remote --pipe | jq '{outcome, backup, minutes, error}'
+wrangler r2 object get commerceworker-backups<suffix>/d1/<yyyy-mm-dd>/manifest.json --remote --pipe | jq '.startedAt, .finishedAt, .migrationHead'
+```
+
+To take a backup or run a drill now, `wrangler workflows trigger commerceworker-d1-backup<suffix>` or `commerceworker-d1-restore<suffix>` (a backup is named by the UTC date it starts on, so on a day that has one it copies nothing).
+
+The backup is not a request path, so it changes no query count in `packages/db/test/query-counts.json`.
+
+### Restoring commerce D1 from a backup
+
+**Prefer Time Travel** when the loss is inside its 30 days: it restores to the minute, in place, with no registry change ([Restoring D1](deploy.md#restoring-d1)). Use a backup when the database is gone or can't be restored in place, or the point you need is older than 30 days.
+
+1. **Hold the deployment** (`"hold": true`) and, if the database is still answering, stop writes you don't want to lose: nothing else changes until step 5.
+2. **Pick the backup.** List `d1/` in `commerceworker-backups<suffix>` and read the manifests' `finishedAt`; the newest finished one loses the least. Check the last drill's evidence is `passed` for it.
+3. **Restore it into the standby:**
+
+   ```bash
+   wrangler workflows trigger commerceworker-d1-restore<suffix> --params '{"date": "2026-11-12"}'
+   wrangler workflows instances describe commerceworker-d1-restore<suffix> latest
+   ```
+
+   Read `drills/<today>.json`: the outcome is `passed` only when every check is. A chunk that fails its hash, or a standby that isn't empty and wasn't made by a restore, stops it before anything is written.
+4. **Look before you promote.** The standby is a complete database: `wrangler d1 execute <standby name> --remote --command "SELECT count(*) FROM orders"`, and its `d1_migrations` head against what is deployed. A deploy applies any migration after the head, so a backup older than a migration is fine.
+5. **Promote it.** In `deployments/<id>.jsonc` put the standby's id in `d1Id` (and keep the old `d1Id` aside), remove `hold`, and merge: CI renders `d1Id` into the web, engine and catalog configs, applies the migrations after the backup's head, and deploys. The standby needs no schema step of its own.
+6. **Provision a new standby** for the next drill: the promoted database can't also be one. Create another D1 database (`wrangler d1 create`), write its id as `standbyD1Id`, and delete the database you replaced once you no longer need it.
+
+Caveats:
+
+- **What is lost is everything written since the backup began**, up to a day: orders, approvals, audit events and carts. Stripe and the carriers know about charges and shipments the database doesn't: reconcile them by hand. Files in the docs bucket for lost orders stay there, unreferenced.
+- **Durable Object state is not in D1** and is not restored: live orders' and carts' agents keep what they held, which may name rows the restore doesn't have. Check running orders against the restored `orders` table before resuming anything.
+- **The restore wipes and rebuilds the standby each time**, so promote only once you have what you need from the drill's result: a drill run after the promotion has a different standby.
+- **Webhook deliveries marked sent after the backup are pending again** and go out a second time; receivers dedupe on the delivery id.
+- **`provision.sh` finds databases by name.** The promoted database keeps the name `commerceworker-standby<suffix>`, so re-running the script for the deployment would write the old database's id back as `d1Id`. Don't re-run it for a deployment after a promotion; until it learns the swap, resource names and ids disagree on purpose and the ids are the truth. `wrangler d1 time-travel` works from the new `d1Id` as usual.
+- **AUTOINCREMENT counters** start again after the highest row loaded (SQLite's `sqlite_sequence` is not copied), which only matters for ids a deleted row once held.
+- A backup older than 30 days has no Time Travel behind it; a restore from it is the only recovery for its date.
+
+### What is recovered, and how fast
+
+| What went wrong | Recovered from | Data lost (RPO) | Time to recover (RTO) |
+|---|---|---|---|
+| A migration or a bad write corrupted rows, within the last 30 days | D1 Time Travel to a minute or a deploy's bookmark ([Restoring D1](deploy.md#restoring-d1)) | About 1 minute: restore to any minute in the last 30 days | One `wrangler d1 time-travel restore`; the database is replaced in place |
+| The database is lost or can't be restored in place; or the point is older than 30 days | The daily backup in `commerceworker-backups<suffix>`, restored into the standby and promoted ([above](#restoring-commerce-d1-from-a-backup)) | Up to 24 hours (since the last backup began); kept `backupDays` days (default 35) | The drill's `minutes` for the restore, which the latest evidence records, plus one deploy |
+| The same bucket, account or R2 is lost | Not covered yet: `offsite` is accepted and not acted on | The bucket's contents | None |
+| Durable Object state (live orders, carts, assistants) | Durable Objects' own 30 days of point-in-time recovery; not part of this | | |
+
+The backup is in the same Cloudflare account as the database: it survives losing D1, not losing the account.
+
 ## Bucket locks
 
 `provision.sh` sets two R2 bucket lock rules on the deployment's docs bucket
-(`commerceworker-docs<suffix>`, in its jurisdiction) and one on its catalog bucket
-(`commerceworker-catalog<suffix>`), so nothing (a person, a script, a compromised token) can delete what
+(`commerceworker-docs<suffix>`, in its jurisdiction), one on its catalog bucket
+(`commerceworker-catalog<suffix>`) and, with `redundancy`, one on its backups bucket
+(`commerceworker-backups<suffix>`), so nothing (a person, a script, a compromised token) can delete what
 audits, rollbacks and restores rely on:
 
 | Bucket | Rule | Prefix | Retention |
@@ -621,6 +708,7 @@ audits, rollbacks and restores rely on:
 | docs | `audit-archive` | `audit/` | `auditArchiveDays` days from each object's creation, the same as the lifecycle rule of that name, so the lifecycle rule deletes an archive only once its lock has lapsed; indefinitely when `auditArchiveDays` is unset (and then there is no lifecycle rule) |
 | docs | `plugin-bundles` | `plugins/` | Indefinitely: a pinned sandboxed-plugin bundle is what a rollback loads again |
 | catalog | `catalog-backups` | `backups/` | `catalogBackupDays` days, the same as the lifecycle rule `backups` ([Catalog backups](#catalog-backups)) |
+| backups | `d1-backups` | `d1/` | `redundancy.backupDays` days, the same as the lifecycle rule `d1-backups` ([Redundancy](#redundancy)); `drills/` has no lock and is kept |
 
 It writes them with `wrangler r2 bucket lock set`, which replaces the bucket's whole lock
 configuration in one call: a re-run changes the audit retention without a moment unlocked, and a
@@ -629,10 +717,10 @@ engine deletes under either prefix: erasure deletes `orders/<id>/` and inbound m
 audit archive. Nothing overwrites under them either, since a locked object can't be written again:
 the sweep and the deploy name each object by what it holds (an archive by its first event and
 count, a bundle by its sha) and skip one that is already there; the catalog's backup Workflow
-looks before every write the same way. Shortening `auditArchiveDays` or `catalogBackupDays`
+looks before every write the same way, and so does the commerce D1's. Shortening `auditArchiveDays` or `catalogBackupDays`
 shortens its rules on the next run. Each bucket's `lock set` replaces that bucket's whole
 configuration, so a rule added by hand is dropped. List the rules with
-`wrangler r2 bucket lock list commerceworker-docs<suffix>` (or `commerceworker-catalog<suffix>`).
+`wrangler r2 bucket lock list commerceworker-docs<suffix>` (or `commerceworker-catalog<suffix>`, or `commerceworker-backups<suffix>`).
 
 ## The bench deployment
 
@@ -930,6 +1018,7 @@ A deployment holds only that customer's data, so removing it is the erasure:
 
 1. Export what the contract requires first (a D1 export with
    `wrangler d1 export commerceworker-<id> --remote --output <file>`, and the R2 bucket's documents, including the audit archive under `audit/`: events past `auditRetentionDays` live only there, as NDJSON with their hashes). The catalog's products live in its Durable Objects; their export is a [catalog backup](#catalog-backups), `backups/<date>/` in `commerceworker-catalog-<id>` (NDJSON per table, with `manifest.json`; trigger one first for the latest state); its published documents there are a rendered copy.
+   With `redundancy`, [the commerce D1 backup](#redundancy) is the same export without that step: `commerceworker-d1-backup<suffix>` copies every table of record (the search index is rebuilt from `products`), so trigger one first for the latest state.
    D1 can't export a database that has a virtual table (Cloudflare's D1 import and export docs,
    "Known limitations"), and `products_search` (migration 0058, the products' keyword index) is
    one. Drop it and its triggers first, in one `wrangler d1 execute commerceworker-<id> --remote
@@ -944,5 +1033,5 @@ A deployment holds only that customer's data, so removing it is the erasure:
    `INSERT INTO products_search(products_search) VALUES('rebuild')`.
 2. Delete `deployments/<id>.jsonc` and merge, so CI stops deploying it.
 3. Delete the Workers (`commerceworker-web-<id>`, `commerceworker-storefront-<id>`, `commerceworker-engine-<id>`, `commerceworker-catalog-<id>`, `commerceworker-delivery-<id>` and `commerceworker-plugin-<plugin>-<id>` for each plugin, which removes their Durable
-   Objects and Workflow instances), the D1 database, the R2 buckets (`commerceworker-docs-<id>` and `commerceworker-catalog-<id>`; empty them first, and before emptying `commerceworker-docs-<id>` remove its [bucket locks](#bucket-locks), `wrangler r2 bucket lock remove commerceworker-docs-<id> --name audit-archive` and `--name plugin-bundles`, and before emptying `commerceworker-catalog-<id>` its `--name catalog-backups` (with `--jurisdiction` as provisioned), since a locked object can't be deleted and so neither can the bucket), the catalog's KV namespace, the two feed queues, the two purge queues and the two changes queues, each plugin's D1 database (`commerceworker-plugin-<plugin>-<id>`), the AI
+   Objects and Workflow instances), the D1 database, the R2 buckets (`commerceworker-docs-<id>` and `commerceworker-catalog-<id>`; empty them first, and before emptying `commerceworker-docs-<id>` remove its [bucket locks](#bucket-locks), `wrangler r2 bucket lock remove commerceworker-docs-<id> --name audit-archive` and `--name plugin-bundles`, and before emptying `commerceworker-catalog-<id>` its `--name catalog-backups` (with `--jurisdiction` as provisioned), since a locked object can't be deleted and so neither can the bucket), the backups bucket `commerceworker-backups-<id>` and the standby database `commerceworker-standby-<id>` (with `redundancy`; remove the bucket's lock first, `wrangler r2 bucket lock remove commerceworker-backups-<id> --name d1-backups`, and export what the contract requires, since the backups hold the same data as the database), the catalog's KV namespace, the two feed queues, the two purge queues and the two changes queues, each plugin's D1 database (`commerceworker-plugin-<plugin>-<id>`), the AI
    Gateway and its logs, the OAuth KV namespace, the GitHub environment and `.secrets/<id>/`. With `content`, also its Workers (`commerceworker-pipeline-<id>`, `-media-`, `-api-`, `-studio-`), the content database `commerceworker-content-<id>` (export it first, like the commerce one), the assets bucket `commerceworker-media-<id>` (empty it first; its originals are the customer's assets), the cache KV `commerceworker-content-cache-<id>`, the Vectorize index `commerceworker-vectors-<id>` and the ten content queues. Delete the Logpush job `commerceworker-workers-<id>` and its token `commerceworker-logpush-<id>` (the account's **Logpush** page in the dashboard, and **Manage Account** > **Account API Tokens**), and empty and delete `commerceworker-logs-<id>` once the contract no longer needs its logs; until then the bucket keeps them for `logRetentionDays` on its own.

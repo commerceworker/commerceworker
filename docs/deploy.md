@@ -330,6 +330,8 @@ code needs the newer schema. Time Travel keeps 30 days; for any other point in t
 `wrangler d1 time-travel info commerceworker --timestamp=<RFC3339>` finds its bookmark. Durable Object
 state (live order state, assistant conversations) is not part of D1 and isn't restored.
 
+A deployment with `redundancy` also has a daily backup of the database and a restore drill, for a database that can't be restored in place or a point older than 30 days: [Restoring commerce D1 from a backup](operations.md#restoring-commerce-d1-from-a-backup).
+
 ## The docs site
 
 The public docs, docs.commerceworker.com, are `apps/docs` (`@commerceworker/docs`), a static Starlight site served by a static-assets

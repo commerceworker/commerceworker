@@ -9,6 +9,7 @@ export * from './catalog-reader';
 export * from './checkouts';
 export * from './companies';
 export * from './confirmations';
+export * from './database-copy';
 export * from './documents';
 export * from './flows';
 export * from './fulfillment';

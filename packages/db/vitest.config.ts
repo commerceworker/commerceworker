@@ -15,7 +15,12 @@ export default defineConfig(async () => {
         miniflare: {
           compatibilityDate: '2026-10-01',
           compatibilityFlags: ['nodejs_compat'],
-          d1Databases: { DB: 'commerceworker-commerce-test' },
+          d1Databases: {
+            DB: 'commerceworker-commerce-test',
+            // Two empty databases for the database copy's contract: a source and a target.
+            COPY_SOURCE: 'copy-source-test',
+            COPY_TARGET: 'copy-target-test',
+          },
           r2Buckets: ['DOCS'],
           bindings: { TEST_MIGRATIONS: migrations },
         },

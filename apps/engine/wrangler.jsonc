@@ -74,6 +74,30 @@
       "class_name": "Replenish",
       "schedules": ["0 6 * * *"],
       "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
+    },
+    // The redundancy bindings below (the two Workflows, STANDBY_DB and BACKUPS) belong to a
+    // deployment whose registry sets `redundancy`; scripts/fleet.ts strips them from the rest.
+    {
+      // Daily logical backup of the commerce D1 into BACKUPS (src/d1-backup.ts). The registry's
+      // redundancy.backupHourUtc sets the hour; commerceworker's is 01:00 UTC.
+      "name": "commerceworker-d1-backup",
+      "binding": "D1_BACKUP",
+      "class_name": "D1Backup",
+      "schedules": ["0 1 * * *"],
+      // A chunk is a step: the most steps a Workflow may have, for a database of millions of rows.
+      "limits": { "steps": 10000 },
+      "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
+    },
+    {
+      // The restore drill: rebuilds the newest backup in STANDBY_DB and writes drills/<date>.json.
+      // Also run by hand for a restore (docs/operations.md, "Restoring commerce D1 from a backup").
+      // redundancy.drill sets weekly (Sundays) or monthly (the 1st), six hours after the backup's.
+      "name": "commerceworker-d1-restore",
+      "binding": "D1_RESTORE",
+      "class_name": "D1Restore",
+      "schedules": ["0 7 * * 0"],
+      "limits": { "steps": 10000 },
+      "default_retention": { "success_retention": "30 days", "error_retention": "30 days" }
     }
   ],
   // Resource ids are provisioned by `wrangler deploy` on first deploy.
@@ -83,9 +107,22 @@
       "database_name": "commerceworker",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "../../packages/db/migrations"
+    },
+    // The restore drill's target and the database to promote after a loss of DB: a second, empty
+    // D1 database that only D1Restore writes, wiped and rebuilt on each drill. The id here is
+    // a placeholder (distinct from DB's, so the tests' two bindings are two databases).
+    {
+      "binding": "STANDBY_DB",
+      "database_name": "commerceworker-standby",
+      "database_id": "00000000-0000-0000-0000-000000000001"
     }
   ],
-  "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
+  "r2_buckets": [
+    { "binding": "DOCS", "bucket_name": "commerceworker-docs" },
+    // The D1 backups (d1/, locked for the registry's redundancy.backupDays) and the drills'
+    // evidence (drills/); provisioned only for a deployment with `redundancy`.
+    { "binding": "BACKUPS", "bucket_name": "commerceworker-backups" }
+  ],
   // The product catalog, for the assistant's product content drafts (docs/product-editor.md) and
   // UCP catalog search (its types, channels and ORDERS_CHANNEL). The catalog deploys before the
   // engine. The engine's tests stub it (vitest.config.ts).

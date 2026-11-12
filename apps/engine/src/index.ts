@@ -25,6 +25,9 @@ export { OrderAgent } from './agent';
 export { EngineApi } from './api';
 export { AssistantAgent } from './assistant/agent';
 export { CartAgent } from './cart/agent';
+// The commerce database's daily backup and its restore drill (d1-backup.ts); bound only when the
+// registry's `redundancy` is on.
+export { D1Backup, D1Restore } from './d1-backup';
 // The deploy smoke test's write check object (health.ts).
 export { HealthProbe } from './health';
 // What a plugin can ask of the core, bound into it as COMMERCEWORKER (plugin-api.ts).
