@@ -1,6 +1,8 @@
 import { type RouteConfig, route } from '@react-router/dev/routes';
 
 export default [
+  // RFC 9116: where to report a vulnerability (@commerceworker/security/security-txt).
+  route('.well-known/security.txt', 'routes/security-txt.ts'),
   // An external cart's buyer (a punchout session): a one-time start link, then the cart itself,
   // outside any app shell and sign-in (lib/cart-guest.server.ts).
   route('cart/start/:cartId/:token', 'routes/cart-start.tsx'),
