@@ -65,7 +65,11 @@
   "vars": {
     // Rendered per deployment (scripts/fleet.ts): queue consumers route by the suffixed queue name.
     "QUEUE_SUFFIX": "",
-    "ROLE": "media"
+    "ROLE": "media",
+    // The space and environment an `asset:` product reference resolves in (the /a/ route);
+    // scripts/fleet.ts renders the registry's `mediaScope` over these defaults.
+    "ASSET_REF_SPACE": "space-1",
+    "ASSET_REF_ENV": "main"
   }
   // Secret: MEDIA_SIGNING_SECRET, the same as the api's and delivery's: it verifies the token in
   // every published path and Preview's short-lived signed draft reads. Required with DB bound.

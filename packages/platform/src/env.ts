@@ -196,6 +196,9 @@ export interface EdgeEnv {
   readonly ASSISTANT_PRINCIPAL_KEY?: string;
   /** Rotation only: derived from PRINCIPAL_KEY_PREVIOUS, accepted until the web Worker has moved. */
   readonly ASSISTANT_PRINCIPAL_KEY_PREVIOUS?: string;
+  /** The media Worker's `/a/` route: the space and environment an `asset:` reference resolves in. */
+  readonly ASSET_REF_SPACE?: string;
+  readonly ASSET_REF_ENV?: string;
   readonly SEED_DEV?: string;
   readonly SEED_SPACE_ID?: string;
   readonly SEED_ENV_ID?: string;

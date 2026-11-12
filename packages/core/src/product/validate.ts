@@ -54,6 +54,17 @@ export function mediaSrcProblem(src: string, rules: MediaRules): string | undefi
   return undefined;
 }
 
+/**
+ * The URL a published document carries for `src`: an `asset:<assetId>` reference becomes the
+ * assets service's stable `<origin>/a/<assetId>` (its media Worker redirects that to the asset's
+ * current published file, so a replaced file needs no republish); anything else, or any reference
+ * where the deployment has no assets service, is kept as written.
+ */
+export function resolveMediaSrc(src: string, mediaOrigin?: string): string {
+  if (!mediaOrigin || !ASSET_REF.test(src)) return src;
+  return `${mediaOrigin.replace(/\/$/, '')}/a/${src.slice('asset:'.length)}`;
+}
+
 export type CompiledType = {
   type: ProductType;
   product: Map<string, { def: AttributeDef; check: Check }>;

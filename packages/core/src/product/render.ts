@@ -5,7 +5,7 @@
  */
 import type { AttributeDef, Channel, Json, Money, Product, ProductType } from './model';
 import { NUMERIC_KINDS, TERM_KINDS } from './model';
-import { compileType, pickLocale } from './validate';
+import { compileType, pickLocale, resolveMediaSrc } from './validate';
 
 export type Option = { code: string; label: string };
 
@@ -187,12 +187,15 @@ function searchableText(
 /**
  * Renders `product` for one channel: a doc, card and search entry per locale, and one index entry.
  * A product that isn't active or isn't listed in the channel renders to nothing (unpublish).
+ * `mediaOrigin` (the assets service's, when the deployment has one) turns each `asset:` media
+ * reference into its stable URL; the stored product keeps the reference.
  */
 export function renderForChannel(
   product: Product,
   type: ProductType,
   channel: Channel,
   ids: { uid: number; createdAt: number },
+  mediaOrigin?: string,
 ): Publication {
   const listing = product.channels[channel.code];
   if (product.status !== 'active' || !listing?.visible) return { rendered: null, index: null };
@@ -261,7 +264,7 @@ export function renderForChannel(
       return out;
     };
     const media = product.media.map((m) => ({
-      src: m.src,
+      src: resolveMediaSrc(m.src, mediaOrigin),
       alt: pickLocale(m.alt, locale, fallback),
       width: m.width,
       height: m.height,
@@ -286,7 +289,7 @@ export function renderForChannel(
         attributes: attrs(v.attributes, c.variant, axes),
         price: variantPrice(product, v, channel),
         media: v.media?.map((m) => ({
-          src: m.src,
+          src: resolveMediaSrc(m.src, mediaOrigin),
           alt: pickLocale(m.alt, locale, fallback),
           width: m.width,
           height: m.height,

@@ -77,7 +77,14 @@ already published keep their old ancestors until a [reindex](#freshness).
 
 A product's or variant's `media` image is an absolute `https` URL, kept exactly as you wrote it, so you can keep your own DAM or CDN. Anything else, a bare file key included, is refused with the image's position (`media.0.src`) when you write the product, import its feed row or save the edit, so no published document holds a URL a shopper's browser can't load. A deployment without the assets service renders, publishes and serves products with external URLs only.
 
-Asset references are accepted but not yet turned into URLs: they publish as written until the assets service's public read URL is wired to the catalog, so use `https` URLs for images shoppers must see today.
+### Your own assets
+
+On a deployment with the assets service, an image can also be one of your published assets: write its `src` as `asset:<assetId>`, with the asset's id from your asset library. The published product carries a stable image URL on the assets service's host (`https://media.<your host>/a/<assetId>`) instead of the reference. That address answers with a redirect to the asset's current file, so replacing the file in the library reaches shoppers within a minute with no change to the product and no reindex.
+
+- The asset must be published. An unknown, unpublished or expired asset answers `404` at its image URL (cached for 30 seconds) (the product still publishes, so publish the asset before you point a product at it).
+- The reference resolves in the one space and environment your deployment is set up to use for product media; ask your CommerceWorker contact if your assets live elsewhere.
+- Ask for a size with a variant: `https://media.<your host>/a/<assetId>/w640` for a width step, `/a/<assetId>/r-<name>` for a rendition and `/a/<assetId>/o` for the original, as in [Delivering assets](/content/guides/delivering-assets/#urls). An unknown variant is `400`.
+- A deployment without the assets service refuses `asset:` references when you write the product, the same as a bare key: use an absolute `https` URL.
 
 ## Writing products
 

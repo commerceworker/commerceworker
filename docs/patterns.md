@@ -51,7 +51,7 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | Sealed secrets at rest; refuse fake adapters in a persistent deployment | Platform | Content: merged · Commerce: partial (every stored secret sealed and resealed daily through the sealed secrets port; fake-adapter refusal P1) | `packages/platform/src/wire.ts` |
 | Sharded catalog in Durable Objects with a frozen shard hash | Order engine | Merged | `apps/catalog`, golden tests |
 | Workflows with step-keyed effects, saga rollback, continue-as-new | Order engine | Merged | `apps/engine/src/workflow.ts` |
-| Optional assets service (R2 originals, Images variants, Stream, signed reads, share links) | Platform | Merged as an app; per-deployment switch and product media wiring P3 | `apps/media` |
+| Optional assets service (R2 originals, Images variants, Stream, signed reads, share links) | Platform | Merged as an app and per-deployment switch; product media `asset:` references resolve through a redirect on `apps/media`; the storefront's customer pages are P3 | `apps/media` |
 | Sandboxed plugins on Worker Loader with declared capabilities | both | Merged | `apps/engine/src/plugin-host.ts` |
 
 ## Surfaces, auth and AI

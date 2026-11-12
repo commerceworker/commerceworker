@@ -258,6 +258,16 @@ projector,
 `deliveredAsset` (`packages/domain/src/asset/delivered.ts`), used by REST get and list, entry
 embeds, Preview and GraphQL's `Asset` type.
 
+The **asset reference route** (`apps/media/src/asset-ref.ts`) gives an asset an address that
+survives a replace: `/a/<assetId>` and `/a/<assetId>/<variant>` answer `302` to the published URL
+above, built from the gate's current version and file name and the path signer's token (KV, then a
+replica; nothing is written). The catalog publishes a product's `asset:<assetId>` media as it. The
+space and environment are the deployment's one media scope (`ASSET_REF_SPACE`, `ASSET_REF_ENV`, from the registry's `mediaScope`). A bad variant
+is `400` (`no-store`); an unknown, unpublished, expired, video or (for a variant) non-image asset is
+`404`, cached 30 s. The `302` is `public, max-age=60`, capped by the rights' expiry, and varies on nothing;
+it is never purged, the short age is the freshness. Only a path of three or four segments is this
+route, so a space named `a` keeps its eight-segment URLs.
+
 - The **gateway** (default entrypoint, uncached) trusts no header. It checks the path's token
   first, so a guessed or edited URL is a `404` (`no-store`) that costs a MAC and no cache, key-value
   or database read. It then maps the URL to a canonical

@@ -32,17 +32,18 @@ export function typeResolver(config: CatalogConfig): TypeResolver {
 }
 
 /**
- * What a product's media may be here. The fleet sets `MEDIA_ORIGIN` (the assets service's origin)
- * only for a deployment that has the service; without it only absolute https URLs are accepted
- * (`mediaSrcProblem`). Read through a cast: the var is in no base config, so it isn't in `Env`.
+ * The assets service's origin, set by the fleet (`MEDIA_ORIGIN`) only for a deployment that has
+ * the service. Read through a cast: the var is in no base config, so it isn't in `Env`.
  */
-export const mediaRules = (_env: Env): MediaRules => ({
-  // Off everywhere until an `asset:` reference resolves to a URL shoppers can load (the open P3
-  // decision: a media redirect route, read-time resolution in delivery, or publish-time signing).
-  // Accepting one now would publish an image no one can see. When it resolves, this becomes
-  // `Boolean(env.MEDIA_ORIGIN)`, which the fleet already sets for a deployment with the service.
-  assets: false,
-});
+export const mediaOrigin = (env: Env): string | undefined =>
+  (env as unknown as { MEDIA_ORIGIN?: string }).MEDIA_ORIGIN || undefined;
+
+/**
+ * What a product's media may be here: with the assets service, `asset:<assetId>` too, which
+ * publishes as `<MEDIA_ORIGIN>/a/<assetId>` (`resolveMediaSrc`); without it only absolute https
+ * URLs (`mediaSrcProblem`).
+ */
+export const mediaRules = (env: Env): MediaRules => ({ assets: Boolean(mediaOrigin(env)) });
 
 const JURISDICTIONS = ['eu', 'fedramp'] as const;
 
