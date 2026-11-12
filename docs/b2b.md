@@ -56,8 +56,7 @@ What is missing, or isn't what its name suggests:
 ## Slices
 
 **S1 is built**, on the defaults of D1 (the business customer is the company), D9 (fixed roles
-`buyer`, `approver`, `company_admin`) and D11 (no company-bound tokens), none yet confirmed by the product
-owner. What depends on a default stays in one place: D1 is `hasCompany` and `COMPANY_CUSTOMER_KIND`
+`buyer`, `approver`, `company_admin`) and D11 (no company-bound tokens), confirmed by the product owner (2026-11-12). What depends on a default stays in one place: D1 is `hasCompany` and `COMPANY_CUSTOMER_KIND`
 (`packages/core/src/b2b/companies.ts`) and the 1:1 key of `companies`; D9 is `COMPANY_ROLES` and its
 labels; D11 is that every read takes a `scope`, so a token bound to a company could be added later.
 Beyond the plan: a member's order limit is data (`buyer.orderLimit`), not enforced by `validateOrder`, since
@@ -67,7 +66,7 @@ again.
 
 **S5 is built**, on the defaults of D3 (staff record a company member's vote, `onBehalfOf`, audited,
 until buyers can sign in) and D4 (thresholds are flow logic over `order.baseTotal` and `company.*` or
-`buyer.*`, not rule tables), neither yet confirmed by the product owner. What depends on a default
+`buyer.*`, not rule tables), confirmed by the product owner (2026-11-12). What depends on a default
 stays in one place: D3 is `onBehalfOf` (the `decide` RPC, `decide_approval`, `decide_approvals` and
 the order page's member picker) and `voter_kind`/`on_behalf_by` on `approval_votes`, so a member who
 signs in later votes as themselves with the same rows; D4 is that the node's `approvers`, `mode`,
@@ -96,7 +95,7 @@ plan:
   (`needs_attention` and the inbox are the reads), so the filters aren't an API yet. Company approvals aren't
   decided inline from the inbox or its batch.
 
-**S6 is built**, on the defaults of D6 (a buyer's PO and the inbound EDI, email and punchout POs are all records; `commerce.generate_po` stays the supplier document) and D7 (a quote reaches an order through a PO draft: `quote_id` is nullable on the PO and left for S7), neither yet confirmed by the product owner. What depends on a default stays in one place: D6 is `PO_SOURCES` (`packages/core/src/b2b/purchase-orders.ts`), `recordInboundPo` and `PurchaseOrderStart`. Beyond the plan:
+**S6 is built**, on the defaults of D6 (a buyer's PO and the inbound EDI, email and punchout POs are all records; `commerce.generate_po` stays the supplier document) and D7 (a quote reaches an order through a PO draft: `quote_id` is nullable on the PO and left for S7), confirmed by the product owner (2026-11-12). What depends on a default stays in one place: D6 is `PO_SOURCES` (`packages/core/src/b2b/purchase-orders.ts`), `recordInboundPo` and `PurchaseOrderStart`. Beyond the plan:
 
 - A PO's number is unique within its company among POs not cancelled (any case), so a cancelled PO gives its number back. Migration `0073`.
 - The engine ties an order to its PO, never the caller's meta: `StartOrderInput.purchaseOrder` is `{ link }` (submitting a PO) or `{ record }` (EDI and email), `fromOutside` drops a `link` from a caller, and `start` strips `meta.purchaseOrderId` from every caller and sets it itself, so the PO an order's progress is mirrored into is never one a caller named. The order is linked before its flow launches.
@@ -118,7 +117,7 @@ Left for later:
 - POs are in subject export and erasure but not the retention sweep (an erased order's PO keeps its words until the person is erased).
 - `quote_id` is set by S7's conversion: a quote's PO draft names the quote.
 
-**S7 is built**, on the defaults of D7 (an accepted quote becomes a PO draft when the company uses POs, and goes straight to an order otherwise) and D8 (quote prices are in the base currency), neither yet confirmed by the product owner. What depends on a default stays in one place: D7 is `quoteConversion` (`packages/core/src/b2b/quotes.ts`) and the question it is asked (`planConvertQuote`: does the company have any PO, in any status), and D8 is that a quote has no currency column and its lines convert at an order's rate like a book's. Beyond the plan:
+**S7 is built**, on the defaults of D7 (an accepted quote becomes a PO draft when the company uses POs, and goes straight to an order otherwise) and D8 (quote prices are in the base currency), confirmed by the product owner (2026-11-12). What depends on a default stays in one place: D7 is `quoteConversion` (`packages/core/src/b2b/quotes.ts`) and the question it is asked (`planConvertQuote`: does the company have any PO, in any status), and D8 is that a quote has no currency column and its lines convert at an order's rate like a book's. Beyond the plan:
 
 - **Statuses.** `draft`, `sent`, `accepted`, `declined`, `expired` and `superseded`: v1's, minus `under_review` (a counter-offer is a new version) and `converted` (a conversion is a link on an accepted quote, `converted_to` and `converted_id`, because an accepted quote keeps pricing until it expires, so it can't leave `accepted`). A draft can be withdrawn through `declined`. Staff record the company's accept and decline (audited with who did it) until buyers can sign in, as D3 does for approvals. Migration `0074`.
 - **Versions.** Revising a sent, declined or expired quote inserts the next version as a draft with the same lines (and the same expiry while it is still ahead) and supersedes the old one in one batch, so two racing revisions make one version and a repeat returns it. An accepted quote can't be revised: it is a deal, and ending it first (`expire_quote`) lets a new one start. Superseded versions are read-only for good, and the list shows each negotiation once unless a status or a negotiation is asked for.
@@ -192,7 +191,7 @@ assigned books still price (pricing isn't access control; `validateOrder` declin
 ### S4 notes
 
 Built on D5 (each budget is `strict` or `advisory`, advisory unless chosen) and D8 (amounts in the base
-currency), neither yet confirmed by the product owner.
+currency), confirmed by the product owner (2026-11-12).
 
 - **Ledger.** `budget_spend` rows are keyed `bsp_<order>_<step>_<budget>` (a retried step commits once); a
   reversal is a row of its own, `rev_` and the commit's id, of the negated amount in the same window, so a
@@ -225,11 +224,11 @@ currency), neither yet confirmed by the product owner.
 After S1 there are three parallel streams: S2; S3; and S4 followed by S5. S6 follows S3, S4 and
 S5, and S7 follows S2 and S6.
 
-## Decisions, and what is still open
+## Decisions
 
-Everything P5 built stands on a default, and none has been confirmed by the product owner. Each is one place in the code (named in its slice's notes above), so changing a default is a change there and not a rewrite. This is the one list to take to the owner.
+Everything P5 built stands on these defaults, and the product owner confirmed all of them as built on 2026-11-12. Each is one place in the code (named in its slice's notes above), so changing one later is a change there and not a rewrite.
 
-| # | Question | What is built (the default) | Where it lives |
+| # | Question | What is built (confirmed) | Where it lives |
 |---|---|---|---|
 | D1 | Is a company a new entity above customers, or is the business customer the company? | The business customer is the company, 1:1 | `hasCompany`, `COMPANY_CUSTOMER_KIND`, `companies` |
 | D2 | Priority or price when several books apply? | The highest-priority assigned book, then the lowest price in it | `resolvePrice`, `bookInForce` |

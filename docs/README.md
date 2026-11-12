@@ -24,7 +24,7 @@ matter to someone with the source or a Cloudflare account (file paths, bindings,
 | [Product editor](product-editor.md) | The plan for catalog overrides, staged publishing, the gap index and assistant drafts, PR by PR |
 | [Testing](testing.md) | The test suites, what each covers, and the recorded runs on the docs home page |
 | [Port map](port-map.md) | Where each part came from (the order engine and Commerce Worker v1) and what is still to lift, by phase |
-| [B2B core plan](b2b.md) | P5, slice by slice: the rules every slice follows, the slices, and the product decisions D1 to D11 with their defaults |
+| [B2B core plan](b2b.md) | P5, slice by slice: the rules every slice follows, the slices, and the product decisions D1 to D11, confirmed as built |
 | [Pattern inventory](patterns.md) | Every architectural pattern and whether it is merged, partial or still to merge |
 | [Decisions](adr/) | ADRs: one stack per customer on D1, the order engine as the base, converging on a hexagonal architecture |
 | [Brand](brand/) | Positioning, messaging, naming and voice |
