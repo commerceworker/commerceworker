@@ -76,10 +76,12 @@ export function d1OrderRecords(d1: D1Database, clock: Clock): OrderRecords {
         .get(),
 
     async index(orderId, row) {
-      await d
+      const r = await d
         .update(orders)
         .set({ ...row, updatedAt: now() })
-        .where(eq(orders.id, orderId));
+        .where(eq(orders.id, orderId))
+        .run();
+      return (r.meta.changes ?? 0) > 0;
     },
 
     async channel(orderId) {

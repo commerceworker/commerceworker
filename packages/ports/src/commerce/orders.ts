@@ -113,9 +113,10 @@ export interface OrderRecords {
   >;
   /**
    * Writes the order's index row. The order's row is created when the order starts; an order with
-   * none is left alone.
+   * none is left alone, and the answer is false so the caller can say so (a restored database can
+   * lack rows its orders still run under). True when the row was written.
    */
-  index(orderId: string, row: OrderIndexRow): Promise<void>;
+  index(orderId: string, row: OrderIndexRow): Promise<boolean>;
   /** The channel an order came in on, or undefined for an unknown order. */
   channel(orderId: string): Promise<string | undefined>;
   /** Who started the order (null for channels and email), or undefined for an unknown order. */

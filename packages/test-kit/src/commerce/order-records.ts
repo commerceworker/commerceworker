@@ -35,7 +35,9 @@ export class InMemoryOrderRecords implements OrderRecords {
   }
 
   async index(orderId: string, row: OrderIndexRow) {
-    if (this.rows.has(orderId)) this.rows.set(orderId, { ...row });
+    if (!this.rows.has(orderId)) return false;
+    this.rows.set(orderId, { ...row });
+    return true;
   }
 
   private readonly created = new Map<string, NewOrderRow>();

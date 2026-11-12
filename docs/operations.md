@@ -340,7 +340,7 @@ Failures reach a person through Cloudflare Notifications, which are set on the a
 Worker. Every app Worker turns on Workers Issues (`observability.issues.enabled` in its
 `wrangler.jsonc`): uncaught exceptions, failed invocations, `5xx` responses and logs written with
 `console.error` become issues, so an error-level log line (a dead letter's `dlq_message`, a failed
-retention sweep, a model call that fell back to the heuristic) alerts without a rule of its own. The account holds these notification policies,
+retention sweep, a model call that fell back to the heuristic) alerts without a rule of its own. The order lifecycle logs `order_index_failed`, `order_index_stuck` (a D1 index row still behind after five retries: the order's list row and its retention erasure are wrong until it lands), `order_index_missing` (the order has no D1 row), `rollback_failed` (a failed order's rollback did not complete: look at the order's timeline for what was left) and `cancel_terminate_failed` / `cancel_not_stopped` (a cancel couldn't stop the Workflow; the order is not cancelled and the agent keeps retrying). The account holds these notification policies,
 all sent to the account's email:
 
 | Policy | Alert type | Fires on |

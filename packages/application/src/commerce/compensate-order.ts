@@ -11,6 +11,7 @@ import type {
   InventoryStore,
   LabelService,
   MarketplaceStore,
+  PricingStore,
   ShippingStore,
 } from '@commerceworker/ports/commerce';
 import { reverseBudgetSpend } from './budgets';
@@ -26,6 +27,7 @@ export type CompensationPorts = InvoicePorts & {
   readonly fulfillment: FulfillmentStore;
   readonly balances: BalanceStore;
   readonly budgets: BudgetStore;
+  readonly pricing: Pick<PricingStore, 'releaseRedemptions'>;
 };
 
 /** What a cancel undid, counted. */
@@ -44,6 +46,7 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string,
     invoices,
     creditReleased,
     budgetSpendReversed,
+    promotionsReleased,
   ] = await Promise.all([
     ports.inventory.release(orderId),
     voidAuthorizations(ports, orderId),
@@ -56,6 +59,8 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string,
     ports.balances.releaseHolds(orderId),
     // What the order spent of its company's budgets goes back to them.
     reverseBudgetSpend(ports, orderId, now),
+    // A promotion's redemption counts toward its cap, so an order that never completes frees it.
+    ports.pricing.releaseRedemptions(orderId),
   ]);
   // After the void, so an invoice found paid at the processor keeps its (settled) account charge.
   const unbilled = await ports.balances.reverse(orderId);
@@ -73,6 +78,7 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string,
     unbilled,
     creditReleased,
     budgetSpendReversed,
+    promotionsReleased,
     invoicesVoided: invoices.voided,
     invoicesPaid: invoices.paid,
     labelsNotVoided: labels.failed,

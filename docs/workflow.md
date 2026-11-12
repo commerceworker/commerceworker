@@ -141,8 +141,8 @@ Report failures are logged and swallowed: the UI must never fail an order. See
 
 Three throws can reach `run()`, and each leaves the order `failed` with a reason and one
 `order.failed`. The OrderAgent starts watching the instance (`checkInstance`, which records the
-rollback) only when a report flips the order to `failed`, so a throw nobody reports leaves it running,
-waiting or queued for good.
+rollback) when a report says the order is `failed` and no watch is scheduled, so a throw nobody
+reports leaves it running, waiting or queued for good.
 
 | Throw | Who reports it |
 |---|---|
@@ -179,7 +179,8 @@ An approval's `:open` step fails for good only when the node's approval fields d
 (`readApprovalSpec`, a flow that bypassed publish validation). A database or network error while
 resolving the approvers retries like any step.
 
-The release steps after an End (`<key>:void`, `<key>:budgets`, `credit:release`) keep retrying. One
+The release steps after an End (`<key>:void`, `<key>:budgets`, `<key>:promotions` (only in a flow
+with a `commerce.discount` node), `credit:release`) keep retrying. One
 that fails for good never fails the order: its End node has already announced `order.completed`,
 `order.declined` or `order.cancelled`, and an error out of `run` would make Workflows roll back an
 order the buyer was told is done (refunding a capture, releasing its stock). The order keeps its
@@ -218,8 +219,12 @@ and reports the node `rolled_back`. A failed report is logged, not thrown, so Wo
 thrown node) Workflows runs the compensations in reverse order. The agent then polls the instance
 to record the rollback outcome (see [OrderAgent](order-agent.md#rollback-outcome)).
 
-Cancelling does not go through rollback: the agent terminates the instance and calls
-`compensateOrder` directly.
+Cancelling stops the instance with `terminate({ rollback: true })`, which runs the compensations
+registered by the steps that finished (the plugin nodes' included), and then calls
+`compensateOrder` for what the core holds. Every compensation is idempotent, so the two together
+undo each thing once; a cancel whose `terminate` fails compensates nothing until it succeeds (see
+[Cancel](order-agent.md#cancel)). An End node that declines or cancels runs no rollback either, so
+its own release steps give back what the order held, promotion redemptions included.
 
 ## Outbound webhooks
 

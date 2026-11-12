@@ -456,6 +456,9 @@ describe('orders with a Stripe invoice', () => {
     const [row] = await invoiceRows(orderId);
     expect(row!.status).toBe('void');
     expect(stripe.invoices.get(row!.externalId!)!.status).toBe('void');
-    expect((await state(orderId)).timeline.at(-1)!.message).toMatch(/voided 1 invoice,/);
+    // The cancel stops the run with its rollbacks, so the invoice step's own compensation may void
+    // it first (and the cancel's line count none); either way the timeline says it was voided.
+    const lines = (await state(orderId)).timeline.map((t) => t.message);
+    expect(lines.some((m) => /voided 1 invoice/i.test(m))).toBe(true);
   });
 });
