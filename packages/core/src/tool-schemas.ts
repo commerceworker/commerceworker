@@ -1357,6 +1357,7 @@ export const TOOL_OUTPUTS = {
       checkoutFlowId: z.string().nullable().describe('The flow checkouts start; null while off'),
       links: z.array(row({ type: z.string(), url: z.string(), title: z.string().optional() })),
       orderUrl: z.string().nullable(),
+      productUrl: z.string().nullable(),
     }),
     platforms: z.array(
       row({

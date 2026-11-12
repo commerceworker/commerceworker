@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import worker from '../../src';
 import { FRESH, MISSING } from '../../src/catalog/delivery';
 import { backoff, drain, PURGE_CALLS, PURGE_PACE_MS } from '../../src/catalog/gateway';
+import { CatalogRead } from '../../src/catalog/read';
 
 const get = (path: string, init?: RequestInit) =>
   (exports as unknown as { default: Fetcher }).default.fetch(
@@ -34,6 +35,38 @@ beforeAll(async () => {
   await env.CARDS.put(paths.uid(DOC_FORMAT, 'hat'), '70');
   await env.CARDS.put(paths.card(DOC_FORMAT, 'web', 'en', 7), card('tee', 'Tee'));
   await env.CARDS.put(paths.card(DOC_FORMAT, 'web', 'en', 70), card('hat', 'Hat'));
+});
+
+describe('CatalogRead, what the engine binds', () => {
+  const read = (path: string, init?: RequestInit) =>
+    (exports as unknown as { CatalogRead: Fetcher }).CatalogRead.fetch(
+      `https://catalog.internal${path}`,
+      init,
+    );
+
+  it('serves the public routes as the gateway does, through the cached entry', async () => {
+    const r = await read('/v1/web/en/products/tee');
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ key: 'tee', title: 'Tee', version: 1 });
+    expect((await read('/v1/web/en/skus/TEE-S')).status).toBe(200);
+    expect((await read('/v1/web/en/products/ghost')).status).toBe(404);
+  });
+
+  it('refuses what is not a public read: index blobs, unknown paths, dot segments and writes', async () => {
+    expect((await read('/_idx/web/shoes/0')).status).toBe(404);
+    // A dot segment is resolved by URL parsing before the entrypoint sees it, into no route.
+    expect((await read('/v1/web/en/products/..')).status).toBe(404);
+    expect((await read('/nope')).status).toBe(404);
+    const post = await read('/v1/web/en/products/tee', { method: 'POST', body: '{}' });
+    expect(post.status).toBe(405);
+  });
+
+  it('has only fetch: no purge or other method a service binding could call', () => {
+    expect(Object.getOwnPropertyNames(CatalogRead.prototype).sort()).toEqual([
+      'constructor',
+      'fetch',
+    ]);
+  });
 });
 
 describe('documents', () => {

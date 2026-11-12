@@ -16,6 +16,7 @@
     "@a2a-js/sdk": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@cloudflare/ai-chat": "catalog:",
+    "@commerceworker/adapters": "workspace:*",
     "@commerceworker/application": "workspace:*",
     "@commerceworker/core": "workspace:*",
     "@commerceworker/db": "workspace:*",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "catalog:",
+    "@cfworker/json-schema": "catalog:",
     "@cloudflare/vitest-plugin": "catalog:",
     "@commerceworker/plugin-sdk": "workspace:*",
     "@commerceworker/typescript-config": "workspace:*",

@@ -4,6 +4,8 @@ import { Validator } from '@cfworker/json-schema';
 import { describe, expect, it } from 'vitest';
 import {
   businessProfile,
+  CATALOG_LOOKUP_CAPABILITY,
+  CATALOG_SEARCH_CAPABILITY,
   CHECKOUT_CAPABILITY,
   CHECKOUT_TTL_MS,
   type CheckoutSession,
@@ -39,6 +41,7 @@ import {
   ucpCheckoutInput,
   ucpCompleteInput,
   ucpErrorResponse,
+  ucpSettingsSchema,
   verifyMessage,
 } from '../src';
 
@@ -219,6 +222,55 @@ describe('profiles and negotiation', () => {
     ).toBe('capabilities_incompatible');
   });
 
+  it('lists the catalog capabilities, each with the schema its service spec points at', () => {
+    const profile = businessProfile(ORIGIN, [handler], []);
+    expect(profile.ucp.capabilities[CATALOG_SEARCH_CAPABILITY]).toEqual([
+      expect.objectContaining({
+        version: UCP_VERSION,
+        schema: `https://ucp.dev/${UCP_VERSION}/schemas/shopping/catalog_search.json`,
+      }),
+    ]);
+    expect(profile.ucp.capabilities[CATALOG_LOOKUP_CAPABILITY]).toEqual([
+      expect.objectContaining({
+        version: UCP_VERSION,
+        schema: `https://ucp.dev/${UCP_VERSION}/schemas/shopping/catalog_lookup.json`,
+      }),
+    ]);
+    // Neither extends checkout: a platform can negotiate them alone.
+    expect(JSON.stringify(profile.ucp.capabilities[CATALOG_SEARCH_CAPABILITY])).not.toContain(
+      'extends',
+    );
+    // The names are the ones the vendored capability schemas declare.
+    const named = (id: string) =>
+      (schemas as { $id: string; name?: string }[]).find((s) => s.$id.endsWith(id))?.name;
+    expect(named('/shopping/catalog_search.json')).toBe(CATALOG_SEARCH_CAPABILITY);
+    expect(named('/shopping/catalog_lookup.json')).toBe(CATALOG_LOOKUP_CAPABILITY);
+    expect(conformsTo('profile.json#/$defs/business_schema', profile)).toEqual([]);
+  });
+
+  it('activates the catalog capabilities a platform lists, on their own, and no others', () => {
+    const entry = { version: UCP_VERSION, spec: 'https://ucp.dev/x', schema: 'https://ucp.dev/y' };
+    const negotiated = (caps: Record<string, unknown>) => {
+      const p = parsePlatformProfile(platformDoc(caps));
+      if ('problem' in p) throw new Error(p.problem);
+      const n = negotiate(p);
+      return n.ok ? [...n.capabilities.keys()] : n.code;
+    };
+    expect(negotiated({ [CATALOG_SEARCH_CAPABILITY]: [entry] })).toEqual([
+      CATALOG_SEARCH_CAPABILITY,
+    ]);
+    expect(
+      negotiated({
+        [CHECKOUT_CAPABILITY]: [entry],
+        [CATALOG_LOOKUP_CAPABILITY]: [entry],
+      }),
+    ).toEqual([CHECKOUT_CAPABILITY, CATALOG_LOOKUP_CAPABILITY]);
+    // A platform on an older version of the catalog capability shares nothing.
+    expect(negotiated({ [CATALOG_SEARCH_CAPABILITY]: [{ ...entry, version: '2026-01-11' }] })).toBe(
+      'capabilities_incompatible',
+    );
+  });
+
   it('refuses a newer protocol and an empty intersection', () => {
     const newer = parsePlatformProfile(platformDoc({}, '2099-01-01'));
     if ('problem' in newer) throw new Error(newer.problem);
@@ -249,6 +301,24 @@ describe('settings', () => {
     expect(s.links).toEqual([]);
     expect(orderPermalink(s, ORIGIN, 'ord_1')).toBe('https://shop.example/o/ord_1');
     expect(orderPermalink(UCP_OFF, ORIGIN, 'ord_1')).toBe(`${ORIGIN}/orders/ord_1`);
+    // Settings saved before catalog search had no product page: none.
+    expect(s.productUrl).toBeNull();
+  });
+
+  it('takes a product page template only as an https URL with {slug} or {key}', () => {
+    const parse = (productUrl: unknown) =>
+      ucpSettingsSchema.safeParse({ checkoutFlowId: null, productUrl }).success;
+    expect(parse('https://shop.example/p/{slug}')).toBe(true);
+    expect(parse('https://shop.example/p?key={key}')).toBe(true);
+    expect(parse(null)).toBe(true);
+    for (const bad of [
+      'https://shop.example/p',
+      'http://shop.example/p/{slug}',
+      'javascript:alert({key})',
+      '{slug}',
+      `https://shop.example/${'x'.repeat(500)}/{slug}`,
+    ])
+      expect(parse(bad)).toBe(false);
   });
 });
 

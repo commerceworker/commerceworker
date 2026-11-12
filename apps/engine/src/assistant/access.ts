@@ -208,6 +208,9 @@ export async function previewUcpSettings(
       i.orderUrl
         ? `Buyers see their order at ${where(i.orderUrl)}`
         : 'Buyers see their order in the app',
+      i.productUrl
+        ? `Catalog results link a product to ${where(i.productUrl)}`
+        : 'Catalog results carry no product link',
       'The web app picks it up within 30 seconds',
     ],
     blocked: roleBlock ?? refusal ?? undefined,

@@ -57,6 +57,7 @@ Settings, set with `POST /api/v1/ucp/settings` (admin; see [REST API](/reference
 | `checkoutFlowId` | The flow described above, or `null` to turn agentic checkout off (a change takes effect within 30 seconds) |
 | `links` | Up to 10 legal links every checkout shows the buyer: `{ type, url, title? }`, such as a privacy policy, terms of service or refund policy |
 | `orderUrl` | Where a buyer sees their order, a URL containing `{id}` such as `https://shop.example/orders/{id}`. Without it the link is the order's page in the workspace |
+| `productUrl` | Where a buyer sees a product, an `https` URL containing `{slug}` or `{key}` such as `https://shop.example/p/{slug}`. Without it [catalog results](#catalog-search-and-lookup) carry no product link |
 
 ```bash
 curl -X POST https://app.commerceworker.com/api/v1/ucp/settings \
@@ -65,7 +66,8 @@ curl -X POST https://app.commerceworker.com/api/v1/ucp/settings \
   -d '{
     "checkoutFlowId": "tpl-storefront-order",
     "links": [{ "type": "privacy_policy", "url": "https://shop.example/privacy" }],
-    "orderUrl": "https://shop.example/orders/{id}"
+    "orderUrl": "https://shop.example/orders/{id}",
+    "productUrl": "https://shop.example/p/{slug}"
   }'
 ```
 
@@ -101,7 +103,7 @@ Every request from a platform carries:
 | `400` | `invalid_profile_url` | `UCP-Agent` is missing (REST) or not a `profile="…"` value |
 | `403` | `forbidden` | The profile named is not the one the key was registered with |
 | `404` | `not_found` | Agentic checkout is off |
-| `429` | | Over 300 requests a minute for that platform; wait `Retry-After` seconds |
+| `429` | | Over 300 requests a minute for that platform (checkouts and orders), or over 120 a minute of [catalog](#catalog-search-and-lookup) calls (a lookup counts once for each id), which have their own budget; wait `Retry-After` seconds |
 
 Protocol errors have the body `{ "code": "…", "content": "…" }`.
 
@@ -356,10 +358,61 @@ A platform verifies an event before trusting it:
 
 If the order ends without being fulfilled, the payment hold placed at completion is released.
 
+## Catalog search and lookup
+
+A platform can look at the catalog before it starts a checkout. These are read-only: nothing is stored
+and no `Idempotency-Key` is taken. They need the platform to list the capability in its own profile,
+and answer `403 forbidden` for one it didn't negotiate.
+
+| REST (`POST`, JSON body) | MCP tool | Capability | Does |
+|---|---|---|---|
+| `/ucp/v1/catalog/search` | `search_catalog` | `dev.ucp.shopping.catalog.search` | Searches by query text, or lists one category |
+| `/ucp/v1/catalog/lookup` | `lookup_catalog` | `dev.ucp.shopping.catalog.lookup` | Looks up products or variants by id |
+| `/ucp/v1/catalog/product` | `get_product` | `dev.ucp.shopping.catalog.lookup` | Returns one product with each option value flagged against the selections made so far |
+
+Both capabilities are on whenever agentic checkout is. Catalog routes and the MCP endpoint take only `Content-Type: application/json` (`415` otherwise). Over MCP the argument is `{ meta, catalog }`, where
+`catalog` is the request body REST takes.
+
+What a platform sees is [what the workspace publishes](/guides/product-catalog/#ai-shopping-platforms), in
+one channel, the one the workspace's administrator has chosen for orders (`web` by default), and in that
+channel's currency, as list prices. Checkout stays the authority on what an order costs, so a checkout's
+totals can differ from a catalog price (a promotion, tax, shipping). There is no availability yet.
+
+- **Search** needs `query`, or exactly one category in `filters.categories`; with neither, or with several
+  categories and no query, the answer is an empty page and an `info` message `query_required`. A query is
+  keyword search, best match first. `filters.price` (`min` and `max`, in minor units) keeps the products
+  with a variant in range, and shows only those variants. With a query, `filters.categories` (any of
+  them) and `filters.price` are applied to the 50 best matches. `pagination` takes `limit` (default 10,
+  at most 25) and an opaque `cursor`; a cursor that isn't one a response gave is `400 invalid_request`.
+- **Lookup** takes up to 50 `ids`, each a product key or a variant SKU, and returns the products they
+  name. Each returned variant lists the request ids that resolved to it, as `exact` for a SKU and
+  `featured` for a product key (its cheapest variant). An id that matches nothing is left out and named in
+  an `info` message `not_found` at `$.ids[n]`.
+- **Get product** takes a product key or a variant SKU. A SKU narrows the options to that variant unless
+  `selected` says otherwise. `selected` (up to five `{ name, id?, label }`) and `preferences` narrow the
+  options: each value says whether a variant has it with the others' selections (`exists`). A product
+  that isn't there, or has no price in the channel's currency, is a `200` error response with code
+  `not_found`.
+
+Every product carries its `id` (the product key), `title`, a plain-text `description`, `handle`, the
+`url` from `productUrl`, `categories`, `price_range`, `media`, `options` and `variants`. A variant's `id` is
+its SKU, which is the `item.id` of a [checkout line](#checkout-lifecycle), so what a platform finds is
+what it can buy. Images that are not `https` URLs (`asset:` references) are left out.
+
+`context` is read for two things. `context.language` (then `Accept-Language` on REST) picks the
+locale among the channel's, falling back to its default; option names and text come in that locale.
+`context.currency` is checked against the channel's: another currency is not converted, the answer stays
+in the channel's and carries an `info` message `currency_unsupported`, and a price filter is ignored with a
+`price_filter_ignored` warning. Nothing else in `context`, and none of `signals`, is used, kept or logged.
+
+If the catalog can't be reached the answer is `503 catalog_unavailable`; a workspace with no catalog
+channel answers an error response `catalog_unavailable`.
+
 ## MCP binding
 
 `POST /ucp/mcp` serves the same operations as MCP tools: `create_checkout`, `get_checkout`,
-`update_checkout`, `complete_checkout`, `cancel_checkout` and `get_order`. It is JSON-RPC over
+`update_checkout`, `complete_checkout`, `cancel_checkout`, `get_order` and the read-only catalog tools
+`search_catalog`, `lookup_catalog` and `get_product` (see [Catalog search and lookup](#catalog-search-and-lookup)). It is JSON-RPC over
 `POST` with plain JSON answers (no stream); any other method is `405`.
 
 Arguments are `{ meta, id?, checkout? }`:
@@ -379,7 +432,8 @@ error is a JSON-RPC error with the HTTP status set: code `-32001` for a profile 
 
 - Currencies other than `USD`.
 - Fulfillment is shipping or pickup for the whole checkout; no split between them, and no other methods.
-- Catalog search and lookup, carts, identity linking, AP2 mandates and the embedded checkout.
+- Carts, identity linking, AP2 mandates and the embedded checkout.
+- Catalog availability (stock), lookup by GTIN or handle, and catalog prices in other currencies.
 - Eligibility and provisional discounts (`provisional`, `eligibility`); the discount extension covers promotion codes and automatic promotions.
 - Cards that require 3-D Secure authentication (refused with `payment_failed`).
 - Verifying a platform's own request signatures; platforms authenticate with their key.

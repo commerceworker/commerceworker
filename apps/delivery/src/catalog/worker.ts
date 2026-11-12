@@ -10,6 +10,7 @@ import type { CatalogEnv } from './env';
 import { catalogFetch, catalogQueue } from './gateway';
 
 export { CatalogDelivery } from './delivery';
+export { CatalogRead } from './read';
 
 export default {
   async fetch(request, env, ctx) {

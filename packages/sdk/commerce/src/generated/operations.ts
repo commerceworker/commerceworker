@@ -2523,6 +2523,7 @@ export type SetUcpSettingsInput = {
     title?: string;
   }[];
   orderUrl?: string | null;
+  productUrl?: string | null;
 };
 
 export type SetUcpSettingsResult = {
@@ -2534,6 +2535,7 @@ export type SetUcpSettingsResult = {
       title?: string;
     }[];
     orderUrl: string | null;
+    productUrl: string | null;
   };
 };
 
@@ -3639,6 +3641,7 @@ export type UcpSettings = {
     title?: string;
   }[];
   orderUrl: string | null;
+  productUrl: string | null;
 };
 
 export type AuditEvent = {

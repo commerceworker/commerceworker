@@ -290,6 +290,11 @@ export interface ProductCatalogRpc {
    */
   deleteChannel(code: string, by: string): Promise<DeleteChannelResult>;
   listChannels(): Promise<Channel[]>;
+  /**
+   * The code of the one channel CommerceWorker's orders and UCP catalog read (the catalog's
+   * `ORDERS_CHANNEL`). It may name a channel that isn't created yet.
+   */
+  ordersChannel(): Promise<string>;
   /** Upserts categories; the tree is republished once per call. */
   putCategories(categories: CategoryInput[], by: string): Promise<CategoriesResult>;
   /** Removes categories; refused while one has children outside the set or products in it. */

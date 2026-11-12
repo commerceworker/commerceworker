@@ -1462,7 +1462,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'Set agentic checkout up, or turn it off (admin)',
           description:
-            'The checkout flow is the published flow a completed checkout starts; it must authorize a card payment. `links` are the legal links every checkout shows, and `orderUrl` (with `{id}`) is where a buyer sees their order. A null `checkoutFlowId` turns agentic checkout off.',
+            'The checkout flow is the published flow a completed checkout starts; it must authorize a card payment. `links` are the legal links every checkout shows, `orderUrl` (with `{id}`) is where a buyer sees their order, and `productUrl` (with `{slug}` or `{key}`) where they see a product in catalog search results. A null `checkoutFlowId` turns agentic checkout off.',
           requestBody: body(ucpSettingsSchema),
           responses: {
             '200': okJson('The settings as saved', z.object({ settings: ucpSettingsSchema })),

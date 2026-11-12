@@ -10,8 +10,12 @@ import {
   paginate,
   toUcpDetailProduct,
   toUcpProduct,
+  UCP_CATALOG_ROUTES,
+  UCP_CATALOG_TOOLS,
+  UCP_REST_PATH,
   type UcpCatalogContext,
   ucpCatalogEnvelope,
+  ucpCatalogOp,
   ucpGetProductInput,
   ucpLookupInput,
   ucpSearchInput,
@@ -455,6 +459,34 @@ describe('the vendored shopping service specs', () => {
     expect(external(mcp.components.schemas.catalog_get_product_result)).toContain(
       '../../schemas/shopping/catalog_lookup.json#/$defs/get_product_response',
     );
+  });
+
+  it('name the routes and tools the engine serves, and only those', () => {
+    const catalogPaths = Object.keys(rest.paths).filter((p) => p.startsWith('/catalog/'));
+    expect(Object.keys(UCP_CATALOG_ROUTES).sort()).toEqual(catalogPaths.sort());
+    for (const [path, tool] of Object.entries(UCP_CATALOG_ROUTES))
+      expect(rest.paths[path]?.post?.operationId).toBe(tool);
+    const methods = mcp.methods.map((m: { name: string }) => m.name);
+    for (const tool of UCP_CATALOG_TOOLS) expect(methods).toContain(tool);
+    // The catalog's three reads, and only POST: the REST spec has no GET for them.
+    expect(UCP_CATALOG_TOOLS).toHaveLength(3);
+    for (const path of catalogPaths) expect(Object.keys(rest.paths[path])).toEqual(['post']);
+  });
+
+  it('recognises a catalog path the way the engine routes it', () => {
+    expect(ucpCatalogOp(`${UCP_REST_PATH}/catalog/search`)).toBe('search_catalog');
+    expect(ucpCatalogOp(`${UCP_REST_PATH}/catalog/lookup/`)).toBe('lookup_catalog');
+    expect(ucpCatalogOp(`${UCP_REST_PATH}//catalog//product`)).toBe('get_product');
+    for (const other of [
+      '/catalog/search',
+      `${UCP_REST_PATH}/catalog`,
+      `${UCP_REST_PATH}/catalog/search/x`,
+      `${UCP_REST_PATH}/catalog/constructor`,
+      `${UCP_REST_PATH}/catalog/__proto__`,
+      `${UCP_REST_PATH}x/catalog/search`,
+      `${UCP_REST_PATH}/checkout-sessions`,
+    ])
+      expect(ucpCatalogOp(other)).toBeNull();
   });
 
   it('resolve every external ref to a vendored schema', () => {

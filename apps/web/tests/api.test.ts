@@ -911,7 +911,7 @@ describe('hosted checkout’s settings over REST', () => {
 
 describe('agentic checkout over REST', () => {
   beforeEach(() => audit.mockReset());
-  const settings = { checkoutFlowId: 'tpl-checkout', links: [], orderUrl: null };
+  const settings = { checkoutFlowId: 'tpl-checkout', links: [], orderUrl: null, productUrl: null };
 
   it('shows the settings and platforms, and is an admin’s', async () => {
     ucp.ucpAdmin.mockResolvedValueOnce({ settings, platforms: [] });

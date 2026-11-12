@@ -49,7 +49,7 @@
  *   POST   /api/v1/plugins/:id/disable          turn off a plugin installed at runtime (admin)
  *
  *   GET    /api/v1/ucp                          agentic checkout: settings and platforms (admin)
- *   POST   /api/v1/ucp/settings                 { checkoutFlowId, links?, orderUrl? }
+ *   POST   /api/v1/ucp/settings                 { checkoutFlowId, links?, orderUrl?, productUrl? }
  *   POST   /api/v1/ucp/platforms                { name, profileUrl } → API key, once
  *   DELETE /api/v1/ucp/platforms/:id            revoke
  *

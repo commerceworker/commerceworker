@@ -319,7 +319,7 @@ describe('UCP over MCP', () => {
   };
   const meta = () => ({ 'ucp-agent': { profile: alpha.profileUrl } });
 
-  it('lists the checkout and order tools', async () => {
+  it('lists the checkout, order and catalog tools', async () => {
     const init = await rpc('initialize', { protocolVersion: '2025-06-18' });
     expect(init.body.result.protocolVersion).toBe('2025-06-18');
     const r = await rpc('tools/list');
@@ -330,6 +330,9 @@ describe('UCP over MCP', () => {
       'complete_checkout',
       'cancel_checkout',
       'get_order',
+      'search_catalog',
+      'lookup_catalog',
+      'get_product',
     ]);
   });
 

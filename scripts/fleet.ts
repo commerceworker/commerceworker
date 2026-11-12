@@ -431,7 +431,12 @@ const FIXTURE_PLUGINS = new Set(['example', 'fixture-carrier']);
 export const pluginBinding = (id: string) => `PLUGIN_${id.toUpperCase().replaceAll('-', '_')}`;
 
 /** The registry's `limits` keys, and the web Worker's rate-limit binding each one sets. */
-const LIMITS = { api: 'API_LIMIT', agents: 'AGENT_LIMIT', webhooks: 'WEBHOOK_LIMIT' } as const;
+const LIMITS = {
+  api: 'API_LIMIT',
+  agents: 'AGENT_LIMIT',
+  catalog: 'CATALOG_LIMIT',
+  webhooks: 'WEBHOOK_LIMIT',
+} as const;
 type LimitKey = keyof typeof LIMITS;
 
 function readJsonc(path: string): Record<string, unknown> {
@@ -1235,7 +1240,11 @@ export function renderEngine(base: Config, d: Deployment): Config {
     }));
   config.services = [
     ...config.services.map((s: Config) =>
-      s.binding === 'CATALOG' ? { ...s, service: names(d).catalog } : s,
+      s.binding === 'CATALOG'
+        ? { ...s, service: names(d).catalog }
+        : s.binding === 'CATALOG_EDGE'
+          ? { ...s, service: names(d).delivery }
+          : s,
     ),
     ...pluginServices(d),
   ];
@@ -1403,8 +1412,8 @@ function renderCatalogDelivery(base: Config, d: Deployment): Config {
 
 /**
  * The rate-limit bindings with this deployment's namespaces and budgets. Namespaces are per
- * account: slot 1 keeps the base ids (the web Worker's 1001 to 1005, the storefront's 1006 and
- * 1007), slot 2 uses 2001 and so on. The registry's `limits` replace a binding's requests a
+ * account: slot 1 keeps the base ids (the web Worker's 1001 to 1005, the storefront's 1006 to
+ * 1009), slot 2 uses 2001 and so on. The registry's `limits` replace a binding's requests a
  * minute; the period stays 60 seconds.
  */
 function rateLimits(ratelimits: Config[], d: Deployment): Config[] {
@@ -1571,7 +1580,7 @@ function contentCommon(base: Config, d: Deployment, app: ContentApp): Config {
           : s,
     );
   // The content Workers' namespaces sit in the deployment's slot at 500 and up: the commerce
-  // Workers' (1001 to 1007 for slot 1) are another set of counters with their own budgets.
+  // Workers' (1001 to 1009 for slot 1) are another set of counters with their own budgets.
   if (c.ratelimits)
     c.ratelimits = c.ratelimits.map((r: Config) => ({
       ...r,

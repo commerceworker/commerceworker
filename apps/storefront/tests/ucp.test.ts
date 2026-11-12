@@ -32,7 +32,9 @@ vi.mock('~/lib/env.server', () => ({
     health: () => engineHealth(),
   }),
 }));
-vi.mock('~/lib/rate-limit', () => ({ overBudget: async () => null }));
+/** Which budget each request was counted against, and the one a test makes refuse. */
+const overBudget = vi.fn(async (_budget: string, _key: string): Promise<Response | null> => null);
+vi.mock('~/lib/rate-limit', () => ({ overBudget: (b: string, k: string) => overBudget(b, k) }));
 
 const { forgetUcpSettings, ucpDiscovery, ucpFetch } = await import('~/lib/ucp.server');
 const { default: worker } = await import('../workers/app');
@@ -52,6 +54,7 @@ const asPlatform = { 'x-api-key': KEY, 'ucp-agent': `profile="${PROFILE}"` };
 describe('UCP on the storefront', () => {
   beforeEach(async () => {
     engineFetch.mockClear();
+    overBudget.mockClear();
     forgetUcpSettings();
     platforms = new Map([
       [await sha256Hex(KEY), { id: 'ucp_1', name: 'Agent', profileUrl: PROFILE }],
@@ -182,5 +185,142 @@ describe('UCP on the Worker’s routes', () => {
     expect(health).toHaveBeenCalledTimes(1);
     health.mockResolvedValueOnce({ ok: false });
     expect((await viaWorker('/health/deep')).status).toBe(503);
+  });
+});
+
+describe('the catalog budget on the storefront', () => {
+  const rpc = (name: string) => ({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name, arguments: {} },
+  });
+  const send = (path: string, body: unknown, headers: Record<string, string> = asPlatform) =>
+    ucpFetch(
+      new Request(`https://shop.example${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+      }),
+    );
+
+  beforeEach(async () => {
+    engineFetch.mockClear();
+    overBudget.mockClear();
+    forgetUcpSettings();
+    platforms = new Map([
+      [await sha256Hex(KEY), { id: 'ucp_1', name: 'Agent', profileUrl: PROFILE }],
+    ]);
+    checkoutOn = true;
+  });
+
+  it('counts the catalog’s REST paths against CATALOG_LIMIT and checkout against AGENT_LIMIT', async () => {
+    // Each spelling the engine routes to a catalog read, so none can be sent as a checkout call.
+    for (const path of [
+      '/ucp/v1/catalog/search',
+      '/ucp/v1/catalog/lookup',
+      '/ucp/v1/catalog/product',
+      '/ucp/v1/catalog/search/',
+      '/ucp/v1//catalog//search',
+    ])
+      await send(path, {});
+    expect(overBudget.mock.calls.map((c) => c[0])).toEqual(Array(5).fill('CATALOG_LIMIT'));
+    expect(overBudget.mock.calls[0]).toEqual(['CATALOG_LIMIT', '/ucp/catalog:ucp_1']);
+    overBudget.mockClear();
+    await send('/ucp/v1/checkout-sessions', {});
+    await send('/ucp/v1/catalog', {});
+    await send('/ucp/v1/orders/o1', {});
+    expect(overBudget.mock.calls.map((c) => c[0])).toEqual(Array(3).fill('AGENT_LIMIT'));
+    expect(overBudget.mock.calls[0]).toEqual(['AGENT_LIMIT', '/ucp:ucp_1']);
+  });
+
+  it('counts an MCP call of a catalog tool against CATALOG_LIMIT, and hands the engine the whole call', async () => {
+    const body = JSON.stringify(rpc('search_catalog'));
+    expect((await send('/ucp/mcp', body)).status).toBe(200);
+    expect(overBudget.mock.calls).toEqual([['CATALOG_LIMIT', '/ucp/catalog:ucp_1']]);
+    expect(await engineFetch.mock.calls[0]![0].text()).toBe(body);
+    for (const tool of ['lookup_catalog', 'get_product']) await send('/ucp/mcp', rpc(tool));
+    expect(overBudget.mock.calls.map((c) => c[0])).toEqual(Array(3).fill('CATALOG_LIMIT'));
+  });
+
+  it('counts every other MCP call, and any it cannot read, against AGENT_LIMIT', async () => {
+    await send('/ucp/mcp', rpc('create_checkout'));
+    await send('/ucp/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    await send('/ucp/mcp', 'not json');
+    await send('/ucp/mcp', rpc('search_catalog'.padEnd(300 * 1024, 'x')));
+    expect(overBudget.mock.calls.map((c) => c[0])).toEqual(Array(4).fill('AGENT_LIMIT'));
+    // The engine got each as it was sent, the oversized one too: it is the one that refuses it.
+    expect(engineFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('counts a catalog call whose body is not declared JSON against AGENT_LIMIT, unread', async () => {
+    const plain = { ...asPlatform, 'content-type': 'text/plain' };
+    await send('/ucp/mcp', rpc('search_catalog'), plain);
+    await send('/ucp/mcp', rpc('lookup_catalog'), plain);
+    expect(overBudget.mock.calls.map((c) => c[0])).toEqual(['AGENT_LIMIT', 'AGENT_LIMIT']);
+  });
+
+  it('charges a lookup one unit an id, over REST and MCP, and stops at the first refusal', async () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `id${i}`);
+    await send('/ucp/v1/catalog/lookup', { ids: ids(7) });
+    expect(overBudget.mock.calls.filter((c) => c[0] === 'CATALOG_LIMIT')).toHaveLength(7);
+    overBudget.mockClear();
+    await send('/ucp/mcp', {
+      ...rpc('lookup_catalog'),
+      params: { name: 'lookup_catalog', arguments: { catalog: { ids: ids(3) } } },
+    });
+    expect(overBudget.mock.calls).toHaveLength(3);
+    overBudget.mockClear();
+    // More than a lookup takes costs what it takes; no ids, or junk, costs one.
+    await send('/ucp/v1/catalog/lookup', { ids: ids(500) });
+    expect(overBudget.mock.calls).toHaveLength(50);
+    overBudget.mockClear();
+    await send('/ucp/v1/catalog/lookup', { ids: 'x' });
+    await send('/ucp/v1/catalog/lookup', 'not json');
+    await send(
+      '/ucp/v1/catalog/lookup',
+      { ids: ids(9) },
+      { ...asPlatform, 'content-type': 'text/plain' },
+    );
+    expect(overBudget.mock.calls).toHaveLength(3);
+    overBudget.mockClear();
+    // Search and product cost one each.
+    await send('/ucp/v1/catalog/search', { query: 'x' });
+    await send('/ucp/v1/catalog/product', { id: 'x' });
+    expect(overBudget.mock.calls).toHaveLength(2);
+    // A refusal on the third id stops the rest and the engine is not reached.
+    overBudget.mockClear();
+    engineFetch.mockClear();
+    let n = 0;
+    overBudget.mockImplementation(async () =>
+      ++n === 3 ? new Response('slow', { status: 429 }) : null,
+    );
+    expect((await send('/ucp/v1/catalog/lookup', { ids: ids(20) })).status).toBe(429);
+    expect(overBudget.mock.calls).toHaveLength(3);
+    expect(engineFetch).not.toHaveBeenCalled();
+    overBudget.mockImplementation(async () => null);
+  });
+
+  it('refuses a platform over its catalog budget without spending its checkout budget', async () => {
+    overBudget.mockImplementation(async (budget) =>
+      budget === 'CATALOG_LIMIT' ? new Response('slow down', { status: 429 }) : null,
+    );
+    expect((await send('/ucp/v1/catalog/search', {})).status).toBe(429);
+    expect((await send('/ucp/mcp', rpc('search_catalog'))).status).toBe(429);
+    expect(engineFetch).not.toHaveBeenCalled();
+    expect(overBudget.mock.calls.map((c) => c[0])).toEqual(['CATALOG_LIMIT', 'CATALOG_LIMIT']);
+    // Checkout still goes through.
+    expect((await send('/ucp/v1/checkout-sessions', {})).status).toBe(200);
+    overBudget.mockImplementation(async () => null);
+  });
+
+  it('keeps a platform’s catalog budget its own, and answers 404 while checkout is off', async () => {
+    await send('/ucp/v1/catalog/search', {});
+    expect(overBudget.mock.calls[0]![1]).toContain('ucp_1');
+    overBudget.mockClear();
+    checkoutOn = false;
+    forgetUcpSettings();
+    expect((await send('/ucp/v1/catalog/search', {})).status).toBe(404);
+    expect(overBudget).not.toHaveBeenCalled();
   });
 });

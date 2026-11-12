@@ -86,10 +86,19 @@
     }
   ],
   "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
-  // The product catalog, for the assistant's product content drafts (docs/product-editor.md). The
-  // catalog deploys before the engine. The engine's tests stub it (vitest.config.ts).
+  // The product catalog, for the assistant's product content drafts (docs/product-editor.md) and
+  // UCP catalog search (its types, channels and ORDERS_CHANNEL). The catalog deploys before the
+  // engine. The engine's tests stub it (vitest.config.ts).
+  // CATALOG_EDGE: the catalog's read edge (apps/delivery, entrypoint CatalogRead: fetch only, forwarding
+  // to the cached CatalogDelivery), which UCP catalog search and lookup read published documents through, so a
+  // platform sees exactly what the public edge serves. Delivery deploys before the engine.
   "services": [
-    { "binding": "CATALOG", "service": "commerceworker-catalog", "entrypoint": "CatalogApi" }
+    { "binding": "CATALOG", "service": "commerceworker-catalog", "entrypoint": "CatalogApi" },
+    {
+      "binding": "CATALOG_EDGE",
+      "service": "commerceworker-delivery",
+      "entrypoint": "CatalogRead"
+    }
   ],
   // The product index: an embedding of each SKU's name (@cf/baai/bge-base-en-v1.5, 768 dimensions,
   // cosine), which ai.extract queries to find the catalog entries a document means

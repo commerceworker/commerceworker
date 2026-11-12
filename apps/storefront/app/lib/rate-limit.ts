@@ -1,6 +1,7 @@
 /**
- * Request budgets on the storefront's two programmatic surfaces: a cart's buyer on product search
- * (`API_LIMIT`) and each UCP platform (`AGENT_LIMIT`). The budgets are Workers rate-limit bindings
+ * Request budgets on the storefront's programmatic surfaces: a cart's buyer on product search
+ * (`API_LIMIT`), each UCP platform (`AGENT_LIMIT`) and each UCP platform's catalog search and lookup
+ * (`CATALOG_LIMIT`, apart from `AGENT_LIMIT` so browsing can't use up a platform's checkouts). The budgets are Workers rate-limit bindings
  * (`apps/storefront/wrangler.jsonc`, overridden per deployment by the registry's `limits`, as the
  * web Worker's are), counted per Cloudflare location, so they stop a runaway client rather than
  * meter it exactly.
@@ -8,7 +9,7 @@
 
 import { env } from 'cloudflare:workers';
 
-export type Budget = 'API_LIMIT' | 'AGENT_LIMIT' | 'PROMO_LIMIT';
+export type Budget = 'API_LIMIT' | 'AGENT_LIMIT' | 'CATALOG_LIMIT' | 'PROMO_LIMIT';
 
 /** Every budget's window, in seconds: what a refused caller is told to wait. */
 export const RATE_WINDOW_S = 60;

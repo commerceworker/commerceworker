@@ -4,16 +4,26 @@
  * `create_checkout`, `get_checkout`, `update_checkout`, `complete_checkout`, `cancel_checkout` and
  * `get_order`. Arguments are `{ meta, id?, checkout? }`, where `meta["ucp-agent"].profile` must be
  * the calling platform's profile and `meta["idempotency-key"]` is required to complete or cancel.
+ * The catalog's reads, `search_catalog`, `lookup_catalog` and `get_product`, are tools too; their
+ * argument is `{ meta, catalog }`, the request body of the same REST route (./catalog.ts), and they
+ * take no idempotency key.
  *
  * It answers JSON-RPC itself rather than through the MCP SDK because UCP fixes the error shape: a
  * protocol error is a JSON-RPC error (-32001 for profile problems, -32000 otherwise), and a
  * business outcome is a result whose `structuredContent` is the UCP body.
  */
 
-import { type PlatformCaller, ucpCheckoutInput } from '@commerceworker/core';
+import {
+  type PlatformCaller,
+  UCP_CATALOG_TOOLS,
+  type UcpCatalogOp,
+  ucpCheckoutInput,
+} from '@commerceworker/core';
 import { idempotencyKeyProblem, readCappedText } from '../body';
+import { catalogCall, isJson } from './catalog';
 import {
   cancelCheckout,
+  checkoutRefusal,
   completeCheckout,
   createCheckout,
   getCheckout,
@@ -48,6 +58,20 @@ const checkout = {
     'The checkout payload (dev.ucp.shopping.checkout, with dev.ucp.shopping.fulfillment and dev.ucp.shopping.discount).',
 };
 const SCHEMA = 'https://ucp.dev/2026-08-25/schemas/shopping';
+const catalog = (description: string) => ({ type: 'object', description });
+/** A catalog result, or the error response a missing product or an unavailable catalog is. */
+const catalogResult = (ref: string) => ({
+  oneOf: [
+    { $ref: `${SCHEMA}/${ref}` },
+    { $ref: 'https://ucp.dev/2026-08-25/schemas/common/types/error_response.json' },
+  ],
+});
+const READ = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
 
 const TOOLS = [
   {
@@ -124,6 +148,57 @@ const TOOLS = [
     outputSchema: { $ref: `${SCHEMA}/order.json` },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
+  {
+    name: 'search_catalog',
+    description:
+      'Search the catalog by query text, or list one category (filters.categories with a single value); filter by price in minor units. Prices are in the catalog currency.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meta,
+        catalog: catalog(
+          'catalog_search.json#/$defs/search_request: query, filters, context, pagination',
+        ),
+      },
+      required: ['meta', 'catalog'],
+    },
+    outputSchema: catalogResult('catalog_search.json#/$defs/search_response'),
+    annotations: READ,
+  },
+  {
+    name: 'lookup_catalog',
+    description:
+      'Look up products or variants by product key or SKU. Each variant says which ids resolved to it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meta,
+        catalog: catalog(
+          'catalog_lookup.json#/$defs/lookup_request: ids (up to 50), filters, context',
+        ),
+      },
+      required: ['meta', 'catalog'],
+    },
+    outputSchema: catalogResult('catalog_lookup.json#/$defs/lookup_response'),
+    annotations: READ,
+  },
+  {
+    name: 'get_product',
+    description:
+      'Get one product by key or SKU, with each option value flagged for the selections made so far.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meta,
+        catalog: catalog(
+          'catalog_lookup.json#/$defs/get_product_request: id, selected, preferences, filters, context',
+        ),
+      },
+      required: ['meta', 'catalog'],
+    },
+    outputSchema: catalogResult('catalog_lookup.json#/$defs/get_product_response'),
+    annotations: READ,
+  },
 ] as const;
 
 const reply = (id: unknown, body: Record<string, unknown>, status = 200) =>
@@ -154,6 +229,7 @@ export async function handleUcpMcp(
 ): Promise<Response> {
   if (request.method !== 'POST')
     return new Response('Method not allowed', { status: 405, headers: { allow: 'POST' } });
+  if (!isJson(request)) return rpcError(null, -32600, 'Send application/json.', undefined, 415);
   const text = await readCappedText(request, MAX_BODY);
   if (text === null) return rpcError(null, -32600, 'Request too large', undefined, 413);
   let rpc: Rpc;
@@ -180,7 +256,7 @@ export async function handleUcpMcp(
             version: '1.0.0',
           },
           instructions:
-            'UCP checkout for this business. Create a checkout with line_items, add the buyer email and a shipping address (fulfillment), then complete it with a payment instrument from ucp.payment_handlers. Every call carries meta["ucp-agent"].profile.',
+            'UCP for this business. Search and look up products with search_catalog, lookup_catalog and get_product (a variant\'s id is its SKU, which is a checkout line\'s item id). Create a checkout with line_items, add the buyer email and a shipping address (fulfillment), then complete it with a payment instrument from ucp.payment_handlers. Every call carries meta["ucp-agent"].profile.',
         },
       });
     }
@@ -201,6 +277,7 @@ async function callTool(env: Env, caller: PlatformCaller, rpc: Rpc): Promise<Res
     meta?: { 'ucp-agent'?: { profile?: unknown }; 'idempotency-key'?: unknown };
     id?: unknown;
     checkout?: unknown;
+    catalog?: unknown;
   };
   const name = String(params.name ?? '');
   if (!TOOLS.some((t) => t.name === name)) return rpcError(rpc.id, -32602, `Unknown tool ${name}`);
@@ -222,6 +299,14 @@ async function callTool(env: Env, caller: PlatformCaller, rpc: Rpc): Promise<Res
   const negotiation = await contextFor(env, caller);
   if ('refusal' in negotiation) return toolReply(rpc.id, negotiation.refusal);
   const { ctx } = negotiation;
+  // The catalog's reads take their request whole, and store nothing: no id, no idempotency key.
+  if (UCP_CATALOG_TOOLS.includes(name))
+    return toolReply(rpc.id, await catalogCall(env, ctx, name as UcpCatalogOp, args.catalog));
+  // Every checkout tool needs checkout negotiated; the order and catalog tools have their own.
+  if (name !== 'get_order') {
+    const refused = checkoutRefusal(ctx);
+    if (refused) return toolReply(rpc.id, refused);
+  }
   const target = typeof args.id === 'string' ? args.id : '';
   const key = args.meta?.['idempotency-key'];
   const bad = (content: string) =>
