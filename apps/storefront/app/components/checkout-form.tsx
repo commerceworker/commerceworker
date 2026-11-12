@@ -6,6 +6,7 @@ import { Input } from '@commerceworker/ui/input';
 import { money, plural } from '@commerceworker/ui/lib/format';
 import { Section } from '@commerceworker/ui/page';
 import { CreditCard } from 'lucide-react';
+import { useRef } from 'react';
 import { Form } from 'react-router';
 import {
   type CodeStatus,
@@ -19,6 +20,7 @@ import {
   type ShipField,
   totalRows,
 } from '~/lib/checkout-form';
+import { CardPayment } from './card-payment';
 import { FieldMessage, fieldId, IssueList, RadioRow, TextField } from './checkout-fields';
 
 /** The ship-to fields: what each is called, the token a browser fills it by, and its shape. */
@@ -48,6 +50,17 @@ export type CheckoutFormProps = {
   checkout: HostedCheckout;
   /** Payments are only recorded: the page offers a test order instead of a card. */
   testPayments: boolean;
+  /**
+   * Payments are live and the deployment can take a card: the Payment Element, with the Turnstile
+   * site key when it has one, and (`authenticate`) the client secret of a payment the bank must
+   * confirm. `answer` is what the action last said, so a spent token is replaced.
+   */
+  card?: {
+    publishableKey: string;
+    turnstileKey: string | null;
+    authenticate?: string | undefined;
+    answer: unknown;
+  } | null;
   editLines: boolean;
   /** What the buyer posted last, kept when the page is shown again with errors. */
   values?: FormValues | undefined;
@@ -74,6 +87,7 @@ export type CheckoutFormProps = {
 export function CheckoutForm({
   checkout,
   testPayments,
+  card,
   editLines,
   values,
   errors = {},
@@ -95,12 +109,14 @@ export function CheckoutForm({
   const option = chosenOption(checkout);
   const quoted = new Map((q?.lines ?? []).map((l) => [l.id, l]));
   const promoError = errors.promo;
+  const formRef = useRef<HTMLFormElement>(null);
 
   return (
     // Remounted only when the page changed under the buyer: otherwise the fields (and the focus in
     // them) stay where they are after each update.
     <Form
       method="post"
+      ref={formRef}
       key={changed ? `v${checkout.version}` : 'form'}
       noValidate
       preventScrollReset
@@ -411,13 +427,24 @@ export function CheckoutForm({
                     Test mode: no card is charged and nothing ships.
                   </p>
                 </>
+              ) : card && q ? (
+                <CardPayment
+                  publishableKey={card.publishableKey}
+                  currency={q.currency}
+                  total={q.total}
+                  turnstileKey={card.turnstileKey}
+                  busy={busy}
+                  formRef={formRef}
+                  authenticate={card.authenticate}
+                  answer={card.answer}
+                />
               ) : (
                 <Alert>
                   <CreditCard aria-hidden="true" />
-                  <AlertTitle>Card payment is coming</AlertTitle>
+                  <AlertTitle>Card payment isn’t set up here</AlertTitle>
                   <AlertDescription>
-                    You can fill in your details now, but this page can’t take a payment yet.
-                    Contact the business to pay for this order.
+                    You can fill in your details now, but this page can’t take a payment. Contact
+                    the business to pay for this order.
                   </AlertDescription>
                 </Alert>
               )}

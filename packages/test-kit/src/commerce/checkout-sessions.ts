@@ -3,7 +3,7 @@
  * change a stored session by holding on to the object it wrote. The contract in
  * ./checkout-sessions-contract.ts holds it to the same behaviour as the D1 store.
  */
-import type { CheckoutSession } from '@commerceworker/core';
+import { type CheckoutSession, HOSTED_OWNER_PREFIX } from '@commerceworker/core';
 import type { CheckoutSessionStore } from '@commerceworker/ports/commerce';
 
 export class InMemoryCheckoutSessions implements CheckoutSessionStore {
@@ -44,6 +44,19 @@ export class InMemoryCheckoutSessions implements CheckoutSessionStore {
     const next = { ...s, ownerId: to };
     this.rows.set(id, { ...r, ownerId: to, data: JSON.stringify(next) });
     return next;
+  }
+
+  async stuckHosted(before: number, limit: number) {
+    return [...this.rows.values()]
+      .map((r) => this.parse(r.data))
+      .filter(
+        (s) =>
+          s.ownerId.startsWith(HOSTED_OWNER_PREFIX) &&
+          s.status === 'complete_in_progress' &&
+          s.updatedAt < before,
+      )
+      .sort((a, b) => a.updatedAt - b.updatedAt)
+      .slice(0, limit);
   }
 
   async forOrder(orderId: string) {

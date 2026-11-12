@@ -1,6 +1,6 @@
 /**
  * Cloudflare Turnstile's challenge, inside a form that posts to an action checking it
- * (`checkTurnstile` in lib/turnstile.server.ts). The widget writes its token into the form as
+ * (`checkTurnstileForm`, @commerceworker/security/turnstile). The widget writes its token into the form as
  * `cf-turnstile-response`. Its script is loaded only by this component, so only on the pages that
  * render it, whose CSP alone allows it.
  */

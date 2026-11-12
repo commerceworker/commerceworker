@@ -6,7 +6,7 @@ const engineFetch = vi.fn(async (_r: Request) => new Response('ok'));
 const redeemCheckoutStart = vi.fn();
 const checkout = vi.fn();
 const storefrontSettings = vi.fn(async () => ({
-  checkout: { enabled: true, editLines: false, testPayments: true },
+  checkout: { enabled: true, editLines: false, testPayments: true, publishableKey: null },
 }));
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
@@ -42,7 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   lib.forgetStorefrontSettings();
   storefrontSettings.mockResolvedValue({
-    checkout: { enabled: true, editLines: false, testPayments: true },
+    checkout: { enabled: true, editLines: false, testPayments: true, publishableKey: null },
   });
   delete env.API_LIMIT;
 });
@@ -156,7 +156,7 @@ describe('redeeming a hosted checkout’s start link by POST', () => {
 
   it('refuses while hosted checkout is off without asking the engine to redeem', async () => {
     storefrontSettings.mockResolvedValue({
-      checkout: { enabled: false, editLines: false, testPayments: true },
+      checkout: { enabled: false, editLines: false, testPayments: true, publishableKey: null },
     });
     expect((await refusal(() => redeem())).status).toBe(404);
     expect(redeemCheckoutStart).not.toHaveBeenCalled();
@@ -186,7 +186,13 @@ describe('the buyer’s checkout page', () => {
       params: { id: 'chk_1' },
       request: pageRequest(cookie),
     } as never)) as unknown as { data: unknown; init: ResponseInit };
-    expect(res.data).toEqual({ checkout: session, testPayments: true, editLines: false });
+    expect(res.data).toEqual({
+      checkout: session,
+      testPayments: true,
+      editLines: false,
+      publishableKey: null,
+      turnstileKey: null,
+    });
     const headers = new Headers(res.init.headers);
     expect(headers.get('cache-control')).toBe('no-store');
     expect(headers.get('referrer-policy')).toBe('no-referrer');
@@ -234,7 +240,7 @@ describe('the buyer’s checkout page', () => {
       ).status,
     ).toBe(404);
     storefrontSettings.mockResolvedValue({
-      checkout: { enabled: false, editLines: false, testPayments: true },
+      checkout: { enabled: false, editLines: false, testPayments: true, publishableKey: null },
     });
     lib.forgetStorefrontSettings();
     checkout.mockClear();

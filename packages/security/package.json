@@ -11,7 +11,8 @@
     "./csp": "./src/csp.ts",
     "./origin": "./src/origin.ts",
     "./principal": "./src/principal.ts",
-    "./roles": "./src/roles.ts"
+    "./roles": "./src/roles.ts",
+    "./turnstile": "./src/turnstile.ts"
   },
   "scripts": {
     "test": "vitest run",

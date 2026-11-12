@@ -158,8 +158,14 @@ export type CheckoutSession = {
   issues: CheckoutIssue[];
   /** The customer it is priced for (contract prices, credit) and its order is placed for. */
   customerId?: string;
-  /** The payment held for it, once a hosted checkout takes payment. Unset until then. */
-  payment?: { intentId: string; state: string };
+  /**
+   * A hosted checkout's card payment, once the buyer has pressed Pay. `attempts` counts the
+   * confirmation tokens it has been tried with (the cap against card testing); `token` is the one
+   * being paid with and `intentId` the PaymentIntent it made, so a press retried after a lost answer
+   * resumes the same hold, and the sweep can release it if nothing finishes (`sweeps` counts the times it
+   * failed to settle it). Never shown to a buyer.
+   */
+  payment?: { attempts: number; token?: string; intentId?: string; sweeps?: number };
   /** The order completing it started. */
   orderId: string | null;
   createdAt: number;
@@ -317,7 +323,11 @@ export function quoteNodes(graph: FlowGraph): FlowNode[] {
   });
 }
 
-/** Why a flow can't take checkouts, or null when it can: it must authorize a card. */
+/**
+ * Why a flow can't take checkouts, or null when it can: it must authorize a card, and must not
+ * carry the order on the customer's account (an invoice billed to it, a stored-method charge): a
+ * buyer pays with their own card, never the account's credit.
+ */
 export function checkoutFlowProblem(graph: FlowGraph): string | null {
   const authorize = graph.nodes.find((n) => n.type === 'commerce.authorize_payment');
   if (!authorize)
@@ -327,6 +337,13 @@ export function checkoutFlowProblem(graph: FlowGraph): string | null {
     return `The checkout flow authorizes "${String(method)}"; checkout pays by card.`;
   if (authorize.config?.purpose === 'verify')
     return 'The checkout flow only verifies the card; it must hold the payment to capture it later.';
+  const onAccount = graph.nodes.find(
+    (n) =>
+      n.type === 'commerce.charge' ||
+      (n.type === 'commerce.invoice' && n.config?.onAccount !== false),
+  );
+  if (onAccount)
+    return `The checkout flow carries the order on account (${onAccount.type}); checkout pays by card.`;
   return null;
 }
 

@@ -61,7 +61,7 @@ import { emit, orderSummary } from './outbox';
 import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
-import { approvalPorts, orderRecords, purchaseOrderStore } from './wire';
+import { approvalPorts, orderRecords, paymentLedger, purchaseOrderStore } from './wire';
 import { plural } from './words';
 
 /** What recording a vote answered: where the vote stands, or why it couldn't be taken. */
@@ -174,7 +174,10 @@ export class OrderAgent extends Agent<Env, State> {
     this.sql`CREATE TABLE IF NOT EXISTS a2a_watchers (name TEXT PRIMARY KEY)`;
     this.sql`CREATE TABLE IF NOT EXISTS a2a_watch_state (id INTEGER PRIMARY KEY, key TEXT)`;
     this
-      .sql`CREATE TABLE IF NOT EXISTS ucp_sync (id INTEGER PRIMARY KEY, digest TEXT, pending INTEGER NOT NULL DEFAULT 0, released INTEGER NOT NULL DEFAULT 0)`;
+      .sql`CREATE TABLE IF NOT EXISTS ucp_sync (id INTEGER PRIMARY KEY, digest TEXT, pending INTEGER NOT NULL DEFAULT 0)`;
+    // Whether the hold a checkout placed has been let go of (`releaseUnusedHold`), once.
+    this
+      .sql`CREATE TABLE IF NOT EXISTS hold_release (id INTEGER PRIMARY KEY, pending INTEGER NOT NULL DEFAULT 0, released INTEGER NOT NULL DEFAULT 0)`;
     // Events that arrived before a step waited for them (`holdProblem` in core).
     this
       .sql`CREATE TABLE IF NOT EXISTS order_inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, payload TEXT NOT NULL, at INTEGER NOT NULL, taken_by TEXT)`;
@@ -973,6 +976,7 @@ export class OrderAgent extends Agent<Env, State> {
   override onStateChanged(state: State | undefined) {
     if (!state?.orderId) return;
     if (ucpMetaOf(state.order?.meta)) this.queueUcpSync();
+    if (this.holdToRelease(state)) this.queueHoldRelease();
     if (!this.watchers().length) return;
     const key = watchKey(state);
     const last = this.sql<{ key: string }>`SELECT key FROM a2a_watch_state WHERE id = 1`[0]?.key;
@@ -1015,8 +1019,56 @@ export class OrderAgent extends Agent<Env, State> {
     return this.sql<{
       digest: string | null;
       pending: number;
-      released: number;
-    }>`SELECT digest, pending, released FROM ucp_sync WHERE id = 1`[0];
+    }>`SELECT digest, pending FROM ucp_sync WHERE id = 1`[0];
+  }
+
+  // ── A checkout's hold ──
+  // A UCP or hosted checkout holds the buyer's card before its order starts, and the order's
+  // authorize step adopts that hold. An order that ends without being fulfilled (cancelled by
+  // someone, declined by policy before authorize, an authorize that refused the hold, failed or
+  // rolled back) may never have taken it: it is let go of once, here, so no card is held for an
+  // order that won't ship.
+
+  /** The intent to let go of, when this order is a checkout's and has ended unfulfilled. */
+  private holdToRelease(state: State | undefined) {
+    const order = state?.order;
+    const intent = order?.payment?.intentId;
+    if (!intent || !state || !UNFULFILLED.includes(state.status)) return null;
+    return order.meta?.hosted === true || ucpMetaOf(order.meta) ? intent : null;
+  }
+
+  private queueHoldRelease() {
+    this.tables();
+    const row = this.sql<{ pending: number; released: number }>`
+      SELECT pending, released FROM hold_release WHERE id = 1`[0];
+    if (row?.pending || row?.released) return;
+    this
+      .sql`INSERT INTO hold_release (id, pending) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET pending = 1`;
+    this.ctx.waitUntil(this.schedule(2, 'releaseUnusedHold', { attempt: 0 }));
+  }
+
+  /**
+   * Cancels the checkout's hold unless money was taken from it (the ledger holds a capture for the
+   * intent), once however many times the order's state changes. A Stripe failure is retried with
+   * the webhooks' backoff.
+   */
+  async releaseUnusedHold(p: { attempt: number }) {
+    const intent = this.holdToRelease(this.state);
+    this.sql`UPDATE hold_release SET pending = 0 WHERE id = 1`;
+    if (!intent) return;
+    try {
+      const taken = (await paymentLedger(this.env).forExternalId(intent)).some(
+        (r) => r.status === 'captured',
+      );
+      if (!taken) await releaseHold(this.env, intent);
+      this.sql`UPDATE hold_release SET released = 1 WHERE id = 1`;
+    } catch (err) {
+      console.warn('release unused hold', this.state.orderId, err);
+      if (p.attempt < WEBHOOK_RETRIES) {
+        this.sql`UPDATE hold_release SET pending = 1 WHERE id = 1`;
+        await this.schedule(10 * 2 ** p.attempt, 'releaseUnusedHold', { attempt: p.attempt + 1 });
+      }
+    }
   }
 
   private queueUcpSync() {
@@ -1033,16 +1085,6 @@ export class OrderAgent extends Agent<Env, State> {
     if (!orderId || !u) return;
     this.sql`UPDATE ucp_sync SET pending = 0 WHERE id = 1`;
     const row = this.ucpSyncRow();
-    // A hold the checkout placed that no step took is released once the order ends without it.
-    const intent = this.state.order?.payment?.intentId;
-    if (intent && !row?.released && UNFULFILLED.includes(this.state.status)) {
-      try {
-        await releaseHold(this.env, intent);
-        this.sql`UPDATE ucp_sync SET released = 1 WHERE id = 1`;
-      } catch (err) {
-        console.warn('ucp release hold', orderId, err);
-      }
-    }
     let out: Awaited<ReturnType<typeof syncUcpOrder>>;
     try {
       out = await syncUcpOrder(this.env, orderId, u, row?.digest ?? null);

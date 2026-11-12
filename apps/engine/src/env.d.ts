@@ -11,6 +11,8 @@ interface Env {
   SHIPPING_CARRIER_AUTH?: string;
   /** Stripe secret or restricted key (sk_… / rk_…); required when PAYMENTS_MODE is "stripe". */
   STRIPE_SECRET_KEY?: string;
+  /** The text Apple Pay's domain verification fetches from the storefront; a secret only for where it is kept. */
+  APPLE_PAY_DOMAIN_ASSOCIATION?: string;
   /** Shared with the web Worker: signs the principal header on every forwarded request. */
   PRINCIPAL_KEY?: string;
   /** The key before a rotation, still accepted until the web Worker signs with the new one. */

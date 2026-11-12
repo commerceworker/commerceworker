@@ -9,6 +9,7 @@ import { retryLabelVoids } from '@commerceworker/application/commerce';
 import { UCP_PATH } from '@commerceworker/core';
 import { A2A_PATH, handleA2A } from './a2a/route';
 import { routeAgents } from './agent-routes';
+import { settleOrphanedHolds } from './checkout/hosted';
 
 import { receiveEmail } from './email';
 import { refreshRates } from './fx';
@@ -41,7 +42,7 @@ export { Replenish } from './replenish';
 export { StorefrontApi } from './storefront-api';
 export { OrderWorkflow } from './workflow';
 
-/** The hourly cron in wrangler.jsonc that runs `reindexProducts`. */
+/** The hourly cron in wrangler.jsonc: `reindexProducts` and `settleOrphanedHolds`. */
 const REINDEX_CRON = '15 * * * *';
 
 export default {
@@ -61,7 +62,20 @@ export default {
   // rates of the currencies the deployment sells in.
   async scheduled(controller, env) {
     if (controller.cron === REINDEX_CRON) {
-      await reindexProducts(env);
+      // Hourly: a hold a buyer's card payment left behind is settled within the hour, not the day.
+      const failed: string[] = [];
+      for (const [name, run] of Object.entries({
+        'product index': () => reindexProducts(env),
+        'card holds': () => settleOrphanedHolds(env),
+      })) {
+        try {
+          await run();
+        } catch (err) {
+          console.error(name, 'failed', err);
+          failed.push(name);
+        }
+      }
+      if (failed.length) throw new Error(`Hourly jobs failed: ${failed.join(', ')}`);
       return;
     }
     // Each daily job runs whatever the others do, so one failing every day can't starve the rest;

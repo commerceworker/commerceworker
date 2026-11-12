@@ -14,10 +14,10 @@ import {
   FieldLabel,
 } from '@commerceworker/ui/field';
 import { Input } from '@commerceworker/ui/input';
+import { Turnstile } from '@commerceworker/ui/turnstile';
 import { useState } from 'react';
 import { data, Form, redirect, useActionData, useLoaderData, useNavigation } from 'react-router';
 import { Mark } from '~/components/mark';
-import { Turnstile } from '~/components/turnstile';
 import { authEnabled, startSession, Throttled } from '~/lib/auth.server';
 import { redeemSetupCode, setupOpen } from '~/lib/setup.server';
 import { TeamError } from '~/lib/team.server';

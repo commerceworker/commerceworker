@@ -114,12 +114,28 @@ candidate finding that still needs a concrete attacker before it is reported.
 - Does a hosted checkout's payment use the buyer's own instrument? Never on-account, never the
   customer's credit or saved cards, unless the operator explicitly allows it
   (`apps/engine/src/checkout/complete.ts`; `completeHosted` in `hosted.ts` completes only in test mode, with a
-  test authorizer that holds and takes nothing, until a card is taken). When a card is taken (S3), also:
-  - a live hosted authorizer returns the buyer's own `payment.intentId` for the order to adopt, and a
-    live completion without one is refused (`holdsNothingOnlyInTestMode` throws);
-  - a flow that carries the order on account (`commerce.invoice` with `onAccount`, `commerce.charge`) is
+  test authorizer that holds and takes nothing; a card is taken by `payHosted`). Taking a card (S3), done:
+  - [x] a live hosted authorizer returns the buyer's own `payment.intentId` for the order to adopt, and a
+    live completion without one is refused (`holdsNothingOnlyInTestMode` throws; `holdCard` returns the
+    intent of a PaymentIntent made from the buyer's confirmation token, `paymentIntents.confirmWithToken`
+    having no customer, saved-method or `off_session` parameter);
+  - [x] a flow that carries the order on account (`commerce.invoice` with `onAccount`, `commerce.charge`) is
     refused, as one that doesn't authorize a card is (`checkoutFlowProblem`);
-  - the flow is loaded and re-checked at completion, not trusted from when the setting was saved
-    (`completeHosted`, and UCP's `completeCheckout`);
-  - completion is for the version and total the buyer saw (`completeCheckout`'s `shown`), so an
-    order is never placed at a price they were not shown.
+  - [x] the flow is loaded and re-checked at completion, not trusted from when the setting was saved
+    (`payHosted`, `confirmHostedPayment` and the sweep via `flowFor`; `completeHosted`; UCP's
+    `completeCheckout`);
+  - [x] completion is for the version and total the buyer saw (`payHosted`'s `version` and `total`), so an
+    order is never placed at a price they were not shown, and the amount charged is the server's quote,
+    never the page's;
+  - [x] the amount, the PaymentIntent's `checkout_id` and `requires_capture` are checked again before an
+    authenticated payment becomes an order (`settle`), and the order's authorize node checks the intent
+    once more (`adoptProblem`);
+  - [x] card testing: five attempts per session (`HOSTED_PAY_ATTEMPTS`), `PAY_LIMIT` per cookie and per
+    address, Turnstile (`checkout_pay`) before the engine is asked, and Radar left on (an owner step);
+  - [x] a hold an unfulfilled UCP or hosted order never took is released once by its OrderAgent
+    (`releaseUnusedHold`), a session whose order exists is never reopened over it (`completeFromOrder`),
+    and a session the sweep can't settle is let go of after `MAX_FAILED_SWEEPS`;
+  - [x] a hosted order's authorize step takes only the adopted intent, and `adoptProblem` checks its
+    `checkout_id`; `meta.hosted` and `hosted:` keys can't be set from outside;
+  - [x] Stripe.js, its frames and its API are in the policy of a checkout page that takes a card and no
+    other page (`STRIPE_HEADER`), and the browser's payment request is allowed there alone.

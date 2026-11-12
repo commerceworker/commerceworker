@@ -1,7 +1,7 @@
 /**
  * The Content-Security-Policy and security headers every Worker that serves pages sends: the admin
  * (`apps/web`) and the storefront (`apps/storefront`) differ only in what a page asks for. A route
- * names it in a response header (`EMBED_HEADER`, `TURNSTILE_HEADER`), which `pageHeaders` folds into
+ * names it in a response header (`EMBED_HEADER`, `TURNSTILE_HEADER`, `STRIPE_HEADER`), which `pageHeaders` folds into
  * the policy and drops. Pure, so both Workers and their tests share it.
  */
 
@@ -25,6 +25,35 @@ export const EMBED_HEADER = 'x-commerceworker-embed';
  * (`withTurnstilePolicy`); entry.server.tsx lets that page alone load Turnstile, and drops it.
  */
 export const TURNSTILE_HEADER = 'x-commerceworker-turnstile';
+
+/**
+ * Carried from a hosted checkout's page when it takes a card (`apps/storefront`): that page alone
+ * loads Stripe.js, frames its Payment Element and 3-D Secure, calls its API and may use the
+ * browser's payment request (`Permissions-Policy: payment`), which every other page denies.
+ */
+export const STRIPE_HEADER = 'x-commerceworker-stripe';
+
+/**
+ * Where Stripe.js loads from, the origins its elements and authentication frame, and its API.
+ * Stripe's CSP guidance (https://docs.stripe.com/security/guide#content-security-policy) lists
+ * js.stripe.com and its `*.js.stripe.com` subdomains for scripts and frames, hooks.stripe.com for
+ * 3-D Secure and api.stripe.com for connections. That page could not be read when this was written
+ * (the Stripe CLI's docs need a login), so the wildcard is Stripe's long-standing recommendation
+ * from memory: check it against the page and trim what a real browser test shows is unused.
+ */
+export const STRIPE_SCRIPT_ORIGIN = 'https://js.stripe.com';
+export const STRIPE_SCRIPT_ORIGINS = [STRIPE_SCRIPT_ORIGIN, 'https://*.js.stripe.com'] as const;
+export const STRIPE_FRAME_ORIGINS = [
+  'https://js.stripe.com',
+  'https://*.js.stripe.com',
+  'https://hooks.stripe.com',
+] as const;
+export const STRIPE_API_ORIGIN = 'https://api.stripe.com';
+
+/** What every page may use of the browser's features; a card page's adds Stripe's payment request. */
+const PERMISSIONS = 'camera=(), microphone=(), geolocation=()';
+export const PERMISSIONS_POLICY = `${PERMISSIONS}, payment=()`;
+export const STRIPE_PERMISSIONS_POLICY = `${PERMISSIONS}, payment=(self "${STRIPE_SCRIPT_ORIGIN}")`;
 
 /**
  * Carried from the consent page's `headers` (routes/oauth-authorize.tsx): the return address the
@@ -123,7 +152,7 @@ export function parseEmbed(raw: string | null): EmbedPolicy | null {
 export function contentSecurityPolicy(
   nonce: string,
   embed?: EmbedPolicy | null,
-  opts: { turnstile?: boolean; redirect?: string | null } = {},
+  opts: { turnstile?: boolean; stripe?: boolean; redirect?: string | null } = {},
 ): string {
   const ancestors = embed?.frameAncestors.length ? embed.frameAncestors.join(' ') : "'none'";
   const actions = [
@@ -132,14 +161,19 @@ export function contentSecurityPolicy(
     ...(opts.redirect ? [opts.redirect] : []),
   ].join(' ');
   const turnstile = opts.turnstile ? ` ${TURNSTILE_ORIGIN}` : '';
+  const stripe = opts.stripe ? ` ${STRIPE_SCRIPT_ORIGINS.join(' ')}` : '';
+  const frames = [
+    ...(opts.turnstile ? [TURNSTILE_ORIGIN] : []),
+    ...(opts.stripe ? STRIPE_FRAME_ORIGINS : []),
+  ];
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'${turnstile}`,
-    ...(opts.turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
+    `script-src 'self' 'nonce-${nonce}'${turnstile}${stripe}`,
+    ...(frames.length ? [`frame-src ${frames.join(' ')}`] : []),
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data: blob:",
-    "connect-src 'self'",
+    `connect-src 'self'${opts.stripe ? ` ${STRIPE_API_ORIGIN}` : ''}`,
     "object-src 'none'",
     "base-uri 'self'",
     `form-action ${actions}`,
@@ -148,22 +182,25 @@ export function contentSecurityPolicy(
 }
 
 /** Headers a route passes to entry.server.tsx and no response may carry. */
-const INTERNAL_HEADERS = [EMBED_HEADER, TURNSTILE_HEADER, CONSENT_HEADER];
+const INTERNAL_HEADERS = [EMBED_HEADER, TURNSTILE_HEADER, STRIPE_HEADER, CONSENT_HEADER];
 
 /**
- * A page's headers as sent: the route's `EMBED_HEADER`, `TURNSTILE_HEADER` and `CONSENT_HEADER` folded into its
- * Content-Security-Policy when there is a `nonce`, and removed either way (a HEAD answer, or the
- * dev server, which sets no policy).
+ * A page's headers as sent: the route's `EMBED_HEADER`, `TURNSTILE_HEADER`, `STRIPE_HEADER` and
+ * `CONSENT_HEADER` folded into its Content-Security-Policy when there is a `nonce`, and removed
+ * either way (a HEAD answer, or the dev server, which sets no policy). A card page also gets the
+ * Permissions-Policy that lets Stripe's payment request run; `withSecurityHeaders` leaves it be.
  */
 export function pageHeaders(headers: Headers, nonce?: string): Headers {
   const embed = parseEmbed(headers.get(EMBED_HEADER));
   const turnstile = headers.has(TURNSTILE_HEADER);
+  const stripe = headers.has(STRIPE_HEADER);
   const redirect = redirectSource(headers.get(CONSENT_HEADER));
   for (const h of INTERNAL_HEADERS) headers.delete(h);
+  if (stripe) headers.set('permissions-policy', STRIPE_PERMISSIONS_POLICY);
   if (nonce)
     headers.set(
       'Content-Security-Policy',
-      contentSecurityPolicy(nonce, embed, { turnstile, redirect }),
+      contentSecurityPolicy(nonce, embed, { turnstile, stripe, redirect }),
     );
   return headers;
 }
@@ -187,7 +224,7 @@ export function withSecurityHeaders(res: Response, url: URL): Response {
   // A page that allows framers says so in its CSP (frame-ancestors), which X-Frame-Options can't.
   if (!/frame-ancestors (?!'none')/.test(out.headers.get('content-security-policy') ?? ''))
     set('x-frame-options', 'DENY');
-  set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  set('permissions-policy', PERMISSIONS_POLICY);
   if (url.protocol === 'https:')
     set('strict-transport-security', 'max-age=31536000; includeSubDomains');
   return out;

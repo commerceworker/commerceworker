@@ -21,6 +21,12 @@ export interface CheckoutSessionStore {
    * owns it, or null.
    */
   transfer(id: string, from: string, to: string, now: number): Promise<CheckoutSession | null>;
+  /**
+   * Hosted sessions (their owner is a redeemed buyer's, `hosted:…`) claimed for completion
+   * (`complete_in_progress`) and not written since `before`, oldest first: a payment that began and
+   * never finished, which holds a card for nothing until someone finishes or releases it.
+   */
+  stuckHosted(before: number, limit: number): Promise<CheckoutSession[]>;
   /** The session that placed `orderId`, whoever owns it. */
   forOrder(orderId: string): Promise<CheckoutSession | null>;
 }

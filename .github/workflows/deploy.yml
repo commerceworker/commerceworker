@@ -61,7 +61,7 @@ jobs:
     # The deployment's GitHub environment holds its secrets (PRINCIPAL_KEY and DATA_KEY, required,
     # and PRINCIPAL_KEY_PREVIOUS and DATA_KEY_PREVIOUS during a rotation; SETUP_TOKEN, SHOPIFY_WEBHOOK_SECRET,
     # STRIPE_WEBHOOK_SECRET, OIDC_CLIENT_SECRET, INTAKE_ALLOWLIST, SHIPPING_CARRIER_AUTH, STRIPE_SECRET_KEY,
-    # UCP_SIGNING_KEY; with the content stack also TOKEN_PEPPER and MEDIA_SIGNING_SECRET, required,
+    # APPLE_PAY_DOMAIN_ASSOCIATION, UCP_SIGNING_KEY; with the content stack also TOKEN_PEPPER and MEDIA_SIGNING_SECRET, required,
     # and STREAM_WEBHOOK_SECRET, MCP_TOKEN and ADMIN_TOKEN; and each installed plugin's
     # PLUGIN_<ID>_<NAME>, docs/plugins.md) and, if it should, a required reviewer.
     # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID can be repository secrets.
@@ -153,6 +153,7 @@ jobs:
           INTAKE_ALLOWLIST: ${{ secrets.INTAKE_ALLOWLIST }}
           SHIPPING_CARRIER_AUTH: ${{ secrets.SHIPPING_CARRIER_AUTH }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          APPLE_PAY_DOMAIN_ASSOCIATION: ${{ secrets.APPLE_PAY_DOMAIN_ASSOCIATION }}
           UCP_SIGNING_KEY: ${{ secrets.UCP_SIGNING_KEY }}
         run: |
           node scripts/fleet.ts secrets engine "$RUNNER_TEMP/engine-secrets.json" "$ID"

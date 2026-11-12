@@ -3,7 +3,10 @@
  * what the payment gateway and billing rely on: PaymentIntent states (manual capture, cancel,
  * off-session confirms), refunds against what was received, customers, invoices (draft → items
  * attached by id → finalize → send / void / pay), card declines, and idempotency keys
- * (a repeated key replays the first response; a different body under it is refused). Requests to
+ * (a repeated key replays the first response; a different body under it is refused), and a hosted
+ * checkout's card: a confirmation token (`ctoken_…`) confirms a PaymentIntent server-side, once, and
+ * ends `requires_capture`, `requires_action` (a token naming "authenticate"; `authenticate()` plays
+ * the buyer's bank step) or declined (a token naming "declined"). Requests to
  * anything other than api.stripe.com go to the real fetch.
  */
 
@@ -27,6 +30,8 @@ export type FakeIntent = {
   off_session: boolean;
   setup_future_usage: string | null;
   refunded: number;
+  client_secret: string;
+  next_action: { type: string } | null;
 };
 
 export type FakeInvoice = {
@@ -86,6 +91,7 @@ export function parseForm(body: string): Form {
 }
 
 const DECLINING = /chargeDeclined|declined/i;
+const AUTHENTICATING = /authenticate/i;
 /** Ids stay unique across fakes, as Stripe's do, since D1 keeps rows between tests. */
 let seq = 0;
 
@@ -102,6 +108,8 @@ export function installStripeFake() {
     amount: number;
     description: string | null;
   }[] = [];
+  /** Confirmation tokens already spent on a PaymentIntent: Stripe lets one confirm once. */
+  const spentTokens = new Map<string, string>();
   const idempotent = new Map<string, { body: string; status: number; json: Json }>();
   const calls: StripeCall[] = [];
   /** Paths whose next request is processed but whose response is lost (a network error). */
@@ -140,7 +148,34 @@ export function installStripeFake() {
       off_session: p.off_session === 'true',
       setup_future_usage: (p.setup_future_usage as string) ?? null,
       refunded: 0,
+      client_secret: '',
+      next_action: null,
     };
+    pi.client_secret = `${pi.id}_secret_fake`;
+    const ctoken = p.confirmation_token as string | undefined;
+    if (ctoken) {
+      if (!/^ctoken_/.test(ctoken))
+        return error(400, {
+          type: 'invalid_request_error',
+          code: 'resource_missing',
+          param: 'confirmation_token',
+          message: `No such confirmation token: '${ctoken}'`,
+        });
+      if (spentTokens.has(ctoken))
+        return error(400, {
+          type: 'invalid_request_error',
+          code: 'confirmation_token_already_used',
+          param: 'confirmation_token',
+          message: 'This ConfirmationToken has already been used.',
+        });
+      if (p.confirm !== 'true' || p.payment_method)
+        return error(400, {
+          type: 'invalid_request_error',
+          message:
+            'A confirmation token confirms the intent it is given to, with no payment_method',
+        });
+      pi.payment_method = `pm_from_${ctoken}`;
+    }
     if (!(pi.amount > 0) || !Number.isInteger(pi.amount))
       return error(400, { type: 'invalid_request_error', param: 'amount', message: 'Bad amount' });
     if (pi.customer && !customers.has(pi.customer))
@@ -159,6 +194,7 @@ export function installStripeFake() {
     if (p.confirm !== 'true') return ok(view(pi));
     if (!pi.payment_method)
       return error(400, { type: 'invalid_request_error', message: 'No payment method' });
+    if (ctoken) spentTokens.set(ctoken, pi.id);
     if (DECLINING.test(pi.payment_method)) {
       pi.status = 'requires_payment_method';
       return error(402, {
@@ -168,6 +204,11 @@ export function installStripeFake() {
         message: 'Your card was declined.',
         payment_intent: view(pi),
       });
+    }
+    if (AUTHENTICATING.test(pi.payment_method)) {
+      pi.status = 'requires_action';
+      pi.next_action = { type: 'use_stripe_sdk' };
+      return ok(view(pi));
     }
     if (pi.capture_method === 'manual') {
       pi.status = 'requires_capture';
@@ -471,6 +512,20 @@ export function installStripeFake() {
      */
     failNext(path: RegExp, when?: (params: Form) => boolean) {
       failBefore.push({ path, when });
+    },
+    /**
+     * The buyer's bank step for a PaymentIntent waiting on it (what `handleNextAction` runs in the
+     * browser): it passes and the intent is an open authorization, or it fails and the intent goes
+     * back to wanting a payment method.
+     */
+    authenticate(id: string, outcome: 'succeed' | 'fail') {
+      const pi = intents.get(id);
+      if (pi?.status !== 'requires_action') throw new Error(`${id} is not waiting on the buyer`);
+      pi.next_action = null;
+      if (outcome === 'succeed') {
+        pi.status = 'requires_capture';
+        pi.amount_capturable = pi.amount;
+      } else pi.status = 'requires_payment_method';
     },
     /** A PaymentIntent made elsewhere (a checkout), authorized and waiting for capture. */
     authorizedIntent(amount: number, currency = 'usd', metadata: Record<string, string> = {}) {

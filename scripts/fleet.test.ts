@@ -281,7 +281,7 @@ test('the storefront config binds the engine’s narrow entrypoint and its own h
       'ai',
     ])
       assert.equal(config[binding], undefined, `the storefront binds ${binding}`);
-  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 to <slot>009.
+  // Namespaces follow the web Worker's five (<slot>001 to <slot>005): <slot>006 to <slot>010.
   assert.deepEqual(
     c.ratelimits.map((r: { name: string; namespace_id: string }) => [r.name, r.namespace_id]),
     [
@@ -289,6 +289,7 @@ test('the storefront config binds the engine’s narrow entrypoint and its own h
       ['AGENT_LIMIT', '2007'],
       ['PROMO_LIMIT', '2008'],
       ['CATALOG_LIMIT', '2009'],
+      ['PAY_LIMIT', '2010'],
     ],
   );
   // No two Workers of the fleet share a rate-limit namespace.
@@ -583,6 +584,7 @@ test('payments are mocked unless the registry says stripe, with its publishable 
     ...acme,
     payments: 'stripe',
     stripePublishableKey: 'pk_live_abc123',
+    turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY',
   });
   const engine = renderEngine(base('engine'), live);
   assert.equal(engine.vars.PAYMENTS_MODE, 'stripe');
@@ -604,15 +606,21 @@ test('payments are mocked unless the registry says stripe, with its publishable 
 
 test('a Stripe deployment needs STRIPE_SECRET_KEY in the same mode as its publishable key', () => {
   assert.equal(secretsProblem(acme, {}, 'engine'), null);
-  const stripe = toDeployment({ ...acme, payments: 'stripe', stripePublishableKey: 'pk_test_abc' });
+  const stripe = toDeployment({
+    ...acme,
+    payments: 'stripe',
+    stripePublishableKey: 'pk_test_abc',
+    turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY',
+  });
   assert.match(secretsProblem(stripe, {}, 'engine') ?? '', /STRIPE_SECRET_KEY/);
+  // (A site key makes the storefront and the web Worker want the widget's secret too.)
   assert.match(
     secretsProblem(stripe, { STRIPE_SECRET_KEY: 'sk_live_x' }, 'engine') ?? '',
     /both test or both live/,
   );
   assert.equal(secretsProblem(stripe, { STRIPE_SECRET_KEY: 'rk_test_x' }, 'engine'), null);
-  // The web Worker doesn't take payments.
-  assert.equal(secretsProblem(stripe, {}, 'web'), null);
+  // The web Worker doesn't take payments; it needs the widget's secret, which the key brings.
+  assert.equal(secretsProblem(stripe, { TURNSTILE_SECRET_KEY: 'x' }, 'web'), null);
 });
 
 test("a customer's turnstileSiteKey turns on the web Worker's Turnstile check", () => {
@@ -690,18 +698,22 @@ test("the storefront's secrets file holds its derived keys and never the princip
       });
     run({ PRINCIPAL_KEY_PREVIOUS: previous });
     // The storefront's key and its previous one (which verifies the buyer's cookie during a
-    // rotation), derived; no principal key, and nothing of the admin's: no data key, pepper, setup
-    // code or payment secret.
+    // rotation), derived, and the Turnstile widget's secret (it checks a card payment); no principal
+    // key, and nothing else of the admin's: no data key, pepper, setup code or payment secret.
     const written = JSON.parse(readFileSync(out, 'utf8'));
     assert.deepEqual(written, {
       STOREFRONT_KEY: storefrontKey(key),
       STOREFRONT_KEY_PREVIOUS: storefrontKey(previous),
+      TURNSTILE_SECRET_KEY: 'x',
     });
     assert.ok(!readFileSync(out, 'utf8').includes(key));
     assert.ok(!('PRINCIPAL_KEY' in written));
     // Outside a rotation there is no previous key.
     run({});
-    assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), { STOREFRONT_KEY: storefrontKey(key) });
+    assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), {
+      STOREFRONT_KEY: storefrontKey(key),
+      TURNSTILE_SECRET_KEY: 'x',
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -728,6 +740,67 @@ test('the storefront is rendered with no PRINCIPAL_KEY secret and no D1 binding'
   // The deploy's secrets for it are derived: PRINCIPAL_KEY is not among them.
   const secrets = storefrontSecrets({ PRINCIPAL_KEY: 'p'.repeat(40) });
   assert.deepEqual(Object.keys(secrets), ['STOREFRONT_KEY']);
+});
+
+test('a deployment that takes cards through Stripe needs a Turnstile site key for the storefront', () => {
+  const live = { ...acme, payments: 'stripe', stripePublishableKey: 'pk_test_abc' };
+  assert.throws(() => toDeployment(live), /turnstileSiteKey/);
+  assert.equal(
+    toDeployment({ ...live, turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY' }).payments,
+    'stripe',
+  );
+  // Without a publishable key the storefront offers no card, so nothing needs guarding.
+  assert.equal(toDeployment({ ...acme, payments: 'stripe' }).payments, 'stripe');
+});
+
+test("a customer's turnstileSiteKey turns on the storefront's Turnstile check of a card payment", () => {
+  const key = '0x4AAAAAAABkMYinukE8nzY';
+  const guarded = toDeployment({ ...acme, turnstileSiteKey: key });
+  assert.equal(renderStorefront(base('storefront'), guarded).vars.TURNSTILE_SITE_KEY, key);
+  // Always set, so one deployment's widget is never another's.
+  assert.equal(renderStorefront(base('storefront'), acme).vars.TURNSTILE_SITE_KEY, '');
+  // The widget's secret is the storefront's own, beside its derived key; a deploy needs it.
+  assert.match(
+    secretsProblem(guarded, {}, 'storefront') ?? '',
+    /TURNSTILE_SECRET_KEY to the deploy-acme GitHub environment/,
+  );
+  assert.equal(secretsProblem(guarded, { TURNSTILE_SECRET_KEY: 'x' }, 'storefront'), null);
+  assert.equal(secretsProblem(acme, {}, 'storefront'), null);
+  assert.deepEqual(
+    Object.keys(storefrontSecrets({ PRINCIPAL_KEY: 'p'.repeat(40), TURNSTILE_SECRET_KEY: 'x' })),
+    ['STOREFRONT_KEY', 'TURNSTILE_SECRET_KEY'],
+  );
+});
+
+test("the engine's secrets include the Apple Pay domain file, and the publishable key is a var, never a secret", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'engine-secrets-'));
+  try {
+    const out = join(dir, 'engine-secrets.json');
+    execFileSync('node', ['scripts/fleet.ts', 'secrets', 'engine', out, 'commerceworker'], {
+      cwd: join(import.meta.dirname, '..'),
+      env: {
+        PATH: process.env.PATH,
+        PRINCIPAL_KEY: 'a'.repeat(64),
+        DATA_KEY: 'a'.repeat(64),
+        PASSWORD_PEPPER: 'a'.repeat(64),
+        STRIPE_SECRET_KEY: 'sk_test_x',
+        APPLE_PAY_DOMAIN_ASSOCIATION: '7B227073',
+      },
+      stdio: 'pipe',
+    });
+    const written = JSON.parse(readFileSync(out, 'utf8'));
+    assert.equal(written.APPLE_PAY_DOMAIN_ASSOCIATION, '7B227073');
+    assert.ok(!('STRIPE_PUBLISHABLE_KEY' in written));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const pk = toDeployment({
+    ...acme,
+    payments: 'stripe',
+    stripePublishableKey: 'pk_test_abc',
+    turnstileSiteKey: '0x4AAAAAAABkMYinukE8nzY',
+  });
+  assert.equal(renderEngine(base('engine'), pk).vars.STRIPE_PUBLISHABLE_KEY, 'pk_test_abc');
 });
 
 test("the storefront's key is derived as core derives it, and is neither the principal key nor another derived one", () => {

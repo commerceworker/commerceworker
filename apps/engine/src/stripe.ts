@@ -76,6 +76,10 @@ export type PaymentIntent = {
   customer: string | null;
   payment_method: string | null;
   metadata: Record<string, string>;
+  /** Handed to the buyer's browser (Stripe.js) to act on this intent; never stored. */
+  client_secret?: string | null;
+  /** What the buyer must do before the intent can go on (`use_stripe_sdk`: Stripe.js does it). */
+  next_action?: { type: string } | null;
   last_payment_error?: { code?: string; decline_code?: string; message?: string } | null;
 };
 
@@ -199,6 +203,38 @@ export function stripeClient(secretKey: string) {
     paymentIntents: {
       create: (params: StripeParams, key: string) =>
         post<PaymentIntent>('/v1/payment_intents', params, key),
+      /**
+       * A buyer's own card, from the confirmation token their browser made (Stripe.js, from the
+       * Payment Element): authorized, never captured here (`manual`), confirmed at once, and with no
+       * redirect or asynchronous method, so it ends `requires_capture`, `requires_action` (Stripe.js
+       * runs the bank's step) or a card error. No customer, saved method or `off_session` is a
+       * parameter of this call, so none can ride along: a buyer pays with what they just entered.
+       */
+      confirmWithToken: (
+        p: {
+          amount: number;
+          currency: string;
+          confirmationToken: string;
+          description: string;
+          metadata: Record<string, string>;
+        },
+        key: string,
+      ) =>
+        post<PaymentIntent>(
+          '/v1/payment_intents',
+          {
+            amount: p.amount,
+            currency: p.currency,
+            capture_method: 'manual',
+            confirm: true,
+            confirmation_token: p.confirmationToken,
+            use_stripe_sdk: true,
+            automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
+            description: p.description,
+            metadata: p.metadata,
+          },
+          key,
+        ),
       retrieve: (id: string) =>
         request<PaymentIntent>('GET', `/v1/payment_intents/${encodeURIComponent(id)}`),
       capture: (id: string, params: StripeParams, key: string) =>

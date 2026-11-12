@@ -3,9 +3,12 @@ import {
   ANY_HTTPS_FRAMER,
   CONSENT_HEADER,
   contentSecurityPolicy,
+  PERMISSIONS_POLICY,
   pageHeaders,
   parseEmbed,
   redirectSource,
+  STRIPE_HEADER,
+  TURNSTILE_HEADER,
   TURNSTILE_ORIGIN,
   withSecurityHeaders,
 } from '../src/csp';
@@ -33,6 +36,62 @@ describe('page CSP', () => {
     expect(directive(csp, 'frame-ancestors')).toBe("frame-ancestors 'none'");
     expect(directive(csp, 'form-action')).toBe("form-action 'self'");
     expect(directive(csp, 'connect-src')).toBe("connect-src 'self'");
+  });
+
+  it('lets only a page that asks for Stripe load Stripe.js, frame its elements and call its API', () => {
+    const plain = contentSecurityPolicy('n');
+    expect(plain).not.toContain('stripe.com');
+    expect(directive(plain, 'connect-src')).toBe("connect-src 'self'");
+    const csp = contentSecurityPolicy('n', null, { stripe: true });
+    expect(directive(csp, 'script-src')).toBe(
+      "script-src 'self' 'nonce-n' https://js.stripe.com https://*.js.stripe.com",
+    );
+    expect(directive(csp, 'frame-src')).toBe(
+      'frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com',
+    );
+    expect(directive(csp, 'connect-src')).toBe("connect-src 'self' https://api.stripe.com");
+    // Nothing else opens up.
+    expect(directive(csp, 'frame-ancestors')).toBe("frame-ancestors 'none'");
+    expect(directive(csp, 'form-action')).toBe("form-action 'self'");
+    expect(directive(csp, 'object-src')).toBe("object-src 'none'");
+    // With Turnstile too (the payment page), both frames and both scripts, each once.
+    const both = contentSecurityPolicy('n', null, { stripe: true, turnstile: true });
+    expect(directive(both, 'frame-src')).toBe(
+      `frame-src ${TURNSTILE_ORIGIN} https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com`,
+    );
+    expect(directive(both, 'script-src')).toBe(
+      `script-src 'self' 'nonce-n' ${TURNSTILE_ORIGIN} https://js.stripe.com https://*.js.stripe.com`,
+    );
+  });
+
+  it('folds a route’s Stripe note into its policy and Permissions-Policy, and no other page gets either', () => {
+    const card = pageHeaders(new Headers({ [STRIPE_HEADER]: '1', [TURNSTILE_HEADER]: '1' }), 'n');
+    expect(card.has(STRIPE_HEADER)).toBe(false);
+    expect(card.get('content-security-policy')).toContain('https://js.stripe.com');
+    expect(card.get('permissions-policy')).toContain('payment=(self "https://js.stripe.com")');
+    // Sent through the Worker's headers, the page's own Permissions-Policy stands.
+    const sent = withSecurityHeaders(
+      new Response('x', { headers: card }),
+      new URL('https://shop.test/checkout/chk_1'),
+    );
+    expect(sent.headers.get('permissions-policy')).toContain('payment=(self');
+    expect(sent.headers.get('permissions-policy')).toContain('camera=()');
+    // Every other page, and a HEAD answer's, keep payment denied and Stripe out of the policy.
+    for (const nonce of ['n', undefined]) {
+      const other = pageHeaders(new Headers(), nonce);
+      expect(other.get('content-security-policy') ?? '').not.toContain('stripe.com');
+      expect(other.has('permissions-policy')).toBe(false);
+    }
+    const other = withSecurityHeaders(new Response('x'), new URL('https://shop.test/cart/c_1'));
+    expect(other.headers.get('permissions-policy')).toBe(PERMISSIONS_POLICY);
+    expect(PERMISSIONS_POLICY).toContain('payment=()');
+    // The note reaches no client, even on a .data answer that never passes the entry.
+    const data = withSecurityHeaders(
+      new Response('x', { headers: { [STRIPE_HEADER]: '1' } }),
+      new URL('https://shop.test/checkout/chk_1.data'),
+    );
+    expect(data.headers.has(STRIPE_HEADER)).toBe(false);
+    expect(data.headers.get('permissions-policy')).toBe(PERMISSIONS_POLICY);
   });
 
   it('lets the consent page post to the client’s return origin, and no other page', () => {

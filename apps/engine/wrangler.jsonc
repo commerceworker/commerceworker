@@ -107,7 +107,8 @@
   "vectorize": [{ "binding": "PRODUCT_VECTORS", "index_name": "commerceworker-products" }],
   // "30 3 * * *": the daily retention sweep (src/retention.ts): expired sessions, old webhook
   // deliveries, node timings and the intake log, and archiving old audit events to R2.
-  // "15 * * * *": hourly, the product index catches up with `products` (src/product-index.ts).
+  // "15 * * * *": hourly, the product index catches up with `products` (src/product-index.ts) and
+  // hosted card payments that began and never finished are settled (src/checkout/hosted.ts).
   "triggers": { "crons": ["30 3 * * *", "15 * * * *"] },
   "ai": { "binding": "AI" },
   "vars": {
@@ -192,6 +193,8 @@
   // SHIPPING_CARRIER_AUTH — JSON object of live shipping carrier id → Authorization header value,
   // e.g. {"acme":"Bearer …"}, for the liveCarriers of a commerce.shipping_rate node.
   // STRIPE_SECRET_KEY — Stripe secret or restricted key, required when PAYMENTS_MODE is "stripe".
+  // APPLE_PAY_DOMAIN_ASSOCIATION — the text of Stripe's Apple Pay domain verification file, which
+  // the storefront serves at /.well-known/apple-developer-merchantid-domain-association (docs/operations.md).
   // UCP_SIGNING_KEY — private P-256 JWK with a kid that signs UCP order webhooks; its public half
   // is published at /.well-known/ucp. Without it, agentic checkout sends no order events.
 }
