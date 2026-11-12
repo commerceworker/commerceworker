@@ -665,8 +665,10 @@ with `payment.intentId` recorded; the browser runs `stripe.handleNextAction`, th
 `confirmCheckoutPayment`, which retrieves the PaymentIntent (`settle`) and checks `metadata.checkout_id`, amount and
 currency and `requires_capture` before placing the order, and releases the hold (`releaseHold`) and reopens the
 session when the bank refused. `settleOrphanedHolds` (the retention sweep and the hourly cron) takes each hosted
-session claimed over `ORPHAN_HOLD_MS` (15 minutes) ago the same way: an open hold for this checkout becomes its
-order, anything else is released and the session reopened (`CheckoutSessionStore.stuckHosted`). A hold whose creation
+session claimed over `ORPHAN_HOLD_MS` (15 minutes) ago the same way, a UCP platform's too (`CheckoutSessionStore.stuckInProgress`;
+`completeSession` records the hold on the session before `placeOrder`, and the session keeps the origin it was completed on,
+`completedOn`, for the order's `meta.ucp`): an open hold for this checkout becomes its order, anything else is released and
+the session reopened. With test payments there is no hold, so the session completes with the order it already started or reopens. A hold whose creation
 answer was lost (token recorded, no intent) is found by replaying the creation under the same key. A session
 whose sweeps keep failing (`MAX_FAILED_SWEEPS`, 5; each failure is counted in `payment.sweeps`), or whose hold Stripe will
 never find again (a token or intent that is gone, an idempotency window that has passed), is let go of: the hold released

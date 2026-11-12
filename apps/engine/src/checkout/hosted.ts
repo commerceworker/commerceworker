@@ -18,6 +18,7 @@ import {
   type FlowGraph,
   HOSTED_CONFIRMATION_TOKEN,
   HOSTED_ID,
+  HOSTED_OWNER_PREFIX,
   HOSTED_PAY_ATTEMPTS,
   HOSTED_SECRET,
   type HostedChange,
@@ -47,6 +48,7 @@ import { loadFlowVersion } from '../flows';
 import { stripeFor } from '../gateway';
 import { guestActor } from '../principal';
 import { type PaymentIntent, StripeError } from '../stripe';
+import { ucpOrderCaller } from '../ucp/caller';
 import { ucpSettings } from '../ucp/config';
 import { checkoutSessions, pricingStore, workspaceStore } from '../wire';
 import type { CheckoutCaller } from './caller';
@@ -577,6 +579,21 @@ export async function confirmHostedPayment(
   return refused(now, now.issues.find((i) => i.path === '$.payment')?.content ?? CHANGED);
 }
 
+const once = <T>(load: () => Promise<T>) => {
+  let loaded: Promise<T> | undefined;
+  return () => {
+    loaded ??= load();
+    return loaded;
+  };
+};
+
+/** The flow a UCP platform's checkouts complete through, when it still can take a card. */
+async function platformFlow(env: Env) {
+  const { checkoutFlowId } = await ucpSettings(env);
+  const flow = checkoutFlowId ? await loadFlowVersion(env, checkoutFlowId) : null;
+  return flow && !checkoutFlowProblem(flow as unknown as FlowGraph) ? flow : null;
+}
+
 /** How long a claimed payment may sit before the sweep takes it up: past any bank step a buyer is on. */
 export const ORPHAN_HOLD_MS = 15 * 60_000;
 
@@ -604,21 +621,40 @@ async function failedSweep(env: Env, s: CheckoutSession) {
 }
 
 /**
- * The sweep's step for card payments that began and never finished (the Worker died after the hold
- * and before the order, or the buyer left the bank's page): each hosted session claimed longer ago
- * than `ORPHAN_HOLD_MS` is taken where it stands (`settle`), so a hold that is open for this
- * checkout becomes its order and anything else is released and the session reopened. Returns what
- * it did; one session failing is logged and left for the next run.
+ * The sweep's step for payments that began and never finished (the Worker died after the hold and
+ * before the order, or the buyer left the bank's page): each session, a hosted buyer's or a UCP
+ * platform's, claimed longer ago than `ORPHAN_HOLD_MS` is taken where it stands (`settle`), so a
+ * hold that is open for this checkout becomes its order (started under the session's own
+ * idempotency key, so never twice) and anything else is released and the session reopened. With
+ * test payments there is no hold to find: an order the session already started completes it, and
+ * otherwise it reopens. Returns what it did; one session failing is logged and left for the next run.
  */
 export async function settleOrphanedHolds(env: Env, now = Date.now()) {
   const counts = { placed: 0, released: 0, failed: 0 };
-  if (testPayments(env)) return counts;
-  const stuck = await checkoutSessions(env).stuckHosted(now - ORPHAN_HOLD_MS, 50);
+  const stuck = await checkoutSessions(env).stuckInProgress(now - ORPHAN_HOLD_MS, 50);
   if (!stuck.length) return counts;
-  const flow = await flowFor(env, await storefrontSettings(env));
+  // Each kind of owner places its orders through its own flow, loaded once if any session needs it.
+  const flows = {
+    hosted: once(() => storefrontSettings(env).then((c) => flowFor(env, c))),
+    platform: once(() => platformFlow(env)),
+  };
   for (const s of stuck) {
     try {
-      const outcome = await settle(env, callerOf(s.ownerId), flow, s, true);
+      const isHosted = s.ownerId.startsWith(HOSTED_OWNER_PREFIX);
+      const caller = isHosted
+        ? callerOf(s.ownerId)
+        : ucpOrderCaller(s.ownerId, s.id, s.completedOn);
+      let outcome: Settled;
+      if (testPayments(env)) {
+        if (await completeFromOrder(env, caller, s)) outcome = 'placed';
+        else {
+          await reopenSession(env, s, 'That payment was not completed. Try again.');
+          outcome = 'released';
+        }
+      } else {
+        const flow = await (isHosted ? flows.hosted() : flows.platform());
+        outcome = await settle(env, caller, flow, s, true);
+      }
       if (outcome === 'placed') counts.placed++;
       else counts.released++;
     } catch (err) {

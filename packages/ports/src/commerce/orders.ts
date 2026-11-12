@@ -85,6 +85,17 @@ export interface OrderRecords {
    * key first makes this throw, and the caller replays that one.
    */
   create(row: NewOrderRow): Promise<void>;
+  /**
+   * Orders created before `before` that are still queued and were started with no idempotency key,
+   * oldest first: a start that failed after the row was written, which nothing will ever finish (a
+   * keyed start is finished by its caller's retry). The caller checks each for a Workflow.
+   */
+  staleQueued(before: number, limit: number): Promise<{ id: string; instanceId: string | null }[]>;
+  /**
+   * Ends a queued order as failed with `reason`; true when it did. An order that has moved on
+   * (or already failed) is left alone, so it is safe to repeat.
+   */
+  failQueued(orderId: string, reason: string): Promise<boolean>;
   /** Whether an order with the id was started. */
   exists(orderId: string): Promise<boolean>;
   /** The order started under an idempotency key, as a replay needs it. */

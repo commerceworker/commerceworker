@@ -271,6 +271,38 @@ async function launch(
   }
 }
 
+/** How long a queued order may go without a Workflow before the sweep gives up on it. */
+export const UNSTARTED_ORDER_MS = 60 * 60_000;
+
+/**
+ * The sweep's step for an order whose start failed after its row was written, with no
+ * Idempotency-Key to make the caller's retry finish it (`start` replays a keyed one): a `queued`
+ * row older than `UNSTARTED_ORDER_MS` with no Workflow instance is marked failed, with a reason.
+ * It is failed, not started, because the row keeps none of the request (the lines, the payment,
+ * the PO link live only in the call that failed), and the caller was told it failed: it may have
+ * placed the order again since, and starting this one late would make two. Returns what it did;
+ * a row that fails is logged and left for the next run.
+ */
+export async function failUnstartedOrders(env: Env, now = Date.now()) {
+  const counts = { failed: 0, started: 0, errors: 0 };
+  const records = orderRecords(env);
+  for (const o of await records.staleQueued(now - UNSTARTED_ORDER_MS, 50)) {
+    try {
+      // Its Workflow is there, so the agent's reports will move it on: not ours to end.
+      if (await instanceExists(env, o.instanceId ?? instanceIdFor(o.id))) {
+        counts.started++;
+        continue;
+      }
+      if (await records.failQueued(o.id, 'The order could not be started; place it again.'))
+        counts.failed++;
+    } catch (err) {
+      counts.errors++;
+      console.warn(JSON.stringify({ type: 'unstarted_order_failed', orderId: o.id }), err);
+    }
+  }
+  return counts;
+}
+
 export async function instanceExists(env: Env, id: string) {
   try {
     await env.ORDER_WORKFLOW.get(id);

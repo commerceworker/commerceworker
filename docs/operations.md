@@ -823,10 +823,26 @@ the owner:
 
 A payment that began and never finished (the buyer left their bank's page, or a Worker died between
 the hold and the order) is found by the engine's hourly job and its daily retention sweep: a checkout
-claimed for more than 15 minutes whose hold is open becomes its order, and anything else is released
-(the PaymentIntent canceled and the checkout reopened). The sweep logs `card holds` with what it
-placed and released, and `orphaned_hold_failed` for a checkout it could not settle (tried again next
-run). A hold that nothing ever settles still expires with the card network, in about seven days.
+claimed for more than 15 minutes whose hold is open becomes its order (started under the checkout's
+own key, so never twice), and anything else is released (the PaymentIntent canceled and the checkout
+reopened). This covers a UCP platform's checkout as well as a hosted buyer's: completion records the
+PaymentIntent on the session before it starts the order, so a Worker that died in between leaves the
+sweep the hold to find, and the platform's next `complete` (or `get`) sees the order or a reopened
+checkout. With test payments there is no hold: the sweep completes a claimed checkout with the order it
+already started, and otherwise reopens it. The sweep logs `card holds` with what it placed and
+released, and `orphaned_hold_failed` for a checkout it could not settle (tried again next run). A hold
+that nothing ever settles still expires with the card network, in about seven days. The one gap left is
+a Worker that dies after Stripe makes the hold and before the session records it: nothing names that
+PaymentIntent, so it is left to expire.
+
+**Orders that never started.** An order started over REST with no `Idempotency-Key` is written as a
+`queued` row before its Workflow is created. If the start fails in between, the caller is told it
+failed and the row stays. The hourly job (`unstarted orders` in the log) marks every such row older than
+an hour with no Workflow instance `failed`, with the reason "The order could not be started; place it
+again." It fails the order rather than starting it: the row keeps none of the request, and the caller
+may have placed the order again since, so a late start could make two. A row started with an
+`Idempotency-Key` is left alone, since its caller's retry finishes it. `unstarted_order_failed` is
+logged for a row the job could not settle (tried again next run).
 
 ### Provisioning (SCIM)
 

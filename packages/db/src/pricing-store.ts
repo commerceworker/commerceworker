@@ -379,13 +379,16 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
 
     async redeem(r: Redemption) {
       const max = r.promotion.maxRedemptions ?? Number.MAX_SAFE_INTEGER;
-      // The count and the insert are one statement: two orders racing for the last redemption
-      // can't both have it.
+      // The counts and the insert are one statement: two orders racing for the last redemption, or
+      // one customer's two orders for their only one, can't both have it. A guest (no customer)
+      // has no per-customer count, as in `redemptionsOf`.
       await d1
         .prepare(
           `INSERT INTO promotion_redemptions (promotion_id, order_id, customer_id, amount, step_key, created_at)
            SELECT ?1, ?2, ?3, ?4, ?5, ?6
            WHERE (SELECT count(*) FROM promotion_redemptions WHERE promotion_id = ?1 AND order_id <> ?2) < ?7
+             AND (?3 IS NULL OR ?8 IS NULL
+               OR (SELECT count(*) FROM promotion_redemptions WHERE promotion_id = ?1 AND customer_id = ?3 AND order_id <> ?2) < ?8)
            ON CONFLICT (promotion_id, order_id) DO NOTHING`,
         )
         .bind(
@@ -396,6 +399,7 @@ export function d1PricingStore(d1: D1Database, clock: Clock): PricingStore {
           r.stepKey,
           clock.now().getTime(),
           max,
+          r.promotion.perCustomerLimit ?? null,
         )
         .run();
       const held = await db

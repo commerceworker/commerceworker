@@ -41,6 +41,7 @@ import { bump, current, newSession, refresh, save } from '../checkout/session';
 import { loadFlowVersion } from '../flows';
 import { orderAgent } from '../namespaces';
 import { checkoutSessions, paymentLedger, pricingStore, shippingStore } from '../wire';
+import { ucpOrderCaller } from './caller';
 import { paymentHandlers, ucpSettings } from './config';
 import { authorizeCheckout } from './payments';
 
@@ -205,20 +206,28 @@ export async function completeCheckout(
     return protocol(503, 'unavailable', 'Checkout is not set up for this business.');
   const caller: CheckoutCaller = {
     ...callerOf(ctx),
-    meta: { ucp: { platformId: ctx.caller.id, checkoutId: s.id, origin: ctx.caller.origin } },
+    ...ucpOrderCaller(ctx.caller.id, s.id, ctx.caller.origin),
   };
   const instrument = selectedInstrument(parsed.data);
   const handler = paymentHandlers(env).find((h) => h.id === instrument?.handler_id);
-  const done = await completeSession(env, caller, flow, s, {
-    refusal:
-      instrument && handler
-        ? null
-        : {
-            code: 'payment_failed',
-            content: 'Select one instrument of a payment handler this checkout offers.',
-          },
-    authorize: (claimed) => authorizeCheckout(env, claimed, handler!.name, instrument!),
-  });
+  const done = await completeSession(
+    env,
+    caller,
+    flow,
+    s,
+    {
+      refusal:
+        instrument && handler
+          ? null
+          : {
+              code: 'payment_failed',
+              content: 'Select one instrument of a payment handler this checkout offers.',
+            },
+      authorize: (claimed) => authorizeCheckout(env, claimed, handler!.name, instrument!),
+    },
+    // The origin is kept with the claim: the sweep places the order from the session alone.
+    { claim: { completedOn: ctx.caller.origin } },
+  );
   return done.kind === 'raced' ? raced() : respond(env, done.session, ctx, 200, settings);
 }
 

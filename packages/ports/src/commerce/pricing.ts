@@ -62,7 +62,7 @@ export interface PricingInputs {
 }
 
 export interface Redemption {
-  readonly promotion: Pick<Promotion, 'id' | 'maxRedemptions'>;
+  readonly promotion: Pick<Promotion, 'id' | 'maxRedemptions' | 'perCustomerLimit'>;
   readonly orderId: string;
   readonly customerId: string | undefined;
   readonly amount: number;
@@ -95,8 +95,10 @@ export interface PricingStore {
   ): Promise<{ total: number; byCustomer: number }>;
   /**
    * Records that the order redeemed the promotion, once per promotion and order, and only while
-   * it is under its limit; the count and the write are one step, so two orders racing for the last
-   * redemption can't both have it. True when the order holds the redemption.
+   * it is under its limit and the customer is under theirs (a guest order has no customer limit);
+   * the counts and the write are one step, so two orders racing for the last redemption, or one
+   * customer's two orders racing for their only one, can't both have it. True when the order holds
+   * the redemption.
    */
   redeem(r: Redemption): Promise<boolean>;
   /** Gives back what an order redeemed (a failed or cancelled order); safe to repeat. */
