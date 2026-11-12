@@ -5,7 +5,21 @@
  * and the in-memory store to the same behaviour.
  */
 import type { OrderQueries } from '@commerceworker/ports/commerce';
-import { and, asc, desc, eq, gte, inArray, isNotNull, lte, notInArray, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { createDb } from './index';
 import { contains, endsWith } from './match';
 import { approvals, customers, flowVersions, orders } from './schema';
@@ -168,6 +182,48 @@ export function d1OrderQueries(d1: D1Database): OrderQueries {
         .where(endsWith(orders.id, ref))
         .limit(2);
       return tail.length === 1 ? tail[0]!.id : null;
+    },
+
+    // The email index (`orders_contact_email`, migration 0076) finds the shopper's rows; the sort
+    // is over only those.
+    forContact: (email, { before, limit }) =>
+      d
+        .select({
+          id: orders.id,
+          status: orders.status,
+          currency: orders.currency,
+          total: orders.total,
+          createdAt: orders.createdAt,
+        })
+        .from(orders)
+        .where(
+          and(
+            sql`lower(${orders.contactEmail}) = ${email.toLowerCase()}`,
+            isNull(orders.erasedAt),
+            before
+              ? or(
+                  lt(orders.createdAt, before.createdAt),
+                  and(eq(orders.createdAt, before.createdAt), lt(orders.id, before.id)),
+                )
+              : undefined,
+          ),
+        )
+        .orderBy(desc(orders.createdAt), desc(orders.id))
+        .limit(limit),
+
+    async placedUnder(email, orderId) {
+      const row = await d
+        .select({ id: orders.id })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.id, orderId),
+            sql`lower(${orders.contactEmail}) = ${email.toLowerCase()}`,
+            isNull(orders.erasedAt),
+          ),
+        )
+        .get();
+      return !!row;
     },
   };
 }

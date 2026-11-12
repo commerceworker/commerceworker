@@ -34,7 +34,13 @@ import type {
 } from './plugins';
 import type { ProductDraftRequest, ProductDraftResult } from './product/api';
 import type { CartGuest, SignedActor } from './roles';
-import type { ShopperSignedIn, ShopperStart, ShopperView } from './shopper';
+import type {
+  ShopperAddresses,
+  ShopperOrderPage,
+  ShopperSignedIn,
+  ShopperStart,
+  ShopperView,
+} from './shopper';
 import type { TaxCertificate, TaxCertificateChange, TaxCertificateInput } from './tax-exemption';
 import type {
   FlowGraph,
@@ -677,6 +683,36 @@ export interface StorefrontRpc {
   shopper(secret: string, actor: SignedActor): Promise<ShopperView | null>;
   /** Ends the session the cookie's `secret` names; nothing for one that is already gone. */
   shopperSignOut(secret: string, actor: SignedActor): Promise<void>;
+  /**
+   * A page of the orders placed under the session's address (`orders.contact_email`), newest first,
+   * with `next`, the cursor of the page after it; a `cursor` that isn't one starts from the top.
+   * Null with no session (unknown, ended, expired, or `secret` a stored hash). The scope is the
+   * session's email and nothing the caller sends: erased orders have no address left and never show.
+   * The account calls take `secret` and `actor` as `shopper` does.
+   */
+  shopperOrders(
+    secret: string,
+    actor: SignedActor,
+    cursor?: string,
+  ): Promise<ShopperOrderPage | null>;
+  /**
+   * One of those orders as its buyer sees it (`BuyerOrderView`), after checking again that it was
+   * placed under the session's address. Another address's order, an erased one, an unknown id and
+   * no session all answer null, so a caller learns nothing about which orders exist.
+   */
+  shopperOrder(secret: string, actor: SignedActor, id: string): Promise<BuyerOrderView | null>;
+  /**
+   * The places the shopper has shipped to: the ship-tos of their newest orders and the address
+   * book's entries for a consumer customer with that email (never a business customer's, nor a
+   * company member's), de-duplicated, most recently used first. Null with no session.
+   */
+  shopperAddresses(secret: string, actor: SignedActor): Promise<ShopperAddresses | null>;
+  /**
+   * Forgets one address-book entry by the id `shopperAddresses` gave; only entries of the
+   * session's own email can go, an order's place is its record and stays. True when one was
+   * forgotten, false for anything else and for a repeat.
+   */
+  forgetAddress(secret: string, actor: SignedActor, id: string): Promise<boolean>;
   /** Finds products to add to the cart by SKU or name, as `EngineRpc.searchCartProducts` does. */
   searchCartProducts(
     cartId: string,

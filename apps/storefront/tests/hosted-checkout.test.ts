@@ -188,6 +188,7 @@ describe('the buyer’s checkout page', () => {
     } as never)) as unknown as { data: unknown; init: ResponseInit };
     expect(res.data).toEqual({
       checkout: session,
+      saved: null,
       testPayments: true,
       editLines: false,
       publishableKey: null,

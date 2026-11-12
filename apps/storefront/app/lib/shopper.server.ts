@@ -12,9 +12,10 @@ import {
   SHOPPER_CALL,
   SHOPPER_GUEST_ID,
   SHOPPER_SECRET,
+  type ShopperAddresses,
   type ShopperView,
 } from '@commerceworker/core';
-import { data } from 'react-router';
+import { data, redirect } from 'react-router';
 import { engine } from './env.server';
 import { signedActor, signingKey } from './principal.server';
 import { overBudget, RATE_WINDOW_S } from './rate-limit';
@@ -87,6 +88,45 @@ export async function currentShopper(
  * confirm page is exactly such a form, and one that must work without script.
  */
 export const PRIVATE_HEADERS = { 'cache-control': 'no-store', 'referrer-policy': 'same-origin' };
+
+/** Where a signed-out visitor to an account page goes; the stale cookie, if any, is left to expire. */
+export const toSignIn = () =>
+  redirect('/account/sign-in', { status: 303, headers: PRIVATE_HEADERS });
+
+/**
+ * What an account page asks the engine with: the cookie's secret and the actor this Worker signs
+ * for `shopper`, or a redirect to sign in when the request has no cookie of the engine's shape. The
+ * engine says whether the session is live (each account call answers null without one, and the page
+ * then goes to `toSignIn` too); nothing about the shopper is decided here.
+ */
+export async function accountCall(request: Request) {
+  const secret = shopperSecret(request);
+  if (!secret) throw toSignIn();
+  return { secret, actor: await shopperActor() };
+}
+
+/** The cursor a list's next-page link carries (`?after=`), as long as the engine makes one; it parses the rest. */
+export function listCursor(request: Request): string | undefined {
+  const after = new URL(request.url).searchParams.get('after');
+  return after && after.length <= 130 ? after : undefined;
+}
+
+/**
+ * What a signed-in shopper may fill a hosted checkout with: their address and the places their
+ * orders have shipped (`StorefrontRpc.shopperAddresses`, read by the engine from the session's
+ * address alone), or null for anyone who isn't signed in. A checkout is never held up by it: an
+ * engine that can't answer is no offer.
+ */
+export async function savedDetails(request: Request): Promise<ShopperAddresses | null> {
+  const secret = shopperSecret(request);
+  if (!secret) return null;
+  try {
+    return await engine().shopperAddresses(secret, await shopperActor());
+  } catch (err) {
+    console.warn('shopper details unavailable', err);
+    return null;
+  }
+}
 
 /**
  * An account page's `headers` export: `PRIVATE_HEADERS` whichever of its loader, action or error

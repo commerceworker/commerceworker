@@ -15,9 +15,11 @@ export default [
   route('carts/:cartId/attachments', 'routes/cart-attachments.ts'),
   route('carts/:cartId/attachments/:attachmentId', 'routes/cart-attachment.ts'),
   route('carts/:cartId/products', 'routes/cart-products.ts'),
-  // A shopper's sign-in by an emailed code or link, and their page: outside any app shell, with
-  // no password (lib/shopper.server.ts).
+  // A shopper's sign-in by an emailed code or link, and their pages (orders, one order, addresses):
+  // outside any app shell, with no password (lib/shopper.server.ts).
   route('account', 'routes/account.tsx'),
+  route('account/addresses', 'routes/account-addresses.tsx'),
+  route('account/orders/:id', 'routes/account-order.tsx'),
   route('account/sign-in', 'routes/account-sign-in.tsx'),
   route('account/code', 'routes/account-code.tsx'),
   route('account/confirm/:token', 'routes/account-confirm.tsx'),

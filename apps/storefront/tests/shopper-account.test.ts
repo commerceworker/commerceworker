@@ -18,6 +18,7 @@ const redeemShopperLink = vi.fn();
 const shopperLinkPreview = vi.fn();
 const shopper = vi.fn();
 const shopperSignOut = vi.fn();
+const shopperOrders = vi.fn();
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
@@ -30,6 +31,7 @@ vi.mock('~/lib/env.server', () => ({
     shopperLinkPreview,
     shopper,
     shopperSignOut,
+    shopperOrders,
   }),
 }));
 
@@ -128,14 +130,16 @@ describe('where a session can be set', () => {
   });
 
   it('never reads the unprefixed cookie there, so a planted one names no one', async () => {
-    const res = (await account.loader({
-      request: new Request('http://shop.example.com/account', {
-        headers: { cookie: `cw_shop=${SECRET}` },
-      }),
-      params: {},
-    } as never)) as Response;
+    const res = await thrown(() =>
+      account.loader({
+        request: new Request('http://shop.example.com/account', {
+          headers: { cookie: `cw_shop=${SECRET}` },
+        }),
+        params: {},
+      } as never),
+    );
     expect(res.headers.get('location')).toBe('/account/sign-in');
-    expect(shopper).not.toHaveBeenCalled();
+    expect(shopperOrders).not.toHaveBeenCalled();
   });
 });
 
@@ -517,7 +521,12 @@ describe('the pages', () => {
   });
 
   it('draws the signed-in page with the address, and a sign-out form that posts', () => {
-    const html = draw(account.default, { email: 'pat@example.com' });
+    const html = draw(account.default, {
+      email: 'pat@example.com',
+      orders: [],
+      next: null,
+      paged: false,
+    });
     expect(html).toContain('pat@example.com');
     expect(html).toMatch(/<form [^>]*method="post"/);
     expect(html).toContain('Sign out');
@@ -662,19 +671,34 @@ describe('asking for a code', () => {
 
 describe('the signed-in page', () => {
   const cookie = `__Host-cw_shop=${SECRET}`;
+  const page = {
+    email: 'pat@example.com',
+    orders: [
+      {
+        id: 'ord_1',
+        ref: '#ord_1',
+        placedAt: 1_700_000_000_000,
+        status: 'completed',
+        currency: 'USD',
+        total: 25,
+      },
+    ],
+    next: null,
+  };
 
   it('sends the engine the cookie’s secret and an actor signed for `shopper`', async () => {
-    shopper.mockResolvedValueOnce({ email: 'pat@example.com', since: 1, expiresAt: later() });
+    shopperOrders.mockResolvedValueOnce(page);
     const res = answered(
       await account.loader({ request: get('/account', cookie), params: {} } as never),
     );
-    expect(res.data).toEqual({ email: 'pat@example.com' });
+    expect(res.data).toEqual({ ...page, paged: false });
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('referrer-policy')).toBe('same-origin');
-    const [secret, actor] = shopper.mock.calls[0]!;
+    const [secret, actor, cursor] = shopperOrders.mock.calls[0]!;
     // The engine hashes the secret to compare; this Worker holds no hash and stores nothing.
     expect(secret).toBe(SECRET);
     expect(secret).not.toBe(await hashShopperSecret(SECRET));
+    expect(cursor).toBeUndefined();
     expect(
       await verifyGuestActor([env.STOREFRONT_KEY as string], actor, SHOPPER_CALL),
     ).toMatchObject({
@@ -689,23 +713,22 @@ describe('the signed-in page', () => {
       `cw_shop=${SECRET}`,
       `__Host-cw_shop=${'B2'.repeat(32)}`,
     ]) {
-      const res = (await account.loader({
-        request: get('/account', c),
-        params: {},
-      } as never)) as Response;
+      const res = await thrown(() =>
+        account.loader({ request: get('/account', c), params: {} } as never),
+      );
       expect(res.status).toBe(303);
       expect(res.headers.get('location')).toBe('/account/sign-in');
     }
-    expect(shopper).not.toHaveBeenCalled();
+    expect(shopperOrders).not.toHaveBeenCalled();
   });
 
   it('goes to sign-in when the engine no longer knows the session', async () => {
-    shopper.mockResolvedValueOnce(null);
-    const res = (await account.loader({
-      request: get('/account', cookie),
-      params: {},
-    } as never)) as Response;
+    shopperOrders.mockResolvedValueOnce(null);
+    const res = await thrown(() =>
+      account.loader({ request: get('/account', cookie), params: {} } as never),
+    );
     expect(res.headers.get('location')).toBe('/account/sign-in');
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('signs out at the engine, then clears the cookie', async () => {

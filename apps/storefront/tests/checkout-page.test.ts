@@ -138,6 +138,7 @@ describe('the checkout page’s loader', () => {
     expect(r.status).toBe(200);
     expect(r.data).toEqual({
       checkout: view(),
+      saved: null,
       testPayments: true,
       editLines: true,
       publishableKey: null,

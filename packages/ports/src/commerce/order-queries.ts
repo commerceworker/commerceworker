@@ -39,6 +39,15 @@ export interface FoundOrder {
   readonly updatedAt: number;
 }
 
+/** An order on a shopper's list, found by the address it was placed under. */
+export interface ContactOrder {
+  readonly id: string;
+  readonly status: string;
+  readonly currency: string;
+  readonly total: number;
+  readonly createdAt: number;
+}
+
 export interface OrderQueries {
   /**
    * Pending approvals (oldest first), orders that failed or rolled back in the last three days
@@ -59,4 +68,16 @@ export interface OrderQueries {
   ): Promise<{ id: string; flowId: string; version: number; flow: unknown }[]>;
   /** An order id from its full id or its last characters, when only one order ends with them. */
   resolveId(ref: string): Promise<string | null>;
+  /**
+   * Orders placed under this address (`lower(contact_email)`, which is how a shopper's orders are
+   * found: they have no account), newest first, from just after `before` (a `createdAt` and id, as
+   * the last of the page before) when given, at most `limit`. An erased order has no address left
+   * and is never listed.
+   */
+  forContact(
+    email: string,
+    page: { before?: { createdAt: number; id: string }; limit: number },
+  ): Promise<ContactOrder[]>;
+  /** Whether the order was placed under this address and not erased. */
+  placedUnder(email: string, orderId: string): Promise<boolean>;
 }

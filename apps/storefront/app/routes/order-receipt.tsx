@@ -7,10 +7,10 @@
  * credential and an expired one all read the same.
  */
 
-import { type BuyerOrderView, formatAmount } from '@commerceworker/core';
 import { Empty } from '@commerceworker/ui/page';
 import { Receipt } from 'lucide-react';
 import { data, isRouteErrorResponse, useLoaderData, useRouteError } from 'react-router';
+import { OrderView } from '~/components/order-view';
 import { engine } from '~/lib/env.server';
 import { overBudget } from '~/lib/rate-limit';
 import type { Route } from './+types/order-receipt';
@@ -21,17 +21,6 @@ const PRIVATE = {
   'cache-control': 'no-store',
   'referrer-policy': 'no-referrer',
   'x-robots-tag': 'noindex, nofollow',
-};
-
-const STATUS: Record<BuyerOrderView['status'], string> = {
-  queued: 'Received',
-  running: 'Being prepared',
-  waiting: 'Being prepared',
-  completed: 'Complete',
-  declined: 'Not accepted',
-  cancelled: 'Cancelled',
-  failed: 'Could not be completed',
-  rolled_back: 'Cancelled',
 };
 
 export const meta = ({ loaderData: d }: Route.MetaArgs) => [
@@ -81,75 +70,9 @@ export function ErrorBoundary() {
 
 export default function OrderReceiptPage() {
   const o = useLoaderData<typeof loader>();
-  const cash = (n: number) => formatAmount(n, o.currency);
   return (
     <main id="main" className="mx-auto max-w-2xl px-6 pt-safe-12 pb-safe-12">
-      <h1 className="font-semibold text-2xl tracking-title">Order {o.ref}</h1>
-      <p className="mt-1 text-muted-foreground">
-        {STATUS[o.status]} · placed {new Date(o.placedAt).toISOString().slice(0, 10)}
-      </p>
-
-      <ul className="mt-8 divide-y">
-        {o.lines.map((l, i) => (
-          // A line has no id of its own; the order and its position are its identity.
-          <li key={`${l.sku}-${i}`} className="flex justify-between gap-4 py-3">
-            <span>
-              {l.qty} × {l.name}
-            </span>
-            {l.lineTotal !== null && <span className="tabular-nums">{cash(l.lineTotal)}</span>}
-          </li>
-        ))}
-      </ul>
-
-      <dl className="mt-6 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 tabular-nums">
-        <dt>Subtotal</dt>
-        <dd className="text-right">{cash(o.subtotal)}</dd>
-        {o.shipping > 0 && (
-          <>
-            <dt>Shipping</dt>
-            <dd className="text-right">{cash(o.shipping)}</dd>
-          </>
-        )}
-        {o.tax > 0 && (
-          <>
-            <dt>Tax</dt>
-            <dd className="text-right">{cash(o.tax)}</dd>
-          </>
-        )}
-        <dt className="font-semibold">Total</dt>
-        <dd className="text-right font-semibold">{cash(o.total)}</dd>
-      </dl>
-
-      {o.shipTo.length > 0 && (
-        <section className="mt-8" aria-labelledby="ship-to">
-          <h2 id="ship-to" className="font-semibold">
-            Shipping to
-          </h2>
-          <p className="mt-1 text-muted-foreground">
-            {o.shipTo.map((line, i) => (
-              <span key={`${i}-${line}`} className="block">
-                {line}
-              </span>
-            ))}
-          </p>
-        </section>
-      )}
-
-      {o.shipments.length > 0 && (
-        <section className="mt-8" aria-labelledby="tracking">
-          <h2 id="tracking" className="font-semibold">
-            Tracking
-          </h2>
-          <ul className="mt-1 text-muted-foreground">
-            {o.shipments.map((s) => (
-              <li key={s.tracking}>
-                {s.carrier ? `${s.carrier}: ` : ''}
-                <span className="font-mono">{s.tracking}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <OrderView order={o} />
     </main>
   );
 }

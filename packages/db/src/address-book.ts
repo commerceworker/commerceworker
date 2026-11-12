@@ -6,12 +6,31 @@
  */
 import { newId } from '@commerceworker/core';
 import type { AddressBook } from '@commerceworker/ports/commerce';
-import { desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { createDb } from './index';
 import { customerAddresses, orders } from './schema';
 
+const entry = {
+  id: customerAddresses.id,
+  key: customerAddresses.key,
+  name: customerAddresses.name,
+  line1: customerAddresses.line1,
+  line2: customerAddresses.line2,
+  region: customerAddresses.region,
+  city: customerAddresses.city,
+  postalCode: customerAddresses.postalCode,
+  country: customerAddresses.country,
+  orders: customerAddresses.orders,
+  firstUsedAt: customerAddresses.firstUsedAt,
+  lastUsedAt: customerAddresses.lastUsedAt,
+  lastOrderId: customerAddresses.lastOrderId,
+};
+
 export function d1AddressBook(d1: D1Database): AddressBook {
   const d = createDb(d1);
+  /** The customers a shopper is: consumers with this email, never a business customer. */
+  const consumers = (email: string) =>
+    sql`(select id from customers where kind = 'consumer' and lower(email) = ${email.toLowerCase()})`;
   return {
     async remember({ customerId, orderId, key, address: a, at }) {
       await d
@@ -46,25 +65,32 @@ export function d1AddressBook(d1: D1Database): AddressBook {
 
     addresses: (customerId, limit = -1) =>
       d
-        .select({
-          id: customerAddresses.id,
-          key: customerAddresses.key,
-          name: customerAddresses.name,
-          line1: customerAddresses.line1,
-          line2: customerAddresses.line2,
-          region: customerAddresses.region,
-          city: customerAddresses.city,
-          postalCode: customerAddresses.postalCode,
-          country: customerAddresses.country,
-          orders: customerAddresses.orders,
-          firstUsedAt: customerAddresses.firstUsedAt,
-          lastUsedAt: customerAddresses.lastUsedAt,
-          lastOrderId: customerAddresses.lastOrderId,
-        })
+        .select(entry)
         .from(customerAddresses)
         .where(eq(customerAddresses.customerId, customerId))
         .orderBy(desc(customerAddresses.lastUsedAt))
         .limit(limit),
+
+    forConsumer: (email, limit) =>
+      d
+        .select(entry)
+        .from(customerAddresses)
+        .where(sql`${customerAddresses.customerId} in ${consumers(email)}`)
+        .orderBy(desc(customerAddresses.lastUsedAt))
+        .limit(limit),
+
+    async forgetForConsumer(email, id) {
+      const gone = await d
+        .delete(customerAddresses)
+        .where(
+          and(
+            eq(customerAddresses.id, id),
+            sql`${customerAddresses.customerId} in ${consumers(email)}`,
+          ),
+        )
+        .returning({ id: customerAddresses.id });
+      return gone.length === 1;
+    },
 
     pendingBackfill: (limit) =>
       d

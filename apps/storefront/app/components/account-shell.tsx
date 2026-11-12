@@ -1,19 +1,54 @@
 import type { ReactNode } from 'react';
+import { Form, NavLink } from 'react-router';
 
 /**
  * The frame of every account page: the wordmark and one narrow column, padded for the notch, the
- * status bar and the home indicator. A shopper has no navigation here yet, so there is none.
+ * status bar and the home indicator. `wide` is for the pages that list things (orders, addresses),
+ * which have room to.
  */
-export function AccountShell({ children }: { children: ReactNode }) {
+export function AccountShell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
     <main
       id="main"
-      className="mx-auto flex min-h-dvh max-w-md flex-col px-safe-4 pt-safe-6 pb-safe-8 sm:px-safe-6"
+      className={`mx-auto flex min-h-dvh flex-col px-safe-4 pt-safe-6 pb-safe-8 sm:px-safe-6 ${wide ? 'max-w-2xl' : 'max-w-md'}`}
     >
       {/* TODO(S7): the merchant's store name, which the wordmark stands in for until then. */}
       <p className="mb-8 font-semibold text-brand tracking-title">CommerceWorker</p>
       {children}
     </main>
+  );
+}
+
+const link =
+  'inline-flex min-h-11 items-center rounded-full px-4 text-base text-muted-foreground aria-[current=page]:bg-muted aria-[current=page]:font-medium aria-[current=page]:text-foreground';
+
+/**
+ * A signed-in shopper's page: who they are, where they can go, and sign out. Orders and Addresses
+ * are plain links and sign out a plain form, so nothing here needs a script.
+ */
+export function SignedInShell({ email, children }: { email: string; children: ReactNode }) {
+  return (
+    <AccountShell wide>
+      <nav aria-label="Your account" className="-mx-4 mb-6 flex flex-wrap gap-1">
+        <NavLink to="/account" end className={link}>
+          Orders
+        </NavLink>
+        <NavLink to="/account/addresses" className={link}>
+          Addresses
+        </NavLink>
+      </nav>
+      {children}
+      <footer className="mt-10 border-t pt-6">
+        <p className="text-muted-foreground">
+          Signed in as <span className="break-all font-medium text-foreground">{email}</span>.
+        </p>
+        <Form method="post" action="/account" className="mt-4">
+          <button type="submit" className={accountButton}>
+            Sign out
+          </button>
+        </Form>
+      </footer>
+    </AccountShell>
   );
 }
 

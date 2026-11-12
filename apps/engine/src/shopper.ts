@@ -9,15 +9,17 @@
 import * as uc from '@commerceworker/application/commerce';
 import {
   hashShopperSecret,
+  type OrderState,
   SHOPPER_CALL,
   SHOPPER_GUEST_ID,
   SHOPPER_SECRET,
   type SignedActor,
   shopperCodeKey,
 } from '@commerceworker/core';
-import { sender } from './order-confirmation';
+import { orderAgent } from './namespaces';
+import { confirmations, sender } from './order-confirmation';
 import { guestActor } from './principal';
-import { shopperAuth } from './wire';
+import { addressBook, orderQueries, orderRecords, shopperAuth } from './wire';
 
 /** Whether `signed` is the storefront speaking for a shopper call (the one thing it may say). */
 async function fromStorefront(env: Env, signed: SignedActor): Promise<boolean> {
@@ -74,4 +76,53 @@ export async function shopperSignOut(env: Env, secret: unknown, signed: SignedAc
   if (!(await fromStorefront(env, signed))) return;
   const hash = await hashOf(secret);
   if (hash) await uc.shopperSignOut(await ports(env), hash);
+}
+
+/**
+ * What the account calls read, bound to this deployment: the order index and address book by the
+ * session's email, an order as its buyer sees it, and an order's recorded ship-to from its agent
+ * (an id nothing started is not woken as an agent of its own).
+ */
+const accountPorts = (env: Env) => ({
+  shoppers: shopperAuth(env),
+  orders: orderQueries(env),
+  addresses: addressBook(env),
+  views: confirmations(env),
+  shipTos: {
+    async read(orderId: string) {
+      if (!(await orderRecords(env).exists(orderId))) return null;
+      return (
+        ((await orderAgent(env, orderId).snapshot()) as OrderState).order?.meta?.shipTo ?? null
+      );
+    },
+  },
+});
+
+export async function shopperOrders(
+  env: Env,
+  secret: unknown,
+  cursor: unknown,
+  signed: SignedActor,
+) {
+  if (!(await fromStorefront(env, signed))) return null;
+  const hash = await hashOf(secret);
+  return hash ? uc.shopperOrders(accountPorts(env), hash, cursor, Date.now()) : null;
+}
+
+export async function shopperOrder(env: Env, secret: unknown, id: unknown, signed: SignedActor) {
+  if (!(await fromStorefront(env, signed))) return null;
+  const hash = await hashOf(secret);
+  return hash ? uc.shopperOrder(accountPorts(env), hash, id, Date.now()) : null;
+}
+
+export async function shopperAddresses(env: Env, secret: unknown, signed: SignedActor) {
+  if (!(await fromStorefront(env, signed))) return null;
+  const hash = await hashOf(secret);
+  return hash ? uc.shopperAddresses(accountPorts(env), hash, Date.now()) : null;
+}
+
+export async function forgetAddress(env: Env, secret: unknown, id: unknown, signed: SignedActor) {
+  if (!(await fromStorefront(env, signed))) return false;
+  const hash = await hashOf(secret);
+  return hash ? uc.forgetShopperAddress(accountPorts(env), hash, id, Date.now()) : false;
 }

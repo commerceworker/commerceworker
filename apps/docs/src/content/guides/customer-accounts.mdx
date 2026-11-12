@@ -1,6 +1,6 @@
 ---
 title: Customer accounts
-description: Let a shopper sign in on your storefront with an emailed code or link, no password. What they get, what protects it, and what happens to their data.
+description: Let a shopper sign in on your storefront with an emailed code or link, no password, and see their orders and saved addresses. What they get, what protects it, and what happens to their data.
 ---
 
 A shopper can sign in on your storefront (`shop.<your domain>`) with an email address and nothing else: no
@@ -12,8 +12,8 @@ sign in as it, and the orders that address placed are the ones that belong to th
 or change a [customer](/guides/commerce-models/) in your workspace.
 
 :::note
-This is the first part of customer accounts. Today a shopper can sign in, see which address they are signed in
-as, and sign out. Their orders and saved details come next, and passkeys after that.
+A signed-in shopper can see their orders and the addresses they have shipped to, and checkout offers to fill
+them in. Passkeys come after that.
 :::
 
 ## What a shopper does
@@ -23,7 +23,7 @@ as, and sign out. Their orders and saved details come next, and passkeys after t
 3. They type the code on the next page, or open the link on the device they want to sign in on and tap **Sign
    in**. The link asks first, and signs in only when they tap, so a mail app or a security scanner that opens
    links ahead of them doesn't use it up.
-4. They land on **Your account**, which shows the address they are signed in as and a **Sign out** button.
+4. They land on **Your orders**, with **Addresses** one tap away and a **Sign out** button.
 
 Every address gets the same answer, whether or not it has ever ordered: signing in never tells anyone which
 addresses are your customers.
@@ -31,6 +31,28 @@ addresses are your customers.
 The pages are plain forms, so they work without script, and they're laid out for a phone and a tablet, in
 Safari and installed to the Home Screen. The one exception is the spam check below, which needs script when you
 turn it on.
+
+## What a shopper sees
+
+**Orders.** Every order placed with their address, newest first, twenty at a time: its reference, the day it was
+placed, its status and its total. Tapping one opens the same page the order's confirmation email links to: what
+was bought, the totals, where it ships and its tracking. It shows no payment details, and nothing your team
+wrote on the order. Orders are found by the address they were placed under, in any capitalisation, whether or not
+the shopper was signed in when they placed them, so a guest order from last month shows up the first time they
+sign in.
+
+**Addresses.** The places their orders have shipped, once each, plus any a consumer customer record in your
+workspace holds for that address. A saved address can be **forgotten**: that removes it from the ones checkout
+offers, and past orders keep the address they shipped to. An address that comes from an order, rather than from a
+customer record, has no Forget button, since the order is the record. Addresses saved for a **business** customer
+or a company's members are never shown, even under the same email: those belong to the business.
+
+**At checkout.** When a signed-in shopper opens a [hosted checkout](/guides/hosted-checkout/), the page offers
+their email and their saved addresses, and **Use these details** fills the form from them. They can still type
+anything instead, and the price is still the quote's.
+
+A shopper only ever sees what their own address owns. An order that isn't theirs reads exactly like one that
+doesn't exist, so the pages tell nobody which orders there are.
 
 ## How long it lasts
 
@@ -62,7 +84,7 @@ turn it on.
 
 ## Privacy
 
-A shopper's sign-ins and sessions are personal data. An erasure request for their address deletes them and ends
+The account pages store nothing of their own: they read the orders and addresses you already hold. A shopper's sign-ins and sessions are personal data. An erasure request for their address deletes them and ends
 every session they have, and the export for that address lists when they were sent a code and where they are
 signed in (never a code or a secret); both are in [data subject requests](/reference/rest-api/#data-subject-requests).
-Expired sessions and sign-ins are deleted by the daily clean-up.
+Expired sessions and sign-ins are deleted by the daily clean-up. Once an address is erased, the orders it placed no longer show on any account, and its saved addresses are gone with the customer record.

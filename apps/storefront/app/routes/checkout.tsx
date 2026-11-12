@@ -20,7 +20,14 @@ import { useEffect, useRef } from 'react';
 import { data, redirect, useActionData, useLoaderData, useNavigation } from 'react-router';
 import { CheckoutForm } from '~/components/checkout-form';
 import { CheckoutRefusal } from '~/components/checkout-refusal';
-import { type FieldErrors, type FormValues, patchFromForm, valuesOf } from '~/lib/checkout-form';
+import {
+  type FieldErrors,
+  type FormValues,
+  fillPatch,
+  isOpen,
+  patchFromForm,
+  valuesOf,
+} from '~/lib/checkout-form';
 import { engine } from '~/lib/env.server';
 import {
   cardPageNotes,
@@ -31,6 +38,7 @@ import {
   storefrontSettings,
 } from '~/lib/hosted-checkout.server';
 import { overBudget } from '~/lib/rate-limit';
+import { savedDetails } from '~/lib/shopper.server';
 import { checkPayTurnstile, turnstileSiteKey } from '~/lib/turnstile.server';
 import type { Route } from './+types/checkout';
 
@@ -63,9 +71,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // A card is taken when payments are live and the engine has a key to take it with.
   const publishableKey = settings.checkout.testPayments ? null : settings.checkout.publishableKey;
   const turnstileKey = publishableKey ? turnstileSiteKey() : null;
+  // A signed-in shopper is offered their own details; the engine reads them, nothing here is theirs to say.
+  const saved = isOpen(checkout) ? await savedDetails(request) : null;
   return data(
     {
       checkout,
+      saved,
       testPayments: settings.checkout.testPayments,
       editLines: settings.checkout.editLines,
       publishableKey,
@@ -98,9 +109,12 @@ export async function action({ request, params }: Route.ActionArgs) {
   const { buyer, settings } = await authorize(request, params.id);
   const form = await request.formData();
   const wanted = form.get('intent');
-  const step = wanted === 'place' || wanted === 'pay' || wanted === 'confirm' ? wanted : 'update';
+  const step =
+    wanted === 'place' || wanted === 'pay' || wanted === 'confirm' || wanted === 'fill'
+      ? wanted
+      : 'update';
   // What the alert says did not happen: a change, or an order.
-  const intent = step === 'update' ? 'update' : 'place';
+  const intent = step === 'update' || step === 'fill' ? 'update' : 'place';
   // A form with no version asks for no conflict check; one with a version that is no number is
   // never the session's, so it is a conflict (`Number('')` would have been 0).
   const version = form.has('version') ? Number(form.get('version')) : undefined;
@@ -179,7 +193,11 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   // What the page can tell wrong without asking the engine: an email that isn't one, a quantity.
-  const { patch, errors } = patchFromForm(form, current, settings.checkout);
+  // Filling from a shopper's saved details reads them from the engine, never from the form.
+  const { patch, errors } =
+    step === 'fill'
+      ? fillPatch(String(form.get('saved') ?? ''), current, await savedDetails(request))
+      : patchFromForm(form, current, settings.checkout);
   if (Object.keys(errors).length)
     return refusal(
       {
@@ -219,7 +237,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       },
       changed.changed ? 409 : 422,
     );
-  if (step === 'update')
+  if (step === 'update' || step === 'fill')
     return redirect(`/checkout/${params.id}`, { status: 303, headers: PRIVATE_HEADERS });
 
   // Place the order: only a checkout that is ready, and only in test mode (the engine checks both).
@@ -420,6 +438,7 @@ export default function CheckoutPage() {
 
       <CheckoutForm
         checkout={checkout}
+        saved={loaded.saved}
         testPayments={loaded.testPayments}
         card={
           loaded.publishableKey

@@ -30,6 +30,14 @@ candidate finding that still needs a concrete attacker before it is reported.
   counted across codes and the daily cap, leave the link usable after a lockout, ask before one link replaces a
   signed-in shopper, set the unprefixed cookie only on localhost,
   and send only escaped text? Does a new `shopper_*` column reach export, erasure and the retention sweep?
+- A shopper's account (`packages/application/src/commerce/shopper-account.ts`, `apps/engine/src/shopper.ts`,
+  the storefront's `account*` and `checkout` routes): does every account method still re-verify the session and
+  scope by *its* email, with no id, email or customer from the storefront widening it? Does an order of another
+  address, an erased one and an unknown id still answer the same `null` (`placedUnder` before any read)? Do the
+  addresses still exclude business customers and company members (`kind = 'consumer'`), and `forgetAddress`
+  still delete only a book entry of the session's own email, in one statement? Does the checkout fill still
+  read the shopper's details from the engine and take only an id from the form? Do the pages stay `no-store`,
+  `same-origin`, noindex and free of a credential in the URL?
 - Does anything widen `PRINCIPAL_TTL_MS`, accept a missing `exp`, or fall back to
   `DEV_PRINCIPAL_KEY` outside local dev?
 - Does a new socket method re-check the principal or session it needs, rather than trusting the

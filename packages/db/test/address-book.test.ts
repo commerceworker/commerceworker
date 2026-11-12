@@ -6,7 +6,7 @@ import {
 import { like } from 'drizzle-orm';
 import { d1AddressBook } from '../src/address-book';
 import { createDb } from '../src/index';
-import { customerAddresses, orders } from '../src/schema';
+import { customerAddresses, customers, orders } from '../src/schema';
 
 const DB = (env as unknown as { DB: D1Database }).DB;
 
@@ -14,6 +14,8 @@ async function seed(f: AddressBookFixture) {
   const db = createDb(DB);
   await db.delete(customerAddresses).where(like(customerAddresses.customerId, 'ab_%'));
   await db.delete(orders).where(like(orders.id, 'ab_%'));
+  await db.delete(customers).where(like(customers.id, 'ab_%'));
+  for (const c of f.customers ?? []) await db.insert(customers).values({ ...c, name: c.id });
   for (const o of f.pending ?? [])
     await db.insert(orders).values({
       id: o.id,

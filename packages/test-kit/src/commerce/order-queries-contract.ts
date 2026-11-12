@@ -104,6 +104,30 @@ const WAITS_FIXTURE: OrderQueriesFixture = {
   ],
 };
 
+/** Orders placed under two addresses, one with its case changed and one erased. */
+const CONTACT_FIXTURE: OrderQueriesFixture = {
+  orders: [
+    order('oq_c_old', { contactEmail: 'Shopper@Example.com', createdAt: now - 3 * DAY, total: 10 }),
+    order('oq_c_b', { contactEmail: 'shopper@example.com', createdAt: now - 2 * DAY, total: 20 }),
+    // The same moment as the one above: the id breaks the tie.
+    order('oq_c_a', { contactEmail: 'shopper@example.com', createdAt: now - 2 * DAY, total: 30 }),
+    order('oq_c_new', {
+      contactEmail: 'shopper@example.com',
+      createdAt: now - DAY,
+      status: 'running',
+      currency: 'EUR',
+      total: 40,
+    }),
+    order('oq_c_erased', {
+      contactEmail: 'shopper@example.com',
+      createdAt: now,
+      erasedAt: now,
+    }),
+    order('oq_c_other', { contactEmail: 'someone@example.com', createdAt: now - DAY }),
+    order('oq_c_none', { createdAt: now - DAY }),
+  ],
+};
+
 export function describeOrderQueriesContract(
   name: string,
   make: (fixture: OrderQueriesFixture) => Promise<OrderQueries>,
@@ -169,6 +193,50 @@ export function describeOrderQueriesContract(
       expect(await q.resolveId('abc123')).toBe('oq_tail_abc123');
       expect(await q.resolveId('led')).toBeNull();
       expect(await q.resolveId('zzz')).toBeNull();
+    });
+
+    it('lists the orders placed under an address, newest first, in pages by keyset', async () => {
+      const q = await make(CONTACT_FIXTURE);
+      const first = await q.forContact('Shopper@example.com', { limit: 2 });
+      expect(first.map((o) => o.id)).toEqual(['oq_c_new', 'oq_c_b']);
+      expect(first[0]).toEqual({
+        id: 'oq_c_new',
+        status: 'running',
+        currency: 'EUR',
+        total: 40,
+        createdAt: now - DAY,
+      });
+      const last = first[1]!;
+      const second = await q.forContact('shopper@example.com', {
+        before: { createdAt: last.createdAt, id: last.id },
+        limit: 2,
+      });
+      expect(second.map((o) => o.id)).toEqual(['oq_c_a', 'oq_c_old']);
+      const end = second[1]!;
+      expect(
+        await q.forContact('shopper@example.com', {
+          before: { createdAt: end.createdAt, id: end.id },
+          limit: 2,
+        }),
+      ).toEqual([]);
+    });
+
+    it('lists nothing for an address no order was placed under, nor an erased order', async () => {
+      const q = await make(CONTACT_FIXTURE);
+      expect(await q.forContact('nobody@example.com', { limit: 10 })).toEqual([]);
+      const all = await q.forContact('shopper@example.com', { limit: 50 });
+      expect(all.map((o) => o.id)).not.toContain('oq_c_erased');
+      expect(all).toHaveLength(4);
+    });
+
+    it('says whether an order was placed under an address, never for an erased one', async () => {
+      const q = await make(CONTACT_FIXTURE);
+      expect(await q.placedUnder('SHOPPER@example.com', 'oq_c_a')).toBe(true);
+      expect(await q.placedUnder('shopper@example.com', 'oq_c_other')).toBe(false);
+      expect(await q.placedUnder('someone@example.com', 'oq_c_a')).toBe(false);
+      expect(await q.placedUnder('shopper@example.com', 'oq_c_erased')).toBe(false);
+      expect(await q.placedUnder('shopper@example.com', 'oq_c_none')).toBe(false);
+      expect(await q.placedUnder('shopper@example.com', 'oq_nothing')).toBe(false);
     });
   });
 }
