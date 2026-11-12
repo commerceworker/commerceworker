@@ -13,8 +13,8 @@ export const STORE_NAME = 'E2E Supply';
 export const CHECKOUT_ID = 'chk_e2e_page';
 export const CHECKOUT_SECRET = 'c0'.repeat(32);
 
-const now = Date.now();
-const session = {
+export const now = Date.now();
+export const session = {
   id: CHECKOUT_ID,
   ownerId: `hosted:${createHash('sha256').update(CHECKOUT_SECRET).digest('hex')}`,
   status: 'incomplete',
@@ -132,7 +132,7 @@ export const DEVICE_KEYS = [
 export const startId = (key: string) => `chk_e2e_start_${key}`;
 export const formId = (key: string) => `chk_e2e_form_${key}`;
 export const startToken = (key: string) => `tok_e2e_${key}`;
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const spendable = DEVICE_KEYS.flatMap((key) => [
   { ...session, id: startId(key), ownerId: `hosted-start:${sha256(startToken(key))}` },
   { ...session, id: formId(key) },
@@ -150,9 +150,9 @@ const others = [
 ];
 
 /** `'` doubled, so JSON sits inside a SQL string. */
-const q = (s: string) => `'${s.replaceAll("'", "''")}'`;
+export const q = (s: string) => `'${s.replaceAll("'", "''")}'`;
 
-const row = (s: typeof session) =>
+export const row = (s: typeof session) =>
   `INSERT OR REPLACE INTO checkout_sessions (id, owner_id, status, data, order_id, version, created_at, updated_at, expires_at) VALUES (${q(s.id)}, ${q(s.ownerId)}, ${q(s.status)}, ${q(JSON.stringify(s))}, ${s.orderId ? q(s.orderId) : 'NULL'}, 1, ${now}, ${now}, ${s.expiresAt})`;
 
 /** Writes the rows into the device tests' database (`.wrangler/e2e`, as playwright.config.ts names it). */

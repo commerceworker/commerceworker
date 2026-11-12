@@ -13,6 +13,36 @@ if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65535)
   );
 const state = '.wrangler/e2e';
 
+const deviceProjects = [
+  { name: 'iphone', use: { ...devices['iPhone 15'] } },
+  { name: 'iphone-landscape', use: { ...devices['iPhone 15 landscape'] } },
+  { name: 'ipad', use: { ...devices['iPad (gen 7)'] } },
+  { name: 'ipad-landscape', use: { ...devices['iPad Pro 11 landscape'] } },
+  { name: 'desktop', use: { ...devices['Desktop Safari'] } },
+];
+const PLACED = /checkout-placed\.spec\.ts/;
+/** The device projects, running every spec but the placed-order one. */
+const base = deviceProjects.map((d) => ({ ...d, testIgnore: PLACED }));
+/**
+ * The placed-order spec needs a published checkout flow, which the storefront's settings name for
+ * the whole deployment, and the other hosted checkout specs expect the device engine to have none.
+ * So it runs last, on the same devices: `publish` runs once the other projects are done, then each
+ * device runs the placed-order spec alone (`<device> placed`). `E2E_PLACED_ONLY=1` drops the wait
+ * for the other projects, to run the placed-order spec by itself (the specs it waits for are not
+ * in that run, and `--no-deps` would skip `publish` too).
+ */
+const publish = {
+  name: 'publish',
+  testMatch: /placed\.setup\.ts/,
+  dependencies: process.env.E2E_PLACED_ONLY === '1' ? [] : base.map((d) => d.name),
+};
+const placed = deviceProjects.map((d) => ({
+  name: `${d.name} placed`,
+  use: d.use,
+  testMatch: PLACED,
+  dependencies: ['publish'],
+}));
+
 /**
  * Device tests: the buyer's pages in WebKit on an iPhone and an iPad, both ways up, plus a desktop,
  * against the dev server running offline (COMMERCEWORKER_E2E in vite.config.ts) with an engine of its
@@ -32,13 +62,7 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
   },
-  projects: [
-    { name: 'iphone', use: { ...devices['iPhone 15'] } },
-    { name: 'iphone-landscape', use: { ...devices['iPhone 15 landscape'] } },
-    { name: 'ipad', use: { ...devices['iPad (gen 7)'] } },
-    { name: 'ipad-landscape', use: { ...devices['iPad Pro 11 landscape'] } },
-    { name: 'desktop', use: { ...devices['Desktop Safari'] } },
-  ],
+  projects: [...base, publish, ...placed],
   webServer: {
     command: [
       `rm -rf ${state}`,
