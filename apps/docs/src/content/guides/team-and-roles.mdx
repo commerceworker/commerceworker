@@ -230,8 +230,11 @@ People who have no password (the ones single sign-on added) are never asked for 
 single sign-on only is on, see a **Sign-in** note in place of the password, two-factor and passkey
 sections.
 
-Disabling someone at the provider doesn't end a session they already have; it ends when it would
-have anyway. **Disable** on the Team page ends it now, and
+A session that single sign-on started ends 12 hours after sign-in, whatever else happens, and the
+person signs in again at the provider to continue. That is the longest someone disabled at the
+provider can keep a session if you don't use SCIM. Password and passkey sessions keep the lifetime
+described under [Your sessions](#your-sessions) and above.
+**Disable** on the Team page ends a session now, and
 [SCIM provisioning](#provisioning-with-scim) can do it for you as the provider changes.
 
 Changes are audited as `team.sso_settings`; links as `auth.sso_linked`; people added by sign-in as

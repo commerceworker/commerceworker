@@ -378,7 +378,7 @@ export async function signInWithSso(
     person = { kind: 'user', id: row.id, email: row.email, name: row.name, role: row.role as Role };
   }
   await audit(request, 'auth.sign_in', { actor: person, detail: { method: 'sso' } });
-  return { session: await startSession(request, person.id) };
+  return { session: await startSession(request, person.id, { sso: true }) };
 }
 
 // ── Linking someone with a password ──

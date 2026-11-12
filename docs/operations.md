@@ -785,8 +785,12 @@ Removing `sso` from the registry (the Worker then has no issuer) turns the butto
 **Single sign-on only** then has no effect (`ssoOnlyInEffect` in `settings.server.ts` needs a
 configured provider), so passwords and passkeys work again; people single sign-on added have no
 password and need an admin to reset one for them.
-A person disabled at the provider keeps their session until it ends; an admin disabling them on the
-Team page ends it now, or the provider can do it through SCIM (below).
+A session single sign-on starts ends 12 hours after sign-in (`SESSION_SSO_MAX_MS`, a constant, not a
+registry setting), so a person disabled at the provider is signed out within that, and signs in at
+the provider again to continue; passwords and passkeys keep 30 days. An admin disabling them on the
+Team page ends it now, or the provider can do it through SCIM (below). A first sign-in that links
+an existing account with a password and an authenticator code (`/login/sso/link`) still gets the
+password lifetime, once, as the code step starts that session.
 
 ## Email sending
 
