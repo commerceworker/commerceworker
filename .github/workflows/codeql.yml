@@ -1,0 +1,48 @@
+name: CodeQL
+
+# Static analysis of the TypeScript and JavaScript for injection, unsafe URL and cryptography use
+# and the like. It complements zizmor (which reads the workflows) and the dependency audit.
+on:
+  pull_request:
+    branches: [main]
+  # The merge queue tests each queued pull request on top of main, so a finding fails it there too.
+  merge_group:
+  # Weekly on main, which also keeps the default branch's results current for a pull request to be
+  # compared against, and catches a query the next CodeQL release adds.
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+# A new push to a pull request supersedes its last scan; a scan on main or in the queue runs out.
+concurrency:
+  group: codeql-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing is granted by default; the job asks for what it needs.
+permissions: {}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Uploads the results to code scanning.
+      security-events: write
+      # CodeQL reads the run's own metadata (needed when the repository is private).
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: javascript-typescript
+          # Interpreted languages need no build: it reads the source (and the tsconfigs) directly.
+          build-mode: none
+          queries: security-extended
+      - name: Analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:javascript-typescript
