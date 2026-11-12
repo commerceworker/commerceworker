@@ -115,9 +115,10 @@ export const PLACED_ID = 'chk_e2e_placed';
 export const PLACED_ORDER = 'ord_e2e_ab12cd';
 
 /**
- * Sessions the specs that submit a form spend, one per device project and retry so that parallel
- * projects and a retried test never share one: `startSession` is waiting to be redeemed by the token
- * `startToken(key)`, and `formSession` is owned by the cookie secret as `CHECKOUT_ID` is.
+ * Sessions the specs that submit a form spend, one per device project, retry and variant (hydrated
+ * `j`, scripts off `n`) so that parallel projects, the two variants and a retried test never share
+ * one: `startSession` is waiting to be redeemed by the token `startToken(key)`, and `formSession` is
+ * owned by the cookie secret as `CHECKOUT_ID` is.
  */
 export const DEVICE_KEYS = [
   'iphone',
@@ -125,7 +126,9 @@ export const DEVICE_KEYS = [
   'ipad',
   'ipad-landscape',
   'desktop',
-].flatMap((p) => [0, 1, 2].map((r) => `${p.replace('-', '')}${r}`));
+].flatMap((p) =>
+  [0, 1, 2].flatMap((r) => ['j', 'n'].map((variant) => `${p.replace('-', '')}${r}${variant}`)),
+);
 export const startId = (key: string) => `chk_e2e_start_${key}`;
 export const formId = (key: string) => `chk_e2e_form_${key}`;
 export const startToken = (key: string) => `tok_e2e_${key}`;

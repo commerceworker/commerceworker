@@ -12,8 +12,7 @@ import {
  * projects, and the tests of a spec, run at the same time against one database, so each has a
  * sign-in of its own, by link or by code, written as the engine stores them (hashes only): the link's
  * SHA-256, and the code's HMAC under the key the engine derives from the dev principal key. Nothing
- * here is mailed: the device tests' engine has no Email Sending, which is what the sign-in page's
- * "isn't available" answer is tested against.
+ * here is read from a mailbox: the device tests' engine takes mail (a local binding) and sends nothing.
  */
 export const PROJECTS = [
   'iphone',

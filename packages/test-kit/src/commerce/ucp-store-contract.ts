@@ -75,6 +75,7 @@ export function describeUcpStoreContract(
         profileUrl: 'https://agent.example/.well-known/ucp',
         keyPrefix: 'cmw_ucp_ab',
         keyHash: 'ucs_hash_new',
+        redirectUris: ['https://agent.example/cb', 'https://agent.example/other'],
         createdAt: 10,
         createdBy: 'ada@example.com',
       });
@@ -85,19 +86,30 @@ export function describeUcpStoreContract(
         name: 'Shopping agent',
         profileUrl: 'https://agent.example/.well-known/ucp',
         keyPrefix: 'cmw_ucp_ab',
+        redirectUris: ['https://agent.example/cb', 'https://agent.example/other'],
         createdAt: 10,
         createdBy: 'ada@example.com',
         lastUsedAt: null,
         revokedAt: null,
       });
+      // A platform registered with none lists none, and is found the same ways.
+      expect(listed[2]!.redirectUris).toEqual([]);
+      expect((await s.livePlatformById('ucs_new'))?.redirectUris).toEqual([
+        'https://agent.example/cb',
+        'https://agent.example/other',
+      ]);
+      expect((await s.livePlatform('ucs_hash_new'))?.redirectUris).toHaveLength(2);
       expect((await s.livePlatform('ucs_hash_new'))?.id).toBe('ucs_new');
       expect(await s.livePlatform('ucs_gone')).toBeUndefined();
+      expect((await s.livePlatformById('ucs_new'))?.id).toBe('ucs_new');
+      expect(await s.livePlatformById('ucs_gone')).toBeUndefined();
       await s.touchPlatform('ucs_new', 20);
       expect((await s.livePlatform('ucs_hash_new'))?.lastUsedAt).toBe(20);
       expect(await s.revokePlatform('ucs_new', 30)).toMatchObject({ id: 'ucs_new', revokedAt: 30 });
       expect(await s.revokePlatform('ucs_new', 40)).toBeUndefined();
       expect(await s.revokePlatform('ucs_none', 40)).toBeUndefined();
       expect(await s.livePlatform('ucs_hash_new')).toBeUndefined();
+      expect(await s.livePlatformById('ucs_new')).toBeUndefined();
       // Revoked, it is still listed: its checkouts and orders name it.
       expect((await s.platforms(10)).some((p) => p.id === 'ucs_new')).toBe(true);
     });

@@ -78,6 +78,8 @@ export * from './subject-store';
 export * from './subject-store-contract';
 export * from './tax-certificate-store';
 export * from './tax-certificate-store-contract';
+export * from './ucp-links';
+export * from './ucp-links-contract';
 export * from './ucp-store';
 export * from './ucp-store-contract';
 export * from './webhook-outbox';

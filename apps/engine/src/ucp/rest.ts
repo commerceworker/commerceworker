@@ -9,13 +9,14 @@
  *   PUT  /ucp/v1/checkout-sessions/:id             update (full replacement)
  *   POST /ucp/v1/checkout-sessions/:id/complete    Idempotency-Key required
  *   POST /ucp/v1/checkout-sessions/:id/cancel      Idempotency-Key required
- *   GET  /ucp/v1/orders/:id
+ *   GET  /ucp/v1/orders/:id                        the platform's own; a linked shopper's with a token
  *   POST /ucp/v1/catalog/search                    search_catalog (read-only)
  *   POST /ucp/v1/catalog/lookup                    lookup_catalog
  *   POST /ucp/v1/catalog/product                   get_product
  */
 
 import {
+  LINK_USER_TOKEN_HEADER,
   type PlatformCaller,
   PRINCIPAL_HEADER,
   UCP_MCP_PATH,
@@ -49,7 +50,11 @@ const MAX_BODY = 256 * 1024;
 const json = (r: UcpResult, requestId?: string | null) =>
   Response.json(r.body, {
     status: r.status,
-    headers: { 'cache-control': 'no-store', ...(requestId ? { 'request-id': requestId } : {}) },
+    headers: {
+      'cache-control': 'no-store',
+      ...r.headers,
+      ...(requestId ? { 'request-id': requestId } : {}),
+    },
   });
 
 const refuse = (status: number, code: string, content: string): UcpResult => ({
@@ -187,6 +192,6 @@ export async function handleUcp(request: Request, env: Env): Promise<Response> {
       return reply(await write(() => cancelCheckout(env, ctx, id), true));
   }
   if (parts[0] === 'orders' && parts.length === 2 && method === 'GET')
-    return reply(await getOrder(env, ctx, parts[1]!));
+    return reply(await getOrder(env, ctx, parts[1]!, request.headers.get(LINK_USER_TOKEN_HEADER)));
   return reply(refuse(404, 'not_found', 'Not found'));
 }

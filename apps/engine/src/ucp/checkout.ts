@@ -17,6 +17,7 @@ import {
   type FlowGraph,
   type FlowVersion,
   FULFILLMENT_CAPABILITY,
+  IDENTITY_LINKING_CAPABILITY,
   isFinalCheckout,
   isOpenCheckout,
   ORDER_CAPABILITY,
@@ -40,12 +41,19 @@ import { completeSession } from '../checkout/complete';
 import { bump, current, newSession, refresh, save } from '../checkout/session';
 import { loadFlowVersion } from '../flows';
 import { orderAgent } from '../namespaces';
-import { checkoutSessions, paymentLedger, pricingStore, shippingStore } from '../wire';
+import {
+  checkoutSessions,
+  orderQueries,
+  paymentLedger,
+  pricingStore,
+  shippingStore,
+} from '../wire';
 import { ucpOrderCaller } from './caller';
 import { paymentHandlers, ucpSettings } from './config';
+import { linkedShopperFor } from './identity-link';
 import { authorizeCheckout } from './payments';
 
-export type UcpResult = { status: number; body: unknown };
+export type UcpResult = { status: number; body: unknown; headers?: Record<string, string> };
 
 /** Who is asking, and what was negotiated with them. */
 export type UcpContext = {
@@ -282,14 +290,49 @@ export async function orderEntity(
   };
 }
 
-export async function getOrder(env: Env, ctx: UcpContext, orderId: string): Promise<UcpResult> {
+/**
+ * An order for a platform. With no `userToken` it is the platform's own: one a checkout of its
+ * placed. With a linked shopper's access token (`Authorization: Bearer`, which the storefront
+ * passes on) it is the shopper's: any order a checkout placed under their address, whoever's
+ * checkout it was, and only for a token issued to this platform with `order:read` while the
+ * platform lists identity linking. A token that doesn't qualify is refused (401, not silently
+ * treated as no token), so a platform with an expired one learns to refresh it.
+ */
+export async function getOrder(
+  env: Env,
+  ctx: UcpContext,
+  orderId: string,
+  userToken?: string | null,
+): Promise<UcpResult> {
   if (!ctx.capabilities.has(ORDER_CAPABILITY))
     return protocol(
       403,
       'forbidden',
       'The platform profile does not support dev.ucp.shopping.order.',
     );
+  if (userToken === undefined || userToken === null) {
+    const found = await orderEntity(env, orderId, ctx.capabilities, ctx.caller.origin);
+    if (!found || found.session.ownerId !== ctx.caller.id) return gone('Order not found.');
+    return { status: 200, body: found.entity };
+  }
+  const shopper = ctx.capabilities.has(IDENTITY_LINKING_CAPABILITY)
+    ? await linkedShopperFor(env, userToken, ctx.caller.id)
+    : null;
+  if (!shopper)
+    return {
+      status: 401,
+      body: ucpError(
+        'unauthorized',
+        'The access token is not valid for this platform, or has expired.',
+      ),
+      headers: { 'www-authenticate': 'Bearer error="invalid_token"' },
+    };
+  // Placed under the shopper's address, as the account's own order page asks (`placedUnder`: the
+  // order row's contact, an erased order names no one), and before anything of the order is read, so
+  // an order that is another's, erased or unknown answers alike.
+  if (!(await orderQueries(env).placedUnder(shopper.email, orderId)))
+    return gone('Order not found.');
   const found = await orderEntity(env, orderId, ctx.capabilities, ctx.caller.origin);
-  if (!found || found.session.ownerId !== ctx.caller.id) return gone('Order not found.');
+  if (!found) return gone('Order not found.');
   return { status: 200, body: found.entity };
 }

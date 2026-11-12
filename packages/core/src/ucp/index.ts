@@ -9,6 +9,7 @@ export * from './catalog';
 export * from './checkout';
 export * from './discount';
 export * from './errors';
+export * from './identity-linking';
 export * from './order';
 export * from './profile';
 export * from './signature';

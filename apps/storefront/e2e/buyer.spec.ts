@@ -79,8 +79,23 @@ test('serves no admin: its routes are not here, and /health answers', async ({ r
   }
   // Agentic checkout takes a platform's key: nothing without one.
   expect((await request.post('/ucp/v1/checkout-sessions')).status()).toBe(401);
-  // Its profile is off until an admin turns agentic checkout on.
-  expect((await request.get('/.well-known/ucp')).status()).toBe(404);
+  // Agentic checkout is on in the device tests' database (identity linking needs it: e2e/identity-seed.ts),
+  // so the storefront serves the engine's business profile, public and cached; it is off, and
+  // 404, until an admin turns it on (tests/ucp.test.ts). The profile lists identity linking, since
+  // the device engine can send the mail a shopper signs in by.
+  const profile = await request.get('/.well-known/ucp');
+  expect(profile.status()).toBe(200);
+  expect(profile.headers()['cache-control']).toBe('public, max-age=300');
+  const doc = (await profile.json()) as { ucp: { capabilities: Record<string, unknown> } };
+  expect(Object.keys(doc.ucp.capabilities)).toContain('dev.ucp.common.identity_linking');
+  expect(JSON.stringify(doc)).not.toMatch(/key_hash|"d":|secret/i);
+  // The authorization server answers beside it, at the storefront's own origin.
+  const meta = await request.get('/.well-known/oauth-authorization-server');
+  expect(meta.status()).toBe(200);
+  expect(
+    ((await meta.json()) as { code_challenge_methods_supported: string[] })
+      .code_challenge_methods_supported,
+  ).toEqual(['S256']);
 });
 
 test('a hosted checkout’s start link shows a Continue page that spends nothing, sized for a finger', async ({

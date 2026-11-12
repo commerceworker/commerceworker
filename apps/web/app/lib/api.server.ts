@@ -50,7 +50,7 @@
  *
  *   GET    /api/v1/ucp                          agentic checkout: settings and platforms (admin)
  *   POST   /api/v1/ucp/settings                 { checkoutFlowId, links?, orderUrl?, productUrl? }
- *   POST   /api/v1/ucp/platforms                { name, profileUrl } → API key, once
+ *   POST   /api/v1/ucp/platforms                { name, profileUrl, redirectUris? } → API key, once
  *   DELETE /api/v1/ucp/platforms/:id            revoke
  *
  *   GET    /api/v1/storefront                   hosted checkout: its settings (admin)
@@ -774,7 +774,11 @@ async function handleUcpAdmin(
     await audit(request, 'ucp.platform_added', {
       actor: caller,
       target: added.platform.name,
-      detail: { id: added.platform.id, profileUrl: added.platform.profileUrl },
+      detail: {
+        id: added.platform.id,
+        profileUrl: added.platform.profileUrl,
+        redirectUris: added.platform.redirectUris,
+      },
     });
     return json(added, 201);
   }

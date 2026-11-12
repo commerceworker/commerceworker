@@ -18,6 +18,7 @@ import {
   currentShopper,
   insecureRefusal,
   PRIVATE_HEADERS,
+  safeNext,
   shopperActor,
   shopperCookie,
   signInBudget,
@@ -31,11 +32,13 @@ export const meta: Route.MetaFunction = ({ matches }) => [
 ];
 
 export async function loader({ request }: Route.LoaderArgs) {
+  const params = new URL(request.url).searchParams;
+  const next = safeNext(params.get('next'));
   if (await currentShopper(request))
-    return redirect('/account', { status: 303, headers: PRIVATE_HEADERS });
-  const email = shopperEmail(new URL(request.url).searchParams.get('email'));
+    return redirect(next ?? '/account', { status: 303, headers: PRIVATE_HEADERS });
+  const email = shopperEmail(params.get('email'));
   if (!email) return redirect('/account/sign-in', { status: 303, headers: PRIVATE_HEADERS });
-  return data({ email }, { headers: PRIVATE_HEADERS });
+  return data({ email, next }, { headers: PRIVATE_HEADERS });
 }
 
 const refuse = (error: string, email: string, status = 400) =>
@@ -57,7 +60,7 @@ export async function action({ request }: Route.ActionArgs) {
   const signedIn = await engine().redeemShopperCode(email, code, await shopperActor());
   if (!signedIn)
     return refuse('That code didn’t work. Check it and try again, or ask for a new one.', email);
-  return redirect('/account', {
+  return redirect(safeNext(form.get('next')) ?? '/account', {
     status: 303,
     headers: {
       'set-cookie': shopperCookie(request, signedIn.secret, signedIn.expiresAt),
@@ -73,7 +76,7 @@ export function headers({ errorHeaders }: Route.HeadersArgs) {
 export const ErrorBoundary = AccountRefusal;
 
 export default function CodePage() {
-  const { email } = useLoaderData<typeof loader>();
+  const { email, next } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const error = result && 'error' in result ? result.error : undefined;
   return (
@@ -86,6 +89,7 @@ export default function CodePage() {
       </p>
       <Form method="post" className="mt-6 flex flex-col gap-4">
         <input type="hidden" name="email" value={email} />
+        {next ? <input type="hidden" name="next" value={next} /> : null}
         <TextField
           name="code"
           label="Code"

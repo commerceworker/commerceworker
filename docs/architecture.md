@@ -99,7 +99,7 @@ second entrypoint, and the only one the public storefront is bound to. It exists
 else: none of `EngineApi`'s methods without an actor (`startOrder`, `sendEvent`, `cancel`, `paymentEvent`, the data-subject
 calls, the plugin calls) is on it. Its methods are `health`, `ucpProfile`, `ucpCheckoutOn`, `ucpPlatform` (a live platform by
 its key's hash, whose use the engine records), `redeemCartStart`, `cartSnapshot`, `cartCustomerName`, `addCartFile`,
-`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)), a shopper's sign-in, `startShopperSignIn`, `redeemShopperCode`, `redeemShopperLink`, `shopper` and `shopperSignOut`, and the account calls `shopperOrders`, `shopperOrder`, `shopperAddresses` and `forgetAddress` (see [Shoppers](#shoppers)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
+`readCartFile`, `keepCartOpen`, `searchCartProducts`, and the hosted checkout's `storefrontSettings`, `redeemCheckoutStart`, `checkout`, `updateCheckout`, `completeCheckout`, `payCheckout`, `confirmCheckoutPayment` and `applePayDomainAssociation` (see [Hosted checkout](#hosted-checkout)), a shopper's sign-in, `startShopperSignIn`, `redeemShopperCode`, `redeemShopperLink`, `shopper` and `shopperSignOut`, and the account calls `shopperOrders`, `shopperOrder`, `shopperAddresses` and `forgetAddress` (see [Shoppers](#shoppers)), identity linking's `ucpLinkMetadata`, `ucpLinkAuthorize`, `ucpLinkDecide`, `ucpLinkToken`, `ucpLinkRevoke`, `shopperLinks` and `shopperUnlink` (see [Identity linking](#identity-linking)) and `orderReceipt`, and `fetch`, which serves only `/agents/cart-agent/*` and `/ucp/*`
 (anything else is `404`, an order's or the assistant's socket, `/mcp` and `/a2a` included). Each cart call names the buyer as
 an `a1` actor the storefront signed for `cart:<cartId>` (`signGuestActor`), and `buyerOf` admits it only to an external cart
 whose buyer it is (`guest:<external.buyer.id>`), answering `null` otherwise, so a signature for one cart opens no other and
@@ -582,6 +582,69 @@ a secret it never mints.
 Personal data: `shopper_*` rows are exported and erased with an email's data-subject request (`ShopperAuth.exportFor`,
 `eraseFor`: no hash or secret is exported; erasing ends every session), and the retention sweep deletes expired
 sessions, and sign-ins a day after they expire, since the row carries the address's tries, lockout and daily count (`pruneShopperAuth`; reported as `shopperAuth`).
+
+### Identity linking
+
+A UCP platform links a signed-in shopper's address through OAuth and then acts for them, starting with reading their
+orders: UCP's `dev.ucp.common.identity_linking`, scope `dev.ucp.shopping.order:read` (the only scope the vendored
+spec names, `LINK_SCOPES`). The **shopper's authorization server is the storefront host's, and is not the staff
+OAuth server**: its own issuer (the storefront origin, `STOREFRONT_ORIGIN`), its own tables and opaque tokens,
+and nothing shared with `apps/web/app/lib/oauth.server.ts`, which is the OAuth provider library over KV for staff
+and MCP/A2A tokens. The engine holds every credential (`apps/engine/src/ucp/identity-link.ts`, over the use-cases in
+`packages/application/src/commerce/ucp-links.ts` and the rules in `packages/core/src/ucp/identity-linking.ts`); the
+storefront hosts the pages and endpoints and reaches the engine only through `StorefrontRpc`.
+
+- **Client.** UCP defines no client registration, and an admin already let each platform in with an API key, so the
+  OAuth client is the registered platform: `client_id` is its id and it authenticates at the token and revocation
+  endpoints with its key (HTTP Basic or the form), which the storefront hashes before the engine looks it up. A
+  revoked platform can't link, renew or use a link. UCP has no redirect registration, so an admin registers each
+  platform's **exact return addresses** (`ucp_platforms.redirect_uris`, `redirectUris` on `POST /api/v1/ucp/platforms`,
+  at most ten, https with no fragment or credentials) and a request must name one as the **same string**
+  (`linkRedirectProblem`; RFC 9700, OAuth 2.1): matching by origin would let an open redirect on that origin carry the
+  code on. A platform with none registered can't link, and an error is redirected only to a registered address, never
+  to any other path of its origin.
+- **Consent** (`/identity/authorize`, `routes/identity-authorize.tsx`). A GET checks the request (`describeLink`,
+  nothing written): an unknown platform or untrusted return address is shown, never redirected to; any other fault
+  (`response_type`, PKCE, scope, `resource`, `state`) goes back to the platform. A shopper who isn't signed in goes to
+  `/account/sign-in?next=` (only a linking request on this host is accepted as `next`, `safeNext`) and returns. The
+  POST is the shopper's own answer: the engine re-checks the request, and approving mints a one-time code (a minute,
+  256 bits, stored as a SHA-256, PKCE `S256` challenge kept). The redirect carries `code`, `state` and `iss` (RFC 9207).
+  The page is `no-store`, unframed, and its CSP's `form-action` is widened by exactly the platform's origin
+  (`CONSENT_HEADER`; Chrome applies it to the redirect after a post), and it says where the shopper will return to
+  before they choose. CSRF: the Worker refuses a cross-site POST
+  (`crossOrigin`) before the route, and the cookie is `SameSite=Lax`.
+- **Tokens** (`/identity/token`, `/identity/revoke`, ahead of the cross-site check as `/ucp` is: a platform is no
+  browser). Opaque (`cmw_ucpc_`, `cmw_ucpa_`, `cmw_ucpr_`, 32 random bytes; none can pass for a platform key
+  `cmw_ucp_`), stored as SHA-256 (`ucp_link_codes`, `ucp_link_grants`, `ucp_link_tokens`). Access tokens last 15
+  minutes; refresh tokens 30 days and rotate; a link ends at 180 days whatever. A code is spent by one guarded update, a replay
+  marks the code (`replayed_at`) and the link's insert is conditional on it, so a replay between the spending and the
+  link's creation leaves no live link, and a rotation is one batch (`UcpLinks.rotate`, which stores the successors only for the caller that spent the
+  token), so of two racing uses one wins. A code replayed, a refresh token spent twice, and a refresh token presented
+  by another platform each **end the whole link** (no grace window; a platform that loses an answer must link again).
+  A refresh may narrow the scope, never widen it. A shopper has one live link per platform (a new one ends the old).
+- **Using a token.** The platform sends its `X-API-Key` and `Authorization: Bearer <access token>`; the storefront
+  signs the platform as before (`signPlatform`, `u1`) and passes the bearer as `x-ucp-user-token`
+  (`LINK_USER_TOKEN_HEADER`). **There is no new envelope**: the token is an opaque database credential, not a signed
+  one, and is accepted only beside the platform envelope, for the platform it was issued to
+  (`linkedShopper`: unknown, expired, revoked, another platform's, wrong scope and a refresh token all look the
+  same, `401 invalid_token`). `get_order` (REST and MCP) then answers for the shopper: any order a checkout placed
+  `placedUnder` the shopper's address (the same check the account's order page makes: the order row's contact, an
+  erased order matches no one, asked before anything of the order is read), whichever platform ran it, and `not_found` for the rest; with no token it is
+  still only the platform's own orders. Orders no checkout placed aren't reachable (the UCP order entity is built
+  from a checkout session); a shopper's full order list is the S6 slice (`forContact`).
+- **Discovery.** The business profile lists the capability with `config.scopes` only where a shopper can sign in
+  (Email Sending set up); `businessProfile(..., identityLinking)`. The `/identity/*` endpoints and the metadata answer
+  only under the same condition (agentic checkout on **and** Email Sending set up). RFC 8414 metadata is at
+  `/.well-known/oauth-authorization-server` (`authorizationServerMetadata`; PKCE `S256` only, no implicit, password or
+  client-credentials grants, `authorization_response_iss_parameter_supported`). Both are off while agentic checkout is.
+- **The shopper's side.** `/account/apps` ("Linked apps") lists the platforms they linked and unlinks one (`shopperLinks`, `shopperUnlink`,
+  with the shopper cookie and an actor signed for `shopper`: the engine ends a link only for its own address).
+- **Personal data.** Links are exported (no token or hash) and erased with their codes and tokens in a subject
+  request (`UcpLinks.exportFor`, `eraseFor`), and the sweep deletes codes a day after they expire and links a month
+  after they end, and from live links the access tokens that expired and the refresh tokens spent over a day ago
+  but each link's latest one (it is what recognizes a copy of it), so rows don't pile up two a refresh
+  (`pruneUcpLinks`, reported as `ucpLinks`). The token endpoint's budgets are per caller address before any credential
+  is checked and per key hash after, never per the public `client_id`, which would let anyone use up a platform's budget.
 
 ### Hosted checkout
 

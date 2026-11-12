@@ -159,6 +159,8 @@ export type ErasureResult =
       /** Sign-in codes and signed-in sessions of the address, deleted: every session ends. */
       shopperSignIns: number;
       shopperSessions: number;
+      /** Platforms the address linked its identity to, deleted with their codes and tokens. */
+      ucpLinks: number;
       /** The address is also a team member's; remove them on the team page. */
       teamMember: boolean;
     }
@@ -194,6 +196,8 @@ export type SubjectExport = {
   /** Sign-ins and sessions of the address as a storefront shopper (never the secrets or their hashes). */
   shopperSignIns: Record<string, unknown>[];
   shopperSessions: Record<string, unknown>[];
+  /** The platforms the address linked (never a token or its hash). */
+  ucpLinks: Record<string, unknown>[];
   /** True when there were more orders than one export holds. */
   truncated: boolean;
   teamMember: boolean;

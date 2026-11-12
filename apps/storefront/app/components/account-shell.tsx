@@ -38,6 +38,9 @@ export function SignedInShell({ email, children }: { email: string; children: Re
         <NavLink to="/account/addresses" className={link}>
           Addresses
         </NavLink>
+        <NavLink to="/account/apps" className={link}>
+          Linked apps
+        </NavLink>
       </nav>
       {children}
       <footer className="mt-10 border-t pt-6">
@@ -57,3 +60,7 @@ export function SignedInShell({ email, children }: { email: string; children: Re
 /** The one button of an account form: a pill, 44px tall, full width. */
 export const accountButton =
   'inline-flex min-h-11 w-full items-center justify-center rounded-full bg-primary px-6 text-base font-medium text-primary-foreground disabled:opacity-50';
+
+/** The quieter button beside it: an outline, as tall. */
+export const accountButtonQuiet =
+  'inline-flex min-h-11 w-full items-center justify-center rounded-full border border-border bg-background px-6 text-base font-medium text-foreground disabled:opacity-50';

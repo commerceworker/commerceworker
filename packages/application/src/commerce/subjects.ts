@@ -22,6 +22,7 @@ import type {
   Subject,
   SubjectCarts,
   SubjectStore,
+  UcpLinks,
 } from '@commerceworker/ports/commerce';
 
 /** Orders erased per call; the caller repeats until `done`. */
@@ -36,6 +37,8 @@ export type SubjectPorts = {
   readonly carts: SubjectCarts;
   /** Their storefront sign-ins and sessions. */
   readonly shoppers: ShopperAuth;
+  /** Their links to UCP platforms. */
+  readonly links: UcpLinks;
 };
 
 /** The subject's words to erase: their email and their accounts' names. */
@@ -73,6 +76,7 @@ export async function exportDataSubject(
     list.map((o) => o.id),
   );
   const shopper = await ports.shoppers.exportFor(s.email);
+  const links = await ports.links.exportFor(s.email);
   const carts = await Promise.all([
     ...(await ports.subjects.buyerCarts(s.email, EXPORT_MAX)).map((id) =>
       ports.carts.subjectExport(id),
@@ -123,6 +127,7 @@ export async function exportDataSubject(
     quotes: held.quotes.map(({ createdBy: _by, ...q }) => q),
     shopperSignIns: shopper.signIns,
     shopperSessions: shopper.sessions,
+    ucpLinks: links,
     truncated: rows.length > EXPORT_MAX,
     teamMember: s.teamMember,
   };
@@ -168,6 +173,7 @@ export async function eraseDataSubject(
     quotes: 0,
     shopperSignIns: 0,
     shopperSessions: 0,
+    ucpLinks: 0,
     teamMember: s.teamMember,
   };
 
@@ -176,6 +182,8 @@ export async function eraseDataSubject(
   const shopper = await ports.shoppers.eraseFor(s.email);
   result.shopperSignIns = shopper.signIns;
   result.shopperSessions = shopper.sessions;
+  // Their links end with them: a platform's tokens for the address are gone before anything else is.
+  result.ucpLinks = await ports.links.eraseFor(s.email);
 
   // Their external carts: each loses their messages and files, and stops naming them.
   for (const id of await ports.subjects.buyerCarts(s.email, EXPORT_MAX)) {

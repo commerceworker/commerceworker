@@ -197,6 +197,8 @@ export type AcceptQuoteResult = {
 export type AddUcpPlatformInput = {
   name: string;
   profileUrl: string;
+  /** The exact return addresses identity linking may send a shopper back to (https, no fragment). A platform with none can’t link a shopper */
+  redirectUris?: string[];
 };
 
 export type AddUcpPlatformResult = UcpPlatformKey;
@@ -3064,6 +3066,7 @@ export type ErasureProgress = {
   quotes: number;
   shopperSignIns: number;
   shopperSessions: number;
+  ucpLinks: number;
   /** The address is also a team member’s; remove them on the team page */
   teamMember: boolean;
 };
@@ -3098,6 +3101,8 @@ export type SubjectExport = {
   shopperSignIns: { [key: string]: unknown }[];
   /** Where the address is signed in on the storefront */
   shopperSessions: { [key: string]: unknown }[];
+  /** The platforms the address linked its identity to (no tokens) */
+  ucpLinks: { [key: string]: unknown }[];
   /** There were more orders than one export holds */
   truncated: boolean;
   /** The address also belongs to a person on your team */
@@ -3330,6 +3335,8 @@ export type UcpPlatform = {
   profileUrl: string;
   /** The key’s first characters, to tell keys apart */
   keyPrefix: string;
+  /** The exact return addresses identity linking may send a shopper back to */
+  redirectUris: string[];
   createdAt: number;
   createdBy: string | null;
   lastUsedAt: number | null;

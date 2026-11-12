@@ -76,17 +76,25 @@ in the [audit log](/guides/team-and-roles/#audit-log) and are locked in the demo
 
 ## Letting in a platform
 
-A platform is let in by an admin, with its name and the URL of its UCP profile:
+A platform is let in by an admin, with its name, the URL of its UCP profile and, if shoppers may link their
+identity to it, the exact return addresses it may send them back to:
 
 ```bash
 curl -X POST https://app.commerceworker.com/api/v1/ucp/platforms \
   -H "Authorization: Bearer cmw_live_…" \
   -H "Content-Type: application/json" \
-  -d '{ "name": "Acme Shopping", "profileUrl": "https://acme.example/.well-known/ucp" }'
+  -d '{
+    "name": "Acme Shopping",
+    "profileUrl": "https://acme.example/.well-known/ucp",
+    "redirectUris": ["https://acme.example/oauth/callback"]
+  }'
 ```
 
 The answer is `201 { platform, key }`. The `key` (`cmw_ucp_…`) is shown once and is the only
 credential the platform needs; CommerceWorker keeps its hash and prefix. `profileUrl` must be `https`.
+`redirectUris` (at most ten, each `https` with no fragment or credentials) are compared **exactly** when a
+shopper [links their identity](/guides/ucp-identity-linking/): a platform with none registered can't link anyone,
+and the same address with another path, query or case is refused.
 `DELETE /api/v1/ucp/platforms/:id` revokes the platform: its key stops working at once and its
 orders stop sending it events. Its earlier checkouts and orders stay on record.
 
@@ -328,7 +336,7 @@ retry after a lost answer does not place a second one.
 ## Orders and events
 
 `GET /ucp/v1/orders/:id` returns the UCP order entity for an order this platform placed (another
-platform's order is not found). It needs the `dev.ucp.shopping.order` capability. The entity is a full
+platform's order is not found), or, with a linked shopper's access token, an order placed under that shopper's address (see [linking a shopper](/guides/ucp-identity-linking/)). It needs the `dev.ucp.shopping.order` capability. The entity is a full
 snapshot, and carries:
 
 - `line_items`, with `quantity` as `original`, `total` and `fulfilled`, and a `status` of

@@ -1,4 +1,9 @@
-import { runHealthChecks, UCP_PATH, UCP_PROFILE_PATH } from '@commerceworker/core';
+import {
+  LINK_METADATA_PATH,
+  runHealthChecks,
+  UCP_PATH,
+  UCP_PROFILE_PATH,
+} from '@commerceworker/core';
 import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
 import { createRequestHandler } from 'react-router';
@@ -7,6 +12,7 @@ import { cartGuest } from '../app/lib/cart-guest.server';
 import { engine } from '../app/lib/env.server';
 import { setGuestHeader } from '../app/lib/principal.server';
 import { ucpDiscovery, ucpFetch } from '../app/lib/ucp.server';
+import { linkEndpoint, linkEndpointOf, linkMetadata } from '../app/lib/ucp-link.server';
 
 /**
  * The deploy smoke test's check: the engine's D1 and R2 (over the service binding, so a broken
@@ -49,6 +55,13 @@ async function route(request: Request): Promise<Response> {
   if (url.pathname === UCP_PROFILE_PATH && request.method === 'GET') return ucpDiscovery(url);
   if (url.pathname === UCP_PATH || url.pathname.startsWith(`${UCP_PATH}/`))
     return ucpFetch(request);
+
+  // Identity linking's authorization server: its metadata is public and its token and revocation
+  // endpoints take a platform's key (app/lib/ucp-link.server.ts), so they too are ahead of the
+  // cross-site check. The consent page is a route below, and so under it.
+  if (url.pathname === LINK_METADATA_PATH && request.method === 'GET') return linkMetadata();
+  const linkKind = linkEndpointOf(url.pathname);
+  if (linkKind) return linkEndpoint(request, linkKind);
 
   // A browser's state-changing requests and a cart's socket must come from this origin: the
   // buyer's cookie is SameSite=None (their procurement system frames the cart), so another site

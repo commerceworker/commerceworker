@@ -292,9 +292,12 @@ test('has nothing an accessibility scan finds, open or over', async ({ page }) =
   }
 });
 
-/** The seed's key for this test: one per device project and retry, so none is spent twice. */
-const keyOf = (info: { project: { name: string }; retry: number }) =>
-  `${info.project.name.replace('-', '')}${info.retry}`;
+/**
+ * The seed's key for this test: one per device project, retry and variant (hydrated or scripts off,
+ * which run together and each spend a start link), so none is spent twice.
+ */
+const keyOf = (info: { project: { name: string }; retry: number }, scripts: boolean) =>
+  `${info.project.name.replace('-', '')}${info.retry}${scripts ? 'j' : 'n'}`;
 
 /**
  * The pages send `Referrer-Policy: same-origin`, not `no-referrer`: under `no-referrer` a browser
@@ -312,7 +315,7 @@ for (const scripts of [true, false]) {
       page,
       baseURL,
     }, info) => {
-      const key = keyOf(info);
+      const key = keyOf(info, scripts);
       const res = await page.goto(`/checkout/start/${startId(key)}/${startToken(key)}`);
       expect(res?.headers()['referrer-policy']).toBe('same-origin');
       const origins: Array<string | undefined> = [];
@@ -334,7 +337,7 @@ for (const scripts of [true, false]) {
       context,
       baseURL,
     }, info) => {
-      const id = formId(keyOf(info));
+      const id = formId(keyOf(info, scripts));
       await context.addCookies([{ name: `cw_chk_${id}`, value: CHECKOUT_SECRET, url: baseURL! }]);
       await page.goto(`/checkout/${id}`);
       const origins: Array<string | undefined> = [];

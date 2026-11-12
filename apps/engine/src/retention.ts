@@ -10,7 +10,8 @@
  * secrets are resealed under the current `DATA_KEY` (`resealSecrets`). Hosted card payments that
  * began and never finished are settled (`settleOrphanedHolds`): the order placed if its hold is open,
  * the hold released otherwise. Expired storefront sign-ins and sessions are deleted
- * (`pruneShopperAuth`). A sandboxed plugin's uninstall export (`plugin-exports/`) is deleted once it
+ * (`pruneShopperAuth`), and so are UCP identity links a month after they ended, with their codes and
+ * tokens (`pruneUcpLinks`). A sandboxed plugin's uninstall export (`plugin-exports/`) is deleted once it
  * is 30 days old, or the personal data retention if that is shorter (`expirePluginExports`).
  */
 
@@ -22,7 +23,7 @@ import { backfillAddresses } from './customer-addresses';
 import { resealSecrets } from './data-key';
 import { eraseIfErased, eraseOrders } from './subjects';
 import { pruneUsage } from './usage';
-import { auditArchive, cartRuntime, retentionStore, shopperAuth } from './wire';
+import { auditArchive, cartRuntime, retentionStore, shopperAuth, ucpLinks } from './wire';
 
 // The policy and the archive's keys are core rules, kept importable from here.
 export { auditArchiveKey, RETENTION } from '@commerceworker/core';
@@ -40,6 +41,7 @@ export async function sweep(env: Env, now = Date.now()) {
     addressesBackfilled: await backfillAddresses(env, now),
     confirmations: await pruneConfirmations(env, now),
     shopperAuth: await uc.pruneShopperAuth({ shoppers: shopperAuth(env) }, now),
+    ucpLinks: await uc.pruneUcpLinks({ links: ucpLinks(env) }, now),
     aiUsageDays: await pruneUsage(env, now),
     secrets: await resealSecrets(env),
     cardHolds: await settleOrphanedHolds(env, now),

@@ -113,6 +113,25 @@ catalog publisher wrote; the Worker deployed at `catalog.<domain>` binds no cont
    shopper's. The account pages carry no credential in a URL (`orderReceipt`'s link token stays the one bearer
    exception), send `no-store` and `referrer-policy: same-origin` (`no-referrer` makes a plain form post
    `Origin: null`, which is refused), and post only same-origin forms (the Worker's `crossOrigin` check).
+   **A shopper's identity link to a UCP platform follows it** (`apps/engine/src/ucp/identity-link.ts`,
+   `packages/application/src/commerce/ucp-links.ts`): the storefront host is the authorization server
+   (`/identity/authorize` consent, `/identity/token`, `/identity/revoke`, RFC 8414 metadata) and it is **not the staff
+   OAuth server**: its own issuer, tables (`ucp_link_*`) and opaque tokens, with nothing shared with
+   `oauth.server.ts`. The OAuth client is the registered platform: it authenticates at the token endpoint with its
+   API key (the storefront sends only the SHA-256), and its return address must be one of the exact addresses an admin
+   registered with it (`redirect_uris`, compared as the same string, never by origin; none registered, it can't link). Consent is the signed-in shopper's own POST (cookie secret plus the actor signed for
+   `shopper`; the engine re-checks the request), behind the Worker's cross-site refusal and `SameSite=Lax`; the page
+   is `no-store`, unframed and its CSP `form-action` is widened by only the platform's origin. Codes (a minute, PKCE
+   `S256` only), access tokens (15 minutes) and refresh tokens (rotating, 30 days; the link ends at 180) are random,
+   tagged and stored only as SHA-256. **There is no new envelope**: the access token is a database credential,
+   passed as `x-ucp-user-token` beside the platform's signed `u1`, and `linkedShopper` accepts it only for the
+   platform it was issued to and a scope it holds (unknown, expired, revoked, another platform's and a refresh token
+   all `401 invalid_token`). A code replayed, a refresh token spent twice or presented by another platform ends the
+   whole link (no grace window); a refresh may narrow a scope, never widen it. `get_order` with a token answers
+   only orders `placedUnder` the shopper's address (as the account's order page asks), existence hidden. A replayed code
+   marks itself and the link's insert is conditional on that, so a replay mid-redemption leaves no link. The token
+   endpoint's budgets are per address before auth and per key hash after, never per `client_id`. Export and erasure of the address cover `ucp_link_*`, and
+   retention sweeps them (`apps/engine/tests/ucp-identity.test.ts`).
    REST exception, once: the settings routes `POST /api/v1/ucp/settings` and
    `POST /api/v1/storefront/settings` accept an admin API token with no person-confirm, though their
    tools are in `PERSON_CONFIRMS_TOOLS` (over MCP, A2A and the app a person confirms on a card). They

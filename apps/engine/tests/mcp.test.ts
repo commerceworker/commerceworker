@@ -647,6 +647,7 @@ describe('MCP', () => {
           profileUrl: `https://agent.example/${id}?k=v`,
           keyPrefix: 'cmw_ucp_abcd',
           keyHash: `keyhash-${id}`,
+          redirectUris: [],
           createdAt: stamp,
           createdBy: null,
         });

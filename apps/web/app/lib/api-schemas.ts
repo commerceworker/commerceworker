@@ -2,6 +2,8 @@
 
 import {
   isWebhookUrl,
+  LINK_REDIRECT_URIS_MAX,
+  linkRedirectShapeProblem,
   MAX_EVENT_PAYLOAD_BYTES,
   OPERATION_FIELDS,
   ORDER_CHANNELS,
@@ -85,4 +87,20 @@ export const platformInput = z.object({
     .url()
     .max(500)
     .refine((u) => u.startsWith('https://'), 'The profile must be served over https'),
+  redirectUris: z
+    .array(
+      z
+        .string()
+        .max(2000)
+        .superRefine((u, ctx) => {
+          const problem = linkRedirectShapeProblem(u);
+          if (problem) ctx.addIssue({ code: 'custom', message: problem });
+        }),
+    )
+    .max(LINK_REDIRECT_URIS_MAX)
+    .refine((us) => new Set(us).size === us.length, 'Each return address once')
+    .default([])
+    .describe(
+      'The exact return addresses identity linking may send a shopper back to (https, no fragment). A platform with none can’t link a shopper',
+    ),
 });

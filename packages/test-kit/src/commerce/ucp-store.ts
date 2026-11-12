@@ -27,6 +27,7 @@ const view = (p: Platform): UcpPlatform => ({
   name: p.name,
   profileUrl: p.profileUrl,
   keyPrefix: p.keyPrefix,
+  redirectUris: p.redirectUris,
   createdAt: p.createdAt,
   createdBy: p.createdBy,
   lastUsedAt: p.lastUsedAt,
@@ -43,6 +44,7 @@ export class InMemoryUcpStore implements UcpStore {
         name: p.id,
         profileUrl: `https://${p.id}.example/.well-known/ucp`,
         keyPrefix: p.id,
+        redirectUris: [],
         keyHash: p.id,
         createdAt: 0,
         createdBy: null,
@@ -84,6 +86,11 @@ export class InMemoryUcpStore implements UcpStore {
   async livePlatform(keyHash: string) {
     const p = [...this.byId.values()].find((x) => x.keyHash === keyHash && !x.revokedAt);
     return p && view(p);
+  }
+
+  async livePlatformById(id: string) {
+    const p = this.byId.get(id);
+    return p && !p.revokedAt ? view(p) : undefined;
   }
 
   async touchPlatform(id: string, at: number) {

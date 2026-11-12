@@ -17,6 +17,7 @@ import {
   accountHeaders,
   currentShopper,
   PRIVATE_HEADERS,
+  safeNext,
   shopperActor,
   signInBudget,
 } from '~/lib/shopper.server';
@@ -30,9 +31,11 @@ export const meta: Route.MetaFunction = ({ matches }) => [
 ];
 
 export async function loader({ request }: Route.LoaderArgs) {
+  // `next`: the linking request a platform sent them here from, which sign-in returns them to.
+  const next = safeNext(new URL(request.url).searchParams.get('next'));
   if (await currentShopper(request))
-    return redirect('/account', { status: 303, headers: PRIVATE_HEADERS });
-  return data({ siteKey: turnstileSiteKey() }, { headers: PRIVATE_HEADERS });
+    return redirect(next ?? '/account', { status: 303, headers: PRIVATE_HEADERS });
+  return data({ siteKey: turnstileSiteKey(), next }, { headers: PRIVATE_HEADERS });
 }
 
 const refuse = (error: string, status: number, email?: string) =>
@@ -52,8 +55,10 @@ export async function action({ request }: Route.ActionArgs) {
   if (limited) return limited;
 
   const { status } = await engine().startShopperSignIn(email, await shopperActor());
+  const next = safeNext(form.get('next'));
+  const onward = next ? `&next=${encodeURIComponent(next)}` : '';
   if (status === 'sent')
-    return redirect(`/account/code?email=${encodeURIComponent(email)}`, {
+    return redirect(`/account/code?email=${encodeURIComponent(email)}${onward}`, {
       status: 303,
       headers: PRIVATE_HEADERS,
     });
@@ -75,7 +80,7 @@ export function headers({ errorHeaders }: Route.HeadersArgs) {
 export const ErrorBoundary = AccountRefusal;
 
 export default function SignInPage() {
-  const { siteKey } = useLoaderData<typeof loader>();
+  const { siteKey, next } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const waiting = result && 'waiting' in result ? result : null;
   const error = result && 'error' in result ? result : null;
@@ -86,6 +91,7 @@ export default function SignInPage() {
         Enter your email and we’ll send you a code. No password needed.
       </p>
       <Form method="post" className="mt-6 flex flex-col gap-4">
+        {next ? <input type="hidden" name="next" value={next} /> : null}
         <TextField
           name="email"
           label="Email"
@@ -109,7 +115,7 @@ export default function SignInPage() {
           A code was just sent to {waiting.email}. Check your email, or ask again in a minute.{' '}
           <a
             className="underline"
-            href={`/account/code?email=${encodeURIComponent(waiting.email)}`}
+            href={`/account/code?email=${encodeURIComponent(waiting.email)}${next ? `&next=${encodeURIComponent(next)}` : ''}`}
           >
             Enter the code
           </a>

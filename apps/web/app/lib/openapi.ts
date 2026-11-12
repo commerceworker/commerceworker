@@ -1498,7 +1498,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'Let in an AI shopping platform (admin)',
           description:
-            'The platform calls with the returned API key and names `profileUrl` in its `UCP-Agent` header. The key is shown only once.',
+            'The platform calls with the returned API key and names `profileUrl` in its `UCP-Agent` header. The key is shown only once. `redirectUris` are the exact return addresses a shopper may be sent back to when linking their identity to the platform; with none it can’t link one.',
           requestBody: body(platformInput),
           responses: { '201': ok('The platform and its key', ref('UcpPlatformKey')), ...errors },
         },

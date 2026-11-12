@@ -47,7 +47,8 @@
     "./database-copy": "./src/database-copy.ts",
     "./auth-store": "./src/auth-store.ts",
     "./passkey-store": "./src/passkey-store.ts",
-    "./shopper-auth": "./src/shopper-auth.ts"
+    "./shopper-auth": "./src/shopper-auth.ts",
+    "./ucp-links": "./src/ucp-links.ts"
   },
   "scripts": {
     "lint": "biome check .",

@@ -27,7 +27,7 @@ import {
   type UcpSettings,
 } from '@commerceworker/core';
 import { stripeMode } from '../gateway';
-import { workspaceStore } from '../wire';
+import { emailSender, workspaceStore } from '../wire';
 
 export const STRIPE_HANDLER = 'com.commerceworker.stripe';
 export const TEST_HANDLER = 'com.commerceworker.test';
@@ -102,10 +102,14 @@ export function signingKey(env: Env): Promise<SigningKey | null> {
   return key;
 }
 
-/** The business profile for `origin`, or null while agentic checkout is off. */
+/**
+ * The business profile for `origin`, or null while agentic checkout is off. It lists identity
+ * linking only where a shopper can sign in (Email Sending is set up): a platform sent to a consent
+ * page that can't sign anyone in would only fail.
+ */
 export async function ucpProfile(env: Env, origin: string) {
   const settings = await ucpSettings(env);
   if (!settings.checkoutFlowId) return null;
   const key = await signingKey(env);
-  return businessProfile(origin, paymentHandlers(env), key ? [key.public] : []);
+  return businessProfile(origin, paymentHandlers(env), key ? [key.public] : [], !!emailSender(env));
 }

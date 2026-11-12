@@ -11,6 +11,7 @@
  */
 
 import {
+  LINK_USER_TOKEN_HEADER,
   type PlatformCaller,
   PRINCIPAL_HEADER,
   signPlatform,
@@ -172,6 +173,13 @@ export async function ucpFetch(request: Request): Promise<Response> {
   headers.delete('x-api-key');
   headers.delete('cookie');
   headers.delete(PRINCIPAL_HEADER);
+  headers.delete(LINK_USER_TOKEN_HEADER);
+  // With the key in X-API-Key, `Authorization: Bearer` is the slot for a linked shopper's access
+  // token (identity linking). The engine checks it against the platform it signs for below; it
+  // is no credential alone.
+  const bearer = /^Bearer\s+(\S{1,512})$/i.exec(request.headers.get('authorization') ?? '')?.[1];
+  if (bearer && request.headers.has('x-api-key') && !bearer.startsWith(UCP_PLATFORM_KEY_PREFIX))
+    headers.set(LINK_USER_TOKEN_HEADER, bearer);
   headers.set(PRINCIPAL_HEADER, await signPlatform(await signingKey(), caller, url.pathname));
   return engine().fetch(
     new Request(`https://engine${url.pathname}${url.search}`, new Request(request, { headers })),

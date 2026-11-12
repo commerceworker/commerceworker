@@ -66,6 +66,15 @@ import {
   startShopperSignIn,
 } from './shopper';
 import { ucpProfile, ucpSettings } from './ucp/config';
+import {
+  linkAuthorize,
+  linkDecide,
+  linkMetadata,
+  linkRevoke,
+  linksOf,
+  linkToken,
+  unlink,
+} from './ucp/identity-link';
 import { handleUcp } from './ucp/rest';
 import { d1Reachable, pricingStore, ucpStore } from './wire';
 
@@ -297,6 +306,45 @@ export class StorefrontApi extends WorkerEntrypoint<Env> implements StorefrontRp
 
   forgetAddress(secret: string, actor: SignedActor, id: string) {
     return forgetAddress(this.env, secret, id, actor);
+  }
+
+  ucpLinkMetadata() {
+    return linkMetadata(this.env);
+  }
+
+  ucpLinkAuthorize(params: Record<string, string>, secret: string | null, actor: SignedActor) {
+    return linkAuthorize(this.env, params, secret, actor);
+  }
+
+  ucpLinkDecide(
+    params: Record<string, string>,
+    approve: boolean,
+    secret: string | null,
+    actor: SignedActor,
+  ) {
+    return linkDecide(this.env, params, approve, secret, actor);
+  }
+
+  ucpLinkToken(
+    form: Record<string, string>,
+    client: { id: string | null; keyHash: string | null },
+  ) {
+    return linkToken(this.env, form, client);
+  }
+
+  ucpLinkRevoke(
+    form: Record<string, string>,
+    client: { id: string | null; keyHash: string | null },
+  ) {
+    return linkRevoke(this.env, form, client);
+  }
+
+  shopperLinks(secret: string, actor: SignedActor) {
+    return linksOf(this.env, secret, actor);
+  }
+
+  shopperUnlink(secret: string, linkId: string, actor: SignedActor) {
+    return unlink(this.env, secret, linkId, actor);
   }
 
   async searchCartProducts(cartId: string, q: string, signed: SignedActor) {

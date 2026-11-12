@@ -14,6 +14,11 @@ export interface UcpPlatform {
   readonly profileUrl: string;
   /** The key's first characters, to tell keys apart. */
   readonly keyPrefix: string;
+  /**
+   * The exact return addresses identity linking may redirect a shopper to (https, no fragment). A
+   * request names one as the same string; none registered, the platform can't link.
+   */
+  readonly redirectUris: string[];
   readonly createdAt: number;
   readonly createdBy: string | null;
   readonly lastUsedAt: number | null;
@@ -33,6 +38,8 @@ export interface UcpStore {
   revokePlatform(id: string, at: number): Promise<UcpPlatform | undefined>;
   /** The platform a key (by its hash) belongs to, unless it was revoked. */
   livePlatform(keyHash: string): Promise<UcpPlatform | undefined>;
+  /** A platform by id, unless it was revoked: the client an authorization request names. */
+  livePlatformById(id: string): Promise<UcpPlatform | undefined>;
   /** Records when a platform last called. */
   touchPlatform(id: string, at: number): Promise<void>;
   /**

@@ -43,6 +43,7 @@ import { d1ShippingStore } from '@commerceworker/db/shipping-store';
 import { d1ShopperAuth } from '@commerceworker/db/shopper-auth';
 import { d1SubjectStore } from '@commerceworker/db/subject-store';
 import { d1TaxCertificateStore } from '@commerceworker/db/tax-certificate-store';
+import { d1UcpLinks } from '@commerceworker/db/ucp-links';
 import { d1UcpStore } from '@commerceworker/db/ucp-store';
 import { d1WebhookOutbox } from '@commerceworker/db/webhook-outbox';
 import { d1WorkspaceStore } from '@commerceworker/db/workspace-store';
@@ -92,6 +93,7 @@ import type {
   SubjectCarts,
   SubjectStore,
   TaxCertificateStore,
+  UcpLinks,
   UcpStore,
   UsageStore,
   WebhookOutbox,
@@ -439,6 +441,9 @@ export const confirmationStore = (env: Pick<Env, 'DB'>): ConfirmationStore =>
 
 /** A storefront shopper's emailed sign-in and the session it starts. */
 export const shopperAuth = (env: Pick<Env, 'DB'>): ShopperAuth => d1ShopperAuth(env.DB);
+
+/** A shopper's links to UCP platforms: authorization codes, links and their tokens. */
+export const ucpLinks = (env: Pick<Env, 'DB'>): UcpLinks => d1UcpLinks(env.DB);
 
 /** Agentic checkout's idempotency keys and platform profiles. */
 export const ucpStore = (env: Pick<Env, 'DB'>): UcpStore => d1UcpStore(env.DB);
