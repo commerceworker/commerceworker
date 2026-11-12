@@ -19,6 +19,8 @@ const shopperLinkPreview = vi.fn();
 const shopper = vi.fn();
 const shopperSignOut = vi.fn();
 const shopperOrders = vi.fn();
+const shopperLinks = vi.fn(async () => ({ email: 'pat@example.com', links: [] }));
+const shopperUnlink = vi.fn();
 
 vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
 vi.mock('virtual:react-router/server-build', () => ({}));
@@ -32,6 +34,8 @@ vi.mock('~/lib/env.server', () => ({
     shopper,
     shopperSignOut,
     shopperOrders,
+    shopperLinks,
+    shopperUnlink,
   }),
 }));
 
@@ -547,8 +551,9 @@ describe('asking for a code', () => {
     expect(a!.headers.get('location')).toBe('/account/code?email=has-orders%40example.com');
     expect(b!.status).toBe(a!.status);
     expect(b!.headers.get('cache-control')).toBe(a!.headers.get('cache-control'));
+    // The two run together, so either may have reached the engine first.
     const [email, actor] = startShopperSignIn.mock.calls[0]!;
-    expect(email).toBe('has-orders@example.com');
+    expect(['has-orders@example.com', 'never-ordered@example.com']).toContain(email);
     expect(
       await verifyGuestActor([env.STOREFRONT_KEY as string], actor, SHOPPER_CALL),
     ).not.toBeNull();

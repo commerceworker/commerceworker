@@ -988,6 +988,7 @@ describe('data subjects', () => {
       quotes: [],
       shopperSignIns: [],
       shopperSessions: [],
+      ucpLinks: [],
       truncated: false,
       teamMember: false,
     });
@@ -1012,6 +1013,7 @@ describe('data subjects', () => {
       quotes: 0,
       shopperSignIns: 0,
       shopperSessions: 0,
+      ucpLinks: 0,
       teamMember: false,
     });
     await expectResponse(
@@ -1219,10 +1221,14 @@ describe('agentic checkout', () => {
       await call('POST', 'ucp/platforms', {
         name: 'Shopper',
         profileUrl: 'https://shopper.example/.well-known/ucp',
+        redirectUris: ['https://shopper.example/callback'],
       }),
       201,
       ucpPlatformKeySchema,
     );
+    expect((made.platform as { redirectUris: string[] }).redirectUris).toEqual([
+      'https://shopper.example/callback',
+    ]);
     await stores.workspace.setSetting(
       'ucp',
       JSON.stringify({

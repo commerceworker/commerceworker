@@ -40,4 +40,5 @@ export * from './shoppers';
 export * from './subjects';
 export * from './tax-certificates';
 export * from './ucp';
+export * from './ucp-links';
 export * from './workspace';

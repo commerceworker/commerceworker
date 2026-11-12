@@ -43,8 +43,11 @@ export default defineConfig({
               OWN_HOSTS: 'localhost',
               AI_GATEWAY_ID: '',
               PRINCIPAL_KEY: DEV_PRINCIPAL_KEY,
-              ...(e2e ? { AI_MODE: 'mock' } : {}),
+              ...(e2e ? { AI_MODE: 'mock', EMAIL_FROM: 'shop@e2e.test' } : {}),
             },
+            // The device tests' engine can send mail (miniflare takes it and sends nothing): shoppers can
+            // sign in, which identity linking is on only where they can.
+            ...(e2e ? { send_email: [{ name: 'EMAIL' }] } : {}),
           }),
           devOnly: true,
         },

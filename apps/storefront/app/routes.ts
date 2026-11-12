@@ -21,10 +21,15 @@ export default [
   // outside any app shell, with no password (lib/shopper.server.ts).
   route('account', 'routes/account.tsx'),
   route('account/addresses', 'routes/account-addresses.tsx'),
+  // The UCP platforms the shopper linked, each unlinked with a button (identity linking).
+  route('account/apps', 'routes/account-apps.tsx'),
   route('account/orders/:id', 'routes/account-order.tsx'),
   route('account/sign-in', 'routes/account-sign-in.tsx'),
   route('account/code', 'routes/account-code.tsx'),
   route('account/confirm/:token', 'routes/account-confirm.tsx'),
+  // UCP identity linking: the consent page a platform sends a signed-in shopper to
+  // (lib/ucp-link.server.ts; its token and metadata endpoints are the Worker's own, ahead of this router).
+  route('identity/authorize', 'routes/identity-authorize.tsx'),
   // An order's receipt for its buyer: the link a confirmation email carries, and what UCP's
   // default `orderPermalink` points at. Its credential is a bearer secret (routes/order-receipt.tsx).
   route('orders/:orderId', 'routes/order-receipt.tsx'),

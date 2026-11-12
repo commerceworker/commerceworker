@@ -14,6 +14,7 @@
  */
 
 import {
+  LINK_USER_TOKEN_HEADER,
   type PlatformCaller,
   UCP_CATALOG_TOOLS,
   type UcpCatalogOp,
@@ -139,7 +140,8 @@ const TOOLS = [
   },
   {
     name: 'get_order',
-    description: 'Get an order this platform placed.',
+    description:
+      'Get an order this platform placed, or, with a linked shopper’s access token (Authorization: Bearer), one that shopper placed.',
     inputSchema: {
       type: 'object',
       properties: { meta, id: { type: 'string', description: 'The order id.' } },
@@ -265,13 +267,18 @@ export async function handleUcpMcp(
     case 'tools/list':
       return reply(rpc.id, { result: { tools: TOOLS } });
     case 'tools/call':
-      return callTool(env, caller, rpc);
+      return callTool(env, caller, rpc, request.headers.get(LINK_USER_TOKEN_HEADER));
     default:
       return rpcError(rpc.id, -32601, 'Method not found');
   }
 }
 
-async function callTool(env: Env, caller: PlatformCaller, rpc: Rpc): Promise<Response> {
+async function callTool(
+  env: Env,
+  caller: PlatformCaller,
+  rpc: Rpc,
+  userToken: string | null,
+): Promise<Response> {
   const params = (rpc.params ?? {}) as { name?: unknown; arguments?: unknown };
   const args = (params.arguments ?? {}) as {
     meta?: { 'ucp-agent'?: { profile?: unknown }; 'idempotency-key'?: unknown };
@@ -354,6 +361,6 @@ async function callTool(env: Env, caller: PlatformCaller, rpc: Rpc): Promise<Res
     case 'cancel_checkout':
       return toolReply(rpc.id, await write(() => cancelCheckout(env, ctx, target), true));
     default:
-      return toolReply(rpc.id, await getOrder(env, ctx, target));
+      return toolReply(rpc.id, await getOrder(env, ctx, target, userToken));
   }
 }

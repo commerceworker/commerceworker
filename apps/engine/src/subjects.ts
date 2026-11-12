@@ -6,7 +6,14 @@
  * `eraseOrders`.
  */
 import * as uc from '@commerceworker/application/commerce';
-import { objectStore, orderRuntime, shopperAuth, subjectCarts, subjectStore } from './wire';
+import {
+  objectStore,
+  orderRuntime,
+  shopperAuth,
+  subjectCarts,
+  subjectStore,
+  ucpLinks,
+} from './wire';
 
 const ports = (env: Env): uc.SubjectPorts => ({
   subjects: subjectStore(env),
@@ -14,6 +21,7 @@ const ports = (env: Env): uc.SubjectPorts => ({
   orders: orderRuntime(env),
   carts: subjectCarts(env),
   shoppers: shopperAuth(env),
+  links: ucpLinks(env),
 });
 
 export const exportDataSubject = (env: Env, raw: string) =>

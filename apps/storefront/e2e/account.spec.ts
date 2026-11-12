@@ -7,17 +7,17 @@ import { CODE, codeSeed, linkSeed } from './shopper-seed';
  * `/account/confirm/<token>`, `/account`) fit the screen, every control is 44px and every field 16px,
  * nothing is cached or sent in a Referer, and a code and a link each sign in once, with the cookie
  * an HttpOnly one the page can't read. The sign-ins are written by `e2e/shopper-seed.ts`, one pair per
- * device project, since each works once. The device tests' engine has no Email Sending, so asking for
- * a code is tested to say so.
+ * device project, since each works once. The device tests' engine can send mail (identity linking is
+ * on only where shoppers can sign in), so asking for a code goes on to the code page.
  */
 
 test.beforeEach(async ({ context }, info) => {
   await context.setExtraHTTPHeaders(clientHeaders(info.project.name));
 });
 
-test('asking for a code: a form that fits, is private, and says when mail can’t be sent', async ({
+test('asking for a code: a form that fits, is private, and goes on to the code page', async ({
   page,
-}) => {
+}, info) => {
   const res = (await page.goto('/account/sign-in'))!;
   expect(res.status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Sign in', level: 1 })).toBeVisible();
@@ -30,15 +30,18 @@ test('asking for a code: a form that fits, is private, and says when mail can’
   // Guest checkout stays on, and the page says so.
   await expect(page.getByText(/as a guest works without an account/)).toBeVisible();
 
-  // The device tests' engine can't send mail: the answer says so, keeps what was typed, and sets no cookie.
-  await page.getByLabel('Email').fill('Pat@Example.com');
-  const [answer] = await Promise.all([
-    page.waitForResponse((r) => r.request().method() === 'POST'),
+  // The device tests' engine can send mail (the local binding takes it and sends nothing): asking
+  // for a code goes on to the code page for the address given, lower-cased, with no cookie set.
+  // (Where a deployment can't send, the form says so: tests/shopper-account.test.ts.)
+  // An address of its own per project: the engine sends an address one code a minute, and the
+  // projects run together.
+  const address = `Pat-${info.project.name}@Example.com`;
+  await page.getByLabel('Email').fill(address);
+  await Promise.all([
+    page.waitForURL(`**/account/code?email=${encodeURIComponent(address.toLowerCase())}`),
     page.getByRole('button', { name: 'Send code' }).click(),
   ]);
-  expect(answer.status()).toBe(503);
-  await expect(page.getByText('Signing in isn’t available here.')).toBeVisible();
-  await expect(page.getByLabel('Email')).toHaveValue(/^pat@example\.com$/i);
+  await expect(page.getByRole('heading', { name: 'Check your email', level: 1 })).toBeVisible();
   expect(await page.context().cookies()).toEqual([]);
   await fits(page);
 });

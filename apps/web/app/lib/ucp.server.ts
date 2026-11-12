@@ -28,6 +28,7 @@ export async function addPlatform(input: z.infer<typeof platformInput>, by: stri
     id: newId('ucp'),
     name: input.name,
     profileUrl: input.profileUrl,
+    redirectUris: input.redirectUris,
     keyPrefix: key.slice(0, UCP_PLATFORM_KEY_PREFIX.length + 4),
     createdAt: Date.now(),
     createdBy: by,

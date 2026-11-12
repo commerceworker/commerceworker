@@ -1406,6 +1406,8 @@ export const ucpPlatforms = sqliteTable(
     keyPrefix: text('key_prefix').notNull(),
     /** SHA-256 of the platform's API key. */
     keyHash: text('key_hash').notNull(),
+    /** The exact return addresses identity linking may send a shopper to (a JSON array of strings). */
+    redirectUris: text('redirect_uris'),
     /** The profile as last fetched (JSON), and when. */
     profile: text('profile'),
     profileFetchedAt: integer('profile_fetched_at'),
@@ -1415,6 +1417,70 @@ export const ucpPlatforms = sqliteTable(
     revokedAt: integer('revoked_at'),
   },
   (t) => [uniqueIndex('ucp_platforms_key').on(t.keyHash)],
+);
+
+/**
+ * A shopper's link to a UCP platform (identity linking): the family of tokens a consent started.
+ * Ending it (`revoked_at`) ends them all; `expires_at` is absolute. One live link per address and platform.
+ */
+export const ucpLinkGrants = sqliteTable(
+  'ucp_link_grants',
+  {
+    id: text('id').primaryKey(),
+    platformId: text('platform_id').notNull(),
+    email: text('email').notNull(),
+    scope: text('scope').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    revokedAt: integer('revoked_at'),
+  },
+  (t) => [
+    index('ucp_link_grants_email').on(t.email, t.platformId),
+    index('ucp_link_grants_platform').on(t.platformId),
+    index('ucp_link_grants_end').on(t.expiresAt),
+  ],
+);
+
+/** A one-time authorization code, by its SHA-256, spent by one guarded update (`used_at`). */
+export const ucpLinkCodes = sqliteTable(
+  'ucp_link_codes',
+  {
+    codeHash: text('code_hash').primaryKey(),
+    grantId: text('grant_id').notNull(),
+    platformId: text('platform_id').notNull(),
+    email: text('email').notNull(),
+    scope: text('scope').notNull(),
+    redirectUri: text('redirect_uri').notNull(),
+    challenge: text('challenge').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    usedAt: integer('used_at'),
+    /** Set when the code is presented again: the link it starts (or started) must not stand. */
+    replayedAt: integer('replayed_at'),
+  },
+  (t) => [
+    index('ucp_link_codes_email').on(t.email),
+    index('ucp_link_codes_expiry').on(t.expiresAt),
+  ],
+);
+
+/**
+ * A link's access and refresh tokens, by their SHA-256. A refresh token is spent once (`used_at`)
+ * and `successor` names the one its spending issued.
+ */
+export const ucpLinkTokens = sqliteTable(
+  'ucp_link_tokens',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    grantId: text('grant_id').notNull(),
+    kind: text('kind').notNull(),
+    scope: text('scope').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    usedAt: integer('used_at'),
+    successor: text('successor'),
+  },
+  (t) => [index('ucp_link_tokens_grant').on(t.grantId)],
 );
 
 /** Checkout sessions (`CheckoutSession` in @commerceworker/core, as JSON in `data`). */

@@ -2,6 +2,7 @@ import { EMPTY_ORDER_STATE, type OrderState, subjectTarget } from '@commercework
 import {
   InMemoryShopperAuth,
   InMemorySubjectStore,
+  InMemoryUcpLinks,
   SUBJECT_FIXTURE,
 } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
@@ -17,11 +18,13 @@ const now = Date.UTC(2026, 10, 8);
 
 function ports(running = new Set<string>(['sc2_o_mail'])) {
   const shoppers = new InMemoryShopperAuth();
+  const links = new InMemoryUcpLinks();
   const deleted: string[] = [];
   const cartCalls: string[] = [];
   const p: SubjectPorts = {
     subjects: new InMemorySubjectStore(SUBJECT_FIXTURE),
     shoppers,
+    links,
     files: {
       deletePrefix: async (prefix) => {
         deleted.push(prefix);
@@ -43,7 +46,7 @@ function ports(running = new Set<string>(['sc2_o_mail'])) {
       eraseFromEvents: async (id) => cartCalls.push(`events ${id}`),
     },
   };
-  return { p, deleted, cartCalls, running, shoppers };
+  return { p, deleted, cartCalls, running, shoppers, links };
 }
 
 describe('data subject requests', () => {
@@ -216,6 +219,53 @@ describe('a shopper’s sign-in in a data subject request', () => {
       shopperSignIns: 0,
       shopperSessions: 0,
     });
+  });
+
+  it('exports and erases the platforms they linked, and ends their tokens', async () => {
+    const { p, links } = await seeded();
+    for (const [email, c] of [
+      ['ada@example.com', 'a'],
+      ['grace@example.com', 'b'],
+    ] as const)
+      await links.createGrant(
+        {
+          id: `lg_${c}`,
+          platformId: 'ucp_1',
+          email,
+          scope: 'dev.ucp.shopping.order:read',
+          createdAt: now - 1000,
+          expiresAt: now + 1e6,
+          revokedAt: null,
+        },
+        [
+          {
+            tokenHash: `t${c}`.padEnd(64, '0'),
+            grantId: `lg_${c}`,
+            kind: 'access',
+            scope: 'dev.ucp.shopping.order:read',
+            createdAt: now - 1000,
+            expiresAt: now + 1e5,
+          },
+        ],
+        now - 1000,
+      );
+    const x = await exportDataSubject(p, 'ada@example.com', now);
+    expect(x.ucpLinks).toEqual([
+      {
+        id: 'lg_a',
+        platformId: 'ucp_1',
+        email: 'ada@example.com',
+        scope: 'dev.ucp.shopping.order:read',
+        createdAt: now - 1000,
+        expiresAt: now + 1e6,
+        revokedAt: null,
+      },
+    ]);
+    expect(JSON.stringify(x)).not.toContain('ta000');
+    expect(await eraseDataSubject(p, 'ada@example.com', now)).toMatchObject({ ucpLinks: 1 });
+    expect(await links.access('ta'.padEnd(64, '0'), now)).toBeNull();
+    // Grace's link and token are untouched.
+    expect(await links.access('tb'.padEnd(64, '0'), now)).not.toBeNull();
   });
 
   it('keeps them while an order still runs, as it keeps everything', async () => {

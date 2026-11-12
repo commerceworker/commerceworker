@@ -53,6 +53,12 @@ import type {
   PendingWait,
   TimelineEntry,
 } from './types';
+import type {
+  LinkAuthorizeView,
+  LinkDecision,
+  LinkTokenResult,
+  ShopperLink,
+} from './ucp/identity-linking';
 import type { UcpPlatformRef } from './ucp/profile';
 
 export type NodeRun = {
@@ -713,6 +719,57 @@ export interface StorefrontRpc {
    * forgotten, false for anything else and for a repeat.
    */
   forgetAddress(secret: string, actor: SignedActor, id: string): Promise<boolean>;
+  /**
+   * Identity linking's authorization server (the storefront's `/identity/*`; the engine holds the
+   * codes, tokens and links). The RFC 8414 metadata for the storefront's configured origin (the
+   * issuer, which a request's `Host` never sets), or null while agentic checkout is off.
+   */
+  ucpLinkMetadata(): Promise<Record<string, unknown> | null>;
+  /**
+   * Checks an authorization request (`params`: the query a platform sent) and, for a signed-in
+   * shopper (`secret`, with an actor signed for `shopper`), describes the consent to show. Writes
+   * nothing, so a GET may call it. A bad client or return address is `refused` with no `redirect`.
+   */
+  ucpLinkAuthorize(
+    params: Record<string, string>,
+    secret: string | null,
+    actor: SignedActor,
+  ): Promise<LinkAuthorizeView>;
+  /**
+   * The shopper's answer to the consent: approving mints a one-time code and returns the platform's
+   * return address carrying it; denying returns it carrying `access_denied`. The request is
+   * checked again here, and only the signed-in shopper's own session approves.
+   */
+  ucpLinkDecide(
+    params: Record<string, string>,
+    approve: boolean,
+    secret: string | null,
+    actor: SignedActor,
+  ): Promise<LinkDecision>;
+  /**
+   * The token endpoint (RFC 6749 §3.2): `form` is the request body, `client` what the platform
+   * presented (its id and the SHA-256 of its API key, which the engine looks up). Never throws for
+   * a refusal: the answer is the RFC's JSON error.
+   */
+  ucpLinkToken(
+    form: Record<string, string>,
+    client: { id: string | null; keyHash: string | null },
+  ): Promise<LinkTokenResult>;
+  /** Revokes a token's link (RFC 7009), for the platform it was issued to; 200 whatever the token is. */
+  ucpLinkRevoke(
+    form: Record<string, string>,
+    client: { id: string | null; keyHash: string | null },
+  ): Promise<LinkTokenResult>;
+  /**
+   * The signed-in shopper's address and the platforms they have linked, newest first; null with no
+   * session (unknown, ended, expired, or `secret` a stored hash).
+   */
+  shopperLinks(
+    secret: string,
+    actor: SignedActor,
+  ): Promise<{ email: string; links: ShopperLink[] } | null>;
+  /** Ends one of the shopper's own links, and with it every token of it. False for one that isn't theirs. */
+  shopperUnlink(secret: string, linkId: string, actor: SignedActor): Promise<boolean>;
   /** Finds products to add to the cart by SKU or name, as `EngineRpc.searchCartProducts` does. */
   searchCartProducts(
     cartId: string,

@@ -986,6 +986,50 @@ describe('agentic checkout over REST', () => {
     expect(audit).toHaveBeenCalledTimes(1);
   });
 
+  it('takes only exact https return addresses with a platform, and records them', async () => {
+    const platform = {
+      id: 'ucp_1',
+      name: 'Agent',
+      profileUrl: 'https://agent.example/p',
+      redirectUris: ['https://agent.example/cb'],
+    };
+    ucp.addPlatform.mockResolvedValueOnce({ platform, key: 'cmw_ucp_x' });
+    const ok = await post(
+      'ucp/platforms',
+      {
+        name: 'Agent',
+        profileUrl: 'https://agent.example/p',
+        redirectUris: ['https://agent.example/cb'],
+      },
+      admin,
+    );
+    expect(ok.status).toBe(201);
+    expect(ucp.addPlatform.mock.calls[0]![0]).toMatchObject({
+      redirectUris: ['https://agent.example/cb'],
+    });
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'ucp.platform_added', {
+      actor: admin,
+      target: 'Agent',
+      detail: expect.objectContaining({ redirectUris: ['https://agent.example/cb'] }),
+    });
+    for (const bad of [
+      ['http://agent.example/cb'],
+      ['https://agent.example/cb#x'],
+      ['https://u:p@agent.example/cb'],
+      ['agent://cb'],
+      ['https://agent.example/cb', 'https://agent.example/cb'],
+      Array.from({ length: 11 }, (_, i) => `https://agent.example/cb${i}`),
+    ]) {
+      const res = await post(
+        'ucp/platforms',
+        { name: 'Agent', profileUrl: 'https://agent.example/p', redirectUris: bad },
+        admin,
+      );
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(ucp.addPlatform).toHaveBeenCalledTimes(1);
+  });
+
   it('revokes a platform and names it in the audit log; 404 when it is unknown or already revoked', async () => {
     const revoke = () =>
       handleApi(

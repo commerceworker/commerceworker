@@ -43,6 +43,7 @@ import { d1PricingStore } from '../src/pricing-store';
 import { d1PurchaseOrderStore } from '../src/purchase-order-store';
 import { d1QuoteStore } from '../src/quote-store';
 import { d1ShippingStore } from '../src/shipping-store';
+import { d1UcpLinks } from '../src/ucp-links';
 import committed from './query-counts.json';
 import { seedFulfillment, seedInventory, seedMarketplace, seedPricing } from './seeds';
 
@@ -95,6 +96,7 @@ function stores(d1: D1Database) {
     budgets: d1BudgetStore(d1),
     purchaseOrders: d1PurchaseOrderStore(d1),
     quotes: d1QuoteStore(d1),
+    links: d1UcpLinks(d1),
   };
 }
 
@@ -240,6 +242,38 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
   ['commerce.invoice: paid so far', () => ports.ledger.forOrder(id('invoice'))],
   ['ucp: order shipments', () => ports.shipping.booked(id('invoice'))],
   ['ucp: load a checkout', () => ports.checkouts.load('qc_platform', id('checkout'))],
+  ['ucp identity: read an access token', () => ports.links.access(id('access'), now)],
+  ['ucp identity: redeem a code', () => ports.links.spendCode(id('code'), now)],
+  [
+    'ucp identity: rotate a refresh token',
+    () =>
+      ports.links.rotate(
+        id('refresh'),
+        [
+          {
+            tokenHash: id('next-a'),
+            grantId: id('grant'),
+            kind: 'access',
+            scope: 's',
+            createdAt: now,
+            expiresAt: now + 1,
+          },
+          {
+            tokenHash: id('next-r'),
+            grantId: id('grant'),
+            kind: 'refresh',
+            scope: 's',
+            createdAt: now,
+            expiresAt: now + 1,
+          },
+        ],
+        now,
+      ),
+  ],
+  [
+    'ucp identity: a shopper’s linked platforms',
+    () => ports.links.forShopper('qc@example.test', now),
+  ],
   ['carts: find a cart', () => ports.carts.find(id('cart'))],
   ['orders: list an order’s approvals', () => ports.orders.approvals(id('invoice'))],
   ['assistant: needs attention', () => ports.orderQueries.attention(now, 6)],

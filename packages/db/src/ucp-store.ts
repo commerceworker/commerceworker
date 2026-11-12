@@ -14,11 +14,24 @@ const view = {
   name: ucpPlatforms.name,
   profileUrl: ucpPlatforms.profileUrl,
   keyPrefix: ucpPlatforms.keyPrefix,
+  redirectUris: ucpPlatforms.redirectUris,
   createdAt: ucpPlatforms.createdAt,
   createdBy: ucpPlatforms.createdBy,
   lastUsedAt: ucpPlatforms.lastUsedAt,
   revokedAt: ucpPlatforms.revokedAt,
 };
+
+/** A platform row as the port gives it: its registered return addresses as an array. */
+function platformOf<R extends { redirectUris: string | null }>(
+  row: R,
+): Omit<R, 'redirectUris'> & { redirectUris: string[] } {
+  let uris: string[] = [];
+  try {
+    const parsed: unknown = row.redirectUris ? JSON.parse(row.redirectUris) : [];
+    if (Array.isArray(parsed)) uris = parsed.filter((u): u is string => typeof u === 'string');
+  } catch {}
+  return { ...row, redirectUris: uris };
+}
 
 export function d1UcpStore(d1: D1Database): UcpStore {
   const d = createDb(d1);
@@ -57,10 +70,19 @@ export function d1UcpStore(d1: D1Database): UcpStore {
       await d.delete(ucpIdempotency).where(keyed(ownerId, key));
     },
 
-    platforms: (limit) =>
-      d.select(view).from(ucpPlatforms).orderBy(desc(ucpPlatforms.createdAt)).limit(limit),
+    async platforms(limit) {
+      const rows = await d
+        .select(view)
+        .from(ucpPlatforms)
+        .orderBy(desc(ucpPlatforms.createdAt))
+        .limit(limit);
+      return rows.map(platformOf);
+    },
     async addPlatform(p) {
-      await d.insert(ucpPlatforms).values(p);
+      await d.insert(ucpPlatforms).values({
+        ...p,
+        redirectUris: p.redirectUris.length ? JSON.stringify(p.redirectUris) : null,
+      });
     },
     async revokePlatform(id, at) {
       const [gone] = await d
@@ -68,14 +90,24 @@ export function d1UcpStore(d1: D1Database): UcpStore {
         .set({ revokedAt: at })
         .where(and(eq(ucpPlatforms.id, id), isNull(ucpPlatforms.revokedAt)))
         .returning(view);
-      return gone;
+      return gone && platformOf(gone);
     },
-    livePlatform: (keyHash) =>
-      d
+    async livePlatform(keyHash) {
+      const row = await d
         .select(view)
         .from(ucpPlatforms)
         .where(and(eq(ucpPlatforms.keyHash, keyHash), isNull(ucpPlatforms.revokedAt)))
-        .get(),
+        .get();
+      return row && platformOf(row);
+    },
+    async livePlatformById(id) {
+      const row = await d
+        .select(view)
+        .from(ucpPlatforms)
+        .where(and(eq(ucpPlatforms.id, id), isNull(ucpPlatforms.revokedAt)))
+        .get();
+      return row && platformOf(row);
+    },
     async touchPlatform(id, at) {
       await d.update(ucpPlatforms).set({ lastUsedAt: at }).where(eq(ucpPlatforms.id, id));
     },

@@ -21,6 +21,13 @@ candidate finding that still needs a concrete attacker before it is reported.
   `orderReceipt`, a bearer-token read: check it keeps the hashed, expiring, constant-time token,
   the buyer-safe view only, `no-store` / `no-referrer` / `noindex`, and that mail is triggered by
   the reserved `hosted:` key, not by `meta`.
+- UCP identity linking (`apps/engine/src/ucp/identity-link.ts`, `packages/application/src/commerce/ucp-links.ts`,
+  `apps/storefront/app/lib/ucp-link.server.ts`, `routes/identity-authorize.tsx`): is it still separate from staff
+  OAuth (own issuer, tables, tokens)? Is the client the registered platform (key hash looked up in the engine, the
+  `client_id` compared), the return address an exact string registered on the platform, PKCE `S256` required, the code spent once by a
+  guarded update, a replayed code or reused or foreign refresh token ending the link, scope only narrowed, and
+  `linkedShopper` binding a token to its platform and scope? Does a new `ucp_link_*` column reach export, erasure
+  and the sweep, and is any rate-limit key the public `client_id` (it must not be)? does a new route that takes the user token check the platform's envelope first?
 - A shopper's sign-in (`apps/engine/src/shopper.ts`, `packages/application/src/commerce/shopper.ts`): does
   every method still take the guest actor signed for `shopper` (and refuse anything else) *and* a secret the
   engine hashes, so a stored hash presented as a secret finds nothing? Is the code still stored only as the

@@ -11,8 +11,9 @@ async function seed(f: UcpFixture) {
   const db = createDb(DB);
   await db.delete(ucpIdempotency).where(like(ucpIdempotency.ownerId, 'ucs_%'));
   await db.delete(ucpPlatforms).where(like(ucpPlatforms.id, 'ucs_%'));
-  for (const p of f.platforms ?? [])
+  for (const { redirectUris, ...p } of f.platforms ?? [])
     await db.insert(ucpPlatforms).values({
+      redirectUris: redirectUris?.length ? JSON.stringify(redirectUris) : null,
       name: p.id,
       profileUrl: `https://${p.id}.example/.well-known/ucp`,
       keyPrefix: p.id,

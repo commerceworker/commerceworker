@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { egressProblem } from '../egress';
 import { UCP_VERSION } from './errors';
+import { IDENTITY_LINKING_CAPABILITY, identityLinkingConfig } from './identity-linking';
 import { isInnerList, parseDictionary } from './structured';
 
 export const UCP_PROFILE_PATH = '/.well-known/ucp';
@@ -111,6 +112,9 @@ export const ucpPlatformSchema = z.object({
   name: z.string(),
   profileUrl: z.string().describe('The UCP profile the platform must name in `UCP-Agent`'),
   keyPrefix: z.string().describe('The key’s first characters, to tell keys apart'),
+  redirectUris: z
+    .array(z.string())
+    .describe('The exact return addresses identity linking may send a shopper back to'),
   createdAt: z.number().int(),
   createdBy: z.string().nullable(),
   lastUsedAt: z.number().int().nullable(),
@@ -282,6 +286,11 @@ export const UCP_CAPABILITIES = {
     spec: `${SPEC}/specification/shopping/catalog/lookup`,
     schema: `${SPEC}/schemas/shopping/catalog_lookup.json`,
   },
+  // Not listed in every business profile: only where a shopper can sign in (`businessProfile`).
+  [IDENTITY_LINKING_CAPABILITY]: {
+    spec: `${SPEC}/specification/identity-linking`,
+    schema: `${SPEC}/schemas/common/identity_linking.json`,
+  },
 } as const;
 export type UcpCapability = keyof typeof UCP_CAPABILITIES;
 
@@ -314,6 +323,8 @@ export function businessProfile(
   origin: string,
   handlers: UcpPaymentHandler[],
   keys: UcpPublicKey[],
+  /** Whether shoppers can link their identity here: it lists the capability, with its scopes. */
+  identityLinking = false,
 ) {
   const service = (transport: 'rest' | 'mcp', path: string, schema: string) => ({
     version: UCP_VERSION,
@@ -334,10 +345,20 @@ export function businessProfile(
         ],
       },
       capabilities: Object.fromEntries(
-        Object.entries(UCP_CAPABILITIES).map(([name, c]) => [
-          name,
-          [{ version: UCP_VERSION, ...c }],
-        ]),
+        Object.entries(UCP_CAPABILITIES)
+          .filter(([name]) => identityLinking || name !== IDENTITY_LINKING_CAPABILITY)
+          .map(([name, c]) => [
+            name,
+            [
+              {
+                version: UCP_VERSION,
+                ...c,
+                ...(name === IDENTITY_LINKING_CAPABILITY
+                  ? { config: identityLinkingConfig() }
+                  : {}),
+              },
+            ],
+          ]),
       ),
       payment_handlers: Object.fromEntries(byName),
     },

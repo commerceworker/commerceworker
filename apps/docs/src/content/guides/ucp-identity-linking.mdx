@@ -1,0 +1,95 @@
+---
+title: Linking a shopper to an AI platform
+description: Let a shopper link their account to an AI shopping platform, so the platform can act for them, starting with reading their orders. How a platform links, what the shopper sees and what is stored.
+---
+
+An [agentic checkout](/reference/ucp/) platform can ask a shopper to **link** their identity: the shopper signs in
+on your storefront, sees who is asking and what it would be able to do, and allows or cancels. If they allow it,
+the platform can act for that shopper within the scope they allowed. Today that is one scope,
+`dev.ucp.shopping.order:read`: the platform can read the orders placed under the shopper's email address.
+
+This is UCP's `dev.ucp.common.identity_linking` capability. Your business profile at `/.well-known/ucp` lists it,
+with the scopes on offer, once agentic checkout is on and shoppers can sign in (your workspace sends email; see
+[Customer accounts](/guides/customer-accounts/)).
+
+## For a shopper
+
+A platform sends them to your storefront. If they aren't signed in they sign in first, then come back to the
+request. The page names the platform, the address they are signed in as, what it would be able to do and where they will
+return to. **Allow**
+sends them back to the platform linked; **Cancel** tells the platform they said no. A linked platform appears on
+their account page (**Linked apps**), with a button that unlinks it and ends everything it holds at once.
+
+A shopper has one link per platform: linking again replaces the old one. A link lasts at most 180 days, however
+often the platform renews it.
+
+## For a platform
+
+Your platform is the OAuth client. Its client id is the id the workspace gave it when it was let in, and it
+authenticates with the API key it already holds. A platform you [revoke](/reference/ucp/) can no longer link
+anyone, renew a link or use one.
+
+An admin registers the platform's **return addresses** when letting it in
+([Letting in a platform](/reference/ucp/#letting-in-a-platform)). A platform with none can't link a shopper.
+
+| | |
+|---|---|
+| Discovery | `GET /.well-known/oauth-authorization-server` on the storefront host (RFC 8414). Its `issuer` is the storefront origin |
+| Authorization | `GET /identity/authorize`: code flow with PKCE (`code_challenge_method=S256`, required), `scope=dev.ucp.shopping.order:read`, a `redirect_uri` that is **exactly one of the registered addresses** and optionally `state` and `resource` (the storefront's `/ucp` URL) |
+| Token | `POST /identity/token`, a form, authenticated with the client id and API key by HTTP Basic or `client_id` and `client_secret` in the form |
+| Revocation | `POST /identity/revoke` (RFC 7009), authenticated the same way |
+
+The redirect carries `code`, your `state` and `iss` (RFC 9207), so a platform linking to many businesses can check
+which one answered. **The return address is matched as the exact string the workspace registered**: the same address with another
+path, query, port or case is refused, as is any address that isn't https or has a fragment. Errors that can't be
+trusted to go anywhere (an unknown platform, an address that isn't registered) are shown to the shopper instead
+of redirected; every error that is redirected goes only to a registered address.
+
+Exchange the code within a minute (it works once) with its `code_verifier` and the same `redirect_uri`:
+
+```http
+POST /identity/token
+Authorization: Basic base64(client_id:api_key)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=cmw_ucpc_…&redirect_uri=https://…&code_verifier=…
+```
+
+```json
+{
+  "access_token": "cmw_ucpa_…",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "refresh_token": "cmw_ucpr_…",
+  "scope": "dev.ucp.shopping.order:read"
+}
+```
+
+Access tokens last 15 minutes. Renew with `grant_type=refresh_token`: **each refresh token works once** and the answer
+carries the next pair. A refresh may ask for a narrower `scope`, never a wider one (`invalid_scope`).
+
+:::caution
+A refresh token used twice, or a code used twice, ends the whole link: whoever holds the newest tokens loses them,
+and the shopper has to link again. Store the new refresh token before you use the new access token, and don't
+retry a refresh whose answer you didn't receive until you've checked what you hold.
+:::
+
+### Reading orders
+
+Call `GET /ucp/v1/orders/:id` (or the `get_order` MCP tool) as always, with your `X-API-Key`, and add the shopper's
+access token as `Authorization: Bearer cmw_ucpa_…`. You get the order if it was placed through a checkout under
+that shopper's email address, whichever platform ran the checkout. Anything else is `not_found`. Without the
+token you still read only the orders your platform placed.
+
+A token that is expired, revoked, issued to another platform or without the scope is `401` with
+`WWW-Authenticate: Bearer error="invalid_token"`: refresh it. Your platform must list `dev.ucp.common.identity_linking` in
+its own profile to use a token.
+
+## What is stored, and what a privacy request does
+
+The authorization server is on only while agentic checkout is on and shoppers can sign in (your workspace sends
+email). Codes and tokens are stored only as SHA-256 hashes; a copy of the database holds nothing to present. Each
+token belongs to the one platform it was issued to. An export of a shopper's data
+([Privacy requests](/guides/team-and-roles/#privacy-requests)) lists the platforms they linked, with the scope and dates and
+never a token. An erasure deletes the links, their tokens and their codes. Ended and expired links are deleted a
+month after they end, and a live link's expired access tokens and old spent refresh tokens are swept daily.

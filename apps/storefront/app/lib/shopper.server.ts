@@ -9,6 +9,7 @@
  */
 
 import {
+  LINK_PATHS,
   SHOPPER_CALL,
   SHOPPER_GUEST_ID,
   SHOPPER_SECRET,
@@ -20,6 +21,24 @@ import { engine } from './env.server';
 import { signedActor, signingKey } from './principal.server';
 import { overBudget, RATE_WINDOW_S } from './rate-limit';
 import { withTurnstilePolicy } from './turnstile.server';
+
+/**
+ * Where signing in may send a shopper on to: only a linking request on this host (the consent page
+ * a platform sent them to, `/identity/authorize?…`), as a path and query, never another address. It
+ * rides the sign-in's two forms as `next`, so a shopper who had to sign in lands back on the consent.
+ */
+export function safeNext(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > 2000 || !raw.startsWith(`${LINK_PATHS.authorize}?`))
+    return null;
+  try {
+    const u = new URL(raw, 'https://shop.invalid');
+    return u.origin === 'https://shop.invalid' && u.pathname === LINK_PATHS.authorize
+      ? `${u.pathname}${u.search}`
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The cookie `name` carries on `request`, if any. */
 function cookie(request: Request, name: string): string | undefined {
@@ -172,7 +191,7 @@ export const clientKey = (request: Request) => request.headers.get('cf-connectin
  */
 export async function signInBudget(
   request: Request,
-  what: 'start' | 'code' | 'link',
+  what: 'start' | 'code' | 'link' | 'authorize',
   who?: string,
 ) {
   const limited =
