@@ -166,6 +166,11 @@ export type CheckoutSession = {
    * failed to settle it). Never shown to a buyer.
    */
   payment?: { attempts: number; token?: string; intentId?: string; sweeps?: number };
+  /**
+   * The origin a UCP platform completed it on, kept so the sweep can place the order the request
+   * would have (`meta.ucp`) when the Worker died after the hold. Unset for a hosted checkout.
+   */
+  completedOn?: string;
   /** The order completing it started. */
   orderId: string | null;
   createdAt: number;

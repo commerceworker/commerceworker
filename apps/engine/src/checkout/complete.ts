@@ -41,8 +41,8 @@ export type CompleteOptions = {
    * it is not priced or claimed again, and the payment goes on from where it stopped.
    */
   resume?: boolean;
-  /** Written with the claim: a hosted card payment's token and attempt count. */
-  claim?: Pick<CheckoutSession, 'payment'>;
+  /** Written with the claim: a hosted card payment's token and attempt count, a platform's origin. */
+  claim?: Partial<Pick<CheckoutSession, 'payment' | 'completedOn'>>;
 };
 
 const shown = (session: CheckoutSession): Completed => ({ kind: 'session', session });
@@ -121,7 +121,15 @@ export async function completeSession(
     const next = bump(claimed, { ...retryable(auth.code, auth.content), ...unpaid(claimed) });
     return (await save(env, next, claimed.version)) ? shown(next) : raced;
   }
-  return placeOrder(env, caller, flow, claimed, auth.payment);
+  // The hold is recorded before the order is started, so a crash between the two leaves the sweep
+  // something to find (and release, or place the order on): a hold nothing names is held for days.
+  let held = claimed;
+  const intentId = auth.payment?.intentId;
+  if (intentId && claimed.payment?.intentId !== intentId) {
+    held = bump(claimed, { payment: { attempts: 0, ...claimed.payment, intentId } });
+    if (!(await save(env, held, claimed.version))) return raced;
+  }
+  return placeOrder(env, caller, flow, held, auth.payment);
 }
 
 /**

@@ -87,6 +87,26 @@ describe('applying promotion codes to an order', () => {
     expect(other.order?.subtotal).toBe(45);
   });
 
+  it('gives a customer’s once-only code to one of two orders racing for it', async () => {
+    const pricing = storeWith(promo({ id: 'p_once', code: 'ONCE', perCustomerLimit: 1 }));
+    // Both read no redemptions yet and pass the check: the redeem decides, and declines the loser
+    // with the per-customer reason, leaving its order undiscounted.
+    const [a, b] = await Promise.all([
+      applyPromotions({ pricing }, order(['ONCE'], 'ord_a'), opts),
+      applyPromotions({ pricing }, order(['ONCE'], 'ord_b'), opts),
+    ]);
+    expect([a.applied.length, b.applied.length].sort()).toEqual([0, 1]);
+    const lost = a.applied.length ? b : a;
+    expect(lost.refused).toEqual([
+      { code: 'ONCE', reason: 'ONCE has already been used by this customer.' },
+    ]);
+    expect(lost.order?.subtotal).toBe(45);
+    expect(await pricing.redemptionsOf('p_once', 'ord_none', 'pc_northwind')).toEqual({
+      total: 1,
+      byCustomer: 1,
+    });
+  });
+
   it('holds nothing on a dry run', async () => {
     const pricing = new InMemoryPricingStore(coded, new FixedClock());
     await applyPromotions({ pricing }, order(['PCLAST']), { ...opts, dryRun: true });

@@ -119,7 +119,8 @@ export async function applyPromotions(
         stepKey: opts.stepKey,
       }));
     if (!held) {
-      if (p.code) refused.set(p.code, `${promotionLabel(p)} has been used up.`);
+      // Lost the race for a cap: say which one, as the check would have.
+      if (p.code) refused.set(p.code, (await check(p)) ?? `${promotionLabel(p)} has been used up.`);
       continue;
     }
     lines = r.lines;

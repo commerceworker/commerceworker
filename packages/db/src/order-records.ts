@@ -7,7 +7,7 @@
  */
 import type { Clock } from '@commerceworker/ports';
 import type { ApprovalRecord, OrderRecords } from '@commerceworker/ports/commerce';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt } from 'drizzle-orm';
 import { createDb } from './index';
 import { approvals, approvalVotes, nodeRuns, orders } from './schema';
 
@@ -30,6 +30,30 @@ export function d1OrderRecords(d1: D1Database, clock: Clock): OrderRecords {
         total: 0,
         updatedAt: row.createdAt,
       });
+    },
+
+    async staleQueued(before, limit) {
+      return d
+        .select({ id: orders.id, instanceId: orders.instanceId })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.status, 'queued'),
+            isNull(orders.idempotencyKey),
+            lt(orders.createdAt, before),
+          ),
+        )
+        .orderBy(asc(orders.createdAt))
+        .limit(limit);
+    },
+
+    async failQueued(orderId, reason) {
+      const done = await d
+        .update(orders)
+        .set({ status: 'failed', reason, updatedAt: now() })
+        .where(and(eq(orders.id, orderId), eq(orders.status, 'queued')))
+        .returning({ id: orders.id });
+      return done.length > 0;
     },
 
     async exists(orderId) {

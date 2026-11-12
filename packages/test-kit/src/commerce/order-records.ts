@@ -49,6 +49,41 @@ export class InMemoryOrderRecords implements OrderRecords {
     this.rows.set(row.id, null);
   }
 
+  async staleQueued(before: number, limit: number) {
+    return [...this.created.values()]
+      .filter(
+        (o) =>
+          !o.idempotencyKey &&
+          o.createdAt < before &&
+          (this.rows.get(o.id) ?? { status: 'queued' }).status === 'queued',
+      )
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(0, limit)
+      .map((o) => ({ id: o.id, instanceId: o.instanceId }));
+  }
+
+  async failQueued(orderId: string, reason: string) {
+    const o = this.created.get(orderId);
+    if (!o || (this.rows.get(orderId) ?? { status: 'queued' }).status !== 'queued') return false;
+    this.rows.set(orderId, {
+      status: 'failed',
+      total: 0,
+      fxRate: 1,
+      customerId: o.customerId,
+      title: o.title,
+      instanceId: o.instanceId,
+      generation: 1,
+      waitingOn: null,
+      waitingAt: null,
+      waitingSince: null,
+      waitingDue: null,
+      waitingFor: null,
+      stoppedAt: null,
+      reason,
+    });
+    return true;
+  }
+
   async exists(orderId: string) {
     return this.rows.has(orderId);
   }
@@ -58,7 +93,7 @@ export class InMemoryOrderRecords implements OrderRecords {
     return o
       ? {
           id: o.id,
-          status: 'queued',
+          status: this.rows.get(o.id)?.status ?? 'queued',
           flowId: o.flowId,
           flowVersion: o.flowVersion,
           instanceId: o.instanceId,

@@ -5,9 +5,9 @@
  * contract in @commerceworker/test-kit/commerce holds this and the in-memory store to the same
  * behaviour.
  */
-import { type CheckoutSession, HOSTED_OWNER_PREFIX } from '@commerceworker/core';
+import type { CheckoutSession } from '@commerceworker/core';
 import type { CheckoutSessionStore } from '@commerceworker/ports/commerce';
-import { and, asc, eq, gt, like, lt, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
 import { createDb } from './index';
 import { checkoutSessions } from './schema';
 
@@ -82,13 +82,12 @@ export function d1CheckoutSessions(d1: D1Database): CheckoutSessionStore {
       return rows[0] ? (JSON.parse(rows[0].data) as CheckoutSession) : null;
     },
 
-    async stuckHosted(before, limit) {
+    async stuckInProgress(before, limit) {
       const rows = await d
         .select({ data: checkoutSessions.data })
         .from(checkoutSessions)
         .where(
           and(
-            like(checkoutSessions.ownerId, `${HOSTED_OWNER_PREFIX}%`),
             eq(checkoutSessions.status, 'complete_in_progress'),
             lt(checkoutSessions.updatedAt, before),
           ),

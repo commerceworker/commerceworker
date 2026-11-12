@@ -238,7 +238,7 @@ export function describePricingStoreContract(
 
     it('lets one order hold the last redemption, idempotently, until it gives it back', async () => {
       const s = await store();
-      const promotion = { id: 'pc_promo_last', maxRedemptions: 1 };
+      const promotion = { id: 'pc_promo_last', maxRedemptions: 1, perCustomerLimit: null };
       const redeem = (orderId: string, customerId?: string) =>
         s.redeem({ promotion, orderId, customerId, amount: 1, stepKey: `${orderId}:discount#0` });
 
@@ -263,6 +263,34 @@ export function describePricingStoreContract(
       expect(await s.releaseRedemptions('pc_order_1')).toBe(1);
       expect(await s.releaseRedemptions('pc_order_1')).toBe(0);
       expect(await redeem('pc_order_2', 'pc_twin_a')).toBe(true);
+    });
+
+    it('lets a customer hold a once-per-customer promotion for only one of two racing orders', async () => {
+      const s = await store();
+      const promotion = { id: 'pc_promo_once_each', maxRedemptions: null, perCustomerLimit: 1 };
+      const redeem = (orderId: string, customerId?: string) =>
+        s.redeem({ promotion, orderId, customerId, amount: 1, stepKey: `${orderId}:discount#0` });
+
+      const raced = await Promise.all([
+        redeem('pc_race_1', 'pc_northwind'),
+        redeem('pc_race_2', 'pc_northwind'),
+      ]);
+      expect(raced.filter(Boolean)).toHaveLength(1);
+      // Exactly one row is left, and a retry of the winner still holds it.
+      expect(await s.redemptionsOf('pc_promo_once_each', 'pc_none', 'pc_northwind')).toEqual({
+        total: 1,
+        byCustomer: 1,
+      });
+      const winner = raced[0] ? 'pc_race_1' : 'pc_race_2';
+      expect(await redeem(winner, 'pc_northwind')).toBe(true);
+      // Another customer, and a guest, are not held to it.
+      expect(await redeem('pc_race_3', 'pc_twin_a')).toBe(true);
+      expect(await redeem('pc_race_4')).toBe(true);
+      // Giving the winner's back lets the customer have it again.
+      await s.releaseRedemptions(winner);
+      expect(await redeem(winner === 'pc_race_1' ? 'pc_race_2' : 'pc_race_1', 'pc_northwind')).toBe(
+        true,
+      );
     });
 
     it('converts from the base currency, and knows no rate it was not given', async () => {

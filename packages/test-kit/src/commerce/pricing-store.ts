@@ -161,6 +161,15 @@ export class InMemoryPricingStore implements PricingStore {
     const max = r.promotion.maxRedemptions ?? Number.MAX_SAFE_INTEGER;
     const taken = this.redemptions.filter((h) => h.promotion.id === r.promotion.id).length;
     if (taken >= max) return false;
+    const limit = r.promotion.perCustomerLimit;
+    if (
+      limit != null &&
+      r.customerId &&
+      this.redemptions.filter(
+        (h) => h.promotion.id === r.promotion.id && h.customerId === r.customerId,
+      ).length >= limit
+    )
+      return false;
     this.redemptions.push({ ...r, at: this.clock.now().getTime() });
     return true;
   }

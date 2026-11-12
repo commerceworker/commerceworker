@@ -82,16 +82,17 @@ export function describeCheckoutSessionsContract(
       expect(await s.ownerOf('csc_6')).toBe('start:a');
     });
 
-    it('finds hosted sessions whose payment began and was not finished, oldest first', async () => {
+    it('finds sessions, hosted or a platform’s, whose payment began and was not finished, oldest first', async () => {
       const s = await make();
       const claimed = { status: 'complete_in_progress' as const };
       await s.create(session('csc_7', { ownerId: 'hosted:a', ...claimed, updatedAt: 3_000 }));
       await s.create(session('csc_8', { ownerId: 'hosted:b', ...claimed, updatedAt: 2_000 }));
-      // Not stuck: written since, not claimed, never redeemed, a platform's, or finished.
+      // Not stuck: written since, not claimed, or finished.
       await s.create(session('csc_9', { ownerId: 'hosted:c', ...claimed, updatedAt: 6_000 }));
       await s.create(session('csc_10', { ownerId: 'hosted:d', updatedAt: 1_000 }));
+      // A platform's session, and one never redeemed, are claimed and abandoned like any other.
       await s.create(
-        session('csc_11', { ownerId: 'hosted-start:e', ...claimed, updatedAt: 1_000 }),
+        session('csc_11', { ownerId: 'hosted-start:e', ...claimed, updatedAt: 1_500 }),
       );
       await s.create(session('csc_12', { ownerId: 'platform_a', ...claimed, updatedAt: 1_000 }));
       await s.create(
@@ -99,9 +100,14 @@ export function describeCheckoutSessionsContract(
       );
       const mine = (rows: CheckoutSession[]) =>
         rows.filter((r) => r.id.startsWith('csc_')).map((r) => r.id);
-      expect(mine(await s.stuckHosted(5_000, 50))).toEqual(['csc_8', 'csc_7']);
-      expect(mine(await s.stuckHosted(2_500, 50))).toEqual(['csc_8']);
-      expect(mine(await s.stuckHosted(5_000, 1)).length).toBeLessThanOrEqual(1);
+      expect(mine(await s.stuckInProgress(5_000, 50))).toEqual([
+        'csc_12',
+        'csc_11',
+        'csc_8',
+        'csc_7',
+      ]);
+      expect(mine(await s.stuckInProgress(2_500, 50))).toEqual(['csc_12', 'csc_11', 'csc_8']);
+      expect(mine(await s.stuckInProgress(5_000, 1)).length).toBeLessThanOrEqual(1);
     });
 
     it('finds the session that placed an order', async () => {

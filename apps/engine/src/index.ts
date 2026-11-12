@@ -14,6 +14,7 @@ import { settleOrphanedHolds } from './checkout/hosted';
 import { receiveEmail } from './email';
 import { refreshRates } from './fx';
 import { handleMcp, MCP_PATH } from './mcp';
+import { failUnstartedOrders } from './orders';
 import { reindexProducts } from './product-index';
 import { sweep } from './retention';
 import { handleUcp } from './ucp/rest';
@@ -42,7 +43,7 @@ export { Replenish } from './replenish';
 export { StorefrontApi } from './storefront-api';
 export { OrderWorkflow } from './workflow';
 
-/** The hourly cron in wrangler.jsonc: `reindexProducts` and `settleOrphanedHolds`. */
+/** The hourly cron in wrangler.jsonc: `reindexProducts`, `settleOrphanedHolds` and `failUnstartedOrders`. */
 const REINDEX_CRON = '15 * * * *';
 
 export default {
@@ -62,11 +63,13 @@ export default {
   // rates of the currencies the deployment sells in.
   async scheduled(controller, env) {
     if (controller.cron === REINDEX_CRON) {
-      // Hourly: a hold a buyer's card payment left behind is settled within the hour, not the day.
+      // Hourly: a hold a card payment left behind is settled within the hour, not the day, and so is
+      // an order that never got its Workflow.
       const failed: string[] = [];
       for (const [name, run] of Object.entries({
         'product index': () => reindexProducts(env),
         'card holds': () => settleOrphanedHolds(env),
+        'unstarted orders': () => failUnstartedOrders(env),
       })) {
         try {
           await run();

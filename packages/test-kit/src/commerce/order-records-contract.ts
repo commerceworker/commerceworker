@@ -3,7 +3,7 @@
  * in workerd (packages/db). Order ids start `oc_`, which the D1 runner clears and seeds.
  */
 import type { OrderIndexRow } from '@commerceworker/core';
-import type { NodeRunRecord, OrderRecords } from '@commerceworker/ports/commerce';
+import type { NewOrderRow, NodeRunRecord, OrderRecords } from '@commerceworker/ports/commerce';
 import { describe, expect, it } from 'vitest';
 import type { OrderRecordsFixture } from './order-records';
 
@@ -108,6 +108,57 @@ export function describeOrderRecordsContract(
       });
       await expect(r.create({ ...start, id: 'oc_new2' })).rejects.toThrow();
       expect(await r.byIdempotencyKey('oc_none')).toBeUndefined();
+    });
+
+    it('fails an order whose start never got a Workflow, once, and only without a key', async () => {
+      const r = await fresh();
+      const start = (id: string, over: Partial<NewOrderRow> = {}) =>
+        r.create({
+          id,
+          model: 'b2b',
+          channel: 'api',
+          externalId: null,
+          contactEmail: null,
+          title: 'Stale',
+          flowId: 'flow_1',
+          flowVersion: 1,
+          instanceId: `${id}-g1`,
+          customerId: null,
+          currency: 'USD',
+          createdAt: 1_000,
+          idempotencyKey: null,
+          idempotencyFingerprint: null,
+          startedBy: null,
+          ...over,
+        });
+      await start('oc_stale_old');
+      await start('oc_stale_new', { createdAt: 9_000 });
+      await start('oc_stale_keyed', {
+        idempotencyKey: 'oc-stale-key',
+        idempotencyFingerprint: 'f',
+      });
+      const ids = async (before: number) =>
+        (await r.staleQueued(before, 50))
+          .filter((o) => o.id.startsWith('oc_stale_'))
+          .map((o) => o.id);
+
+      // Older than the cutoff, queued and unkeyed: not the newer one, not the keyed one.
+      expect(await ids(5_000)).toEqual(['oc_stale_old']);
+      expect(await r.staleQueued(5_000, 50)).toContainEqual({
+        id: 'oc_stale_old',
+        instanceId: 'oc_stale_old-g1',
+      });
+      expect(await r.failQueued('oc_stale_old', 'It never started.')).toBe(true);
+      expect(await r.failQueued('oc_stale_old', 'It never started.')).toBe(false);
+      expect(await r.indexed('oc_stale_old')).toMatchObject({
+        status: 'failed',
+        reason: 'It never started.',
+      });
+      expect(await ids(5_000)).toEqual([]);
+      // An order that moved on is not failed.
+      await r.index('oc_stale_new', { ...row, status: 'running', waitingOn: null });
+      expect(await r.failQueued('oc_stale_new', 'No.')).toBe(false);
+      expect(await r.failQueued('oc_none', 'No.')).toBe(false);
     });
 
     it('records each run once', async () => {
