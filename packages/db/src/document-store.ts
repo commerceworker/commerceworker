@@ -10,12 +10,19 @@ import {
   documentKey,
   type MessageStore,
   messageId,
+  type ObjectReader,
 } from '@commerceworker/ports/commerce';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { createDb } from './index';
 import { documents, messages } from './schema';
 
-export function d1DocumentStore(d1: D1Database, bucket: R2Bucket, clock: Clock): DocumentStore {
+/** Bodies are written to `bucket`; `reader` (the bucket itself by default) is where `text` reads them. */
+export function d1DocumentStore(
+  d1: D1Database,
+  bucket: R2Bucket,
+  clock: Clock,
+  reader: ObjectReader = bucket,
+): DocumentStore {
   const d = createDb(d1);
   return {
     async put(
@@ -43,7 +50,7 @@ export function d1DocumentStore(d1: D1Database, bucket: R2Bucket, clock: Clock):
     },
 
     async text(key) {
-      return (await bucket.get(key))?.text();
+      return (await reader.get(key))?.text();
     },
 
     async list(orderId) {

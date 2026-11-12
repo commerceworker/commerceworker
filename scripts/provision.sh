@@ -229,6 +229,67 @@ jq -n --argjson audit "$audit_lock" '{rules: [
 wrangler r2 bucket lock set "$R2" --file "$locks" --force ${j[@]+"${j[@]}"}
 echo "Locked audit/ (${AUDIT_ARCHIVE_DAYS:-indefinitely}${AUDIT_ARCHIVE_DAYS:+ days}) and plugins/ (indefinitely) in $R2"
 
+# The docs replica (docs/operations.md, "Redundancy"): a second bucket for the order documents, and
+# the queue R2 announces every object create and delete on, with its dead-letter queue. The engine
+# consumes the queue and copies (a delete moves the copy to deleted/). Everything is read before it
+# is created, so a re-run changes nothing but the retention. Empty without `redundancy` (or with
+# `r2Replica` an exception).
+# docs-replica:begin
+if [ -n "${DOCS_REPLICA_R2:-}" ]; then
+  if wrangler r2 bucket info "$DOCS_REPLICA_R2" ${j[@]+"${j[@]}"} >/dev/null 2>&1; then
+    echo "R2 bucket $DOCS_REPLICA_R2 already exists"
+  else
+    wrangler r2 bucket create "$DOCS_REPLICA_R2" ${j[@]+"${j[@]}"}
+  fi
+  # A moved copy (deleted/<date>/<key>) is kept 30 days, so an erasure in the primary completes in
+  # the replica within 30 days; the dead letters the consumer keeps (dlq/) likewise. The audit
+  # archive expires as the primary's does. Replaced each run.
+  for rule in "deleted-copies deleted/ 30" "dlq dlq/ 30"; do
+    read -r rule_name rule_prefix rule_days <<<"$rule"
+    wrangler r2 bucket lifecycle remove "$DOCS_REPLICA_R2" --name "$rule_name" ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+    wrangler r2 bucket lifecycle add "$DOCS_REPLICA_R2" "$rule_name" "$rule_prefix" --expire-days "$rule_days" \
+      --force ${j[@]+"${j[@]}"}
+  done
+  wrangler r2 bucket lifecycle remove "$DOCS_REPLICA_R2" --name audit-archive ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+  if [ -n "$AUDIT_ARCHIVE_DAYS" ]; then
+    wrangler r2 bucket lifecycle add "$DOCS_REPLICA_R2" audit-archive audit/ --expire-days "$AUDIT_ARCHIVE_DAYS" \
+      --force ${j[@]+"${j[@]}"}
+    replica_audit_lock=$(jq -n --argjson d "$AUDIT_ARCHIVE_DAYS" '{type: "Age", maxAgeSeconds: ($d * 86400)}')
+  else
+    replica_audit_lock='{"type":"Indefinite"}'
+  fi
+  # The same locks as the primary's: a copy of the audit archive or a plugin bundle can't be
+  # deleted or overwritten any sooner than the original. The consumer copies these keys once and
+  # never moves them (a lock would refuse), so the lifecycle rule above expires them.
+  replica_locks=$(mktemp)
+  jq -n --argjson audit "$replica_audit_lock" '{rules: [
+    {id: "audit-archive", enabled: true, prefix: "audit/", condition: $audit},
+    {id: "plugin-bundles", enabled: true, prefix: "plugins/", condition: {type: "Indefinite"}}
+  ]}' >"$replica_locks"
+  wrangler r2 bucket lock set "$DOCS_REPLICA_R2" --file "$replica_locks" --force ${j[@]+"${j[@]}"}
+  rm -f "$replica_locks"
+
+  # The queue and its dead-letter queue: the same account-level queues as every other here, so they
+  # share a jurisdiction (a dead-letter queue must share its queue's). The engine's consumers
+  # (wrangler.jsonc) name both, so a deploy fails if either is missing. 14-day retention.
+  for q in "$DOCS_REPLICA_QUEUE" "$DOCS_REPLICA_DLQ"; do
+    if wrangler queues info "$q" >/dev/null 2>&1; then echo "Queue $q already exists"
+    else wrangler queues create "$q"; fi
+    wrangler queues update "$q" --message-retention-period-secs 1209600 >/dev/null
+  done
+
+  # R2 announces creates and deletes of DOCS on the queue: one rule for both, as overlapping rules
+  # aren't allowed. Read first: a second `create` for the same queue would be refused.
+  if wrangler r2 bucket notification list "$R2" ${j[@]+"${j[@]}"} 2>/dev/null | grep -q "$DOCS_REPLICA_QUEUE"; then
+    echo "R2 notification $R2 -> $DOCS_REPLICA_QUEUE already exists"
+  else
+    wrangler r2 bucket notification create "$R2" --event-type object-create --event-type object-delete \
+      --queue "$DOCS_REPLICA_QUEUE" --description "commerceworker docs replica" ${j[@]+"${j[@]}"}
+  fi
+  echo "Order documents in $R2 replicated to $DOCS_REPLICA_R2"
+fi
+# docs-replica:end
+
 # Redundancy (docs/operations.md, "Redundancy"): the commerce D1's daily backups in a bucket of their
 # own, and the standby database the restore drill rebuilds the newest one in. Both are read before
 # they are created, so a re-run changes nothing but the retention. Empty without `redundancy`.

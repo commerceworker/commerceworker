@@ -11,6 +11,12 @@ import { A2A_PATH, handleA2A } from './a2a/route';
 import { routeAgents } from './agent-routes';
 import { settleOrphanedHolds } from './checkout/hosted';
 
+import {
+  applyObjectEvents,
+  isDocsReplicaDlq,
+  isDocsReplicaQueue,
+  keepDeadLetters,
+} from './docs-replica';
 import { receiveEmail } from './email';
 import { refreshRates } from './fx';
 import { handleMcp, MCP_PATH } from './mcp';
@@ -28,6 +34,9 @@ export { CartAgent } from './cart/agent';
 // The commerce database's daily backup and its restore drill (d1-backup.ts); bound only when the
 // registry's `redundancy` is on.
 export { D1Backup, D1Restore } from './d1-backup';
+// The nightly reconcile of the order documents replica (docs-replica.ts); bound only when the
+// registry's `redundancy` is on.
+export { DocsReplicaReconcile } from './docs-replica';
 // The deploy smoke test's write check object (health.ts).
 export { HealthProbe } from './health';
 // What a plugin can ask of the core, bound into it as COMMERCEWORKER (plugin-api.ts).
@@ -101,6 +110,15 @@ export default {
       }
     }
     if (failed.length) throw new Error(`Daily jobs failed: ${failed.join(', ')}`);
+  },
+
+  // The order documents replica's queue (R2 event notifications) and its dead-letter queue; names
+  // carry the deployment's suffix, and the dead-letter queue's starts like the queue's.
+  async queue(batch, env) {
+    if (isDocsReplicaDlq(batch.queue)) return keepDeadLetters(batch, env);
+    if (isDocsReplicaQueue(batch.queue)) return applyObjectEvents(batch, env);
+    console.error(JSON.stringify({ type: 'queue_unknown', queue: batch.queue }));
+    batch.retryAll();
   },
 
   async email(message, env) {

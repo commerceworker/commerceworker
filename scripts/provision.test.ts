@@ -313,3 +313,160 @@ test('a deployment without redundancy creates nothing', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls, []);
 });
+
+// The docs replica section, against the same kind of fake `wrangler`: what exists (buckets, queues,
+// notification rules) is a fixture, every call is recorded, and nothing reaches Cloudflare.
+const docsReplica = /# docs-replica:begin\n([\s\S]*?)# docs-replica:end/.exec(script)?.[1];
+
+function runDocsReplica(opts: {
+  buckets?: string[];
+  queues?: string[];
+  rules?: string;
+  jurisdiction?: string;
+  vars?: Record<string, string>;
+}) {
+  assert.ok(docsReplica, 'provision.sh has no docs-replica section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-'));
+  writeFileSync(join(dir, 'buckets'), (opts.buckets ?? []).join('\n'));
+  writeFileSync(join(dir, 'queues'), (opts.queues ?? []).join('\n'));
+  writeFileSync(join(dir, 'rules'), opts.rules ?? '');
+  const prelude = `
+calls="${dir}/calls"
+wrangler() {
+  echo "wrangler $*" >> "$calls"
+  case "$1 $2 $3" in
+    "r2 bucket info") grep -qx "$4" "${dir}/buckets" ;;
+    "r2 bucket lock") [ "$4" = set ] && cp "$7" "${dir}/lock.json" ;;
+    "r2 bucket notification") if [ "$4" = list ]; then cat "${dir}/rules"; fi ;;
+    "queues info "*) grep -qx "$3" "${dir}/queues" ;;
+  esac
+}
+j=(${opts.jurisdiction ? `--jurisdiction ${opts.jurisdiction}` : ''})
+`;
+  const result = spawnSync('bash', ['-c', `set -euo pipefail\n${prelude}\n${docsReplica}`], {
+    env: {
+      ...process.env,
+      R2: 'commerceworker-docs-acme',
+      DOCS_REPLICA_R2: 'commerceworker-docs-replica-acme',
+      DOCS_REPLICA_QUEUE: 'commerceworker-docs-replica-acme',
+      DOCS_REPLICA_DLQ: 'commerceworker-docs-replica-dlq-acme',
+      AUDIT_ARCHIVE_DAYS: '400',
+      ...opts.vars,
+    },
+    encoding: 'utf8',
+  });
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(dir, name), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  return {
+    status: result.status,
+    stderr: result.stderr,
+    calls: read('calls').split('\n').filter(Boolean),
+    lock: read('lock.json') ? JSON.parse(read('lock.json')) : undefined,
+  };
+}
+
+test('the replica bucket, its queues and the notification rule are created when missing', () => {
+  const r = runDocsReplica({});
+  assert.equal(r.status, 0, r.stderr);
+  const has = (c: string) => assert.ok(r.calls.includes(c), `${c}\n${r.calls.join('\n')}`);
+  has('wrangler r2 bucket create commerceworker-docs-replica-acme');
+  has('wrangler queues create commerceworker-docs-replica-acme');
+  has('wrangler queues create commerceworker-docs-replica-dlq-acme');
+  has(
+    'wrangler r2 bucket notification create commerceworker-docs-acme --event-type object-create --event-type object-delete --queue commerceworker-docs-replica-acme --description commerceworker docs replica',
+  );
+  // The moved copies and the dead letters expire after 30 days; the audit archive as the primary's does.
+  has(
+    'wrangler r2 bucket lifecycle add commerceworker-docs-replica-acme deleted-copies deleted/ --expire-days 30 --force',
+  );
+  has(
+    'wrangler r2 bucket lifecycle add commerceworker-docs-replica-acme dlq dlq/ --expire-days 30 --force',
+  );
+  has(
+    'wrangler r2 bucket lifecycle add commerceworker-docs-replica-acme audit-archive audit/ --expire-days 400 --force',
+  );
+  // The same lock rules as the primary's (the primary's section sets them from auditArchiveDays).
+  assert.deepEqual(r.lock, {
+    rules: [
+      {
+        id: 'audit-archive',
+        enabled: true,
+        prefix: 'audit/',
+        condition: { type: 'Age', maxAgeSeconds: 400 * 86400 },
+      },
+      {
+        id: 'plugin-bundles',
+        enabled: true,
+        prefix: 'plugins/',
+        condition: { type: 'Indefinite' },
+      },
+    ],
+  });
+  // The rule is read before it is created.
+  const list = r.calls.indexOf('wrangler r2 bucket notification list commerceworker-docs-acme');
+  const create = r.calls.findIndex((c) => c.startsWith('wrangler r2 bucket notification create'));
+  assert.ok(list >= 0 && list < create);
+});
+
+test('without auditArchiveDays the replica locks audit/ indefinitely and sets no expiry', () => {
+  const r = runDocsReplica({ vars: { AUDIT_ARCHIVE_DAYS: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.lock.rules[0].condition, { type: 'Indefinite' });
+  assert.ok(!r.calls.some((c) => c.includes('lifecycle add') && c.includes('audit-archive')));
+});
+
+test('an existing bucket, queues and rule are kept: nothing is created twice', () => {
+  const r = runDocsReplica({
+    buckets: ['commerceworker-docs-replica-acme'],
+    queues: ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
+    rules: 'rule-1  commerceworker-docs-replica-acme  object-create,object-delete',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(
+    r.calls.filter((c) => /bucket create|queues create|notification create/.test(c)),
+    [],
+  );
+  // The retention and the locks are set again, so a changed number takes effect.
+  assert.ok(
+    r.calls.some((c) => c.startsWith('wrangler queues update commerceworker-docs-replica-acme')),
+  );
+  assert.ok(r.lock);
+});
+
+test('an EU deployment creates the bucket and its rule in its jurisdiction', () => {
+  const r = runDocsReplica({ jurisdiction: 'eu' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(
+    r.calls.includes(
+      'wrangler r2 bucket create commerceworker-docs-replica-acme --jurisdiction eu',
+    ),
+  );
+  assert.ok(
+    r.calls.some(
+      (c) =>
+        c.startsWith('wrangler r2 bucket notification create') && c.includes('--jurisdiction eu'),
+    ),
+  );
+  assert.ok(
+    r.calls.some(
+      (c) =>
+        c.startsWith('wrangler r2 bucket lock set commerceworker-docs-replica-acme') &&
+        c.includes('--jurisdiction eu'),
+    ),
+  );
+  // Queues are account-level here, as every other queue is: no jurisdiction flag.
+  assert.ok(r.calls.includes('wrangler queues create commerceworker-docs-replica-dlq-acme'));
+});
+
+test('a deployment without the replica creates nothing', () => {
+  const r = runDocsReplica({
+    vars: { DOCS_REPLICA_R2: '', DOCS_REPLICA_QUEUE: '', DOCS_REPLICA_DLQ: '' },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, []);
+});

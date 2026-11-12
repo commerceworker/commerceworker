@@ -40,6 +40,7 @@ import {
   renderStorefront,
   renderStudio,
   renderWeb,
+  replicatesDocs,
   sandboxedPlugins,
   secretsProblem,
   shellVars,
@@ -2413,8 +2414,8 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
   const c = renderEngine(base('engine'), protectedAcme({ backupHourUtc: 4, drill: 'monthly' }));
   assert.deepEqual(REDUNDANCY_BINDINGS(c), {
     databases: ['DB', 'STANDBY_DB'],
-    buckets: ['DOCS', 'BACKUPS'],
-    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE'],
+    buckets: ['DOCS', 'BACKUPS', 'DOCS_REPLICA'],
+    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE', 'DOCS_RECONCILE'],
   });
   // DB keeps its own id: the standby is rendered apart, never mapped onto it.
   assert.deepEqual(
@@ -2429,6 +2430,7 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
     [
       ['DOCS', 'commerceworker-docs-acme', 'eu'],
       ['BACKUPS', 'commerceworker-backups-acme', 'eu'],
+      ['DOCS_REPLICA', 'commerceworker-docs-replica-acme', 'eu'],
     ],
   );
   const flows = Object.fromEntries(c.workflows.map((w: Entry) => [w.binding, w]));
@@ -2467,15 +2469,32 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
     workflows: ['ORDER_WORKFLOW', 'REPLENISH'],
   });
   const on = renderEngine(base('engine'), protectedAcme());
-  // What the flag adds is exactly those four bindings.
+  // What the flag adds is exactly those bindings, and the replica's queue consumers.
   assert.deepEqual(
-    { ...on, d1_databases: off.d1_databases, r2_buckets: off.r2_buckets, workflows: off.workflows },
-    off,
+    {
+      ...on,
+      d1_databases: off.d1_databases,
+      r2_buckets: off.r2_buckets,
+      workflows: off.workflows,
+      queues: undefined,
+    },
+    { ...off, queues: undefined },
   );
-  // d1Backup as an exception turns the same bindings off.
+  assert.equal(off.queues, undefined);
+  // d1Backup and r2Replica as exceptions turn their bindings off, each apart from the other.
+  assert.deepEqual(
+    REDUNDANCY_BINDINGS(
+      renderEngine(base('engine'), protectedAcme({ except: ['d1Backup', 'r2Replica'] })),
+    ),
+    REDUNDANCY_BINDINGS(off),
+  );
   assert.deepEqual(
     REDUNDANCY_BINDINGS(renderEngine(base('engine'), protectedAcme({ except: ['d1Backup'] }))),
-    REDUNDANCY_BINDINGS(off),
+    {
+      databases: ['DB'],
+      buckets: ['DOCS', 'DOCS_REPLICA'],
+      workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'DOCS_RECONCILE'],
+    },
   );
   // And a demo or a held-back standby needs no id.
   assert.doesNotThrow(() =>
@@ -2512,10 +2531,90 @@ test('provision.sh is told the backups bucket, the standby and the retention onl
 test('commerceworker has redundancy on, and the base engine config carries what it binds', () => {
   const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
   assert.deepEqual(d.redundancy, { backupDays: 35, backupHourUtc: 1, drill: 'weekly', except: [] });
-  assert.deepEqual(REDUNDANCY_BINDINGS(base('engine')).workflows.slice(-2), [
+  assert.deepEqual(REDUNDANCY_BINDINGS(base('engine')).workflows.slice(-3), [
     'D1_BACKUP',
     'D1_RESTORE',
+    'DOCS_RECONCILE',
   ]);
   for (const x of loadDeployments().filter((y) => y.id !== 'commerceworker'))
     assert.equal(x.redundancy, undefined, `${x.id} stays as it was`);
+});
+
+test('the engine renders the docs replica: bucket, reconcile Workflow and suffixed queues', () => {
+  const c = renderEngine(base('engine'), protectedAcme());
+  const replica = c.r2_buckets.find((b: Entry) => b.binding === 'DOCS_REPLICA');
+  assert.deepEqual(replica, {
+    binding: 'DOCS_REPLICA',
+    bucket_name: 'commerceworker-docs-replica-acme',
+    jurisdiction: 'eu',
+  });
+  const reconcile = c.workflows.find((w: Entry) => w.binding === 'DOCS_RECONCILE');
+  assert.equal(reconcile.name, 'commerceworker-docs-reconcile-acme');
+  assert.equal(reconcile.class_name, 'DocsReplicaReconcile');
+  // The queue and its dead-letter queue, and the consumer of each: the DLQ's has none of its own.
+  assert.deepEqual(
+    c.queues.consumers.map((q: Record<string, string | undefined>) => [
+      q.queue,
+      q.dead_letter_queue,
+    ]),
+    [
+      ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
+      ['commerceworker-docs-replica-dlq-acme', undefined],
+    ],
+  );
+  // No jurisdiction on the bucket for a deployment without one.
+  const plain = renderEngine(
+    base('engine'),
+    toDeployment({ ...acme, jurisdiction: undefined, redundancy: { except: ['d1Backup'] } }),
+  );
+  assert.equal(
+    plain.r2_buckets.find((b: Entry) => b.binding === 'DOCS_REPLICA').jurisdiction,
+    undefined,
+  );
+});
+
+test('r2Replica as an exception strips the replica and nothing else; the flag off strips it too', () => {
+  const noReplica = renderEngine(base('engine'), protectedAcme({ except: ['r2Replica'] }));
+  assert.deepEqual(REDUNDANCY_BINDINGS(noReplica), {
+    databases: ['DB', 'STANDBY_DB'],
+    buckets: ['DOCS', 'BACKUPS'],
+    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE'],
+  });
+  assert.equal(noReplica.queues, undefined);
+  assert.equal(renderEngine(base('engine'), acme).queues, undefined);
+  // The base config's own consumers are what commerceworker deploys, unsuffixed.
+  const own = renderEngine(
+    base('engine'),
+    loadDeployments().find((x) => x.id === 'commerceworker')!,
+  );
+  assert.deepEqual(own.queues, base('engine').queues);
+  assert.equal(replicatesDocs(protectedAcme()), true);
+  assert.equal(replicatesDocs(protectedAcme({ except: ['r2Replica'] })), false);
+  assert.equal(replicatesDocs(acme), false);
+});
+
+test('provision.sh is told the replica bucket and its queues only when the replica is on', () => {
+  const on = shellVars(protectedAcme());
+  assert.deepEqual(
+    [on.DOCS_REPLICA_R2, on.DOCS_REPLICA_QUEUE, on.DOCS_REPLICA_DLQ],
+    [
+      'commerceworker-docs-replica-acme',
+      'commerceworker-docs-replica-acme',
+      'commerceworker-docs-replica-dlq-acme',
+    ],
+  );
+  for (const d of [acme, protectedAcme({ except: ['r2Replica'] })]) {
+    const off = shellVars(d);
+    assert.deepEqual(
+      [off.DOCS_REPLICA_R2, off.DOCS_REPLICA_QUEUE, off.DOCS_REPLICA_DLQ],
+      ['', '', ''],
+    );
+  }
+  // The replica is independent of the D1 backup.
+  assert.equal(
+    shellVars(protectedAcme({ except: ['d1Backup'] })).DOCS_REPLICA_R2,
+    'commerceworker-docs-replica-acme',
+  );
+  // A bucket and the queue it feeds share a name apart from the dead-letter queue.
+  assert.notEqual(names(acme).docsReplicaDlq, names(acme).docsReplicaQueue);
 });
