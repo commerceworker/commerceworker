@@ -1,18 +1,18 @@
 ---
 title: Concepts
-description: Flows, versions, orders, nodes and branches, waits, rollback and generations, and where each one lives.
+description: Order Flows, versions, orders, nodes and branches, waits, rollback and generations, and where each one lives.
 ---
 
 import Values from '../../components/Values.astro';
 
-## Flow
+## Order Flow
 
-A **flow** is a directed graph of nodes and edges, stored as JSON. Each node has a catalog type
+An **Order Flow** is a directed graph of nodes and edges, stored as JSON. Each node has a catalog type
 (`commerce.reserve_inventory`, `control.approval`, `ai.router`, …), a label and a config; each edge
 connects one **output** of its source node to a target node. The [node catalog](/reference/nodes/)
 lists every type with its fields and outputs.
 
-Each flow belongs to a [commerce model](/guides/commerce-models/): <Values of="order-models" />, and lists
+Each Order Flow belongs to a [commerce model](/guides/commerce-models/): <Values of="order-models" />, and lists
 the channels it is meant for. Every model has a [built-in flow](/guides/templates/), and you can add your own.
 
 ## Draft and published versions
@@ -45,7 +45,7 @@ A node finishes by choosing one or more of its outputs. Edges on the chosen outp
 edges on the others are skipped. A node runs once every incoming edge is resolved and at least one
 is active, so a node after an if/else runs whichever side was taken. A node whose inputs were all
 skipped is skipped too, and the skip carries on downstream. Nodes that become ready together run in
-parallel. [Building flows](/guides/building-flows/) has the exact rules.
+parallel. [Building Order Flows](/guides/building-flows/) has the exact rules.
 
 ## Waits
 

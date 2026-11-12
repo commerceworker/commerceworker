@@ -585,7 +585,7 @@ function Inner({
         </Panel>
         {graph.nodes.length === 0 ? (
           <Panel position="top-center" className="mt-24 text-center text-muted-foreground text-sm">
-            Drag a trigger from the palette to start, or ask the copilot to draft a flow.
+            Drag a trigger from the palette to start, or ask the assistant to draft the flow.
           </Panel>
         ) : null}
       </ReactFlow>

@@ -88,8 +88,9 @@ export default function App() {
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
-  let title = 'Something went wrong';
-  let details = 'An unexpected error occurred.';
+  let title = 'This page failed to load';
+  let details =
+    'The request failed before the page could render. Reload, or go back to the overview.';
   let stack: string | undefined;
   if (isRouteErrorResponse(error)) {
     // Loaders refuse with `{ error }` in operator words (a role that's too low, say); show that

@@ -174,7 +174,7 @@ const NAV: NavItem[] = [
   { to: '/orders', label: 'Orders', icon: ReceiptText },
   { to: '/approvals', label: 'Approvals', icon: Stamp, badge: true },
   { to: '/carts', label: 'Carts', icon: ShoppingCart },
-  { to: '/flows', label: 'Flows', icon: Workflow, section: 'Build' },
+  { to: '/flows', label: 'Order Flows', icon: Workflow, section: 'Build' },
   { to: '/commerce', label: 'Commerce', icon: Store, section: 'Reference' },
   { to: '/purchase-orders', label: 'Purchase orders', icon: FileText, section: 'Reference' },
   { to: '/quotes', label: 'Quotes', icon: Handshake, section: 'Reference' },
@@ -223,7 +223,7 @@ const GO: { key: string; to: string; label: string }[] = [
   { key: 'o', to: '/orders', label: 'Orders' },
   { key: 'a', to: '/approvals', label: 'Approvals' },
   { key: 'c', to: '/carts', label: 'Carts' },
-  { key: 'f', to: '/flows', label: 'Flows' },
+  { key: 'f', to: '/flows', label: 'Order Flows' },
   { key: 'p', to: '/performance', label: 'Performance' },
 ];
 

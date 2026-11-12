@@ -260,7 +260,7 @@ test('the sidebar holds every page, collapses to a rail and remembers it', async
   test.skip(info.project.name !== 'desktop', 'the full sidebar is lg and up');
   await open(page, '/orders');
   const main = page.getByRole('navigation', { name: 'Main' });
-  for (const name of ['Overview', 'Orders', 'Flows', 'Commerce', 'Catalog', 'Team and roles'])
+  for (const name of ['Overview', 'Orders', 'Order Flows', 'Commerce', 'Catalog', 'Team and roles'])
     await expect(main.getByRole('link', { name, exact: true })).toBeVisible();
   await expect(main.getByRole('link', { name: 'Orders', exact: true })).toHaveAttribute(
     'aria-current',

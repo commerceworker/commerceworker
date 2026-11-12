@@ -114,7 +114,7 @@ export class OrderExecutor implements AgentExecutor {
         console.error('a2a: task failed', err);
         say(
           'TASK_STATE_FAILED',
-          'Something went wrong. Try again, or check the order in CommerceWorker.',
+          'CommerceWorker couldn’t complete this task. Try again, or check the order.',
         );
       }
     } finally {

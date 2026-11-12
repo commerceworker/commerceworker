@@ -202,7 +202,7 @@ function Block({ block: b, base }: { block: Leaf; base: string }) {
         </Card>
       ) : (
         <Card className="py-0">
-          <Empty>{b.empty ?? 'Nothing here yet.'}</Empty>
+          <Empty>{b.empty ?? 'This plugin has nothing to show yet.'}</Empty>
         </Card>
       );
     case 'form':

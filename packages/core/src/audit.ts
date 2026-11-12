@@ -149,7 +149,7 @@ export const AUDIT_GROUPS = {
   order: 'Orders',
   approval: 'Approvals',
   cart: 'Carts',
-  flow: 'Flows',
+  flow: 'Order Flows',
   webhook: 'Webhooks',
   stock: 'Stock review',
   promotion: 'Promotions',

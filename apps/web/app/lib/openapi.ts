@@ -543,7 +543,7 @@ export function openApiDocument(serverUrl: string) {
       '/api/v1/flows': {
         get: {
           summary: 'List flows',
-          responses: { '200': ok('Flows', ref('FlowList')), ...errors },
+          responses: { '200': ok('Order Flows', ref('FlowList')), ...errors },
         },
       },
       '/api/v1/orders': {

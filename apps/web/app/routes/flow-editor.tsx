@@ -282,7 +282,7 @@ export default function FlowEditor() {
           {/* As on every page, the crumb is the parent; the flow's name is the title below it. */}
           <div className="caption">
             <Link to="/flows" className="hover:text-foreground hover:underline">
-              Flows
+              Order Flows
             </Link>
           </div>
           <div className="flex flex-wrap items-center gap-2">

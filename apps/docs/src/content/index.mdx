@@ -1,13 +1,14 @@
 ---
 title: Documentation
-description: API-first, agent-first commerce and content on Cloudflare. Every order runs as a durable flow graph; content is modeled once and delivered anywhere.
+description: Commerce infrastructure for people and agents, on Cloudflare. Every order runs as an Order Flow, a durable workflow you can see; content is modeled once and delivered anywhere.
 template: splash
 hero:
-  title: Every order is a loop that runs to its outcome.
+  title: Every order, a workflow you can see.
   tagline: >-
-    Draw a flow from catalog nodes: pricing, payments, approvals, shipping, store pickup, digital
-    delivery, marketplace sellers, AI triage. CommerceWorker runs each order, from any channel, through it
-    durably, waits for people and partners, and rolls back what it did when the order fails.
+    Each order runs as an Order Flow: a graph of catalog nodes for pricing, payments, approvals,
+    shipping, store pickup, digital delivery, marketplace sellers and AI triage. CommerceWorker runs
+    orders from any channel through it durably, waits for people and partners, and rolls back what
+    an order did when it fails.
   actions:
     - text: Get started
       link: /start/getting-started/
@@ -50,7 +51,7 @@ Every [commerce model](/guides/commerce-models/): B2B, B2C, direct to consumer, 
 procurement and replenishment, from any channel. Each model starts from a [built-in flow](/guides/templates/)
 you can open in the editor, change and republish.
 
-- **Flows are data.** A flow is a JSON graph of [catalog nodes](/reference/nodes/). Publishing makes an
+- **An Order Flow is data.** It is a JSON graph of [catalog nodes](/reference/nodes/). Publishing makes an
   immutable version, and each order pins the version it started on.
 - **Orders are durable.** Each node runs once and its result is kept, so an order survives
   restarts, waits days for a person or a payment, and rolls back its reservations, holds and
@@ -64,7 +65,7 @@ you can open in the editor, change and republish.
 
 <CardGrid>
   <LinkCard title="Getting started" href="/start/getting-started/" description="Sign in, run a scenario, start an order over the API." />
-  <LinkCard title="Building flows" href="/guides/building-flows/" description="Nodes, branches, joins, loops, expressions and publishing." />
+  <LinkCard title="Building Order Flows" href="/guides/building-flows/" description="Nodes, branches, joins, loops, expressions and publishing." />
   <LinkCard title="Node catalog" href="/reference/nodes/" description="Every node type, its config fields and its output branches." />
   <LinkCard title="REST API" href="/reference/rest-api/" description="Start orders, deliver events, decide approvals and subscribe to webhooks." />
 </CardGrid>
