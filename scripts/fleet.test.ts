@@ -2107,22 +2107,30 @@ test('the registry refuses two deployments on one host or one queue', () => {
   const dir = mkdtempSync(join(tmpdir(), 'registry-'));
   try {
     const write = (name: string, v: object) => writeFileSync(join(dir, name), JSON.stringify(v));
-    const a = { id: 'aa', ring: 'canary', slot: 1, content: true };
+    const a = { id: 'aa', ring: 'canary', slot: 1, content: true, payments: 'mock' };
     write('aa.jsonc', a);
     write('bb.jsonc', {
       id: 'bb',
       ring: 'canary',
       slot: 2,
       content: true,
+      payments: 'mock',
       mediaDomain: 'media.aa.commerceworker.com',
     });
     assert.throws(() => loadDeployments(dir), /share the host media\.aa\.commerceworker\.com/);
     // Queue names are account-wide: a suffix "-dlq" would name the events dead letters of a
     // deployment with no suffix.
     write('aa.jsonc', { ...a, suffix: '' });
-    write('bb.jsonc', { id: 'bb', ring: 'canary', slot: 2, content: true });
+    write('bb.jsonc', { id: 'bb', ring: 'canary', slot: 2, content: true, payments: 'mock' });
     assert.doesNotThrow(() => loadDeployments(dir));
-    write('bb.jsonc', { id: 'bb', ring: 'canary', slot: 2, content: true, suffix: '-dlq' });
+    write('bb.jsonc', {
+      id: 'bb',
+      ring: 'canary',
+      slot: 2,
+      content: true,
+      payments: 'mock',
+      suffix: '-dlq',
+    });
     assert.throws(() => loadDeployments(dir), /share the queue/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -2183,4 +2191,117 @@ test("a customer's email sets the engine's send_email binding and its sender", (
       /fromName/,
     );
   assert.throws(() => toDeployment({ ...acme, email: 'orders@x.example' }), /email must be/);
+});
+
+test('the registry refuses a general-ring deployment without an explicit payments mode', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  try {
+    const only = (v: object) => {
+      writeFileSync(join(dir, 'acme.jsonc'), JSON.stringify({ id: 'acme', slot: 2, ...v }));
+      return () => loadDeployments(dir);
+    };
+    // Unset payments would render mock; the error names the field and the choices.
+    assert.throws(only({ ring: 'general' }), /set "payments".*"stripe".*"mock"/);
+    // Mock is refused outright on general, even when written down.
+    assert.throws(only({ ring: 'general', payments: 'mock' }), /refused on the general ring/);
+    assert.doesNotThrow(only({ ring: 'general', payments: 'stripe' }));
+    // Anything else is refused by the value check, which lists the choices.
+    assert.throws(
+      only({ ring: 'general', payments: 'none' }),
+      /payments must be "mock" or "stripe"/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the registry refuses a canary deployment without an explicit payments mode', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  try {
+    const only = (v: object) => {
+      writeFileSync(join(dir, 'acme.jsonc'), JSON.stringify({ id: 'acme', slot: 2, ...v }));
+      return () => loadDeployments(dir);
+    };
+    assert.throws(only({ ring: 'canary' }), /set "payments"/);
+    assert.doesNotThrow(only({ ring: 'canary', payments: 'mock' }));
+    assert.doesNotThrow(only({ ring: 'canary', payments: 'stripe' }));
+    // Staging and internal without a storefront keep the mock default.
+    assert.doesNotThrow(only({ ring: 'staging' }));
+    assert.doesNotThrow(only({ ring: 'internal' }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the registry refuses a deployment with a storefrontDomain and no explicit payments mode', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  try {
+    const only = (v: object) => {
+      writeFileSync(join(dir, 'acme.jsonc'), JSON.stringify({ id: 'acme', slot: 2, ...v }));
+      return () => loadDeployments(dir);
+    };
+    const shop = { ring: 'internal', storefrontDomain: 'shop.acme.example' };
+    assert.throws(only(shop), /set "payments".*storefrontDomain/);
+    assert.doesNotThrow(only({ ...shop, payments: 'mock' }));
+    // A demo is always mock and needs no choice.
+    assert.doesNotThrow(only({ ...shop, demo: true }));
+    // The checked-in registry passes.
+    assert.doesNotThrow(() => loadDeployments());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the registry refuses two deployments that share a resource id', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  try {
+    const kv = (c: string) => c.repeat(32);
+    const a = {
+      id: 'aa',
+      ring: 'staging',
+      slot: 1,
+      content: true,
+      d1Id: 'd1-a',
+      catalogKvId: kv('a'),
+      contentD1Id: 'cd1-a',
+      contentKvId: kv('b'),
+      plugins: { punchout: { d1Id: 'p-a' } },
+    };
+    const write = (name: string, v: object) => writeFileSync(join(dir, name), JSON.stringify(v));
+    const plugin = 'punchout';
+    const b = {
+      ...a,
+      id: 'bb',
+      slot: 2,
+      d1Id: 'd1-b',
+      catalogKvId: kv('c'),
+      contentD1Id: 'cd1-b',
+      contentKvId: kv('d'),
+      plugins: { [plugin]: { d1Id: 'p-b' } },
+    };
+    write('aa.jsonc', a);
+    write('bb.jsonc', b);
+    assert.doesNotThrow(() => loadDeployments(dir));
+    const cases: [string, object][] = [
+      ['d1Id', { d1Id: 'd1-a' }],
+      ['catalogKvId', { catalogKvId: kv('a') }],
+      ['contentD1Id', { contentD1Id: 'cd1-a' }],
+      ['contentKvId', { contentKvId: kv('b') }],
+      [`plugins.${plugin}.d1Id`, { plugins: { [plugin]: { d1Id: 'p-a' } } }],
+    ];
+    for (const [field, stale] of cases) {
+      write('bb.jsonc', { ...b, ...stale });
+      assert.throws(
+        () => loadDeployments(dir),
+        (e: Error) =>
+          e.message.includes(`bb ${field} `) && e.message.includes('already used by aa'),
+        field,
+      );
+    }
+    // One entry can't name one id twice either (a D1 id used as a plugin's).
+    write('bb.jsonc', { ...b, plugins: { [plugin]: { d1Id: 'd1-b' } } });
+    assert.throws(() => loadDeployments(dir), /already used by bb d1Id/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

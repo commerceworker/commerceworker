@@ -151,6 +151,13 @@ See [Configuration](configuration.md#engine-secrets).
 - `TIME_SCALE` is `"1"` (real time) in `apps/engine/wrangler.jsonc`. Only local dev compresses
   waits; don't raise it on a deployment that real orders use.
 - Model calls go through the `commerceworker` AI Gateway (`AI_GATEWAY_ID`): request logs (prompts and responses) only when the registry's `aiGatewayLogs` is `true` (default off; the engine sends it with every call), kept up to 100,000 entries (oldest deleted first), no caching, authentication on, 120 requests a minute (sliding), and failed upstream requests retried up to 3 times (500 ms, exponential backoff) before the engine falls back. It is created once per account, in the dashboard (**AI** > **AI Gateway**) or with the AI Gateway API; change its limits there. `provision.sh` creates it with the registry's `aiGatewayLogs` as its default and these retries, and only warns if an existing gateway's log default or retries differ.
+- Set `payments` in the registry file. `"stripe"` takes real money (with `STRIPE_SECRET_KEY` in the
+  environment); `"mock"` records payments and takes none. An unset field means `mock`, so the
+  fleet refuses a `canary` or `general` entry, or one with a `storefrontDomain`, that leaves it out
+  (the plan and `fleet.ts render` fail naming the file), and refuses `mock` on `general`. A
+  deployment on `general` that should not charge cards yet stays on `canary` until it does. The
+  checked-in `commerceworker` entry writes `"mock"` today; change it to `"stripe"` before it takes
+  real orders ([operations](operations.md)).
 - After the first deploy, open `/setup`, enter the setup code (`SETUP_TOKEN`; `provision.sh` saved
   it in `.secrets/<id>/setup-code`), and create the first admin. Then open **Team**, add people
   with their roles, and create API tokens for other systems. See
