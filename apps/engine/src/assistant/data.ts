@@ -60,10 +60,12 @@ import {
 } from '../wire';
 import {
   previewDeleteWebhook,
+  previewRedeliverWebhook,
   previewRevokeIntegration,
   previewRevokePlatform,
   previewUcpSettings,
   runDeleteWebhook,
+  runRedeliverWebhook,
   runRevokeIntegration,
   runRevokePlatform,
   runUcpSettings,
@@ -539,6 +541,7 @@ export type ActionInput = {
   decline_quote: ToolInput<'decline_quote'>;
   expire_quote: ToolInput<'expire_quote'>;
   convert_quote: ToolInput<'convert_quote'>;
+  redeliver_webhook_delivery: ToolInput<'redeliver_webhook_delivery'>;
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
@@ -866,6 +869,12 @@ export async function previewAction<T extends ActionTool>(
         return await previewExpireQuote(env, input as ActionInput['expire_quote'], roleBlock);
       case 'convert_quote':
         return await previewConvertQuote(env, input as ActionInput['convert_quote'], roleBlock);
+      case 'redeliver_webhook_delivery':
+        return await previewRedeliverWebhook(
+          env,
+          input as ActionInput['redeliver_webhook_delivery'],
+          roleBlock,
+        );
       case 'delete_webhook_subscription':
         return await previewDeleteWebhook(
           env,
@@ -1245,6 +1254,8 @@ export async function runAction<T extends ActionTool>(
       return runExpireQuote(env, p, input as ActionInput['expire_quote'], trail);
     case 'convert_quote':
       return runConvertQuote(env, p, input as ActionInput['convert_quote'], trail);
+    case 'redeliver_webhook_delivery':
+      return runRedeliverWebhook(env, p, input as ActionInput['redeliver_webhook_delivery'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

@@ -360,7 +360,7 @@ acted on to its page:
 | Carts | `cart.created` (the target is the cart; the detail has its flow), `cart.changed` (one per change, with its `op`), `cart.canceled`. Submitting a cart is the `order.started` of its order, with the `cartId` |
 | Hosted checkout | `checkout.created` (the target is the checkout; the detail has its line count and customer, never the one-time link) |
 | Order Flows | `flow.saved` (a draft saved on purpose: **Save** or ⌘S, a new flow, or a duplicate with the flow it came `from`; not an autosave), `flow.published` (name and version), `flow.archived` and `flow.restored` (a never-published draft set aside or brought back) |
-| Webhooks | `webhook.subscribed` (the subscription's id and events), `webhook.rotated`, `webhook.unsubscribed` |
+| Webhooks | `webhook.subscribed` (the subscription's id and events), `webhook.rotated`, `webhook.redelivered` (the target is the delivery id; the detail has its event and subscription), `webhook.unsubscribed` |
 | Stock review | `stock.review_run` (the Workflow instance) |
 | Tax certificates | `tax_certificate.added`, `tax_certificate.verified`, `tax_certificate.revoked` (the target is the customer id; the detail has the certificate id) |
 | Customers | `customer.created`, `customer.updated` (the detail lists the fields that changed, never a name or email) |

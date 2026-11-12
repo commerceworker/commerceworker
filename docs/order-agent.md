@@ -225,9 +225,15 @@ When the order has finished and everyone has heard, `a2a_watchers` is cleared.
 
 ## Agent-side webhooks
 
-`emitWebhook({ key, event, data, attempt })` calls the same `emit` as the Workflow's emit steps,
-keyed by `key`. While deliveries are pending it reschedules itself after `10 * 2^attempt` seconds,
-up to 5 retries (`WEBHOOK_RETRIES`), matching the Workflow's backoff, then leaves the rows `failed`.
+`emitWebhook({ key, event, data })` calls the same `emit` as the Workflow's emit steps, keyed by
+`key`, for endings the Workflow doesn't see (`order.cancelled`). The Workflow's emit step calls
+`queueWebhookRetry({ key, event })` the same way when its first attempt leaves deliveries pending.
+That schedules `retryWebhook({ key, event, attempt })` once per key (a KV marker, `webhook_retry:<key>`,
+outlives the series so a repeated hand-off does nothing), which `resend`s the undelivered rows as
+recorded and reschedules itself after `eventRetryDelaySec(attempt)` (10 seconds doubling to an hour,
+then hourly) up to `EVENT_RETRIES` (32, about a day), then leaves the rows `failed`. A retry records
+nothing, so an erased order's deleted rows are not sent. `redeliver_webhook_delivery` (REST and MCP,
+admin) is an operator's single resend of one row by id; it doesn't use the schedule.
 
 ## UCP order events
 

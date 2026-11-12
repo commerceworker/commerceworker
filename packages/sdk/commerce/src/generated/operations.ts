@@ -123,6 +123,7 @@ export const OPERATIONS = {
   put_price_book_entries: { method: 'POST', path: '/api/v1/price-books/{bookId}/entries', pathParams: ["bookId"], input: 'body' },
   rebuild_catalog_gaps: { method: 'POST', path: '/api/v1/catalog/gaps/rebuild', pathParams: [], input: 'none' },
   receive_edi_850: { method: 'POST', path: '/api/v1/channels/edi/850', pathParams: [], input: 'raw', contentTypes: ["application/edi-x12", "text/plain"] },
+  redeliver_webhook_delivery: { method: 'POST', path: '/api/v1/webhook-deliveries/{deliveryId}/redeliver', pathParams: ["deliveryId"], input: 'body' },
   reindex_catalog: { method: 'POST', path: '/api/v1/catalog/reindex', pathParams: [], input: 'none' },
   remove_company_member: { method: 'POST', path: '/api/v1/companies/{companyId}/members/{memberId}/remove', pathParams: ["companyId", "memberId"], input: 'body' },
   resolve_catalog_alias: { method: 'GET', path: '/api/v1/catalog/aliases/{alias}', pathParams: ["alias"], input: 'query' },
@@ -2146,6 +2147,34 @@ export type ReceiveEdi850Input = {
 };
 
 export type ReceiveEdi850Result = EdiInterchangeResult;
+
+/** Redeliver a webhook delivery (Admin) (request) */
+export type RedeliverWebhookDeliveryInput = {
+  deliveryId: string;
+};
+
+export type RedeliverWebhookDeliveryResult = {
+  preview?: {
+    title: string;
+    consequences: string[];
+    href?: string;
+  } & { [key: string]: unknown };
+  /** Send it back with the same input once agreed */
+  confirmation?: string;
+  expiresAt?: number;
+  next?: string;
+  /** What happened, once the action ran */
+  done?: string;
+  href?: string;
+  /** The delivery sent again */
+  id?: string;
+  /** Where it stands after this attempt */
+  status?: "delivered" | "failed";
+  attempts?: number;
+  /** The receiver’s HTTP status, if it answered */
+  responseStatus?: number | null;
+  lastError?: string | null;
+} & { [key: string]: unknown };
 
 /** Republish every product (admin) (request) */
 export type ReindexCatalogInput = { [key: string]: unknown };
@@ -4205,6 +4234,8 @@ export interface OperationTypes {
   rebuild_catalog_gaps: { input: RebuildCatalogGapsInput; result: RebuildCatalogGapsResult };
   /** EDI X12 850 purchase orders (operator) */
   receive_edi_850: { input: ReceiveEdi850Input; result: ReceiveEdi850Result };
+  /** Redeliver a webhook delivery (Admin) */
+  redeliver_webhook_delivery: { input: RedeliverWebhookDeliveryInput; result: RedeliverWebhookDeliveryResult };
   /** Republish every product (admin) */
   reindex_catalog: { input: ReindexCatalogInput; result: ReindexCatalogResult };
   /** Remove a company member (Operator) */

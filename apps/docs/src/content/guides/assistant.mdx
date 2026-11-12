@@ -164,6 +164,7 @@ A2A skills. Only a signed-in person verifies a certificate, never an API token.
 | `rollback_plugin` | `admin` | Runs an earlier version of a plugin again; needs a step-up |
 | `uninstall_plugin` | `admin` | Uninstalls a plugin installed at runtime; needs a step-up |
 | `delete_webhook_subscription` | `admin` | Removes an outbound webhook subscription and its record of deliveries. The card shows where it posts and its last delivery |
+| `redeliver_webhook_delivery` | `admin` | Sends a failed or delivered webhook delivery to its receiver again, with the same delivery id and payload. The card shows where it goes and how it last went |
 | `revoke_integration` | `admin` | Revokes an integration's signing keys at once. The card shows its name and when it was last used |
 | `revoke_ucp_platform` | `admin` | Revokes an AI shopping platform's key; its checkouts and orders stay. The card shows its name and when it was last used |
 | `set_ucp_settings` | `admin` | Sets agentic checkout's flow (none turns it off), legal links and order page URL, as the REST API does; refused for a flow that never authorizes a card |

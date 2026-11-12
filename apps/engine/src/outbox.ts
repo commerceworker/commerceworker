@@ -3,9 +3,10 @@
  * emitted it, then attempts every delivery for that key that hasn't succeeded yet. `emitCart` does
  * the same for a cart's events, keyed by the cart and the event (each happens once per cart). Installed
  * plugins that subscribe to the event get a delivery too (subscription id `plugin:<id>`), sent
- * over their binding instead of HTTP, with the same ids and retries. It never throws:
- * the caller's step throws on `pending > 0` so Workflows retries with backoff, and the interpreter
- * swallows the final failure so a dead endpoint can't fail an order.
+ * over their binding instead of HTTP, with the same ids and retries. It never throws, and
+ * reports how many deliveries are still `pending`: the caller hands those to an agent's alarm
+ * schedule (`resend`, for about a day) so a dead endpoint neither holds up an order nor fails it.
+ * `redeliver` sends one recorded delivery again for an operator.
  */
 
 import {
@@ -23,7 +24,7 @@ import {
   signWebhook,
   subscribedTo,
 } from '@commerceworker/core';
-import type { WebhookSubscription } from '@commerceworker/ports/commerce';
+import type { WebhookOutbox, WebhookSubscription } from '@commerceworker/ports/commerce';
 import { openSecret } from './data-key';
 import { installedPlugins } from './plugin-host';
 import { deliverToPlugin, hasPlugins, manifests } from './plugins';
@@ -86,7 +87,6 @@ async function record(
   const targets = [...subs, ...plugins];
   if (!targets.length && !(await hasPlugins(env))) return { delivered: 0, pending: 0 };
 
-  const secrets = new Map(subs.map((s) => [s.id, s]));
   const ids = targets.map((s) => `whd_${subject}_${stepKey}_${s.id}`.replace(/[^\w-]/g, '_'));
   const now = Date.now();
   await outbox.record(
@@ -102,12 +102,65 @@ async function record(
 
   // Also any plugin delivery recorded for this step by an earlier attempt, though the plugin isn't
   // among the targets now (it didn't answer this time): it stays pending until it's delivered.
-  const open = await outbox.undelivered(
-    subject,
-    ids,
-    `whd_${subject}_${stepKey}_`.replace(/[^\w-]/g, '_'),
+  const open = await outbox.undelivered(subject, ids, stepPrefix(subject, stepKey));
+  const { pending } = await attempt(env, open, subs);
+  return { delivered: ids.length - pending, pending };
+}
+
+const stepPrefix = (subject: string, stepKey: string) =>
+  `whd_${subject}_${stepKey}_`.replace(/[^\w-]/g, '_');
+
+/**
+ * What a retry sends: the deliveries of one step's event that haven't arrived, as they were
+ * recorded (same id, same payload). It records nothing, so a retry queued before the order's data
+ * was erased finds nothing to send, and the schedule that drives it carries no payload.
+ */
+export async function resend(env: Env, subject: string, stepKey: string) {
+  const outbox = webhookOutbox(env);
+  const open = await outbox.unsent(subject, stepPrefix(subject, stepKey));
+  return attempt(env, open, await outbox.subscriptions());
+}
+
+/**
+ * Sends one recorded delivery again at an operator's request: the same id and payload, signed
+ * now with the subscription's current secret, and its attempts and status updated as any
+ * attempt's. Never records a delivery, so it can't make one the subscription wasn't sent. `error`
+ * says why nothing was sent (the subscription is gone or off).
+ */
+export async function redeliver(env: Env, id: string) {
+  const outbox = webhookOutbox(env);
+  const row = await outbox.delivery(id);
+  if (!row) return { ok: false as const, error: `No webhook delivery ${id}.` };
+  const subs = await outbox.subscriptions();
+  const isPlugin = row.subscriptionId.startsWith(PLUGIN_SUBSCRIPTION);
+  if (!isPlugin && !subs.some((s) => s.id === row.subscriptionId))
+    return {
+      ok: false as const,
+      error: `The subscription ${row.subscriptionId} is gone or off, so there is nowhere to send it.`,
+    };
+  await attempt(
+    env,
+    [
+      {
+        id: row.id,
+        subscriptionId: row.subscriptionId,
+        subject: row.orderId,
+        event: row.event,
+        payload: row.payload,
+      },
+    ],
+    subs,
   );
-  const deliver = async (row: (typeof open)[number]) => {
+  const now = await outbox.delivery(id);
+  return { ok: true as const, delivery: now! };
+}
+
+type Open = Awaited<ReturnType<WebhookOutbox['undelivered']>>;
+
+/** Sends each delivery to its subscriber and records the attempt; `pending` counts the failures. */
+async function attempt(env: Env, open: Open, subs: WebhookSubscription[]) {
+  const secrets = new Map(subs.map((s) => [s.id, s]));
+  const deliver = async (row: Open[number]) => {
     if (row.subscriptionId.startsWith(PLUGIN_SUBSCRIPTION)) {
       const id = row.subscriptionId.slice(PLUGIN_SUBSCRIPTION.length);
       const res = await deliverToPlugin(env, id, JSON.parse(row.payload) as OutboundPayload);
@@ -124,7 +177,7 @@ async function record(
   const sandboxed = new Set(
     (await installedPlugins(env)).flatMap((p) => (p.runtime === 'sandboxed' ? [p.id] : [])),
   );
-  const isSandboxed = (row: (typeof open)[number]) =>
+  const isSandboxed = (row: Open[number]) =>
     row.subscriptionId.startsWith(PLUGIN_SUBSCRIPTION) &&
     sandboxed.has(row.subscriptionId.slice(PLUGIN_SUBSCRIPTION.length));
   const [sent, inTurn] = await Promise.all([
@@ -137,12 +190,11 @@ async function record(
   ]);
   sent.push(...inTurn);
   const done = sent.filter((x) => x !== null);
-  await outbox.attempted(
+  await webhookOutbox(env).attempted(
     done.map(({ row, res }) => ({ id: row.id, ok: res.ok, status: res.status, error: res.error })),
     Date.now(),
   );
-  const pending = done.filter(({ res }) => !res.ok).length;
-  return { delivered: ids.length - pending, pending };
+  return { pending: done.filter(({ res }) => !res.ok).length };
 }
 
 type Subscription = WebhookSubscription;

@@ -1,7 +1,8 @@
 /**
  * Outbound webhooks: the workspace's subscriptions and each delivery of each event. A delivery is
  * recorded once by its id (the subject, the step and the subscriber), before it is sent, so a
- * retried step re-sends only what hasn't arrived; each attempt is recorded on it. Sending and
+ * retry re-sends only what hasn't arrived; each attempt is recorded on it, and an operator may send
+ * a delivery again by the same id. Sending and
  * signing are the engine's. `d1WebhookOutbox` (packages/db) and `InMemoryWebhookOutbox`
  * (packages/test-kit) implement it, held to one contract.
  */
@@ -81,6 +82,8 @@ export interface WebhookOutbox {
   deleteSubscription(id: string): Promise<boolean>;
   /** A subscription's latest deliveries, newest first. */
   deliveries(subscriptionId: string, limit: number): Promise<DeliveryRecord[]>;
+  /** One delivery by its id, or undefined for an unknown one. */
+  delivery(id: string): Promise<DeliveryRecord | undefined>;
   /** The subscriptions that are on. */
   subscriptions(): Promise<WebhookSubscription[]>;
   /** Records deliveries, each once by id. */
@@ -94,6 +97,12 @@ export interface WebhookOutbox {
     ids: readonly string[],
     idPrefix: string,
   ): Promise<WebhookDelivery[]>;
+  /**
+   * Every delivery of one step's event for the subject that hasn't been delivered (ids under
+   * `idPrefix`), to whichever subscriber. What a retry sends: it never records anything, so a
+   * subject that was erased in the meantime has nothing left to send.
+   */
+  unsent(subject: string, idPrefix: string): Promise<WebhookDelivery[]>;
   /** Records each attempt: delivered, or failed with the receiver's status and error. */
   attempted(
     results: readonly { id: string; ok: boolean; status: number | null; error: string | null }[],

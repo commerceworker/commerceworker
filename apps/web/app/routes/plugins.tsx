@@ -804,6 +804,12 @@ function Deliveries({ deliveries }: { deliveries: Plugin['deliveries'] }) {
               {d.lastError && d.status !== 'delivered' ? (
                 <span className="w-full text-destructive text-xs">{d.lastError}</span>
               ) : null}
+              {/* A delivery still on its first attempt can't be sent again yet. */}
+              {d.status === 'pending' ? null : (
+                <PluginAct tool="redeliver_webhook_delivery" input={{ deliveryId: d.id }}>
+                  Redeliver
+                </PluginAct>
+              )}
             </li>
           ))}
         </ul>

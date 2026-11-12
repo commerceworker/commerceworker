@@ -2,7 +2,11 @@
  * Reading outbound webhook subscriptions and their deliveries, as the admin API and the MCP tools
  * show them: never a secret. Time comes in as `now`.
  */
-import type { SubscriptionView, WebhookOutbox } from '@commerceworker/ports/commerce';
+import type {
+  DeliveryRecord,
+  SubscriptionView,
+  WebhookOutbox,
+} from '@commerceworker/ports/commerce';
 import type { AuditDraft } from './audit-trail';
 
 /** Subscriptions listed at most. */
@@ -55,4 +59,34 @@ export async function listWebhookDeliveries(
 ) {
   const rows = await ports.outbox.deliveries(subscriptionId, limit);
   return rows.map(({ payload, ...r }) => ({ ...r, payload: JSON.parse(payload) as unknown }));
+}
+
+/**
+ * A delivery an operator may send again: one whose last attempt failed or arrived, with its
+ * subscription still there to sign it. A delivery that hasn't had its first attempt is still on
+ * its way, and is refused so the send isn't made twice at once. The audit event is the one the REST
+ * API and MCP both write; `error` says why there is nothing to send.
+ */
+export async function findRedeliverable(
+  ports: { outbox: WebhookOutbox },
+  deliveryId: string,
+): Promise<
+  { ok: true; delivery: DeliveryRecord; audit: AuditDraft } | { ok: false; error: string }
+> {
+  const delivery = await ports.outbox.delivery(deliveryId);
+  if (!delivery) return { ok: false, error: `No webhook delivery ${deliveryId}.` };
+  if (delivery.status !== 'delivered' && delivery.status !== 'failed')
+    return {
+      ok: false,
+      error: `Delivery ${deliveryId} hasn't had its first attempt yet; it is still on its way.`,
+    };
+  return {
+    ok: true,
+    delivery,
+    audit: {
+      action: 'webhook.redelivered',
+      target: deliveryId,
+      detail: { event: delivery.event, subscriptionId: delivery.subscriptionId },
+    },
+  };
 }

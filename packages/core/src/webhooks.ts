@@ -198,12 +198,14 @@ export const isCartEvent = (event: string): event is CartEvent =>
   (CART_EVENTS as readonly string[]).includes(event);
 
 /**
- * How often a cart's event is retried after its first attempt, from its CartAgent's schedule: 10
- * seconds doubling to an hour (`cartEventRetryDelaySec`), then hourly, about a day in all, so a
- * receiver down overnight still gets it. The delivery then stays `failed`.
+ * How often an event is retried after its first attempt, from its OrderAgent's or CartAgent's
+ * alarm schedule (the Workflow never waits on it): 10 seconds doubling to an hour
+ * (`eventRetryDelaySec`), then hourly, about a day in all, so a receiver down overnight still gets
+ * it. The delivery then stays `failed`, and an operator can send it again
+ * (`redeliver_webhook_delivery`).
  */
-export const CART_EVENT_RETRIES = 32;
-export const cartEventRetryDelaySec = (attempt: number) => Math.min(10 * 2 ** attempt, 3600);
+export const EVENT_RETRIES = 32;
+export const eventRetryDelaySec = (attempt: number) => Math.min(10 * 2 ** attempt, 3600);
 
 /** Nodes that emit an event when they finish, and the branch that counts as success. */
 export const NODE_EVENTS: Record<string, { event: OrderEvent; branch?: string }> = {

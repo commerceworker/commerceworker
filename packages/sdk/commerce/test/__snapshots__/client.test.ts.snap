@@ -96,6 +96,7 @@ exports[`method names > are the flat camelCase of every operationId 1`] = `
   "putPriceBookEntries",
   "rebuildCatalogGaps",
   "receiveEdi850",
+  "redeliverWebhookDelivery",
   "reindexCatalog",
   "removeCompanyMember",
   "resolveCatalogAlias",

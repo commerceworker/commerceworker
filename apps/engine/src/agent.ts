@@ -21,9 +21,11 @@ import {
   decisionProblem,
   describePlan,
   EMPTY_ORDER_STATE,
+  EVENT_RETRIES,
   eraseOrderState,
   eventDigest,
   eventProblem,
+  eventRetryDelaySec,
   eventWait,
   type FlowVersion,
   flowAwaits,
@@ -57,7 +59,7 @@ import { recordAudit } from './audit';
 import { releaseHold } from './checkout/payments';
 import { compensateOrder } from './connectors';
 import { a2aAgent } from './namespaces';
-import { emit, orderSummary } from './outbox';
+import { emit, orderSummary, resend } from './outbox';
 import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
 import { syncUcpOrder, ucpMetaOf } from './ucp/webhooks';
@@ -90,7 +92,8 @@ type State = OrderState & { seq: number };
 /** Per-connection state: who opened the order page's socket. */
 type ConnectionState = { principal: ProxiedPrincipal | null };
 
-// Matches the Workflow's emit step: 5 retries with exponential backoff from 10 seconds.
+// Retries of the agent's smaller jobs (watchers, a hold's release, a UCP sync): 5, with exponential
+// backoff from 10 seconds. Webhook events retry for a day (`EVENT_RETRIES`).
 const WEBHOOK_RETRIES = 5;
 /** Statuses an order ends in without having been fulfilled. */
 const UNFULFILLED: readonly OrderStatus[] = ['cancelled', 'declined', 'failed', 'rolled_back'];
@@ -952,7 +955,6 @@ export class OrderAgent extends Agent<Env, State> {
         outcome: 'cancelled',
         reason,
       },
-      attempt: 0,
     });
     return { ok: true };
   }
@@ -1098,15 +1100,10 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   /**
-   * Delivers an outbound webhook from the agent, for endings the Workflow doesn't see. Retries on
-   * the agent's own schedule with the same backoff as `emitStep`, then leaves the row `failed`.
+   * Delivers an outbound webhook from the agent, for endings the Workflow doesn't see. A first
+   * attempt that leaves deliveries pending is handed to `retryWebhook`.
    */
-  async emitWebhook(p: {
-    key: string;
-    event: OrderEvent;
-    data: Record<string, unknown>;
-    attempt: number;
-  }) {
+  async emitWebhook(p: { key: string; event: OrderEvent; data: Record<string, unknown> }) {
     if (!this.state.orderId) return;
     let pending = 1;
     try {
@@ -1114,8 +1111,50 @@ export class OrderAgent extends Agent<Env, State> {
     } catch (err) {
       console.warn('webhook emit', p.event, err);
     }
-    if (pending && p.attempt < WEBHOOK_RETRIES)
-      await this.schedule(10 * 2 ** p.attempt, 'emitWebhook', { ...p, attempt: p.attempt + 1 });
+    if (pending) await this.queueWebhookRetry({ key: p.key, event: p.event });
+  }
+
+  /**
+   * Takes over an event's undelivered deliveries after the Workflow's first attempt (or this
+   * agent's own): they are retried from this object's alarm schedule, so a receiver that is down
+   * never holds the Workflow, and an order's events keep retrying after it has finished. Called
+   * from a Workflow step that may itself be retried, so it queues one series per event key, ever
+   * (the marker outlives the series: a replayed step finds it and does nothing).
+   */
+  async queueWebhookRetry(p: { key: string; event: OrderEvent }) {
+    const marker = `webhook_retry:${p.key}`;
+    if (this.ctx.storage.kv.get(marker)) return;
+    this.ctx.storage.kv.put(marker, 1);
+    try {
+      await this.schedule(eventRetryDelaySec(0), 'retryWebhook', { ...p, attempt: 1 });
+    } catch (err) {
+      // Not queued: the caller's retry must be able to try again.
+      this.ctx.storage.kv.delete(marker);
+      throw err;
+    }
+  }
+
+  /**
+   * Resends what hasn't arrived of one event (`resend`: the same ids and payloads, nothing newly
+   * recorded) on the delay `eventRetryDelaySec` gives, `EVENT_RETRIES` times, about a day in all.
+   * The deliveries are then left `failed`, where `redeliver_webhook_delivery` sends them again.
+   */
+  async retryWebhook(p: { key: string; event: OrderEvent; attempt: number }) {
+    const orderId = this.state.orderId;
+    if (!orderId) return;
+    let pending = 1;
+    try {
+      ({ pending } = await resend(this.env, orderId, p.key));
+    } catch (err) {
+      console.warn('webhook retry', p.event, err);
+    }
+    if (!pending) return;
+    if (p.attempt < EVENT_RETRIES)
+      await this.schedule(eventRetryDelaySec(p.attempt), 'retryWebhook', {
+        ...p,
+        attempt: p.attempt + 1,
+      });
+    else console.warn('webhook delivery gave up', p.event, orderId);
   }
 }
 

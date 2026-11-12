@@ -13,7 +13,7 @@ import {
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { auditEvents, createDb, customers } from '@commerceworker/db';
 import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureTemplates } from '../src/flows';
 import worker from '../src/index';
 import { startOrder } from '../src/orders';
@@ -459,7 +459,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(119);
+    expect(admin).toHaveLength(120);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -703,6 +703,16 @@ describe('MCP', () => {
           inputSchema: { properties: { confirmation: {} } },
         });
       }
+      // Sending a delivery again is repeatable (the same id and payload) and reaches the receiver.
+      expect(adminTools.find((t) => t.name === 'redeliver_webhook_delivery')).toMatchObject({
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+        inputSchema: { properties: { deliveryId: {}, confirmation: {} } },
+      });
       // The settings are the REST body: the same fields, the same bounds.
       expect(adminTools.find((t) => t.name === 'set_ucp_settings')?.inputSchema).toMatchObject({
         properties: { checkoutFlowId: {}, links: { maxItems: 10 }, orderUrl: {} },
@@ -713,6 +723,7 @@ describe('MCP', () => {
           'list_integrations',
           'get_ucp_settings',
           'delete_webhook_subscription',
+          'redeliver_webhook_delivery',
           'revoke_integration',
           'revoke_ucp_platform',
           'set_ucp_settings',
@@ -911,6 +922,79 @@ describe('MCP', () => {
       expect(operatorCall.body).toMatchObject({
         error: { message: 'Tool set_storefront_settings not found' },
       });
+    });
+
+    it('previews sending a delivery again, then sends it once with the code, audited via MCP', async () => {
+      await seed();
+      const failed = `del_${ids.hook}`;
+      await webhookOutbox(env).attempted(
+        [{ id: failed, ok: false, status: 503, error: 'HTTP 503' }],
+        stamp,
+      );
+      const sent: { id: string | null; body: string }[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        sent.push({
+          id: new Headers(init?.headers).get('x-commerceworker-delivery'),
+          body: String(init?.body),
+        });
+        return new Response('ok');
+      });
+      try {
+        const again = await confirm(admin, 'redeliver_webhook_delivery', { deliveryId: failed });
+        // Where it goes without the query a receiver may keep a token in, and what is repeated.
+        expect(again.preview.title).toBe(
+          'Send order.shipped to https://hooks.example/orders again',
+        );
+        expect(again.preview.consequences.join('\n')).toContain(failed);
+        expect(again.preview.consequences.join('\n')).toMatch(/Failed after 1 attempt: HTTP 503/);
+        expect(JSON.stringify(again.outputs)).not.toContain('hunter2');
+        expect(sent).toEqual([{ id: failed, body: '{}' }]);
+        expect(again.done).toMatchObject({ id: failed, status: 'delivered', attempts: 2 });
+        expect((await webhookOutbox(env).delivery(failed))?.status).toBe('delivered');
+        expect((await audited('webhook.redelivered')).at(-1)).toMatchObject({
+          target: failed,
+          actor: 'ann@example.com',
+          detail: { via: 'mcp', tool: 'redeliver_webhook_delivery', event: 'order.shipped' },
+        });
+
+        // Blocked at the preview, with no code issued: unknown, and not yet attempted.
+        const fresh = `del_new_${ids.hook}`;
+        await webhookOutbox(env).record(
+          [
+            {
+              id: fresh,
+              subscriptionId: ids.hook,
+              subject: 'ord_2',
+              event: 'order.shipped',
+              payload: '{}',
+            },
+          ],
+          stamp,
+        );
+        for (const [input, why] of [
+          [{ deliveryId: 'whd_nope' }, 'No webhook delivery whd_nope.'],
+          [
+            { deliveryId: fresh },
+            `Delivery ${fresh} hasn't had its first attempt yet; it is still on its way.`,
+          ],
+        ] as const) {
+          const r = await call(admin, 'redeliver_webhook_delivery', input);
+          expect(r.isError, why).toBe(true);
+          expect(r.content[0]!.text).toBe(why);
+          expect(r.structuredContent?.confirmation).toBeUndefined();
+        }
+        // A lower role never reaches it.
+        const r = await rpc(operator, 'tools/call', {
+          name: 'redeliver_webhook_delivery',
+          arguments: { deliveryId: failed },
+        });
+        expect(r.body).toMatchObject({
+          error: { message: 'Tool redeliver_webhook_delivery not found' },
+        });
+        expect(sent).toHaveLength(1);
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     it('refuses a confirm for another input, and previews nothing it would refuse', async () => {

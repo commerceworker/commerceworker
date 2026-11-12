@@ -12,6 +12,7 @@
 
 import {
   changeUcpSettings,
+  findRedeliverable,
   getIntegration,
   getUcpPlatform,
   getWebhookSubscription,
@@ -27,6 +28,7 @@ import {
   type ToolInput,
 } from '@commerceworker/core';
 import { recordAudit } from '../audit';
+import { PLUGIN_SUBSCRIPTION, redeliver } from '../outbox';
 import { flowStore, integrationStore, ucpStore, webhookOutbox, workspaceStore } from '../wire';
 import { Refused } from './data';
 
@@ -44,6 +46,72 @@ const where = (url: string) => {
   }
 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Where a delivery goes: a subscription's URL, or the plugin it is for. */
+async function receiver(env: Env, subscriptionId: string) {
+  if (subscriptionId.startsWith(PLUGIN_SUBSCRIPTION))
+    return { name: `the plugin ${subscriptionId.slice(PLUGIN_SUBSCRIPTION.length)}`, gone: false };
+  const sub = (await webhookOutbox(env).subscriptions()).find((s) => s.id === subscriptionId);
+  return sub ? { name: where(sub.url), gone: false } : { name: subscriptionId, gone: true };
+}
+
+export async function previewRedeliverWebhook(
+  env: Env,
+  i: ToolInput<'redeliver_webhook_delivery'>,
+  roleBlock?: string,
+): Promise<ActionPreview> {
+  const found = await findRedeliverable({ outbox: webhookOutbox(env) }, i.deliveryId);
+  if (!found.ok)
+    return {
+      title: 'Send a webhook delivery again',
+      consequences: [],
+      blocked: roleBlock ?? found.error,
+    };
+  const d = found.delivery;
+  const to = await receiver(env, d.subscriptionId);
+  return {
+    title: `Send ${d.event} to ${to.name} again`,
+    consequences: [
+      `The same delivery id (${d.id}) and the same payload, signed with the subscription’s current secret`,
+      `${d.status === 'delivered' ? 'Delivered' : 'Failed'} after ${plural(d.attempts, 'attempt')}${d.lastError && d.status === 'failed' ? `: ${boundText(d.lastError, 120)}` : ''}`,
+      'A receiver that dedupes by delivery id handles it once, however many times it is sent',
+    ],
+    blocked:
+      roleBlock ??
+      (to.gone
+        ? `The subscription ${d.subscriptionId} is gone or off, so there is nowhere to send it.`
+        : undefined),
+  };
+}
+
+export async function runRedeliverWebhook(
+  env: Env,
+  p: Principal,
+  i: ToolInput<'redeliver_webhook_delivery'>,
+  trail: Trail,
+) {
+  const found = await findRedeliverable({ outbox: webhookOutbox(env) }, i.deliveryId);
+  if (!found.ok) throw new Refused(found.error);
+  const sent = await redeliver(env, i.deliveryId);
+  if (!sent.ok) throw new Refused(sent.error);
+  await recordAudit(env, found.audit.action, {
+    actor: p,
+    target: found.audit.target,
+    detail: { ...found.audit.detail, ...trail },
+  });
+  const d = sent.delivery;
+  return {
+    done:
+      d.status === 'delivered'
+        ? 'Sent again, and the receiver took it'
+        : `Sent again, but it failed: ${d.lastError ?? 'no answer'}`,
+    id: d.id,
+    status: d.status === 'delivered' ? ('delivered' as const) : ('failed' as const),
+    attempts: d.attempts,
+    responseStatus: d.responseStatus,
+    lastError: d.lastError,
+  };
+}
 
 export async function previewDeleteWebhook(
   env: Env,

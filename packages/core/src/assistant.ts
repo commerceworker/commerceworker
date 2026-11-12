@@ -178,6 +178,7 @@ export type AssistantTool =
   | 'get_plugin_usage'
   | 'list_webhook_subscriptions'
   | 'list_webhook_deliveries'
+  | 'redeliver_webhook_delivery'
   | 'delete_webhook_subscription'
   | 'list_integrations'
   | 'revoke_integration'
@@ -1133,6 +1134,14 @@ export const ASSISTANT_TOOLS: Record<
     title: 'List a webhook’s deliveries',
     description:
       'A subscription’s latest deliveries, newest first: the event, its payload, and whether it was delivered, with attempts and the receiver’s last status or error.',
+  },
+  redeliver_webhook_delivery: {
+    role: 'admin',
+    confirm: true,
+    label: 'Send a webhook delivery again',
+    title: 'Redeliver a webhook delivery',
+    description:
+      'Send a failed or delivered webhook delivery to its receiver again, with the same delivery id and payload and the subscription’s current signature, so a receiver that dedupes by delivery id handles it once. A delivery still on its first attempt is refused. Its attempts and last status update.',
   },
   delete_webhook_subscription: {
     role: 'admin',

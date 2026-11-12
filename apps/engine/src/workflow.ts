@@ -1006,9 +1006,14 @@ export class OrderWorkflow extends WorkflowEntrypoint<Env, OrderWorkflowParams> 
 
 /**
  * Delivers an outbound webhook in its own step (`${key}:emit`), keyed by the node's effect key
- * `fx`. The step throws while deliveries
- * are pending so Workflows retries it with backoff; once retries run out the error is swallowed,
- * because a subscriber being down must never fail the order. Undelivered rows stay `failed`.
+ * `fx`. The step records the delivery and makes the first attempt, which is bounded (each receiver
+ * answers within its timeout), then hands what didn't arrive to the OrderAgent, whose alarm
+ * schedule retries it for about a day (`queueWebhookRetry`): the Workflow never waits on a
+ * receiver that is down, and a delivery that runs out of retries stays `failed` for an operator to
+ * redeliver. The step's own retries cover only the work around the delivery (the database, the
+ * agent call), both safe to repeat: the row is recorded once by its id and the hand-off queues once
+ * per key. A failure there is swallowed too, because a subscriber being down must never fail the
+ * order. The step keeps its name (published flows' runs replay it from its stored result).
  */
 async function emitStep(
   step: WorkflowStep,
@@ -1022,10 +1027,10 @@ async function emitStep(
   try {
     await step.do(
       `${key}:emit`,
-      { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' }, timeout: '1 minute' },
+      { retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' }, timeout: '1 minute' },
       async () => {
         const r = await emit(env, fx, orderId, event, data);
-        if (r.pending) throw new Error(`${r.pending} ${event} deliveries pending`);
+        if (r.pending) await orderAgent(env, orderId).queueWebhookRetry({ key: fx, event });
         return r;
       },
     );

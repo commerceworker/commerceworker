@@ -12,7 +12,7 @@ CommerceWorker POSTs signed order and cart events to the endpoints you subscribe
 ## Subscribing
 
 Subscriptions are managed through the [REST API](/reference/rest-api/) with an `admin`
-[API token](/guides/team-and-roles/#api-tokens); there is no UI for them. Creating, rotating and deleting a subscription is recorded in the [audit log](/guides/team-and-roles/#audit-log).
+[API token](/guides/team-and-roles/#api-tokens); there is no UI for them. Creating, rotating and deleting a subscription, and sending a delivery again, is recorded in the [audit log](/guides/team-and-roles/#audit-log).
 
 ```bash
 curl -X POST https://app.commerceworker.com/api/v1/webhook-subscriptions \
@@ -42,6 +42,7 @@ once**, here; listing subscriptions never shows it. Store it with the receiver.
 | `POST /api/v1/webhook-subscriptions/:id/rotate` | Issue a new secret (admin); returns it once |
 | `DELETE /api/v1/webhook-subscriptions/:id` | Delete one |
 | `GET /api/v1/webhook-subscriptions/:id/deliveries` | The 50 most recent deliveries, newest first |
+| `POST /api/v1/webhook-deliveries/:deliveryId/redeliver` | Send one delivery again (admin); see [Redelivering](#redelivering) |
 
 ## When events are sent
 
@@ -150,22 +151,48 @@ if (!verify(secret, raw, request.headers.get('x-commerceworker-signature')))
 Any `2xx` response counts as delivered; anything else, or no response within 10 seconds, is a
 failure.
 
-- **Node and End events, and failures:** retried 5 times with exponential backoff from 10 seconds.
-- **`order.cancelled` on cancel:** retried 5 times, 10 seconds doubling each time.
-- **Cart events:** retried for about a day: 10 seconds doubling to an hour, then hourly, 32 times
-  in all.
+Every event is retried for about a day, whatever sent it. The first attempt is made as the event
+happens. After a failure, the next tries come after 10 seconds, then 20, 40 and so on, doubling up
+to an hour, then hourly: 32 retries in all, about 24 hours. A receiver that is down for ten
+minutes, or overnight, still gets the event. A slow or dead receiver never holds up the order: it
+carries on, and a subscriber being down never fails an order.
 
-Each attempt only resends deliveries that haven't succeeded. When retries run out the delivery
-stays `failed` in the deliveries list, and the order carries on: a subscriber being down never
-fails an order.
+Each retry only resends deliveries that haven't succeeded, and signs again when it sends, so the
+signature's timestamp is always fresh. When the retries run out the delivery stays `failed` in the
+deliveries list (its `attempts` and `lastError` show what happened), and you can
+[send it again](#redelivering) yourself.
 
 The delivery id (`X-CommerceWorker-Delivery`, and `id` in the body) is derived from the order, the
 step that sent it and the subscription (for a cart event, the cart, the event and the
 subscription), and stays the same across retries. Use it to dedupe:
 a receiver can see the same delivery more than once.
 
-Each delivery row records `status` (`pending`, `delivered` or `failed`), `attempts`,
-`responseStatus`, `lastError` and `deliveredAt`. A cart's row has the cart's id in `orderId`.
-When a data subject request erases a cart's buyer, or a customer whose account the cart is for or
-whose order it became, the cart's deliveries are deleted, sent or not, and are not retried, as an
-erased order's are; the cart's title loses their name.
+Each delivery row records `status` (`pending` before its first attempt, then `delivered` or
+`failed`), `attempts`, `responseStatus`, `lastError` and `deliveredAt`. A delivery reads `failed`
+after any failed attempt, including while its retries are still going. A cart's row has the cart's
+id in `orderId`. When a data subject request erases an order's or a cart's buyer, the deliveries
+are deleted, sent or not, and are not retried; the cart's title loses their name.
+
+## Redelivering
+
+An admin can send a delivery again, whether it `failed` or was `delivered`: after fixing a
+receiver, or to replay an event it lost.
+
+```bash
+curl -X POST https://app.commerceworker.com/api/v1/webhook-deliveries/$DELIVERY_ID/redeliver \
+  -H "Authorization: Bearer $COMMERCEWORKER_TOKEN"
+```
+
+Take `$DELIVERY_ID` from `id` in [the deliveries list](#subscribing). The delivery is sent once,
+now, with the same `X-CommerceWorker-Delivery` and the same body (so the same `id` and
+`occurredAt`), signed with the subscription's secret as it is now, so a receiver that dedupes by
+delivery id handles it once however often it is sent. The response is `200` with the delivery's
+`status` after this attempt (`delivered`, or `failed` with `lastError`), its `attempts` and the
+receiver's `responseStatus`; a receiver that is still down doesn't make the call fail. Sending
+twice is safe. It is refused with `409` for an unknown delivery, one still waiting for its first
+attempt, or one whose subscription was deleted, and with `403` for a token below `admin`. Each
+send is recorded in the [audit log](/guides/team-and-roles/#audit-log) as `webhook.redelivered`.
+
+The same action is the `redeliver_webhook_delivery` [MCP tool](/reference/mcp/#outside-access),
+which previews where the delivery goes and sends it after the person's confirmation, and the
+**Redeliver** button beside a plugin's recent events on the Plugins page.

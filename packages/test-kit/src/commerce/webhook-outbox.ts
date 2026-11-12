@@ -130,6 +130,25 @@ export class InMemoryWebhookOutbox implements WebhookOutbox {
       }));
   }
 
+  async delivery(id: string): Promise<DeliveryRecord | undefined> {
+    const row = this.rows.get(id);
+    if (!row) return undefined;
+    const { subject, ...rest } = row;
+    return { ...rest, orderId: subject };
+  }
+
+  async unsent(subject: string, idPrefix: string) {
+    return [...this.rows.values()]
+      .filter((r) => r.status !== 'delivered' && r.subject === subject && r.id.startsWith(idPrefix))
+      .map(({ id, subscriptionId, subject: s, event, payload }) => ({
+        id,
+        subscriptionId,
+        subject: s,
+        event,
+        payload,
+      }));
+  }
+
   async attempted(
     results: readonly { id: string; ok: boolean; status: number | null; error: string | null }[],
     now: number,

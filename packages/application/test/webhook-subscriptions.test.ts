@@ -1,6 +1,7 @@
 import { InMemoryWebhookOutbox } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
 import {
+  findRedeliverable,
   getWebhookSubscription,
   listWebhookDeliveries,
   listWebhookSubscriptions,
@@ -98,6 +99,52 @@ describe('getWebhookSubscription and removeWebhookSubscription', () => {
     expect(await removeWebhookSubscription({ outbox }, 'whs_a')).toEqual({
       ok: false,
       error: 'No webhook subscription whs_a.',
+    });
+  });
+});
+
+describe('findRedeliverable', () => {
+  const delivery = (id: string) => ({
+    id,
+    subscriptionId: 'whs_a',
+    subject: 'ord_1',
+    event: 'order.paid',
+    payload: '{}',
+  });
+
+  it('allows a delivery that failed or arrived, with the audit event both channels write', async () => {
+    const outbox = new InMemoryWebhookOutbox({ subscriptions: [sub('whs_a', 1)] });
+    await outbox.record([delivery('whd_failed'), delivery('whd_sent')], now);
+    await outbox.attempted(
+      [
+        { id: 'whd_failed', ok: false, status: 503, error: 'HTTP 503' },
+        { id: 'whd_sent', ok: true, status: 200, error: null },
+      ],
+      now,
+    );
+    for (const id of ['whd_failed', 'whd_sent']) {
+      expect(await findRedeliverable({ outbox }, id)).toMatchObject({
+        ok: true,
+        delivery: { id },
+        audit: {
+          action: 'webhook.redelivered',
+          target: id,
+          detail: { event: 'order.paid', subscriptionId: 'whs_a' },
+        },
+      });
+    }
+  });
+
+  it('refuses an unknown delivery and one still waiting for its first attempt', async () => {
+    const outbox = new InMemoryWebhookOutbox({ subscriptions: [sub('whs_a', 1)] });
+    await outbox.record([delivery('whd_new')], now);
+    expect(await findRedeliverable({ outbox }, 'whd_nope')).toEqual({
+      ok: false,
+      error: 'No webhook delivery whd_nope.',
+    });
+    expect(await findRedeliverable({ outbox }, 'whd_new')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('first attempt'),
     });
   });
 });

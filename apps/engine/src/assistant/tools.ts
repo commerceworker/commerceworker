@@ -165,6 +165,7 @@ export const ACTION_TOOLS: ActionTool[] = [
   'approve_plugin',
   'rollback_plugin',
   'uninstall_plugin',
+  'redeliver_webhook_delivery',
   'delete_webhook_subscription',
   'revoke_integration',
   'set_ucp_settings',

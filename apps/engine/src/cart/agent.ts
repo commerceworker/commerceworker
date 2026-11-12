@@ -17,7 +17,6 @@ import {
   attachmentName,
   attachmentProblem,
   CART_CHAT_BROADCAST,
-  CART_EVENT_RETRIES,
   CART_START_TTL_MS,
   CART_TYPING_EVERY_MS,
   CART_TYPING_MS,
@@ -39,7 +38,6 @@ import {
   cartAttachmentKey,
   cartAttachmentPrefix,
   cartCancelProblem,
-  cartEventRetryDelaySec,
   cartIndexRow,
   cartOrderStart,
   cartReadyProblem,
@@ -49,8 +47,10 @@ import {
   checkCartReturn,
   EMPTY_CART_STATE,
   ERASED,
+  EVENT_RETRIES,
   eraseText,
   erasureTerms,
+  eventRetryDelaySec,
   extendedCartExpiry,
   externalCartEnd,
   finishCart,
@@ -186,7 +186,7 @@ export class CartAgent extends Agent<Env, CartState> {
 
   /**
    * Delivers a cart's event (`emitCart`), retried on this object's schedule for about a day
-   * (`cartEventRetryDelaySec`), then left `failed` in its delivery rows, where the subscription's
+   * (`eventRetryDelaySec`), then left `failed` in its delivery rows, where the subscription's
    * deliveries and the Plugins page show it. Deliveries are keyed by the cart and the event, so a
    * retry sends only what hasn't arrived. One queued before an erasure is dropped, and one that was
    * on its way while an erasure ran takes back what it wrote.
@@ -205,8 +205,8 @@ export class CartAgent extends Agent<Env, CartState> {
       return;
     }
     if (!pending) return;
-    if (p.attempt < CART_EVENT_RETRIES)
-      await this.schedule(cartEventRetryDelaySec(p.attempt), 'emitWebhook', {
+    if (p.attempt < EVENT_RETRIES)
+      await this.schedule(eventRetryDelaySec(p.attempt), 'emitWebhook', {
         ...p,
         attempt: p.attempt + 1,
       });
