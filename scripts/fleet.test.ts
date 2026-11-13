@@ -12,6 +12,7 @@ import {
   ALERT_POLICIES,
   alertSpec,
   alertsOn,
+  backsUpKv,
   backsUpObjects,
   CONTENT_QUEUES,
   CONTENT_SECRETS,
@@ -2482,6 +2483,7 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
     restore: '0 7 * * 0',
     objectsBackup: '0 3 * * *',
     objectsDrill: '0 8 * * 0',
+    kvBackup: '0 2 * * *',
   });
   assert.equal(
     redundancySchedules(protectedAcme({ backupHourUtc: 20 }).redundancy!).restore,
@@ -2600,9 +2602,88 @@ test('provision.sh is told the backups bucket, the standby and the retention onl
     [noObjects.BACKUPS_R2, noObjects.STANDBY_D1, noObjects.BACKUP_D1, noObjects.BACKUP_OBJECTS],
     ['commerceworker-backups-acme', 'commerceworker-standby-acme', 'true', ''],
   );
-  const neither = shellVars(protectedAcme({ except: ['d1Backup', 'objectBackup'] }));
-  assert.deepEqual([neither.BACKUPS_R2, neither.BACKUP_DAYS], ['', '']);
+  // The OAuth export keeps the bucket on its own, with no standby.
+  assert.deepEqual([on.BACKUP_KV, off.BACKUP_KV], ['true', '']);
+  const onlyKv = shellVars(protectedAcme({ except: ['d1Backup', 'objectBackup'] }));
+  assert.deepEqual(
+    [
+      onlyKv.BACKUPS_R2,
+      onlyKv.STANDBY_D1,
+      onlyKv.BACKUP_D1,
+      onlyKv.BACKUP_OBJECTS,
+      onlyKv.BACKUP_KV,
+    ],
+    ['commerceworker-backups-acme', '', '', '', 'true'],
+  );
+  const noKv = shellVars(protectedAcme({ except: ['kvBackup'] }));
+  assert.deepEqual([noKv.BACKUPS_R2, noKv.BACKUP_KV], ['commerceworker-backups-acme', '']);
+  const none = shellVars(protectedAcme({ except: ['d1Backup', 'objectBackup', 'kvBackup'] }));
+  assert.deepEqual([none.BACKUPS_R2, none.BACKUP_DAYS, none.BACKUP_KV], ['', '', '']);
   assert.equal(names(acme).backups, 'commerceworker-backups-acme');
+});
+
+// The web app's OAuth export: the Workflow and the backups bucket it writes to.
+const WEB_KV = (c: Record<string, Entry[]>) => ({
+  buckets: c.r2_buckets!.map((b) => b.binding),
+  workflows: (c.workflows ?? []).map((w) => w.binding),
+});
+
+test('the web app renders the OAuth export with the flag on: bucket in the jurisdiction, suffixed Workflow, hour', () => {
+  const c = renderWeb(base('web'), protectedAcme({ backupHourUtc: 4 }));
+  assert.deepEqual(WEB_KV(c), { buckets: ['DOCS', 'BACKUPS'], workflows: ['KV_BACKUP'] });
+  const [backups] = c.r2_buckets.filter((b: Entry) => b.binding === 'BACKUPS');
+  assert.deepEqual(
+    [backups.bucket_name, backups.jurisdiction],
+    ['commerceworker-backups-acme', 'eu'],
+  );
+  const [flow] = c.workflows as Entry[];
+  assert.equal(flow!.name, 'commerceworker-kv-backup-acme');
+  assert.equal(flow!.class_name, 'KvBackup');
+  // An hour after the D1 backup, and it wraps past midnight.
+  assert.deepEqual(flow!.schedules, ['0 5 * * *']);
+  assert.deepEqual(
+    (renderWeb(base('web'), protectedAcme({ backupHourUtc: 23 })).workflows as Entry[])[0]!
+      .schedules,
+    ['0 0 * * *'],
+  );
+  // The class is the Worker's own, so no service or other binding names it.
+  assert.equal(c.workflows[0].script_name, undefined);
+});
+
+test('the web app strips the OAuth export with the flag off or kvBackup an exception, and only then', () => {
+  const none = { buckets: ['DOCS'], workflows: [] };
+  assert.deepEqual(WEB_KV(renderWeb(base('web'), acme)), none);
+  assert.equal(renderWeb(base('web'), acme).workflows, undefined);
+  const excepted = renderWeb(base('web'), protectedAcme({ except: ['kvBackup'] }));
+  assert.deepEqual(WEB_KV(excepted), none);
+  // The rest of the config is as without the flag.
+  assert.deepEqual(excepted, renderWeb(base('web'), acme));
+  // The other parts of the flag leave the export on.
+  for (const part of ['d1Backup', 'objectBackup'])
+    assert.deepEqual(WEB_KV(renderWeb(base('web'), protectedAcme({ except: [part] }))), {
+      buckets: ['DOCS', 'BACKUPS'],
+      workflows: ['KV_BACKUP'],
+    });
+  assert.equal(backsUpKv(protectedAcme()), true);
+  assert.equal(backsUpKv(protectedAcme({ except: ['kvBackup'] })), false);
+  assert.equal(backsUpKv(acme), false);
+});
+
+test('the engine binds the backups bucket only for its own parts, the web app for the export', () => {
+  const engineOnly = protectedAcme({ except: ['d1Backup', 'objectBackup'] });
+  assert.ok(
+    !renderEngine(base('engine'), engineOnly).r2_buckets.some(
+      (b: Entry) => b.binding === 'BACKUPS',
+    ),
+  );
+  assert.ok(
+    renderWeb(base('web'), engineOnly).r2_buckets.some((b: Entry) => b.binding === 'BACKUPS'),
+  );
+  assert.ok(
+    renderEngine(base('engine'), protectedAcme({ except: ['kvBackup'] })).r2_buckets.some(
+      (b: Entry) => b.binding === 'BACKUPS',
+    ),
+  );
 });
 
 test('commerceworker has redundancy on, and the base engine config carries what it binds', () => {

@@ -12,7 +12,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const KEY = 'test-principal-key-0123456789abcdef';
 const env: Record<string, string | undefined> = { PRINCIPAL_KEY: KEY };
-vi.mock('cloudflare:workers', () => ({ env, waitUntil: () => {}, WorkerEntrypoint: class {} }));
+vi.mock('cloudflare:workers', () => ({
+  env,
+  waitUntil: () => {},
+  WorkerEntrypoint: class {},
+  WorkflowEntrypoint: class {},
+}));
 vi.mock('virtual:react-router/server-build', () => ({}));
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),

@@ -17,6 +17,7 @@ export * from './identity';
 export * from './integrations';
 export * from './inventory';
 export * from './invoices';
+export * from './kv-copy';
 export * from './logs';
 export * from './marketplace';
 export * from './object-replica';

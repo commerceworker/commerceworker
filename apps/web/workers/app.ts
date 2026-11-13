@@ -174,6 +174,9 @@ const ROUTE_GROUPS = [
   ['/assets', 'assets'],
 ] as const;
 
+// The nightly OAuth grant export (a Workflow, bound only when the registry's redundancy is on).
+export { KvBackup } from './kv-backup';
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

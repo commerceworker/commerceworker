@@ -10,7 +10,11 @@ const rendered = vi.fn(
   async (_r: Request, _c?: RouterContextProvider) => new Response('<html>shell</html>'),
 );
 
-vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
+vi.mock('cloudflare:workers', () => ({
+  env,
+  WorkerEntrypoint: class {},
+  WorkflowEntrypoint: class {},
+}));
 vi.mock('virtual:react-router/server-build', () => ({}));
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),

@@ -19,6 +19,7 @@ import {
 } from '@commerceworker/core/product/listing';
 import { CODE, DOC_FORMAT, paths, tags } from '@commerceworker/core/product/paths';
 import { SEARCH_DEPTH } from '@commerceworker/core/product/search';
+import { cardFromDoc } from './card-fallback';
 import type { CatalogEnv } from './env';
 import { parse, type Route } from './routes';
 
@@ -276,16 +277,60 @@ export class CatalogDelivery extends WorkerEntrypoint<CatalogEnv> {
         : new Map<string, string | null>();
       return new Map(keys.map((k) => [k, cards.get(card(uids.get(k)) ?? '') ?? null]));
     };
-    const remembered = new Set(route.keys.filter((k) => uidCache.has(k)));
-    const found = await read(route.keys, false);
-    // A card missing under a remembered uid: the uid may have changed (see `uids`).
-    const recheck = route.keys.filter((k) => found.get(k) === null && remembered.has(k));
-    if (recheck.length) for (const [k, v] of await read(recheck, true)) found.set(k, v);
+    let degraded = false;
+    let found: Map<string, string | null>;
+    try {
+      const remembered = new Set(route.keys.filter((k) => uidCache.has(k)));
+      const first = await read(route.keys, false);
+      // A card missing under a remembered uid: the uid may have changed (see `uids`).
+      const recheck = route.keys.filter((k) => first.get(k) === null && remembered.has(k));
+      if (recheck.length) for (const [k, v] of await read(recheck, true)) first.set(k, v);
+      found = first;
+    } catch (err) {
+      // KV failed (a miss is a null, not a throw): the batch is by key, so the documents in R2 are
+      // enough to answer it, with the cards made from them.
+      this.failover('cards_kv_read', err);
+      degraded = true;
+      found = await this.cardsFromPublished(route.channel, route.locale, route.keys);
+    }
     // Cards are stored serialized: join them as they are.
     const body = `{"products":[${route.keys.map((k) => found.get(k) ?? 'null').join(',')}]}`;
     return assembled(request, body, {
-      'cache-control': FRESH,
+      // An answer made from R2 is kept only briefly, so the KV cards replace it soon.
+      'cache-control': degraded ? MISSING : FRESH,
       'cache-tag': [tags.channel(route.channel), ...route.keys.map(tags.product)].join(','),
+    });
+  }
+
+  /** Cards for `keys` made from their published documents (`null` for one not published). */
+  private async cardsFromPublished(
+    channel: string,
+    locale: string,
+    keys: string[],
+  ): Promise<Map<string, string | null>> {
+    const cards = await Promise.all(
+      keys.map(async (k) => {
+        const object = await this.env.PUBLISHED.get(paths.doc(DOC_FORMAT, channel, locale, k));
+        return object ? cardFromDoc(await object.text()) : null;
+      }),
+    );
+    return new Map(keys.map((k, i) => [k, cards[i] ?? null]));
+  }
+
+  /**
+   * Counts a read that was served from another copy because the first failed: a log line, and a
+   * data point in the edge's dataset in the layout of the other Workers' `failover` metric
+   * (`blob1` the event, `blob2` the app, `blob3` what), so one query reads them all.
+   */
+  private failover(kind: string, err: unknown) {
+    console.error(
+      'catalog edge failover',
+      JSON.stringify({ kind, error: err instanceof Error ? err.message : String(err) }),
+    );
+    this.env.ANALYTICS?.writeDataPoint({
+      indexes: ['failover'],
+      blobs: ['failover', 'catalog-edge', kind, ''],
+      doubles: [1, 0],
     });
   }
 

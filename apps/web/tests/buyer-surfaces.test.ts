@@ -11,7 +11,11 @@ const env = { PRINCIPAL_KEY: 'web-test-key' };
 const engineFetch = vi.fn(async (_r: Request) => new Response('ok'));
 const principal = vi.fn(async (_r: Request): Promise<null> => null);
 
-vi.mock('cloudflare:workers', () => ({ env, WorkerEntrypoint: class {} }));
+vi.mock('cloudflare:workers', () => ({
+  env,
+  WorkerEntrypoint: class {},
+  WorkflowEntrypoint: class {},
+}));
 vi.mock('virtual:react-router/server-build', () => ({}));
 vi.mock('~/lib/env.server', () => ({ engine: () => ({ fetch: engineFetch }), docs: () => ({}) }));
 vi.mock('~/lib/auth.server', () => ({

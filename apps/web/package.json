@@ -59,6 +59,7 @@
     "@commerceworker/test-kit": "workspace:*",
     "@babel/plugin-proposal-decorators": "catalog:",
     "@cloudflare/vite-plugin": "catalog:",
+    "@cloudflare/vitest-plugin": "catalog:",
     "@commerceworker/typescript-config": "workspace:*",
     "@playwright/test": "catalog:",
     "@react-router/dev": "catalog:",

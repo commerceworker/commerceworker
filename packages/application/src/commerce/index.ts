@@ -11,6 +11,7 @@ export * from './email-queue';
 export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';
+export * from './kv-backup';
 export * from './object-replica';
 export * from './objects-restore';
 export * from './order-confirmation';

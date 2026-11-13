@@ -36,17 +36,42 @@
  *                                                 (email, email-events, docs-replica, catalog-feed-parts,
  *                                                 catalog-changes, catalog-purge) back to it, once each (operator
  *                                                 credentials; never in CI)
+ *   node scripts/fleet.ts kv-restore <id> <date> [--dry-run] [--out <dir>]  plan putting a night's OAuth
+ *                                                 grant export back: reads the dump from the backups bucket,
+ *                                                 skips keys already expired, keeps the rest's remaining
+ *                                                 lifetime, and writes `wrangler kv bulk put` files (never
+ *                                                 writes KV itself; never run in CI)
  *   node scripts/fleet.ts demos                   the provisioned demo deployments, for the nightly reset
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and domain put
  * in, written next to it so its relative paths still resolve. See docs/operations.md.
  */
 
-import { createHmac } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash, createHmac } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { applyEdits, modify, type ParseError, parse, printParseErrorCode } from 'jsonc-parser';
+import {
+  KV_BACKUP_FORMAT,
+  type KvBulkPut,
+  type KvManifest,
+  kvManifestKey,
+  parseKvChunk,
+  planKvRestore,
+  splitBulk,
+} from '../packages/application/src/commerce/kv-restore.ts';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 import { cloudflareIo, operatorEnv, type RedriveTarget, redrive } from './redrive.ts';
 
@@ -637,9 +662,13 @@ export const backsUpD1 = (d: Deployment): d is Deployment & { redundancy: Redund
 export const backsUpObjects = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
   !!d.redundancy && !d.redundancy.except.includes('objectBackup');
 
-/** Whether the backups bucket exists: either the D1 backups or the Durable Object copies are on. */
+/** Whether OAuth grants (`OAUTH_KV`) are exported nightly: `redundancy` on, `kvBackup` not an exception. */
+export const backsUpKv = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('kvBackup');
+
+/** Whether the backups bucket exists: the D1 backups, the Durable Object copies or the OAuth export are on. */
 export const holdsBackups = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
-  backsUpD1(d) || backsUpObjects(d);
+  backsUpD1(d) || backsUpObjects(d) || backsUpKv(d);
 
 /** Whether `DOCS` has a replica: `redundancy` on, `r2Replica` not an exception. */
 export const replicatesDocs = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
@@ -648,7 +677,7 @@ export const replicatesDocs = (d: Deployment): d is Deployment & { redundancy: R
 /**
  * The cron schedules: the D1 backup daily and its drill six hours later on Sundays or the 1st; the
  * Durable Object copy two hours after the backup, and its drill an hour after the D1 drill's, on
- * the same days.
+ * the same days; the OAuth grant export an hour after the backup.
  */
 /**
  * Whether order and sign-in mail goes through a queue (with retries, a dead-letter queue and a
@@ -666,6 +695,7 @@ export function redundancySchedules(r: Redundancy) {
     restore: days(drillHour),
     objectsBackup: `0 ${(r.backupHourUtc + 2) % 24} * * *`,
     objectsDrill: days(objectsDrillHour),
+    kvBackup: `0 ${(r.backupHourUtc + 1) % 24} * * *`,
   };
 }
 
@@ -1661,7 +1691,9 @@ function redundancyBindings(config: Config, d: Deployment) {
   }
   if (!backsUpObjects(d))
     strip('workflows', 'binding', ['OBJECTS_BACKUP', 'OBJECTS_RESTORE', 'OBJECTS_DRILL']);
-  if (!holdsBackups(d)) strip('r2_buckets', 'binding', ['BACKUPS']);
+  // The OAuth export is the web app's (kvBackupBindings): the engine binds the bucket only for its own parts.
+  const engineHolds = backsUpD1(d) || backsUpObjects(d);
+  if (!engineHolds) strip('r2_buckets', 'binding', ['BACKUPS']);
   if (!d.redundancy) return;
   const cron = redundancySchedules(d.redundancy);
   if (backsUpD1(d)) {
@@ -1673,7 +1705,7 @@ function redundancyBindings(config: Config, d: Deployment) {
         : db,
     );
   }
-  if (holdsBackups(d))
+  if (engineHolds)
     config.r2_buckets = config.r2_buckets.map((b: Config) =>
       b.binding === 'BACKUPS'
         ? {
@@ -1691,6 +1723,36 @@ function redundancyBindings(config: Config, d: Deployment) {
   };
   config.workflows = config.workflows.map((w: Config) =>
     schedules[w.binding] ? { ...w, schedules: [schedules[w.binding]] } : w,
+  );
+}
+
+/**
+ * The web app's OAuth export: the backups bucket (the engine's, in the deployment's jurisdiction) and
+ * the KvBackup Workflow at the registry's hour. Stripped when `redundancy` is off or `kvBackup` is an
+ * exception, so the web Worker binds nothing it doesn't use. The Workflow's class stays exported
+ * either way.
+ */
+function kvBackupBindings(config: Config, d: Deployment) {
+  if (!backsUpKv(d)) {
+    config.r2_buckets = config.r2_buckets.filter((b: Config) => b.binding !== 'BACKUPS');
+    config.workflows = config.workflows.filter((w: Config) => w.binding !== 'KV_BACKUP');
+    if (!config.workflows.length) delete config.workflows;
+    return;
+  }
+  const n = names(d);
+  config.r2_buckets = config.r2_buckets.map((b: Config) =>
+    b.binding === 'BACKUPS'
+      ? {
+          ...b,
+          bucket_name: n.backups,
+          ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
+        }
+      : b,
+  );
+  // Workflow names are unique per account, so each deployment's carry its suffix.
+  const hour = redundancySchedules(d.redundancy).kvBackup;
+  config.workflows = config.workflows.map((w: Config) =>
+    w.binding === 'KV_BACKUP' ? { ...w, name: `${w.name}${d.suffix}`, schedules: [hour] } : w,
   );
 }
 
@@ -2055,6 +2117,7 @@ export function renderWeb(base: Config, d: Deployment): Config {
   ];
   config.ratelimits = rateLimits(config.ratelimits, d);
   storage(config, d);
+  kvBackupBindings(config, d);
   // The storefront's origin: where a plugin may send a buyer to their cart's start link.
   config.vars = { ...config.vars, STOREFRONT_ORIGIN: `https://${d.storefrontDomain}` };
   // Plugins' aliases, alias → plugin id; always set, so one deployment's never carries over.
@@ -2629,13 +2692,14 @@ export function shellVars(d: Deployment): Record<string, string> {
     CATALOG_R2: n.catalogR2,
     // The backups bucket (the commerce D1's, and the Durable Object copies'), the standby database and
     // how long a backup is kept and locked. Empty without `redundancy` (the bucket and days also
-    // with both `d1Backup` and `objectBackup` exceptions, the standby with `d1Backup` one).
+    // with `d1Backup`, `objectBackup` and `kvBackup` all exceptions, the standby with `d1Backup` one).
     BACKUPS_R2: holdsBackups(d) ? n.backups : '',
     STANDBY_D1: backsUpD1(d) ? n.standbyD1 : '',
     BACKUP_DAYS: holdsBackups(d) ? String(d.redundancy.backupDays) : '',
-    // Which prefixes of the backups bucket are kept and locked: d1/ and objects/.
+    // Which prefixes of the backups bucket are kept and locked: d1/, objects/ and kv/.
     BACKUP_D1: backsUpD1(d) ? 'true' : '',
     BACKUP_OBJECTS: backsUpObjects(d) ? 'true' : '',
+    BACKUP_KV: backsUpKv(d) ? 'true' : '',
     // The docs replica: its bucket, the queue R2's notifications go to and that queue's dead-letter
     // queue. All empty without `redundancy` (or with `r2Replica` an exception).
     DOCS_REPLICA_R2: replicatesDocs(d) ? n.docsReplica : '',
@@ -2910,6 +2974,122 @@ async function writeCheck(id: string | undefined) {
   console.log(await postWriteCheck(`https://${byId(id).domain}${HEALTH_WRITE_PATH}`, key));
 }
 
+/** What a restore of one night's KV export would put back (`planKvRestoreFromBackup`). */
+export type KvRestoreResult = {
+  date: string;
+  chunks: number;
+  /** Keys in the dump. */
+  keys: number;
+  /** Keys already expired at `now`: left out. */
+  expired: number;
+  /** Keys to write, in files `wrangler kv bulk put` takes (at most 10,000 keys each). */
+  files: KvBulkPut[][];
+  capped: boolean;
+};
+
+/**
+ * Reads the OAuth export of `date` through `get` (an object's bytes, null when there is none),
+ * refusing a dump that isn't finished (no manifest), one of another format, a chunk that is missing or
+ * doesn't match its hash, and one whose key count differs from the manifest's; then plans the puts
+ * as of `now` (`planKvRestore`). Nothing is written anywhere.
+ */
+export async function planKvRestoreFromBackup(
+  date: string,
+  get: (key: string) => Promise<Uint8Array | null>,
+  now = Date.now(),
+): Promise<KvRestoreResult> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`${date} is not a date (yyyy-mm-dd)`);
+  const raw = await get(kvManifestKey(date, 'oauth'));
+  if (!raw) throw new Error(`${date} has no manifest: that export did not finish, or never ran`);
+  const manifest = JSON.parse(new TextDecoder().decode(raw)) as KvManifest;
+  if (manifest.format !== KV_BACKUP_FORMAT)
+    throw new Error(
+      `the manifest of ${date} is format ${manifest.format}, not ${KV_BACKUP_FORMAT}`,
+    );
+  const entries = [];
+  for (const chunk of manifest.chunks) {
+    const bytes = await get(chunk.key);
+    if (!bytes) throw new Error(`${chunk.key} is missing`);
+    if (createHash('sha256').update(bytes).digest('hex') !== chunk.sha256)
+      throw new Error(`${chunk.key} does not match its hash in the manifest`);
+    const got = parseKvChunk(gunzipSync(bytes).toString('utf8'));
+    if (got.length !== chunk.keys)
+      throw new Error(`${chunk.key} holds ${got.length} keys, the manifest says ${chunk.keys}`);
+    entries.push(...got);
+  }
+  const plan = planKvRestore(entries, now);
+  return {
+    date,
+    chunks: manifest.chunks.length,
+    keys: entries.length,
+    expired: plan.expired,
+    files: splitBulk(plan.puts),
+    capped: manifest.capped,
+  };
+}
+
+/**
+ * `kv-restore <id> <date> [--dry-run] [--out <dir>]`: an operator's plan for putting OAuth grants
+ * back (docs/operations.md, "Restoring OAuth grants"). Reads the dump with `wrangler r2 object get
+ * --remote`, prints what it holds and what a restore would write, and (without `--dry-run`) writes
+ * the `kv bulk put` files and prints the commands. It never writes KV: the operator runs those,
+ * with the namespace id from `wrangler kv namespace list`. CI never calls it.
+ */
+async function kvRestore(id: string | undefined, date: string | undefined, rest: string[]) {
+  if (!date) throw new Error('kv-restore <id> <date> [--dry-run] [--out <dir>]');
+  const d = byId(id);
+  if (!backsUpKv(d))
+    throw new Error(
+      `${d.id} does not export OAuth grants: redundancy is off or kvBackup is an exception`,
+    );
+  const dryRun = rest.includes('--dry-run');
+  const outAt = rest.indexOf('--out');
+  const out = outAt >= 0 ? rest[outAt + 1] : '.';
+  if (!out) throw new Error('--out needs a directory');
+  const bucket = names(d).backups;
+  const scratch = mkdtempSync(join(tmpdir(), 'kv-restore-'));
+  try {
+    const get = async (key: string) => {
+      const file = join(scratch, 'object');
+      try {
+        execFileSync(
+          'wrangler',
+          [
+            'r2',
+            'object',
+            'get',
+            `${bucket}/${key}`,
+            '--file',
+            file,
+            '--remote',
+            ...(d.jurisdiction ? ['--jurisdiction', d.jurisdiction] : []),
+          ],
+          { stdio: ['ignore', 'ignore', 'pipe'] },
+        );
+      } catch {
+        return null;
+      }
+      const bytes = new Uint8Array(readFileSync(file));
+      rmSync(file);
+      return bytes;
+    };
+    const r = await planKvRestoreFromBackup(date, get);
+    const puts = r.files.reduce((n, f) => n + f.length, 0);
+    console.log(JSON.stringify({ id: d.id, bucket, ...r, files: r.files.length, puts }, null, 2));
+    if (r.capped)
+      console.error('this export was capped: the namespace was larger than one night covers');
+    if (dryRun) return;
+    mkdirSync(out, { recursive: true });
+    r.files.forEach((f, i) => {
+      const file = join(out, `kv-restore-${d.id}-${date}-${i + 1}.json`);
+      writeFileSync(file, JSON.stringify(f));
+      console.log(`wrangler kv bulk put ${file} --namespace-id <OAUTH_KV namespace id> --remote`);
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [cmd, ...args] = process.argv.slice(2);
   try {
@@ -2924,6 +3104,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'alerts') console.log(JSON.stringify(alertSpec(byId(args[0]))));
     else if (cmd === 'logpush-foreign') logpushForeign(args[0]);
     else if (cmd === 'logpush-token') logpushTokenCmd(args[0], args[1], args[2], args[3]);
+    else if (cmd === 'kv-restore') await kvRestore(args[0], args[1], args.slice(2));
     else if (cmd === 'set-d1') setD1(args[0], args[1]);
     else if (cmd === 'set-standby-d1') setStandbyD1(args[0], args[1]);
     else if (cmd === 'set-catalog-kv') setCatalogKv(args[0], args[1]);
@@ -2935,7 +3116,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|redrive|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|kv-restore|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|redrive|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);
