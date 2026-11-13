@@ -1044,6 +1044,7 @@ product's writes are never reordered. The publishers hold no state.
 
 Measured on production in October 2026 (a pass is 100 products, about 500 writes):
 
+- A failed alarm never leaves the shard: Cloudflare retries a thrown alarm a few times and then drops it, which would leave the outbox waiting for the next write. `alarm()` catches the failure, logs `{"type":"catalog_alarm_failed","shard","failures","retryInMs","error"}` at error level and sets its own next alarm, 30 seconds out and doubling to 15 minutes while it keeps failing; a success forgets the backoff. This was chosen over an hourly cron that re-arms shards with outbox rows: it recovers in seconds rather than up to an hour, adds no trigger to render and provision, and the shard calls no other shard to do it.
 - With no publishers, a 250,000-product feed published at about 200 products a second across the 64
   shards (an alarm pass's p99 about 18 seconds, CPU about 1%).
 - With 8 publishers each running 16 writes in lockstep, a 750,000-product feed still published at

@@ -193,6 +193,9 @@ const PUBLISH_BATCH = 100;
 const PUBLISH_PASSES = 4;
 /** How long one alarm keeps starting passes before it hands over to the next alarm. */
 const ALARM_WINDOW_MS = 60_000;
+/** After a failed alarm: the first retry's delay, doubling each time up to the cap. */
+const ALARM_BACKOFF_MS = 30_000;
+const ALARM_BACKOFF_MAX_MS = 15 * 60_000;
 
 type OutboxRow = { seq: number; key: string; urgent: number; rev: number | null; forced: number };
 /** Cache tags per purge message: what one purge call takes. */
@@ -1874,9 +1877,35 @@ export class CatalogShard extends DurableObject<Env> {
    * starts the next as soon as one finishes. A pass waits for the slowest of its publishers, so one
    * pass at a time left the shard idle behind its slowest write. A product with a pass in flight is
    * left for a later one, so its writes still never overlap or reorder. Hands over to a new alarm
-   * after ALARM_WINDOW_MS; a failed pass fails the alarm (retried) once the others are done.
+   * after ALARM_WINDOW_MS. A failure never leaves the alarm: Cloudflare retries a thrown alarm a few
+   * times and then drops it, and the outbox would wait for the next write. It is logged and the
+   * shard sets its own next alarm, with backoff, for as long as it keeps failing.
    */
   override async alarm() {
+    try {
+      await this.runAlarm();
+      this.alarmFailures = 0;
+    } catch (err) {
+      const delay = Math.min(ALARM_BACKOFF_MS * 2 ** this.alarmFailures, ALARM_BACKOFF_MAX_MS);
+      this.alarmFailures++;
+      console.error(
+        JSON.stringify({
+          type: 'catalog_alarm_failed',
+          shard: this.setting('shard') ?? null,
+          failures: this.alarmFailures,
+          retryInMs: delay,
+          error: String(err),
+        }),
+      );
+      await this.ctx.storage.setAlarm(Date.now() + delay);
+    }
+  }
+
+  /** Consecutive failed alarms; forgotten with the instance, which only restarts the backoff. */
+  private alarmFailures = 0;
+
+  /** One alarm's work; a failed pass fails it once the others are done. */
+  private async runAlarm() {
     this.sql.exec('DELETE FROM applied WHERE at < ?', Date.now() - APPLIED_TTL_MS);
     // A day after a publish: back to Gaps if the product has gaps left, else off the board.
     const now = Date.now();
