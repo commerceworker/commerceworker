@@ -37,6 +37,7 @@ import {
   pluginOwnSecrets,
   postWriteCheck,
   queuesEmail,
+  queuesIntake,
   REDUNDANCY_PARTS,
   RESERVED_PATH_SEGMENTS,
   redriveTargets,
@@ -2676,7 +2677,7 @@ test('the web app strips the OAuth export with the flag off or kvBackup an excep
   const none = { buckets: ['DOCS'], workflows: [] };
   assert.deepEqual(WEB_KV(renderWeb(base('web'), acme)), none);
   assert.equal(renderWeb(base('web'), acme).workflows, undefined);
-  const excepted = renderWeb(base('web'), protectedAcme({ except: ['kvBackup'] }));
+  const excepted = renderWeb(base('web'), protectedAcme({ except: ['kvBackup', 'intake'] }));
   assert.deepEqual(WEB_KV(excepted), none);
   // The rest of the config is as without the flag.
   assert.deepEqual(excepted, renderWeb(base('web'), acme));
@@ -2749,6 +2750,8 @@ test('the engine renders the docs replica: bucket, reconcile Workflow and suffix
     [
       ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
       ['commerceworker-docs-replica-dlq-acme', undefined],
+      ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+      ['commerceworker-intake-dlq-acme', undefined],
     ],
   );
   // No jurisdiction on the bucket for a deployment without one.
@@ -2777,20 +2780,23 @@ test('r2Replica as an exception strips the replica and nothing else; the flag of
       'OBJECTS_DRILL',
     ],
   });
-  assert.equal(noReplica.queues, undefined);
+  // What is left is channel intake's.
+  assert.deepEqual(queueNames(noReplica), [
+    ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+    ['commerceworker-intake-dlq-acme', undefined],
+  ]);
+  assert.equal(
+    renderEngine(base('engine'), protectedAcme({ except: ['r2Replica', 'intake'] })).queues,
+    undefined,
+  );
   assert.equal(renderEngine(base('engine'), acme).queues, undefined);
   // The base config's own consumers are what commerceworker deploys, unsuffixed.
   const own = renderEngine(
     base('engine'),
     loadDeployments().find((x) => x.id === 'commerceworker')!,
   );
-  // commerceworker sets no `email`, so it has the replica's queues and none of the mail queue's.
-  assert.deepEqual(
-    own.queues.consumers,
-    base('engine').queues.consumers.filter((c: { queue: string }) =>
-      c.queue.startsWith('commerceworker-docs-replica'),
-    ),
-  );
+  // commerceworker sets no `email`, so it has the replica's and intake's queues and none of the mail queue's.
+  assert.deepEqual(own.queues.consumers, base('engine').queues.consumers);
   assert.equal(own.queues.producers, undefined);
   assert.equal(replicatesDocs(protectedAcme()), true);
   assert.equal(replicatesDocs(protectedAcme({ except: ['r2Replica'] })), false);
@@ -2965,6 +2971,8 @@ test('the engine renders the mail queue, its dead letters and the event queue, s
   assert.deepEqual(queueNames(c), [
     ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
     ['commerceworker-docs-replica-dlq-acme', undefined],
+    ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+    ['commerceworker-intake-dlq-acme', undefined],
     ['commerceworker-email-acme', 'commerceworker-email-dlq-acme'],
     ['commerceworker-email-dlq-acme', undefined],
     ['commerceworker-email-events-acme', 'commerceworker-email-events-dlq-acme'],
@@ -2981,7 +2989,7 @@ test('the engine renders the mail queue, its dead letters and the event queue, s
     ],
   );
   // Retries: the queue retries before its dead-letter queue, the dead-letter consumer keeps trying.
-  assert.equal(c.queues.consumers[2]?.max_retries, 6);
+  assert.equal(c.queues.consumers[4]?.max_retries, 6);
 });
 
 test('with the flag off, or email an exception, mail is inline: no producer, no mail consumers', () => {
@@ -3001,6 +3009,8 @@ test('with the flag off, or email an exception, mail is inline: no producer, no 
   assert.deepEqual(queueNames(renderEngine(base('engine'), mailing({ except: ['email'] }))), [
     ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
     ['commerceworker-docs-replica-dlq-acme', undefined],
+    ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+    ['commerceworker-intake-dlq-acme', undefined],
   ]);
   // A flagged deployment with no sender has nothing to queue either.
   assert.ok(
@@ -3010,6 +3020,8 @@ test('with the flag off, or email an exception, mail is inline: no producer, no 
   assert.deepEqual(
     queueNames(renderEngine(base('engine'), mailing({ except: ['r2Replica'] })))!.map((q) => q[0]),
     [
+      'commerceworker-intake-acme',
+      'commerceworker-intake-dlq-acme',
       'commerceworker-email-acme',
       'commerceworker-email-dlq-acme',
       'commerceworker-email-events-acme',
@@ -3060,6 +3072,64 @@ test('provision.sh is told the mail queues and the domains to subscribe, only wh
     );
 });
 
+test('intake is queued with redundancy unless intake is an exception', () => {
+  assert.equal(queuesIntake(protectedAcme()), true);
+  assert.equal(queuesIntake(protectedAcme({ except: ['intake'] })), false);
+  assert.equal(queuesIntake(acme), false);
+  // The other exceptions don't touch it, not even the replica's, which keeps the dead letters.
+  assert.equal(queuesIntake(protectedAcme({ except: ['r2Replica', 'queues', 'email'] })), true);
+});
+
+test('the web app produces to the suffixed intake queue and the engine consumes it and its dead letters', () => {
+  const d = protectedAcme();
+  const web = renderWeb(base('web'), d);
+  assert.deepEqual(web.queues, {
+    producers: [{ binding: 'INTAKE_QUEUE', queue: 'commerceworker-intake-acme' }],
+  });
+  const n = names(d);
+  assert.deepEqual(
+    [n.intakeQueue, n.intakeDlq],
+    ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+  );
+  const engine = renderEngine(base('engine'), d);
+  const consumer = engine.queues.consumers.find(
+    (q: QueueEntry) => q.queue === web.queues.producers[0].queue,
+  );
+  assert.equal(consumer.dead_letter_queue, 'commerceworker-intake-dlq-acme');
+  assert.equal(consumer.max_retries, 6);
+  // Intake alone is still consumed with the replica off: the dead letters are only logged then.
+  assert.deepEqual(
+    queueNames(renderEngine(base('engine'), protectedAcme({ except: ['r2Replica'] }))),
+    [
+      ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+      ['commerceworker-intake-dlq-acme', undefined],
+    ],
+  );
+});
+
+test('with the flag off, or intake an exception, the web app has no producer and the engine no intake consumers', () => {
+  for (const d of [acme, protectedAcme({ except: ['intake'] })]) {
+    assert.equal(renderWeb(base('web'), d).queues, undefined, d.id);
+    assert.ok(
+      !JSON.stringify(renderEngine(base('engine'), d).queues ?? {}).includes('intake'),
+      d.id,
+    );
+  }
+  // The rest of the web config is the same either way.
+  const { queues: _q, ...withFlag } = renderWeb(base('web'), protectedAcme());
+  const { queues: _n, ...without } = renderWeb(base('web'), protectedAcme({ except: ['intake'] }));
+  assert.deepEqual(withFlag, without);
+});
+
+test('provision.sh is told the intake queues only when intake is queued', () => {
+  assert.deepEqual(
+    [shellVars(protectedAcme()).INTAKE_QUEUE, shellVars(protectedAcme()).INTAKE_DLQ],
+    ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+  );
+  for (const d of [acme, protectedAcme({ except: ['intake'] })])
+    assert.deepEqual([shellVars(d).INTAKE_QUEUE, shellVars(d).INTAKE_DLQ], ['', '']);
+});
+
 /**
  * Every queue a rendered config consumes has a dead-letter queue, and every dead-letter queue a
  * consumer. A dead-letter queue's own consumer (it keeps what it gets) has none: it is the end.
@@ -3092,6 +3162,7 @@ test('every queue consumer has a dead-letter queue, and every dead-letter queue 
     mailing(),
     mailing({ except: ['email'] }),
     mailing({ except: ['r2Replica'] }),
+    mailing({ except: ['intake'] }),
     mailing(true, null),
     withContent,
     toDeployment({
@@ -3226,6 +3297,7 @@ test('a redacted dead letter is skipped, never sent, and leaves no marker', asyn
 test('which queues can be redriven follows what the deployment runs; the command never runs in CI', () => {
   const t = (d: ReturnType<typeof toDeployment>) => redriveTargets(d).map((x) => x.name);
   assert.deepEqual(t(mailing()), [
+    'intake',
     'docs-replica',
     'email',
     'email-events',

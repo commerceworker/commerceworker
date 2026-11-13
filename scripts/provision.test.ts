@@ -1092,3 +1092,61 @@ test('without an API token the routes are skipped, not half made', () => {
   assert.match(r.stdout, /Skipped the AI routes/);
   assert.deepEqual(r.calls, []);
 });
+
+// The channel intake queue section, against a fake `wrangler`; every call is recorded.
+const intakeQueue = /# intake-queue:begin\n([\s\S]*?)# intake-queue:end/.exec(script)?.[1];
+
+function runIntakeQueue(opts: { queues?: string[]; vars?: Record<string, string> }) {
+  assert.ok(intakeQueue, 'provision.sh has no intake-queue section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-intake-'));
+  writeFileSync(join(dir, 'queues'), (opts.queues ?? []).join('\n'));
+  const prelude = `
+calls="${dir}/calls"
+wrangler() {
+  echo "wrangler $*" >> "$calls"
+  case "$1 $2" in
+    "queues info") grep -qx "$3" "${dir}/queues" ;;
+  esac
+}
+`;
+  const result = spawnSync('bash', ['-c', `set -euo pipefail\n${prelude}\n${intakeQueue}`], {
+    env: {
+      ...process.env,
+      INTAKE_QUEUE: 'commerceworker-intake-acme',
+      INTAKE_DLQ: 'commerceworker-intake-dlq-acme',
+      ...opts.vars,
+    },
+    encoding: 'utf8',
+  });
+  let calls: string[] = [];
+  try {
+    calls = readFileSync(join(dir, 'calls'), 'utf8').split('\n').filter(Boolean);
+  } catch {}
+  return { status: result.status, stderr: result.stderr, calls };
+}
+
+test('the intake queue and its dead-letter queue are created, after looking for them', () => {
+  const r = runIntakeQueue({});
+  assert.equal(r.status, 0, r.stderr);
+  for (const q of ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme']) {
+    assert.ok(r.calls.includes(`wrangler queues create ${q}`), r.calls.join('\n'));
+    assert.ok(
+      r.calls.indexOf(`wrangler queues info ${q}`) < r.calls.indexOf(`wrangler queues create ${q}`),
+    );
+    assert.ok(r.calls.some((c) => c.startsWith(`wrangler queues update ${q} --message-retention`)));
+  }
+});
+
+test('an existing intake queue is kept, and without intake nothing is called', () => {
+  const kept = runIntakeQueue({
+    queues: ['commerceworker-intake-acme', 'commerceworker-intake-dlq-acme'],
+  });
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.deepEqual(
+    kept.calls.filter((c) => c.includes('queues create')),
+    [],
+  );
+  const off = runIntakeQueue({ vars: { INTAKE_QUEUE: '', INTAKE_DLQ: '' } });
+  assert.equal(off.status, 0, off.stderr);
+  assert.deepEqual(off.calls, []);
+});

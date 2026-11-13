@@ -50,6 +50,13 @@
     // redundancy; scripts/fleet.ts strips the binding and the Workflow below without it).
     { "binding": "BACKUPS", "bucket_name": "commerceworker-backups" }
   ],
+  // The channel intake queue's producer: an accepted Shopify order webhook or EDI 850 is written to DOCS
+  // and queued, and the engine starts its orders (apps/engine/src/intake-queue.ts). scripts/fleet.ts
+  // strips it, and the engine's consumers, with `redundancy` off or `intake` an exception, and the
+  // web app then starts the orders before it answers, as before. scripts/provision.sh creates the queue.
+  "queues": {
+    "producers": [{ "binding": "INTAKE_QUEUE", "queue": "commerceworker-intake" }]
+  },
   "workflows": [
     {
       // Nightly export of OAUTH_KV, the only copy of OAuth client registrations and grants

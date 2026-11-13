@@ -48,7 +48,11 @@ export interface PaymentLedger {
   find(id: string): Promise<PaymentRecord | undefined>;
   /** These rows, by id; unknown ids are absent. */
   findMany(ids: readonly string[]): Promise<PaymentRecord[]>;
-  /** Records a row once by id and returns what is stored: the first recording wins. */
+  /**
+   * Records a row once by id and returns what is stored: the first recording wins. A row that claims
+   * a processor id (an authorization that isn't declined, or a refund) is refused when another row
+   * already claims it: `PaymentClaimedError`.
+   */
   record(payment: NewPayment): Promise<PaymentRecord>;
   /** Every row of the order, oldest first. */
   forOrder(orderId: string): Promise<PaymentRecord[]>;
@@ -123,6 +127,17 @@ export class PaymentDeclinedError extends Error {
 }
 
 /**
+ * A processor id is already claimed by another row: two orders adopting one PaymentIntent, or one
+ * refund recorded twice. The ledger's unique index decides it, so a race has one winner.
+ */
+export class PaymentClaimedError extends Error {
+  override readonly name = 'PaymentClaimedError';
+  constructor(readonly externalId: string) {
+    super(`${externalId} is already claimed by another payment`);
+  }
+}
+
+/**
  * The intent isn't in a state that allows the call (canceled before a capture, captured before a
  * cancel). `status` is the intent's, when the processor says.
  */
@@ -134,6 +149,15 @@ export class IntentStateError extends Error {
   ) {
     super(message);
   }
+}
+
+/** A refund as the processor reports it. */
+export interface ProcessorRefund {
+  readonly id: string;
+  readonly status: string;
+  /** Minor units. */
+  readonly amount: number;
+  readonly metadata: Record<string, string>;
 }
 
 /**
@@ -159,6 +183,8 @@ export interface PaymentProcessor {
     request: { intentId: string; amount: number; metadata: Record<string, string> },
     key: string,
   ): Promise<{ id: string; status: string }>;
+  /** Every refund of an intent, whoever made it (reconciliation finds the ones made in a dashboard). */
+  listRefunds(intentId: string): Promise<ProcessorRefund[]>;
   /** Creates a processor customer and returns its id. */
   createCustomer(
     customer: { email?: string; name?: string; metadata: Record<string, string> },

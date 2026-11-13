@@ -36,6 +36,16 @@ export class InMemoryPaymentEventLog implements PaymentEventLog {
   async release(id: string) {
     this.events.delete(id);
   }
+
+  private readonly cursors = new Map<string, number>();
+
+  async cursor(provider: string) {
+    return this.cursors.get(provider);
+  }
+
+  async advance(provider: string, cursor: number) {
+    this.cursors.set(provider, Math.max(this.cursors.get(provider) ?? cursor, cursor));
+  }
 }
 
 export class InMemoryWebhookReceipts implements WebhookReceipts {

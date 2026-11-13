@@ -839,6 +839,12 @@ export const payments = sqliteTable(
     index('payments_order').on(t.orderId),
     index('payments_status_created').on(t.status, t.createdAt),
     index('payments_external').on(t.externalId).where(sql`${t.externalId} IS NOT NULL`),
+    // One authorization (not declined) or refund per processor id: closes `adoptProblem`'s race.
+    uniqueIndex('payments_external_claim')
+      .on(t.externalId)
+      .where(
+        sql`${t.externalId} IS NOT NULL AND (${t.kind} = 'refund' OR (${t.kind} LIKE 'authorization:%' AND ${t.status} <> 'declined'))`,
+      ),
   ],
 );
 
@@ -1323,6 +1329,13 @@ export const paymentEvents = sqliteTable(
   },
   (t) => [index('payment_events_received').on(t.receivedAt)],
 );
+
+/** Where Stripe's hourly event reconciliation left off (`cursor`: the `created` of the oldest event it hasn't finished). */
+export const paymentCursors = sqliteTable('payment_cursors', {
+  provider: text('provider').primaryKey(),
+  cursor: integer('cursor').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
 
 /** Failed authentication attempts per key in a fixed window; see `throttle.ts` in the web app. */
 export const authFailures = sqliteTable('auth_failures', {

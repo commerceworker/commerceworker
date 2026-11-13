@@ -3,7 +3,11 @@
  * ledger in workerd (packages/db). Order and customer ids start `pc_`, which the D1 runner clears;
  * the clock moves on between writes, so rows read oldest first in both.
  */
-import type { NewPayment, PaymentLedger } from '@commerceworker/ports/commerce';
+import {
+  type NewPayment,
+  PaymentClaimedError,
+  type PaymentLedger,
+} from '@commerceworker/ports/commerce';
 import { describe, expect, it } from 'vitest';
 import type { PaymentLedgerFixture } from './payment-ledger';
 
@@ -102,6 +106,28 @@ export function describePaymentLedgerContract(
       await l.record(auth('pc_c2'));
       await l.voidAuthorization('pc_c2');
       expect(await l.capture('pc_c2', { ...capture, id: 'pc_cap2', ref: 'pc_c2' })).toBeUndefined();
+    });
+
+    it('lets one authorization and one refund claim a processor id, and refuses a second', async () => {
+      const l = await fresh();
+      await l.record(auth('pc_k1', { externalId: 'pi_claimed' }));
+      await expect(
+        l.record(auth('pc_k2', { orderId: 'pc_other', externalId: 'pi_claimed' })),
+      ).rejects.toBeInstanceOf(PaymentClaimedError);
+      expect(await l.find('pc_k2')).toBeUndefined();
+      // The same row again is a retry, not a claim.
+      expect(await l.record(auth('pc_k1', { externalId: 'pi_claimed' }))).toMatchObject({
+        id: 'pc_k1',
+      });
+      // A decline, a capture and a charge name an intent without claiming it.
+      await l.record(auth('pc_k3', { externalId: 'pi_claimed', status: 'declined' }));
+      await l.record(
+        auth('pc_k4', { kind: 'capture', status: 'succeeded', externalId: 'pi_claimed' }),
+      );
+      const refund = (id: string) =>
+        auth(id, { kind: 'refund', status: 'succeeded', externalId: 're_claimed' });
+      await l.record(refund('pc_k5'));
+      await expect(l.record(refund('pc_k6'))).rejects.toBeInstanceOf(PaymentClaimedError);
     });
 
     it("saves a customer's card and settles on one processor customer", async () => {

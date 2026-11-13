@@ -154,6 +154,18 @@ export function stripeProcessor(stripe: StripeClient): PaymentProcessor {
       return { id: out.id, status: out.status };
     },
 
+    async listRefunds(intentId) {
+      const out = await stripe.refunds
+        .list({ payment_intent: intentId, limit: 100 })
+        .catch(rethrow);
+      return out.data.map((r) => ({
+        id: r.id,
+        status: r.status,
+        amount: r.amount,
+        metadata: r.metadata ?? {},
+      }));
+    },
+
     async createCustomer(c, key) {
       const out = await stripe.customers
         .create({ email: c.email, name: c.name, metadata: c.metadata }, key)

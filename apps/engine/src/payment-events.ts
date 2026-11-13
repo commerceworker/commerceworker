@@ -5,6 +5,12 @@
  *   invoice.paid             settle the invoice (./billing), then deliver `payment.received`
  *   payment_intent.canceled  the authorization it held is voided
  *   charge.dispute.created   deliver `payment.disputed` to a node waiting for it
+ *   payment_intent.succeeded an authorization captured in Stripe's dashboard is captured in the ledger
+ *   refund.created/updated, charge.refunded
+ *                            a refund made in Stripe's dashboard is recorded in the ledger
+ *
+ * The same handler serves the hourly reconciliation (./payment-reconcile), which lists Stripe's events
+ * and offers the ones a dropped webhook never delivered.
  *
  * Each event id is claimed in `payment_events` before it is acted on: Stripe redelivers for up to
  * three days, far past the signed-webhook receipts' window, and a repeat (or a concurrent second
@@ -14,6 +20,11 @@
  */
 
 import {
+  type ReconcileOutcome,
+  reconcileCapture,
+  reconcileRefund,
+} from '@commerceworker/application/commerce';
+import {
   fromMinor,
   type OrderState,
   type PaymentEvent,
@@ -22,14 +33,40 @@ import {
 } from '@commerceworker/core';
 import { settleInvoice } from './billing';
 import { orderAgent } from './namespaces';
-import { markIntentCanceled, orderForIntent } from './payments';
-import { paymentEventLog } from './wire';
+import { markIntentCanceled, orderForIntent, paymentMode } from './payments';
+import { paymentEventLog, paymentLedger } from './wire';
 
+const ports = (env: Env) => ({ ledger: paymentLedger(env) });
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
 /** The id of an expandable field: `"pi_…"` or `{ id: "pi_…" }`. */
 const idOf = (v: unknown) => str(v) ?? str((v as { id?: unknown } | null)?.id);
+
+/** The event types the engine acts on; the reconciliation asks Stripe for exactly these. */
+export const HANDLED_EVENT_TYPES = [
+  'invoice.paid',
+  'payment_intent.canceled',
+  'payment_intent.succeeded',
+  'charge.dispute.created',
+  'charge.refunded',
+  'refund.created',
+  'refund.updated',
+] as const;
+
+/** What a ledger catch-up came to, as an event result; a difference it can't fix is flagged. */
+function reconciled(o: ReconcileOutcome): PaymentEventResult {
+  if (o.status === 'unknown') return { outcome: 'ignored', reason: 'Not a CommerceWorker payment' };
+  if (o.status === 'retry')
+    return { outcome: 'retry', orderId: o.orderId, reason: 'Its payment is not captured here yet' };
+  if (o.status === 'mismatch')
+    return { outcome: 'ignored', orderId: o.orderId, reason: o.reason, mismatch: true };
+  return {
+    outcome: 'handled',
+    orderId: o.orderId,
+    ...(o.status === 'known' ? { reason: 'Already in the ledger' } : {}),
+  };
+}
 
 export async function handleStripeEvent(
   env: Env,
@@ -95,6 +132,45 @@ async function dispatch(env: Env, event: PaymentEvent): Promise<PaymentEventResu
         reason: str(obj.reason),
       });
       return r.outcome === 'retry' ? { outcome: 'handled', orderId, reason: 'No wait open' } : r;
+    }
+    case 'payment_intent.succeeded': {
+      const id = str(obj.id);
+      const received = num(obj.amount_received);
+      if (!id || received === undefined)
+        return { outcome: 'ignored', reason: 'No PaymentIntent id or amount received' };
+      return reconciled(await reconcileCapture(ports(env), id, received));
+    }
+    case 'refund.created':
+    case 'refund.updated': {
+      const intent = idOf(obj.payment_intent);
+      const id = str(obj.id);
+      const amount = num(obj.amount);
+      if (!intent || !id || amount === undefined)
+        return { outcome: 'ignored', reason: 'Not a PaymentIntent refund with an amount' };
+      return reconciled(
+        await reconcileRefund(ports(env), intent, {
+          id,
+          amount,
+          status: str(obj.status) ?? '',
+          metadata: (obj.metadata as Record<string, string> | null) ?? {},
+        }),
+      );
+    }
+    case 'charge.refunded': {
+      // A charge names no refunds of its own, so ask which the ledger lacks.
+      const intent = idOf(obj.payment_intent);
+      if (!intent) return { outcome: 'ignored', reason: 'Not a PaymentIntent charge' };
+      const refunds = await paymentMode(env).processor().listRefunds(intent);
+      const results: PaymentEventResult[] = [];
+      for (const r of refunds)
+        results.push(reconciled(await reconcileRefund(ports(env), intent, r)));
+      // A refund waiting on its capture releases the event for another try; then one it can't place.
+      return (
+        results.find((r) => r.outcome === 'retry') ??
+        results.find((r) => r.mismatch) ??
+        results.find((r) => r.outcome === 'handled' && !r.reason) ??
+        results[0] ?? { outcome: 'ignored', reason: 'No refunds' }
+      );
     }
     default:
       return { outcome: 'ignored', reason: `Not handled: ${event.type}` };

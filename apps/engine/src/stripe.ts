@@ -90,6 +90,7 @@ export type Refund = {
   currency: string;
   payment_intent: string | null;
   status: 'pending' | 'requires_action' | 'succeeded' | 'failed' | 'canceled';
+  metadata: Record<string, string>;
 };
 
 export type Customer = { id: string; object: 'customer'; email: string | null };
@@ -138,6 +139,9 @@ export type StripeEvent = {
   livemode: boolean;
   data: { object: Record<string, unknown> & { id: string; object: string } };
 };
+
+/** One page of a list: newest first, `has_more` while another page follows. */
+export type StripeList<T> = { object: 'list'; data: T[]; has_more: boolean };
 
 /** `{a: {b: 1}, c: [x]}` → `a[b]=1&c[0]=x`, as Stripe's form API nests parameters. */
 export function encodeForm(params: StripeParams): string {
@@ -244,6 +248,11 @@ export function stripeClient(secretKey: string) {
     },
     refunds: {
       create: (params: StripeParams, key: string) => post<Refund>('/v1/refunds', params, key),
+      list: (params: StripeParams) => request<StripeList<Refund>>('GET', '/v1/refunds', params),
+    },
+    events: {
+      /** Stripe keeps events for 30 days; newest first, so a caller pages with `starting_after`. */
+      list: (params: StripeParams) => request<StripeList<StripeEvent>>('GET', '/v1/events', params),
     },
     customers: {
       create: (params: StripeParams, key: string) => post<Customer>('/v1/customers', params, key),

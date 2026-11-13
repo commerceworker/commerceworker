@@ -31,8 +31,15 @@ import {
 } from './email-queue';
 import { refreshRates } from './fx';
 import { sweepOrderInstances } from './instance-sweep';
+import {
+  isIntakeDlq,
+  isIntakeQueue,
+  keepIntakeDeadLetters,
+  startIntakeOrders,
+} from './intake-queue';
 import { handleMcp, MCP_PATH } from './mcp';
 import { failUnstartedOrders } from './orders';
+import { reconcileStripe } from './payment-reconcile';
 import { reindexProducts } from './product-index';
 import { sweep } from './retention';
 import { handleUcp } from './ucp/rest';
@@ -70,7 +77,7 @@ export { Replenish } from './replenish';
 export { StorefrontApi } from './storefront-api';
 export { OrderWorkflow } from './workflow';
 
-/** The hourly cron in wrangler.jsonc: `reindexProducts`, `settleOrphanedHolds`, `failUnstartedOrders` and `sweepOrderInstances`. */
+/** The hourly cron in wrangler.jsonc: `reindexProducts`, `settleOrphanedHolds`, `failUnstartedOrders`, `sweepOrderInstances` and `reconcileStripe`. */
 const REINDEX_CRON = '15 * * * *';
 
 async function route(request: Request, env: Env): Promise<Response> {
@@ -122,6 +129,7 @@ export default {
         'card holds': () => settleOrphanedHolds(env),
         'unstarted orders': () => failUnstartedOrders(env),
         'workflow instances': () => sweepOrderInstances(env),
+        'stripe reconciliation': () => reconcileStripe(env),
       })) {
         try {
           await run();
@@ -152,10 +160,12 @@ export default {
     if (failed.length) throw new Error(`Daily jobs failed: ${failed.join(', ')}`);
   },
 
-  // The order documents replica's queue (R2 event notifications), the mail queue and Email Sending's
-  // event queue, each with its dead-letter queue; names carry the deployment's suffix, and the
+  // The order documents replica's queue (R2 event notifications), the channel intake queue, the mail queue
+  // and Email Sending's event queue, each with its dead-letter queue; names carry the deployment's suffix, and the
   // dead-letter queue's starts like the queue's.
   async queue(batch, env) {
+    if (isIntakeDlq(batch.queue)) return keepIntakeDeadLetters(batch, env);
+    if (isIntakeQueue(batch.queue)) return startIntakeOrders(batch, env);
     if (isEmailEventsDlq(batch.queue)) return keepEmailEventDeadLetters(batch, env);
     if (isEmailEvents(batch.queue)) return recordEmailEvents(batch, env);
     if (isEmailDlq(batch.queue)) return keepEmailDeadLetters(batch, env);

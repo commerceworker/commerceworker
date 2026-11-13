@@ -100,7 +100,13 @@ export class FakePaymentProcessor implements PaymentProcessor {
   readonly intents = new Map<string, Intent>();
   readonly refunds = new Map<
     string,
-    { id: string; status: string; intentId: string; amount: number }
+    {
+      id: string;
+      status: string;
+      intentId: string;
+      amount: number;
+      metadata: Record<string, string>;
+    }
   >();
   readonly customers = new Map<string, string>();
   readonly calls: string[] = [];
@@ -152,13 +158,35 @@ export class FakePaymentProcessor implements PaymentProcessor {
     Object.assign(pi, { status: 'succeeded', amount });
   }
 
-  async refund(r: { intentId: string; amount: number }, key: string) {
+  async refund(
+    r: { intentId: string; amount: number; metadata?: Record<string, string> },
+    key: string,
+  ) {
     this.calls.push(`refund ${key}`);
     const seen = this.refunds.get(key);
     if (seen) return { id: seen.id, status: seen.status };
-    const out = { id: `re_${++this.next}`, status: 'succeeded', ...r };
+    const out = { id: `re_${++this.next}`, status: 'succeeded', metadata: {}, ...r };
     this.refunds.set(key, out);
     return { id: out.id, status: out.status };
+  }
+
+  async listRefunds(intentId: string) {
+    return [...this.refunds.values()]
+      .filter((r) => r.intentId === intentId)
+      .map((r) => ({ id: r.id, status: r.status, amount: r.amount, metadata: r.metadata }));
+  }
+
+  /** A refund made in the processor's dashboard: no idempotency key, and none of our metadata. */
+  dashboardRefund(intentId: string, amount: number) {
+    const out = {
+      id: `re_${++this.next}`,
+      status: 'succeeded',
+      intentId,
+      amount,
+      metadata: {},
+    };
+    this.refunds.set(`dashboard_${out.id}`, out);
+    return out;
   }
 
   async createCustomer(_c: unknown, key: string) {

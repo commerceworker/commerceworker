@@ -50,6 +50,16 @@ export type X12Parse = { ok: true; interchange: X12Interchange } | { ok: false; 
  * The ISA segment is fixed width: the element separator is its 4th character, the component
  * separator the 105th and the segment terminator the 106th.
  */
+/** A segment without the CR and LF around it, in linear time (no backtracking regex on partner input). */
+function trimLineBreaks(s: string): string {
+  const isBreak = (c: number) => c === 10 || c === 13;
+  let start = 0;
+  let end = s.length;
+  while (start < end && isBreak(s.charCodeAt(start))) start += 1;
+  while (end > start && isBreak(s.charCodeAt(end - 1))) end -= 1;
+  return s.slice(start, end);
+}
+
 export function parseX12(text: string): X12Parse {
   const raw = text.replace(/^﻿/, '').trimStart();
   if (!raw.startsWith('ISA') || raw.length < 106)
@@ -61,7 +71,7 @@ export function parseX12(text: string): X12Parse {
   const terminator = raw[105]!;
   const segments = raw
     .split(terminator)
-    .map((s) => s.replace(/^[\r\n]+|[\r\n]+$/g, ''))
+    .map(trimLineBreaks)
     .filter(Boolean)
     .map((s) => {
       const [id, ...el] = s.split(element);

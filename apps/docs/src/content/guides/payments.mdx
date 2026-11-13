@@ -105,8 +105,10 @@ such as the B2B flow's "Payment received" is waiting for.
 The payment is recorded by the card payment that paid the invoice, so a Refund node can give it
 back like any other payment. That works when one card payment paid the whole invoice, which is
 how a customer pays on Stripe's hosted page, on an order paid only by invoice. Refund such an
-invoice through the flow, not in the Stripe Dashboard as well: CommerceWorker doesn't see a
-Dashboard refund, so the flow would try to give the money back a second time.
+invoice through the flow, not in the Stripe Dashboard as well. CommerceWorker does record a
+Dashboard refund (or capture) in the payments ledger, within the hour, so the order's totals stay
+true, but a flow's Refund node doesn't know to hold back for it, so it would give the money back a
+second time.
 
 The Refund node finds nothing to refund on an invoice paid in parts or partly outside Stripe, one
 paid before CommerceWorker recorded its card payment, or one on an order whose money was also

@@ -15,6 +15,7 @@ export * from './b2b/quotes';
 export * from './cart';
 export * from './cart-index';
 export * from './catalog';
+export * from './channels/intake';
 export * from './channels/shopify';
 export * from './channels/x12';
 export * from './checkout';

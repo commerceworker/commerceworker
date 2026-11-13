@@ -53,6 +53,10 @@ describe('copying an object to the replica', () => {
     expect(await replicateObject(primary, replica, 'gone')).toBe('gone');
     await primary.write('health/x', 'x', {});
     expect(await replicateObject(primary, replica, 'health/x')).toBe('skipped');
+    // A raw channel intake body holds buyer details and expires in days: never copied.
+    await primary.write('intake/shopify/2026-01-01/x', 'x', {});
+    expect(await replicateObject(primary, replica, 'intake/shopify/2026-01-01/x')).toBe('skipped');
+    expect(await replica.head('intake/shopify/2026-01-01/x')).toBeNull();
     expect(replica.objects.size).toBe(0);
   });
 

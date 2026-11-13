@@ -34,7 +34,7 @@
  *   node scripts/fleet.ts set-content-d1 <id> <uuid>  record the content database id (content only)
  *   node scripts/fleet.ts set-content-kv <id> <kv id>  record the content cache's KV namespace id
  *   node scripts/fleet.ts redrive <id> <queue> [date] [--dry-run]  send the dead letters kept for <queue>
- *                                                 (email, email-events, docs-replica, catalog-feed-parts,
+ *                                                 (intake, email, email-events, docs-replica, catalog-feed-parts,
  *                                                 catalog-changes, catalog-purge) back to it, once each (operator
  *                                                 credentials; never in CI)
  *   node scripts/fleet.ts kv-restore <id> <date> [--dry-run] [--out <dir>]  plan putting a night's OAuth
@@ -718,6 +718,14 @@ export const queuesEmail = (d: Deployment): d is Deployment & { redundancy: Redu
   !!d.redundancy && !d.redundancy.except.includes('email') && !!d.email;
 
 /**
+ * Whether Shopify order webhooks and EDI 850 interchanges are made durable (written to `DOCS` and
+ * queued) before they are answered `202`, rather than starting their orders first: `redundancy` on,
+ * `intake` not an exception.
+ */
+export const queuesIntake = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('intake');
+
+/**
  * Whether the deployment's text and assistant models are called through AI Gateway routes that
  * hold a second model: `redundancy` on, `aiFallback` not an exception. A demo mocks its models
  * and can't have the flag.
@@ -1361,6 +1369,9 @@ export const names = (d: Deployment) => ({
   emailDlq: `commerceworker-email-dlq${d.suffix}`,
   emailEvents: `commerceworker-email-events${d.suffix}`,
   emailEventsDlq: `commerceworker-email-events-dlq${d.suffix}`,
+  /** The channel intake queue (`queuesIntake`) and its dead letters. */
+  intakeQueue: `commerceworker-intake${d.suffix}`,
+  intakeDlq: `commerceworker-intake-dlq${d.suffix}`,
   catalogKv: `commerceworker-catalog-cards${d.suffix}`,
   catalogFeedParts: `commerceworker-catalog-feed-parts${d.suffix}`,
   catalogFeedPartsDlq: `commerceworker-catalog-feed-parts-dlq${d.suffix}`,
@@ -1964,14 +1975,18 @@ const EMAIL_QUEUES = {
 };
 
 /**
- * The engine's queues: the docs replica's consumers (the base config's, with `r2Replica`) and the
- * mail queue's (`EMAIL_QUEUES`, with `queuesEmail`), each with its dead-letter queue and the
- * deployment's suffix. With neither the engine has no queues at all.
+ * The engine's queues: the base config's consumers of the docs replica (with `r2Replica`) and of
+ * channel intake (with `queuesIntake`), and the mail queue's (`EMAIL_QUEUES`, with `queuesEmail`),
+ * each with its dead-letter queue and the deployment's suffix. With none the engine has no queues.
  */
 function queueBindings(config: Config, d: Deployment) {
   const suffixed = (q: string) => `${q}${d.suffix}`;
   const groups: { producers?: Config[]; consumers: Config[] }[] = [];
-  if (replicatesDocs(d)) groups.push(config.queues);
+  const of = (prefix: string) => ({
+    consumers: config.queues.consumers.filter((c: Config) => c.queue.startsWith(prefix)),
+  });
+  if (replicatesDocs(d)) groups.push(of('commerceworker-docs-replica'));
+  if (queuesIntake(d)) groups.push(of('commerceworker-intake'));
   if (queuesEmail(d)) groups.push(structuredClone(EMAIL_QUEUES));
   const consumers = groups
     .flatMap((g) => g.consumers)
@@ -2264,6 +2279,13 @@ export function renderWeb(base: Config, d: Deployment): Config {
   config.ratelimits = rateLimits(config.ratelimits, d);
   storage(config, d);
   kvBackupBindings(config, d);
+  // The intake queue's producer, with `redundancy` unless `intake` is an exception: without it the
+  // web app starts a Shopify or EDI order before it answers, as it always did.
+  if (queuesIntake(d))
+    config.queues = {
+      producers: config.queues.producers.map((p: Config) => ({ ...p, queue: n.intakeQueue })),
+    };
+  else delete config.queues;
   // The storefront's origin: where a plugin may send a buyer to their cart's start link.
   config.vars = { ...config.vars, STOREFRONT_ORIGIN: `https://${d.storefrontDomain}` };
   // Plugins' aliases, alias → plugin id; always set, so one deployment's never carries over.
@@ -2770,6 +2792,8 @@ export function redriveTargets(d: Deployment): RedriveTarget[] {
   const n = names(d);
   const out: RedriveTarget[] = [];
   if (replicatesDocs(d)) {
+    if (queuesIntake(d))
+      out.push({ name: 'intake', bucket: 'docsReplica', dlq: n.intakeDlq, queue: n.intakeQueue });
     out.push({
       name: 'docs-replica',
       bucket: 'docsReplica',
@@ -2858,6 +2882,9 @@ export function shellVars(d: Deployment): Record<string, string> {
     EMAIL_EVENTS: queuesEmail(d) ? n.emailEvents : '',
     EMAIL_EVENTS_DLQ: queuesEmail(d) ? n.emailEventsDlq : '',
     EMAIL_DOMAINS: queuesEmail(d) ? emailDomains(d).join(' ') : '',
+    // The channel intake queue and its dead-letter queue; empty unless intake is queued.
+    INTAKE_QUEUE: queuesIntake(d) ? n.intakeQueue : '',
+    INTAKE_DLQ: queuesIntake(d) ? n.intakeDlq : '',
     CATALOG_KV: n.catalogKv,
     CATALOG_FEED_PARTS: n.catalogFeedParts,
     CATALOG_FEED_PARTS_DLQ: n.catalogFeedPartsDlq,
