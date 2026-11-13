@@ -25,6 +25,7 @@ import {
   loadChunk,
   manifestKey,
   readManifest,
+  replayReminder,
   type TableCopy,
   verifyTable,
   writeManifest,
@@ -178,6 +179,7 @@ export class D1Restore extends WorkflowEntrypoint<Env, RestoreParams> {
         finishedAt: new Date(now).toISOString(),
         minutes: Math.round(((now - started) / 60_000) * 10) / 10,
         checks,
+        ...(backup ? { afterPromotion: replayReminder(backup) } : {}),
         ...(failure ? { error: failure } : {}),
       };
       // Not under a lock, so a second drill the same day replaces the first.

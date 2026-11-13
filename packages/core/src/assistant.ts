@@ -187,6 +187,7 @@ export type AssistantTool =
   | 'revoke_ucp_platform'
   | 'get_storefront_settings'
   | 'set_storefront_settings'
+  | 'replay_erasures'
   | 'draft_cart_reply'
   | 'set_assistant_routing';
 
@@ -1142,6 +1143,14 @@ export const ASSISTANT_TOOLS: Record<
     title: 'Redeliver a webhook delivery',
     description:
       'Send a failed or delivered webhook delivery to its receiver again, with the same delivery id and payload and the subscription’s current signature, so a receiver that dedupes by delivery id handles it once. A delivery still on its first attempt is refused. Its attempts and last status update.',
+  },
+  replay_erasures: {
+    role: 'admin',
+    confirm: true,
+    label: 'Replay erasures after a restore',
+    title: 'Replay erasures after a restore',
+    description:
+      'After a restore (database Time Travel, a promoted backup, an object or KV restore), erase again every person erased since its point: a restore brings them back. Give since, the restore point (epoch ms). It finds the people in the audit log (the database’s, and its R2 copies) and erases each from what is stored now, and erases again orders already marked erased whose agent state or files came back; a person already gone changes nothing, and one with orders still running is named to try again. dryRun lists who would be erased and erases nobody. Needs a step-up from a person; an admin API token may run it.',
   },
   delete_webhook_subscription: {
     role: 'admin',

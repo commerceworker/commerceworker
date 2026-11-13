@@ -25,6 +25,7 @@ import {
   type RestoreOutcome,
   type RestoreReport,
   reindexObject,
+  replayReminder,
   restoreObject,
   SNAPSHOT_CAP,
   type SnapshotChunk,
@@ -170,6 +171,9 @@ export class ObjectsRestore extends WorkflowEntrypoint<Env, unknown> {
         class: plan.class,
         mode: plan.mode,
         ...(plan.mode === 'at' ? { at: new Date(plan.at).toISOString() } : {}),
+        afterRestore: replayReminder(
+          plan.mode === 'at' ? new Date(plan.at).toISOString() : 'the time of those bookmarks',
+        ),
         outcome: failed.length ? 'failed' : 'restored',
         objects,
         undo: Object.fromEntries(objects.filter((o) => o.undo).map((o) => [o.name, o.undo!])),

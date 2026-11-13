@@ -184,6 +184,8 @@ export type RestoreReport = {
   class: ObjectClass;
   mode: 'at' | 'bookmarks';
   at?: string;
+  /** What to do next (`replayReminder`): a restore brings back people erased after its point. */
+  afterRestore?: string;
   outcome: 'restored' | 'failed';
   objects: RestoreOutcome[];
   /** Object name → the bookmark that takes its restore back (run this restore with these as `bookmarks`). */

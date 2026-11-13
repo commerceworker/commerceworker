@@ -351,5 +351,56 @@ export function describeSubjectStoreContract(
       const left = await s.rows(await s.subject('grace@example.com'), ['sc2_o_grace']);
       expect(left.messages.map((m) => m.recipient)).toEqual([ERASED]);
     });
+
+    it('pages through the addresses it holds, lower-cased and never a blanked one', async () => {
+      const s = await fresh();
+      const read = async () => {
+        const seen = new Set<string>();
+        let cursor: string | null = null;
+        let pages = 0;
+        do {
+          const page: { emails: string[]; next: string | null } = await s.addresses(cursor, 2);
+          for (const e of page.emails) seen.add(e);
+          cursor = page.next;
+        } while (cursor && ++pages < 100);
+        expect(cursor).toBeNull();
+        return seen;
+      };
+      const before = await read();
+      for (const e of [ADA, 'grace@example.com', 'charles@corp.example', 'billing@corp.example'])
+        expect(before).toContain(e);
+      expect([...before].every((e) => e === e.toLowerCase())).toBe(true);
+      // What an erasure blanks is not an address any more.
+      await s.eraseOrderRows(['sc2_o_acct', 'sc2_o_guest', 'sc2_o_mail']);
+      await s.markOrderErased('sc2_o_guest', { title: 'Guest', clearReason: true }, 5);
+      await s.eraseUnlinked(ADA);
+      await s.eraseAccount('sc2_acct');
+      await s.eraseMembers(ADA);
+      const after = await read();
+      expect(
+        [...after].filter((e) => e === ERASED.toLowerCase() || e.startsWith('erased-')),
+      ).toEqual([]);
+      expect(after).not.toContain('charles@corp.example');
+      expect(after).toContain('grace@example.com');
+    });
+
+    it('lists the orders marked erased at or after a time, oldest first', async () => {
+      const s = await fresh();
+      expect(await s.erasedOrders(0, 10)).toEqual([]);
+      await s.markOrderErased('sc2_o_guest', { title: 'Guest', clearReason: true }, 50);
+      await s.markOrderErased('sc2_o_acct', { title: 'Acct', clearReason: true }, 20);
+      await s.markOrderErased('sc2_o_grace', { title: 'Grace', clearReason: true }, 90);
+      expect(await s.erasedOrders(0, 10)).toEqual([
+        { id: 'sc2_o_acct', title: 'Acct', at: 20 },
+        { id: 'sc2_o_guest', title: 'Guest', at: 50 },
+        { id: 'sc2_o_grace', title: 'Grace', at: 90 },
+      ]);
+      expect((await s.erasedOrders(50, 10)).map((o) => o.id)).toEqual([
+        'sc2_o_guest',
+        'sc2_o_grace',
+      ]);
+      expect((await s.erasedOrders(0, 2)).map((o) => o.id)).toEqual(['sc2_o_acct', 'sc2_o_guest']);
+      expect(await s.erasedOrders(91, 10)).toEqual([]);
+    });
   });
 }

@@ -65,6 +65,7 @@ import type {
   AuditAnchors,
   AuditArchive,
   AuditLog,
+  AuditRow,
   BalanceStore,
   BudgetStore,
   CartRecords,
@@ -455,6 +456,14 @@ export function auditArchive(env: Pick<Env, 'DOCS'>): AuditArchive {
         cursor = page.truncated ? page.cursor : undefined;
       } while (cursor);
       return copies.filter((c) => c !== null);
+    },
+    async read(key) {
+      const object = await env.DOCS.get(key);
+      const text = object ? await object.text() : '';
+      return text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as AuditRow);
     },
     async put(key, rows) {
       await env.DOCS.put(key, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`, {

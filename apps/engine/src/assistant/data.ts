@@ -122,6 +122,7 @@ import {
   runCreditAdjustment,
   runCreditLimit,
 } from './credit';
+import { previewReplayErasures, runReplayErasures } from './erasures';
 import { draftHash, heldToDraft, previewTestFlow, runTestFlow } from './flows';
 import { previewFxRate, runFxRate } from './fx';
 import { previewRestart, previewStart, runRestart, runStart, type StartInput } from './orders';
@@ -542,6 +543,7 @@ export type ActionInput = {
   expire_quote: ToolInput<'expire_quote'>;
   convert_quote: ToolInput<'convert_quote'>;
   redeliver_webhook_delivery: ToolInput<'redeliver_webhook_delivery'>;
+  replay_erasures: ToolInput<'replay_erasures'>;
   delete_webhook_subscription: ToolInput<'delete_webhook_subscription'>;
   revoke_integration: ToolInput<'revoke_integration'>;
   set_ucp_settings: ToolInput<'set_ucp_settings'>;
@@ -873,6 +875,13 @@ export async function previewAction<T extends ActionTool>(
         return await previewRedeliverWebhook(
           env,
           input as ActionInput['redeliver_webhook_delivery'],
+          roleBlock,
+        );
+      case 'replay_erasures':
+        return await previewReplayErasures(
+          env,
+          p,
+          input as ActionInput['replay_erasures'],
           roleBlock,
         );
       case 'delete_webhook_subscription':
@@ -1256,6 +1265,8 @@ export async function runAction<T extends ActionTool>(
       return runConvertQuote(env, p, input as ActionInput['convert_quote'], trail);
     case 'redeliver_webhook_delivery':
       return runRedeliverWebhook(env, p, input as ActionInput['redeliver_webhook_delivery'], trail);
+    case 'replay_erasures':
+      return runReplayErasures(env, p, input as ActionInput['replay_erasures'], trail);
     case 'delete_webhook_subscription':
       return runDeleteWebhook(env, p, input as ActionInput['delete_webhook_subscription'], trail);
     case 'revoke_integration':

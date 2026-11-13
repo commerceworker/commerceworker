@@ -1819,6 +1819,34 @@ describe('operations REST runs as MCP does', () => {
     expect((await post('webhook-deliveries/whd_2/redeliver', {}, admin)).status).toBe(409);
     run.mockReset();
   });
+  it('replays erasures as an admin only, a restore point in the body and an engine refusal a 409', async () => {
+    run.mockReset();
+    // Erasing people is an admin's: refused before the engine is asked, whatever the body.
+    for (const as of [viewer, operator])
+      expect((await post('erasures/replay', { since: 1_700_000_000_000 }, as)).status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+
+    // The restore point is required, and is a time.
+    run.mockResolvedValueOnce({ ok: false, status: 400, error: 'since: Invalid input' });
+    expect((await post('erasures/replay', {}, admin)).status).toBe(400);
+    run.mockReset();
+
+    run.mockResolvedValueOnce({
+      ok: true,
+      value: { done: 'Dry run: 1 person would be erased again; nothing was', dryRun: true },
+    });
+    const dry = await post('erasures/replay', { since: 1_700_000_000_000, dryRun: true }, admin);
+    expect(dry.status).toBe(200);
+    expect(await dry.json()).toMatchObject({ dryRun: true });
+    expect(run.mock.calls.at(-1)!.slice(0, 2)).toEqual([
+      'replay_erasures',
+      { since: 1_700_000_000_000, dryRun: true },
+    ]);
+    // A token's step-up, or any other refusal the engine makes, is a 409 with its words.
+    run.mockResolvedValueOnce({ ok: false, error: 'Confirm it’s you first, then confirm again.' });
+    expect((await post('erasures/replay', { since: 1_700_000_000_000 }, admin)).status).toBe(409);
+    run.mockReset();
+  });
 });
 
 describe('an OAuth grant at the REST API', () => {

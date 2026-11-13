@@ -50,6 +50,11 @@
  *                                                 skips keys already expired, keeps the rest's remaining
  *                                                 lifetime, and writes `wrangler kv bulk put` files (never
  *                                                 writes KV itself; never run in CI)
+ *   node scripts/fleet.ts replay-erasures <id> <since> [--dry-run]  after a restore, erase again the people
+ *                                                 erased since its point (an ISO time or epoch ms): calls the
+ *                                                 deployment's REST operation with COMMERCEWORKER_API_TOKEN
+ *                                                 (an admin's); --dry-run lists who and erases nobody; exits
+ *                                                 1 if anyone was left alone (never in CI)
  *   node scripts/fleet.ts demos                   the provisioned demo deployments, for the nightly reset
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and domain put
@@ -83,6 +88,7 @@ import {
 } from '../packages/application/src/commerce/kv-restore.ts';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 import { cloudflareIo, operatorEnv, type RedriveTarget, redrive } from './redrive.ts';
+import { parseSince, refuseInCi, replayErasures, summarize } from './replay-erasures.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
@@ -2840,6 +2846,24 @@ export function redriveTargets(d: Deployment): RedriveTarget[] {
   return out;
 }
 
+/** `replay-erasures <id> <since> [--dry-run]` (scripts/replay-erasures.ts): the last step of a restore. */
+async function replayErasuresCmd(
+  id: string | undefined,
+  since: string | undefined,
+  rest: string[],
+) {
+  refuseInCi(process.env);
+  const d = byId(id);
+  const dryRun = rest.includes('--dry-run');
+  const { answer, needsLook } = await replayErasures(d.domain, parseSince(since), {
+    dryRun,
+    env: process.env,
+  });
+  console.log(JSON.stringify(answer, null, 2));
+  console.error(summarize(answer));
+  if (needsLook && !dryRun) process.exitCode = 1;
+}
+
 async function redriveCmd(id: string | undefined, queue: string | undefined, rest: string[]) {
   // It sends production messages with an operator's credentials: a person runs it, a workflow never does.
   if (process.env.CI || process.env.GITHUB_ACTIONS)
@@ -3411,11 +3435,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         throw new Error('promote-standby is run by an operator, never in CI');
       console.log(promoteStandby(args[0]).join('\n'));
     } else if (cmd === 'redrive') await redriveCmd(args[0], args[1], args.slice(2));
+    else if (cmd === 'replay-erasures') await replayErasuresCmd(args[0], args[1], args.slice(2));
     else if (cmd === 'demos')
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|kv-restore|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|database-id|promote-standby|redrive|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|kv-restore|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|database-id|promote-standby|redrive|replay-erasures|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);

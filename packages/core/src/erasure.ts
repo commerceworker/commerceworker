@@ -167,6 +167,63 @@ export type ErasureResult =
   /** Orders still running can't be erased; cancel them or wait for them to finish. */
   | { ok: false; reason: 'active_orders'; orders: string[] };
 
+/** The tallies an erasure pass reports. */
+export type ErasureCounts = Omit<
+  Extract<ErasureResult, { ok: true }>,
+  'ok' | 'done' | 'teamMember'
+>;
+
+/**
+ * What `replayErasures` did: the erasures recorded since a time (`personal_data.erased`, found in
+ * the database's audit log and in the R2 copies of it), run again against what is stored now. A
+ * restore (Time Travel, a promoted backup, an object restore) brings back people erased after its
+ * point; the audit log names them only by a hash of their address (`subjectTarget`), so each is
+ * found by hashing the addresses the stores hold. No address or name is returned, only the hash.
+ */
+export type ErasureReplay = {
+  since: number;
+  /** Nothing was erased: `erased` says what a replay would erase. */
+  dryRun: boolean;
+  /** Distinct people erased since `since`, by where their event was read. */
+  events: { total: number; database: number; archive: number };
+  /** Addresses hashed to find them. */
+  scanned: number;
+  /** People found in the stores and erased again (or, in a dry run, found). */
+  erased: ({
+    /** `subjectTarget`: the audit log's name for them. */
+    target: string;
+    /** When they were first erased. */
+    at: number;
+    /** Their erasure is in the database's audit log (false when a restore dropped it). */
+    recorded: boolean;
+    /** False when more orders are left than a replay's rounds cover: replay again. */
+    done: boolean;
+  } & ErasureCounts)[];
+  /**
+   * Orders already marked erased since `since`, whose agent state or files a restore of an order's
+   * agent or of the documents bucket brought back: `checked` the orders marked erased since,
+   * `erased` those whose agent still held what an erasure removes, `documents` the files deleted
+   * again from `orders/<id>/`, `running` those a restore left running again, which can't be
+   * erased until they end.
+   */
+  orders: {
+    checked: number;
+    erased: number;
+    documents: number;
+    running: string[];
+    /** Set when more orders were erased since than one replay checks: run again with this `since`. */
+    nextSince?: number;
+  };
+  /**
+   * People left alone: their orders are still running (`active_orders`: cancel them or let them
+   * finish, then replay again), or they ordered again after they were erased (`ordered_since`:
+   * live data a replay would erase, so a person decides).
+   */
+  blocked: { target: string; reason: 'active_orders' | 'ordered_since'; orders: string[] }[];
+  /** People the stores hold nothing about (their erasure came before the restore point, or it all went). */
+  clean: string[];
+};
+
 export type SubjectExport = {
   email: string;
   exportedAt: number;

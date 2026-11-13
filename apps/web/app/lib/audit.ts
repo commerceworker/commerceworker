@@ -62,8 +62,6 @@ export const AUDIT_ACTIONS = {
   'ucp.platform_added': 'Let in an AI shopping platform',
   'plugin.uploaded': 'Uploaded a plugin for review',
   'plugin.secret_set': 'Set a plugin’s secret',
-  'personal_data.exported': "Exported a person's data",
-  'personal_data.erased': 'Erased a person from orders and accounts',
   'catalog.products_indexed': 'Updated the product index',
   ...BUSINESS_AUDIT_ACTIONS,
 } as const;

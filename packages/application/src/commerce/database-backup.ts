@@ -324,5 +324,7 @@ export type DrillEvidence = {
   finishedAt: string;
   minutes: number;
   checks: RestoreChecks | null;
+  /** What to do after promoting this backup (`replayReminder`); absent when no backup was restored. */
+  afterPromotion?: string;
   error?: string;
 };

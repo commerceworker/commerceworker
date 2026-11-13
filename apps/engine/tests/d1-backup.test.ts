@@ -122,6 +122,8 @@ describe('the daily backup and the restore drill', () => {
     });
     expect(drill.checks.auditChain.checked).toBeGreaterThanOrEqual(3);
     expect(typeof drill.minutes).toBe('number');
+    // Whoever promotes this backup is told the last step: people erased since it are in it.
+    expect(drill.afterPromotion).toContain(`replay-erasures <id> ${today}`);
 
     // The standby is the live database's copy: rows, indexes, triggers and the search index.
     for (const t of tables)

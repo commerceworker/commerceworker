@@ -89,6 +89,8 @@ const DESTRUCTIVE = new Set<AssistantTool>([
   'revoke_ucp_platform',
   'set_ucp_settings',
   'set_storefront_settings',
+  // Erases people, for good.
+  'replay_erasures',
 ]);
 /** Calling these twice with the same input does nothing more the second time. */
 const IDEMPOTENT = new Set<AssistantTool>([
@@ -137,6 +139,8 @@ const IDEMPOTENT = new Set<AssistantTool>([
   'revoke_ucp_platform',
   'set_ucp_settings',
   'set_storefront_settings',
+  // Again, nobody is left to erase.
+  'replay_erasures',
 ]);
 /**
  * These reach outside CommerceWorker: cancelling voids payments and cancels shipments with the

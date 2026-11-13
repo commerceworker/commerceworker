@@ -459,7 +459,7 @@ describe('MCP', () => {
       inputSchema: { properties: { cartId: {}, confirmation: {} } },
     });
     const admin = await tools(person('admin', 'ann@example.com'));
-    expect(admin).toHaveLength(120);
+    expect(admin).toHaveLength(121);
     // An admin's reads of the audit trail, plugins and webhooks: nothing changes, and no lower
     // role sees them.
     const adminReads = [
@@ -2805,5 +2805,68 @@ describe('MCP', () => {
       skill: { frontmatter: { name: 'stock-review' } },
     });
     expect((await modern(viewer, 'resources/read', unknown)).error).toBeDefined();
+  });
+});
+
+describe('MCP: replaying erasures after a restore', () => {
+  const since = 1_000;
+  const token = { kind: 'token', id: 'tok_ops', name: 'Ops', role: 'admin' } as Principal;
+
+  it('offers it to an admin only, as a confirmed action that can be repeated', async () => {
+    const found = (await tools(person('admin', 'ann@example.com'))).find(
+      (t) => t.name === 'replay_erasures',
+    );
+    expect(found).toMatchObject({
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: { properties: { since: {}, dryRun: {}, confirmation: {} } },
+    });
+    for (const role of ['viewer', 'operator'] as const) {
+      const as = person(role, `${role}@example.com`);
+      expect((await tools(as)).map((t) => t.name)).not.toContain('replay_erasures');
+      expect(
+        (await rpc(as, 'tools/call', { name: 'replay_erasures', arguments: { since } })).body,
+      ).toMatchObject({ error: { message: 'Tool replay_erasures not found' } });
+    }
+  });
+
+  it('previews who would be erased again, then runs once with the code, audited via MCP', async () => {
+    const first = await call(token, 'replay_erasures', { since });
+    expect(first.isError).toBeFalsy();
+    expect(first.structuredContent).toMatchObject({
+      preview: {
+        title: expect.stringContaining('Erase again everyone erased since'),
+        consequences: expect.arrayContaining(['Running it again changes nothing']),
+      },
+      confirmation: expect.stringMatching(/^cfm_[0-9a-f]{32}$/),
+    });
+    // A token needs no step-up, so its card doesn't ask for one.
+    expect(first.structuredContent?.preview).not.toHaveProperty('stepUp');
+    const code = first.structuredContent!.confirmation as string;
+    const done = await call(token, 'replay_erasures', { since, confirmation: code });
+    expect(done.isError).toBeFalsy();
+    expect(done.structuredContent).toMatchObject({
+      dryRun: false,
+      erased: expect.any(Array),
+      blocked: expect.any(Array),
+    });
+    expect((await call(token, 'replay_erasures', { since, confirmation: code })).isError).toBe(
+      true,
+    );
+    const events = await createDb(env.DB)
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, 'personal_data.erasure_replayed'));
+    expect(events.at(-1)).toMatchObject({ actorId: 'tok_ops' });
+    expect(events.at(-1)?.detail).toContain('"via":"mcp"');
+  });
+
+  it('asks a person for a step-up on the card, and refuses the confirm without one', async () => {
+    const ann = person('admin', 'ann@example.com');
+    const first = await call(ann, 'replay_erasures', { since });
+    expect(first.structuredContent?.preview).toMatchObject({ stepUp: true });
+    const code = first.structuredContent!.confirmation as string;
+    const refused = await call(ann, 'replay_erasures', { since, confirmation: code });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]!.text).toBe('Confirm it’s you first, then confirm again.');
   });
 });
