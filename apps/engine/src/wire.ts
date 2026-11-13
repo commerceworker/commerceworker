@@ -5,7 +5,7 @@
  */
 
 import { createCatalogEdgeReader } from '@commerceworker/adapters/catalog-edge';
-import { createCfEmailSender } from '@commerceworker/adapters/email-cf';
+import { createCfEmailSender, withFallbackSender } from '@commerceworker/adapters/email-cf';
 import {
   createR2ObjectBucket,
   createReplicaFallbackBucket,
@@ -52,7 +52,7 @@ import { d1UcpLinks } from '@commerceworker/db/ucp-links';
 import { d1UcpStore } from '@commerceworker/db/ucp-store';
 import { d1WebhookOutbox } from '@commerceworker/db/webhook-outbox';
 import { d1WorkspaceStore } from '@commerceworker/db/workspace-store';
-import type { Clock, EmailSender } from '@commerceworker/ports';
+import type { Clock, EmailQueue, EmailSender } from '@commerceworker/ports';
 import type {
   ActiveObjects,
   AddressBook,
@@ -278,12 +278,30 @@ export function emailSender(env: {
   EMAIL?: SendEmail;
   EMAIL_FROM: string;
   EMAIL_FROM_NAME: string;
+  EMAIL_FALLBACK?: SendEmail;
+  EMAIL_FALLBACK_FROM?: string;
 }): EmailSender | undefined {
   if (!env.EMAIL || !env.EMAIL_FROM) return undefined;
-  return createCfEmailSender(env.EMAIL, {
-    from: env.EMAIL_FROM,
-    ...(env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {}),
-  });
+  const name = env.EMAIL_FROM_NAME ? { fromName: env.EMAIL_FROM_NAME } : {};
+  const primary = createCfEmailSender(env.EMAIL, { from: env.EMAIL_FROM, ...name });
+  // A second sender on another onboarded domain, tried when the first's is refused as unverified
+  // or Email Sending itself fails (the registry's `email.fallbackFrom`).
+  if (!env.EMAIL_FALLBACK || !env.EMAIL_FALLBACK_FROM) return primary;
+  return withFallbackSender(
+    primary,
+    createCfEmailSender(env.EMAIL_FALLBACK, { from: env.EMAIL_FALLBACK_FROM, ...name }),
+  );
+}
+
+/**
+ * The mail queue's producer, or undefined where mail is sent inline (a deployment without
+ * `redundancy` and an `email` sender has no `EMAIL_QUEUE` binding: scripts/fleet.ts strips it).
+ */
+export function emailQueue(env: { EMAIL_QUEUE?: Queue }): EmailQueue | undefined {
+  const queue = env.EMAIL_QUEUE;
+  return queue
+    ? { enqueue: async (job) => void (await queue.send(job, { contentType: 'json' })) }
+    : undefined;
 }
 
 /** The credentials an order-confirmation email's receipt link carries, as hashes with an expiry. */

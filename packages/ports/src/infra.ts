@@ -362,6 +362,8 @@ export interface EmailSendResult {
   readonly delivered: boolean;
   readonly id?: string;
   readonly error?: string;
+  /** The provider's error code when it gave one (Email Sending's `E_SENDER_NOT_VERIFIED`). */
+  readonly code?: string;
 }
 
 /**
@@ -370,6 +372,27 @@ export interface EmailSendResult {
  */
 export interface EmailSender {
   send(message: EmailMessage): Promise<EmailSendResult>;
+}
+
+/**
+ * Mail waiting for the queue's consumer. A confirmation names its `messages` row and carries no
+ * credential (the consumer builds the mail, so a dead letter holds none); a sign-in code's mail is
+ * the code itself, so it carries `expiresAt` (ms) and is dropped, unsent, once the code is dead.
+ */
+export type QueuedEmail =
+  | { readonly kind: 'confirmation'; readonly orderId: string; readonly messageId: string }
+  | {
+      readonly kind: 'sign_in';
+      readonly to: string;
+      readonly subject: string;
+      readonly text: string;
+      readonly html?: string;
+      readonly expiresAt: number;
+    };
+
+/** Where mail waits to be sent with retries. Cloudflare Queues implements it on edge. */
+export interface EmailQueue {
+  enqueue(job: QueuedEmail): Promise<void>;
 }
 
 /** Signs and POSTs a webhook payload. Implemented by the worker (HMAC + fetch). */

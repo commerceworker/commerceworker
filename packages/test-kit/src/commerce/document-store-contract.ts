@@ -98,5 +98,53 @@ export function describeDocumentStoreContract(
       });
       expect(await messages.find('dc_o5', 'none')).toBeUndefined();
     });
+
+    it('keeps the id Email Sending returned, once, and finds the message by it', async () => {
+      const { messages } = await make();
+      const m = { recipient: 'a@example.com', subject: 'Confirmed', body: 'Thanks' };
+      const { messageId } = await messages.send('dc_o6', 'confirmation', m);
+      await messages.markSent(messageId, 1000, 'prov-1');
+      await messages.markSent(messageId, 2000, 'prov-2');
+      expect(await messages.find('dc_o6', 'confirmation')).toMatchObject({
+        sentAt: 1000,
+        providerId: 'prov-1',
+        deliveryStatus: null,
+      });
+      expect(await messages.recordDelivery('prov-1', 'delivered', 1500)).toBe(true);
+      expect(await messages.recordDelivery('nobody', 'delivered', 1500)).toBe(false);
+    });
+
+    it('records the newest delivery status an event reports, never an older one over it', async () => {
+      const { messages } = await make();
+      const m = { recipient: 'a@example.com', subject: 'Confirmed', body: 'Thanks' };
+      const { messageId } = await messages.send('dc_o7', 'confirmation', m);
+      await messages.markSent(messageId, 1000, 'prov-7');
+      const state = async () => {
+        const r = await messages.find('dc_o7', 'confirmation');
+        return [r?.deliveryStatus, r?.deliveryAt, r?.deliveryDetail];
+      };
+      await messages.recordDelivery('prov-7', 'deferred', 1100, '451 try later');
+      expect(await state()).toEqual(['deferred', 1100, '451 try later']);
+      await messages.recordDelivery('prov-7', 'delivered', 1200);
+      expect(await state()).toEqual(['delivered', 1200, null]);
+      // A late deferral or a repeat changes nothing; a complaint follows a delivery.
+      await messages.recordDelivery('prov-7', 'deferred', 1300);
+      await messages.recordDelivery('prov-7', 'delivered', 1400);
+      expect(await state()).toEqual(['delivered', 1200, null]);
+      expect(await messages.recordDelivery('prov-7', 'complained', 1500, 'abuse')).toBe(true);
+      expect(await state()).toEqual(['complained', 1500, 'abuse']);
+      await messages.recordDelivery('prov-7', 'bounced', 1600);
+      expect(await state()).toEqual(['complained', 1500, 'abuse']);
+    });
+
+    it('keeps the first of two peer failures', async () => {
+      const { messages } = await make();
+      const m = { recipient: 'a@example.com', subject: 'Confirmed', body: 'Thanks' };
+      const { messageId } = await messages.send('dc_o8', 'confirmation', m);
+      await messages.markSent(messageId, 1000, 'prov-8');
+      await messages.recordDelivery('prov-8', 'bounced', 1100);
+      await messages.recordDelivery('prov-8', 'failed', 1200);
+      expect((await messages.find('dc_o8', 'confirmation'))?.deliveryStatus).toBe('bounced');
+    });
   });
 }

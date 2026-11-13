@@ -55,6 +55,8 @@ something else entirely.
    consumer needs the purge queue (which `provision.sh` creates) and it reads what the catalog
    publishes; the catalog's `PURGE` producer needs the same queue, and its `CHANGES` producer and consumer need the changes queue.
 
+A deployment that queues mail ([operations](operations.md#the-mail-queue)) needs four more queues from `provision.sh` (`commerceworker-email`, its dead-letter queue, and the queue and dead-letter queue for Email Sending's events, each suffixed), and an event subscription per sending domain; the engine deploy fails while one is missing.
+
 Workflow names (`commerceworker-order`, `commerceworker-replenish`, `commerceworker-catalog-feed`, `commerceworker-catalog-backup`, `commerceworker-catalog-restore`) and queue names must be unique in the account. The catalog's and delivery's queue consumers need their queues to exist, so run `provision.sh` before the first deploy that carries the feed code, the purge queue or the changes queue; an existing deployment re-runs it (see [Operations](operations.md#adding-a-customer)).
 
 ## Email intake

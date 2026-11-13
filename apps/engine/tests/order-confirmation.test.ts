@@ -82,7 +82,14 @@ function fakeEmail() {
   };
   return {
     sent,
-    env: { ...env, EMAIL: binding, EMAIL_FROM: 'orders@mail.shop.test' } as unknown as Env,
+    // No queue: the inline path, as a deployment without `redundancy` sends (tests/email-queue.test.ts
+    // has the queued one).
+    env: {
+      ...env,
+      EMAIL: binding,
+      EMAIL_FROM: 'orders@mail.shop.test',
+      EMAIL_QUEUE: undefined,
+    } as unknown as Env,
   };
 }
 

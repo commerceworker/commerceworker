@@ -295,6 +295,47 @@ if [ -n "${DOCS_REPLICA_R2:-}" ]; then
 fi
 # docs-replica:end
 
+# The mail queue (docs/operations.md, "Email sending"): the queue order confirmations and failed
+# sign-in codes wait in, its dead-letter queue, and the queue Email Sending's events (delivered,
+# bounced, complained...) go to, with its own. Queues are account-level, so a dead-letter queue is in
+# its queue's account by construction. The engine's consumers name all four, so a deploy fails if one
+# is missing. Each sending domain gets one event subscription to the events queue, read before it is
+# made (a second would deliver every event twice); a domain whose zone isn't in this account is
+# reported and left, since the subscription needs the zone. Empty unless mail is queued.
+# email-queue:begin
+if [ -n "${EMAIL_QUEUE:-}" ]; then
+  for q in "$EMAIL_QUEUE" "$EMAIL_DLQ" "$EMAIL_EVENTS" "$EMAIL_EVENTS_DLQ"; do
+    if wrangler queues info "$q" >/dev/null 2>&1; then echo "Queue $q already exists"
+    else wrangler queues create "$q"; fi
+    wrangler queues update "$q" --message-retention-period-secs 1209600 >/dev/null
+  done
+  subscriptions=$(wrangler queues subscription list "$EMAIL_EVENTS" 2>/dev/null || true)
+  for domain in $EMAIL_DOMAINS; do
+    if grep -q "$domain" <<<"$subscriptions"; then
+      echo "Email Sending events for $domain already go to $EMAIL_EVENTS"
+      continue
+    fi
+    # The zone of the sending domain: its own name, then each parent, until the account has one.
+    zone=""
+    host="$domain"
+    while [[ "$host" == *.* ]]; do
+      zone=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+        "https://api.cloudflare.com/client/v4/zones?name=$host&account.id=$CLOUDFLARE_ACCOUNT_ID" \
+        | jq -r '.result[0].id // empty') || zone=""
+      [ -n "$zone" ] && break
+      host="${host#*.}"
+    done
+    if [ -z "$zone" ]; then
+      echo "No zone in this account holds $domain: its Email Sending events aren't subscribed (delivery status stays blank)" >&2
+      continue
+    fi
+    wrangler queues subscription create "$EMAIL_EVENTS" --source email.sending --zone-id "$zone" \
+      --domain "$domain" --events message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained \
+      --name "commerceworker mail events $domain"
+  done
+fi
+# email-queue:end
+
 # Redundancy (docs/operations.md, "Redundancy"): the backups bucket (the commerce D1's daily backups
 # under d1/, the Durable Object copies and restore reports under objects/), and the standby database
 # the D1 restore drill rebuilds the newest backup in. Each part is read before it is created, so a

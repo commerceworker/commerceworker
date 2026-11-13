@@ -1,5 +1,6 @@
 /** Must match migrations/*.sql column for column and index for index. Add a numbered migration; never edit an applied one. */
 
+import type { MessageDelivery } from '@commerceworker/ports/commerce';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -938,8 +939,15 @@ export const messages = sqliteTable(
     sentAt: integer('sent_at'),
     /** Why the last send didn't go. */
     error: text('error'),
+    /** The id Email Sending's binding returned, which its events carry. */
+    providerId: text('provider_id'),
+    /** The newest status an Email Sending event reported (`MESSAGE_DELIVERY`), and when (ms). */
+    deliveryStatus: text('delivery_status').$type<MessageDelivery>(),
+    deliveryAt: integer('delivery_at'),
+    /** The reason it reported (an SMTP response), capped. */
+    deliveryDetail: text('delivery_detail'),
   },
-  (t) => [index('messages_order').on(t.orderId)],
+  (t) => [index('messages_order').on(t.orderId), index('messages_provider').on(t.providerId)],
 );
 
 /**

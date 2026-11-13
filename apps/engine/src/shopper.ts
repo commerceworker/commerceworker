@@ -19,7 +19,7 @@ import {
 import { orderAgent } from './namespaces';
 import { confirmations, sender } from './order-confirmation';
 import { guestActor } from './principal';
-import { addressBook, orderQueries, orderRecords, shopperAuth } from './wire';
+import { addressBook, emailQueue, orderQueries, orderRecords, shopperAuth } from './wire';
 
 /** Whether `signed` is the storefront speaking for a shopper call (the one thing it may say). */
 async function fromStorefront(env: Env, signed: SignedActor): Promise<boolean> {
@@ -36,7 +36,13 @@ const ports = async (env: Env) => {
 export async function startShopperSignIn(env: Env, email: unknown, signed: SignedActor) {
   if (!(await fromStorefront(env, signed))) return { status: 'invalid' as const };
   return uc.startShopperSignIn(
-    { ...(await ports(env)), email: sender(env), storefrontOrigin: env.STOREFRONT_ORIGIN },
+    {
+      ...(await ports(env)),
+      email: sender(env),
+      storefrontOrigin: env.STOREFRONT_ORIGIN,
+      // The code goes inline first, the shopper waiting; the queue is only the retry.
+      queue: emailQueue(env),
+    },
     email,
     Date.now(),
   );

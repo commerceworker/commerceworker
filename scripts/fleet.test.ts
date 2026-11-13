@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -17,6 +17,7 @@ import {
   CONTENT_SECRETS,
   contentHosts,
   contentSecretValues,
+  emailDomains,
   foreignJobsReaching,
   healthCheckKey,
   keysProblem,
@@ -31,9 +32,12 @@ import {
   pluginKey,
   pluginOwnSecrets,
   postWriteCheck,
+  queuesEmail,
   REDUNDANCY_PARTS,
   RESERVED_PATH_SEGMENTS,
+  redriveTargets,
   redundancySchedules,
+  renderAll,
   renderApi,
   renderCatalog,
   renderDelivery,
@@ -57,6 +61,15 @@ import {
   WRITE_CHECK_DEADLINE_MS,
   workerPlugins,
 } from './fleet.ts';
+import {
+  markerKey,
+  parseList,
+  type RedriveIo,
+  redrive,
+  redriveBody,
+  redrivePlan,
+  signR2,
+} from './redrive.ts';
 
 const base = (app: string) =>
   parse(
@@ -2662,7 +2675,14 @@ test('r2Replica as an exception strips the replica and nothing else; the flag of
     base('engine'),
     loadDeployments().find((x) => x.id === 'commerceworker')!,
   );
-  assert.deepEqual(own.queues, base('engine').queues);
+  // commerceworker sets no `email`, so it has the replica's queues and none of the mail queue's.
+  assert.deepEqual(
+    own.queues.consumers,
+    base('engine').queues.consumers.filter((c: { queue: string }) =>
+      c.queue.startsWith('commerceworker-docs-replica'),
+    ),
+  );
+  assert.equal(own.queues.producers, undefined);
   assert.equal(replicatesDocs(protectedAcme()), true);
   assert.equal(replicatesDocs(protectedAcme({ except: ['r2Replica'] })), false);
   assert.equal(replicatesDocs(acme), false);
@@ -2785,4 +2805,374 @@ test('the four policies the docs name, and a minute-by-minute check on each deep
       alertSpec(protectedAcme({ alerts: { webhook: 'https://h.example/x' } }))!.pagerduty,
     false,
   );
+});
+
+// --- Email: the queue, the fallback sender, the dead letters and their redrive ---
+
+const mailing = (redundancy: unknown = true, email: Record<string, unknown> | null = {}) =>
+  protectedAcme(redundancy, {
+    ...(email ? { email: { from: 'orders@mail.acme.test', ...email } } : {}),
+  });
+type QueueEntry = Record<string, string | number | undefined>;
+const queueNames = (c: { queues?: { consumers: QueueEntry[] } }) =>
+  c.queues?.consumers.map((q) => [q.queue, q.dead_letter_queue]);
+
+test('email.fallbackFrom is a second onboarded domain: another address, never the first’s domain', () => {
+  const ok = toDeployment({
+    ...acme,
+    email: { from: 'orders@mail.acme.test', fallbackFrom: ' orders@backup.example.net ' },
+  });
+  assert.equal(ok.email?.fallbackFrom, 'orders@backup.example.net');
+  assert.deepEqual(emailDomains(ok), ['mail.acme.test', 'backup.example.net']);
+  for (const [fallbackFrom, why] of [
+    ['nope', /second domain onboarded/],
+    ['alerts@MAIL.acme.test', /same domain as email.from/],
+    [7, /second domain onboarded/],
+  ] as const)
+    assert.throws(
+      () => toDeployment({ ...acme, email: { from: 'orders@mail.acme.test', fallbackFrom } }),
+      why,
+    );
+  // Ids that would start like a mail queue's own name are refused: the engine dispatches on the name.
+  for (const id of ['dlq', 'events', 'events-eu', 'dlq-x'])
+    assert.throws(() => toDeployment({ ...acme, id }), /would name a mail queue/);
+  assert.doesNotThrow(() => toDeployment({ ...acme, id: 'eventsx' }));
+});
+
+test('mail is queued only with redundancy, a sender, and email not an exception', () => {
+  assert.equal(queuesEmail(mailing()), true);
+  assert.equal(queuesEmail(mailing({ except: ['email'] })), false);
+  assert.equal(queuesEmail(mailing(true, null)), false);
+  assert.equal(queuesEmail(toDeployment({ ...acme, email: { from: 'a@b.test' } })), false);
+  // The other exceptions don't touch it.
+  assert.equal(queuesEmail(mailing({ except: ['queues', 'd1Backup', 'r2Replica'] })), true);
+});
+
+test('the engine renders the mail queue, its dead letters and the event queue, suffixed, with the producer', () => {
+  const c = renderEngine(base('engine'), mailing());
+  assert.deepEqual(c.queues.producers, [
+    { binding: 'EMAIL_QUEUE', queue: 'commerceworker-email-acme' },
+  ]);
+  assert.deepEqual(queueNames(c), [
+    ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
+    ['commerceworker-docs-replica-dlq-acme', undefined],
+    ['commerceworker-email-acme', 'commerceworker-email-dlq-acme'],
+    ['commerceworker-email-dlq-acme', undefined],
+    ['commerceworker-email-events-acme', 'commerceworker-email-events-dlq-acme'],
+    ['commerceworker-email-events-dlq-acme', undefined],
+  ]);
+  const n = names(mailing());
+  assert.deepEqual(
+    [n.emailQueue, n.emailDlq, n.emailEvents, n.emailEventsDlq],
+    [
+      'commerceworker-email-acme',
+      'commerceworker-email-dlq-acme',
+      'commerceworker-email-events-acme',
+      'commerceworker-email-events-dlq-acme',
+    ],
+  );
+  // Retries: the queue retries before its dead-letter queue, the dead-letter consumer keeps trying.
+  assert.equal(c.queues.consumers[2]?.max_retries, 6);
+});
+
+test('with the flag off, or email an exception, mail is inline: no producer, no mail consumers', () => {
+  for (const d of [
+    toDeployment({ ...acme, email: { from: 'orders@mail.acme.test' } }),
+    mailing({ except: ['email'] }),
+  ]) {
+    const c = renderEngine(base('engine'), d);
+    assert.equal(c.queues?.producers, undefined);
+    assert.ok(!JSON.stringify(c.queues ?? {}).includes('commerceworker-email'));
+  }
+  // The flag off strips everything; email an exception leaves the replica's queues.
+  assert.equal(
+    renderEngine(base('engine'), toDeployment({ ...acme, email: { from: 'a@b.test' } })).queues,
+    undefined,
+  );
+  assert.deepEqual(queueNames(renderEngine(base('engine'), mailing({ except: ['email'] }))), [
+    ['commerceworker-docs-replica-acme', 'commerceworker-docs-replica-dlq-acme'],
+    ['commerceworker-docs-replica-dlq-acme', undefined],
+  ]);
+  // A flagged deployment with no sender has nothing to queue either.
+  assert.ok(
+    !JSON.stringify(renderEngine(base('engine'), mailing(true, null)).queues).includes('email'),
+  );
+  // And r2Replica an exception leaves only the mail queue's.
+  assert.deepEqual(
+    queueNames(renderEngine(base('engine'), mailing({ except: ['r2Replica'] })))!.map((q) => q[0]),
+    [
+      'commerceworker-email-acme',
+      'commerceworker-email-dlq-acme',
+      'commerceworker-email-events-acme',
+      'commerceworker-email-events-dlq-acme',
+    ],
+  );
+});
+
+test('the fallback sender adds its binding and address, and only where the registry sets it', () => {
+  const withFallback = toDeployment({
+    ...acme,
+    email: { from: 'orders@mail.acme.test', fallbackFrom: 'orders@backup.example.net' },
+  });
+  const c = renderEngine(base('engine'), withFallback);
+  assert.deepEqual(c.send_email, [{ name: 'EMAIL' }, { name: 'EMAIL_FALLBACK' }]);
+  assert.equal(c.vars.EMAIL_FALLBACK_FROM, 'orders@backup.example.net');
+  const plain = renderEngine(
+    base('engine'),
+    toDeployment({ ...acme, email: { from: 'a@b.test' } }),
+  );
+  assert.deepEqual(plain.send_email, [{ name: 'EMAIL' }]);
+  assert.equal(plain.vars.EMAIL_FALLBACK_FROM, '');
+  assert.equal(renderEngine(base('engine'), acme).send_email, undefined);
+});
+
+test('provision.sh is told the mail queues and the domains to subscribe, only when mail is queued', () => {
+  const on = shellVars(
+    protectedAcme(true, {
+      email: { from: 'orders@mail.acme.test', fallbackFrom: 'orders@backup.example.net' },
+    }),
+  );
+  assert.deepEqual(
+    [on.EMAIL_QUEUE, on.EMAIL_DLQ, on.EMAIL_EVENTS, on.EMAIL_EVENTS_DLQ, on.EMAIL_DOMAINS],
+    [
+      'commerceworker-email-acme',
+      'commerceworker-email-dlq-acme',
+      'commerceworker-email-events-acme',
+      'commerceworker-email-events-dlq-acme',
+      'mail.acme.test backup.example.net',
+    ],
+  );
+  for (const d of [acme, mailing({ except: ['email'] }), mailing(true, null)])
+    assert.deepEqual(
+      ['EMAIL_QUEUE', 'EMAIL_DLQ', 'EMAIL_EVENTS', 'EMAIL_EVENTS_DLQ', 'EMAIL_DOMAINS'].map(
+        (k) => shellVars(d)[k],
+      ),
+      ['', '', '', '', ''],
+    );
+});
+
+/**
+ * Every queue a rendered config consumes has a dead-letter queue, and every dead-letter queue a
+ * consumer. A dead-letter queue's own consumer (it keeps what it gets) has none: it is the end.
+ * Checked across all of a deployment's configs, since a queue is consumed in one Worker and may be
+ * produced to (or, the purge queue, dead-lettered) from another.
+ */
+function coverageOf(configs: { queues?: { consumers: QueueEntry[] } }[]) {
+  const consumers = configs.flatMap((c) => c.queues?.consumers ?? []);
+  const consumed = new Set(consumers.map((c) => c.queue as string));
+  const dlqs = new Set(
+    consumers.flatMap((c) => (c.dead_letter_queue ? [c.dead_letter_queue as string] : [])),
+  );
+  const problems: string[] = [];
+  for (const c of consumers)
+    if (!c.dead_letter_queue && !dlqs.has(c.queue as string))
+      problems.push(`${c.queue} is consumed and has no dead-letter queue`);
+  for (const q of dlqs)
+    if (!consumed.has(q)) problems.push(`${q} is a dead-letter queue nothing consumes`);
+  return { problems, consumers };
+}
+const coverage = (d: ReturnType<typeof toDeployment>) =>
+  coverageOf(renderAll(d).map((r) => r.config));
+
+test('every queue consumer has a dead-letter queue, and every dead-letter queue has a consumer', () => {
+  const deployments = [
+    // The registry's own (a deployment not yet provisioned can't render).
+    ...loadDeployments().filter((d) => d.d1Id && d.catalogKvId),
+    acme,
+    protectedAcme(),
+    mailing(),
+    mailing({ except: ['email'] }),
+    mailing({ except: ['r2Replica'] }),
+    mailing(true, null),
+    withContent,
+    toDeployment({
+      ...withContent,
+      standbyD1Id: STANDBY,
+      redundancy: true,
+      email: { from: 'a@mail.test' },
+    }),
+  ];
+  for (const d of deployments) {
+    const { problems, consumers } = coverage(d);
+    assert.deepEqual(problems, [], `${d.id}: ${problems.join('; ')}`);
+    assert.ok(consumers.length > 0, `${d.id} consumes nothing: the check looks at nothing`);
+  }
+});
+
+test('the coverage check catches a consumer with no dead-letter queue and one that nothing consumes', () => {
+  const engine = renderEngine(base('engine'), mailing());
+  const without = (queue: string) => ({
+    queues: { consumers: engine.queues.consumers.filter((c: QueueEntry) => c.queue !== queue) },
+  });
+  assert.deepEqual(coverageOf([engine]).problems, []);
+  // Its dead-letter queue has no consumer.
+  assert.deepEqual(coverageOf([without('commerceworker-email-dlq-acme')]).problems, [
+    'commerceworker-email-dlq-acme is a dead-letter queue nothing consumes',
+  ]);
+  // A consumer with none (and that is nobody's dead-letter queue).
+  const bare = {
+    queues: { consumers: [{ queue: 'commerceworker-email-acme' }] },
+  };
+  assert.deepEqual(coverageOf([bare]).problems, [
+    'commerceworker-email-acme is consumed and has no dead-letter queue',
+  ]);
+});
+
+// The redrive: what to send is a pure plan; running it needs an operator's credentials.
+const DLQ = 'commerceworker-email-dlq-acme';
+const dead = (date: string, id: string) => `dlq/${DLQ}/${date}/${id}.json`;
+
+test('the redrive plan sends each kept dead letter not yet marked, oldest first, of the day asked for', () => {
+  const keys = [dead('2026-11-12', 'b'), dead('2026-11-11', 'a'), dead('2026-11-12', 'a')];
+  const markers = [markerKey(DLQ, '2026-11-12', 'a.json')];
+  assert.deepEqual(redrivePlan({ dlq: DLQ, keys, markers }), {
+    send: [
+      { key: dead('2026-11-11', 'a'), marker: markerKey(DLQ, '2026-11-11', 'a.json') },
+      { key: dead('2026-11-12', 'b'), marker: markerKey(DLQ, '2026-11-12', 'b.json') },
+    ],
+    skipped: [{ key: dead('2026-11-12', 'a'), reason: 'already redriven' }],
+  });
+  assert.deepEqual(
+    redrivePlan({ dlq: DLQ, date: '2026-11-11', keys, markers }).send.map((s) => s.key),
+    [dead('2026-11-11', 'a')],
+  );
+  // Another queue's object, or a stray key, is skipped; a bad date is refused.
+  const stray = redrivePlan({
+    dlq: DLQ,
+    keys: ['dlq/other-dlq/2026-11-12/x.json', 'dlq/redriven/x', dead('2026-11-12', 'ok')],
+    markers: [],
+  });
+  assert.equal(stray.send.length, 1);
+  assert.equal(stray.skipped.length, 2);
+  assert.throws(
+    () => redrivePlan({ dlq: DLQ, date: 'yesterday', keys: [], markers: [] }),
+    /YYYY-MM-DD/,
+  );
+});
+
+test('a kept body is sent back as it was; a redacted sign-in code and a non-message are not', () => {
+  const job = { kind: 'confirmation', orderId: 'o1', messageId: 'm1' };
+  assert.deepEqual(redriveBody(JSON.stringify({ queue: DLQ, id: 'x', body: job })), { body: job });
+  assert.deepEqual(
+    redriveBody(JSON.stringify({ body: { kind: 'sign_in', redacted: true, expiresAt: 1 } })),
+    { skip: 'redacted when kept: its code is gone' },
+  );
+  assert.deepEqual(redriveBody('not json'), { skip: 'unreadable' });
+  assert.deepEqual(redriveBody('{"id":"x"}'), { skip: 'no body' });
+});
+
+function memoryIo(objects: Record<string, string>, failSend = false) {
+  const store = new Map(Object.entries(objects));
+  const sent: unknown[] = [];
+  const io: RedriveIo = {
+    list: async (prefix) => [...store.keys()].filter((k) => k.startsWith(prefix)).sort(),
+    get: async (k) => store.get(k) ?? '',
+    put: async (k, b) => void store.set(k, b),
+    remove: async (k) => void store.delete(k),
+    send: async (b) => {
+      if (failSend) throw new Error('Queues push: 503');
+      sent.push(b);
+    },
+  };
+  return { io, sent, store };
+}
+
+test('a redrive sends each once: the second run finds the markers and sends nothing', async () => {
+  const body = { kind: 'confirmation', orderId: 'o1', messageId: 'm1' };
+  const { io, sent, store } = memoryIo({ [dead('2026-11-12', 'a')]: JSON.stringify({ body }) });
+  const first = await redrive(io, { dlq: DLQ }, undefined);
+  assert.deepEqual([first.sent, first.failed], [[dead('2026-11-12', 'a')], []]);
+  assert.deepEqual(sent, [body]);
+  assert.ok(store.has(markerKey(DLQ, '2026-11-12', 'a.json')));
+  const second = await redrive(io, { dlq: DLQ }, undefined);
+  assert.deepEqual(second.sent, []);
+  assert.equal(second.skipped[0]?.reason, 'already redriven');
+  assert.equal(sent.length, 1);
+});
+
+test('a send that fails removes its marker so the next run tries again; a dry run changes nothing', async () => {
+  const objects = { [dead('2026-11-12', 'a')]: JSON.stringify({ body: { kind: 'confirmation' } }) };
+  const failing = memoryIo(objects, true);
+  const r = await redrive(failing.io, { dlq: DLQ }, undefined);
+  assert.equal(r.failed.length, 1);
+  assert.match(r.failed[0]!.error, /503/);
+  assert.ok(!failing.store.has(markerKey(DLQ, '2026-11-12', 'a.json')));
+  const dry = memoryIo(objects);
+  const d = await redrive(dry.io, { dlq: DLQ }, undefined, true);
+  assert.equal(d.sent.length, 1);
+  assert.deepEqual(dry.sent, []);
+  assert.ok(![...dry.store.keys()].some((k) => k.startsWith('dlq/redriven/')));
+});
+
+test('a redacted dead letter is skipped, never sent, and leaves no marker', async () => {
+  const { io, sent, store } = memoryIo({
+    [dead('2026-11-12', 'c')]: JSON.stringify({ body: { kind: 'sign_in', redacted: true } }),
+  });
+  const r = await redrive(io, { dlq: DLQ }, undefined);
+  assert.deepEqual(sent, []);
+  assert.equal(r.skipped[0]?.reason, 'redacted when kept: its code is gone');
+  assert.ok(![...store.keys()].some((k) => k.startsWith('dlq/redriven/')));
+});
+
+test('which queues can be redriven follows what the deployment runs; the command never runs in CI', () => {
+  const t = (d: ReturnType<typeof toDeployment>) => redriveTargets(d).map((x) => x.name);
+  assert.deepEqual(t(mailing()), [
+    'docs-replica',
+    'email',
+    'email-events',
+    'catalog-feed-parts',
+    'catalog-changes',
+    'catalog-purge',
+  ]);
+  assert.deepEqual(t(acme), ['catalog-feed-parts', 'catalog-changes', 'catalog-purge']);
+  const email = redriveTargets(mailing()).find((x) => x.name === 'email')!;
+  assert.deepEqual(
+    [email.bucket, email.dlq, email.queue],
+    ['docsReplica', DLQ, 'commerceworker-email-acme'],
+  );
+  const catalog = redriveTargets(acme).find((x) => x.name === 'catalog-changes')!;
+  assert.deepEqual(
+    [catalog.bucket, catalog.queue],
+    ['catalogR2', 'commerceworker-catalog-changes-acme'],
+  );
+  for (const env of [{ CI: 'true' }, { GITHUB_ACTIONS: 'true' }]) {
+    const r = spawnSync(
+      process.execPath,
+      ['scripts/fleet.ts', 'redrive', 'commerceworker', 'catalog-changes'],
+      {
+        cwd: join(import.meta.dirname, '..'),
+        env: { ...process.env, CI: '', GITHUB_ACTIONS: '', ...env },
+        encoding: 'utf8',
+      },
+    );
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /never in CI/);
+  }
+});
+
+test('R2 requests are signed with SigV4 and its list answer is read', () => {
+  const headers = signR2(
+    {
+      method: 'GET',
+      host: 'acct.r2.cloudflarestorage.com',
+      path: '/bucket',
+      query: 'list-type=2&prefix=dlq%2F',
+      payloadHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      at: new Date('2026-11-12T10:00:00Z'),
+    },
+    { accessKeyId: 'AKID', secretAccessKey: 'secret' },
+  );
+  assert.equal(headers['x-amz-date'], '20261112T100000Z');
+  assert.match(
+    headers.authorization!,
+    /^AWS4-HMAC-SHA256 Credential=AKID\/20261112\/auto\/s3\/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/,
+  );
+  assert.deepEqual(
+    parseList(
+      '<R><Key>dlq/a&amp;b.json</Key><Key>dlq/c.json</Key><NextContinuationToken>t</NextContinuationToken></R>',
+    ),
+    { keys: ['dlq/a&b.json', 'dlq/c.json'], next: 't' },
+  );
+  // `&amp;` is decoded last, so an escaped entity stays an entity.
+  assert.deepEqual(parseList('<R><Key>dlq/x&amp;lt;y.json</Key></R>').keys, ['dlq/x&lt;y.json']);
 });

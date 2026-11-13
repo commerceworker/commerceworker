@@ -7,6 +7,7 @@ export * from './companies';
 export * from './compensate-order';
 export * from './credit';
 export * from './database-backup';
+export * from './email-queue';
 export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';

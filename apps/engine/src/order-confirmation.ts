@@ -4,7 +4,8 @@
  * `orderConfirmation.receipt` answers the storefront's receipt page. The Workflow calls `send` for an
  * order on the web channel under a `hosted:` idempotency key (reserved: only hosted checkout's
  * `completeHosted` starts one) once its card is authorized, or at completion for a flow with none, so
- * a flow author adds nothing. It never throws: a send that can't go is recorded on the order's
+ * a flow author adds nothing. With the mail queue bound, `send` files the message and queues the
+ * send (the consumer is `email-queue.ts`); otherwise it sends inline. It never throws: a send that can't go is recorded on the order's
  * message and returned, since an order is not undone for want of mail.
  */
 
@@ -19,6 +20,7 @@ import type { OrderConfirmations } from '@commerceworker/ports/commerce';
 import { ops } from './metrics';
 import { orderAgent } from './namespaces';
 import {
+  emailQueue,
   emailSender,
   messageStore,
   orderRecords,
@@ -53,7 +55,7 @@ export function confirmations(env: Env): OrderConfirmations {
   };
 }
 
-const ports = (env: Env) => ({
+export const ports = (env: Env) => ({
   orders: confirmations(env),
   messages: messageStore(env),
   tokens: orderViewTokens(env),
@@ -78,7 +80,7 @@ export const orderConfirmation = {
   async send(env: Env, orderId: string): Promise<OrderConfirmationOutcome> {
     try {
       const outcome = await sendOrderConfirmation(
-        { ...ports(env), email: sender(env) },
+        { ...ports(env), email: sender(env), queue: emailQueue(env) },
         orderId,
         Date.now(),
       );
