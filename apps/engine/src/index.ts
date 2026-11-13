@@ -151,7 +151,10 @@ export default {
     const failed: string[] = [];
     for (const [name, run] of Object.entries(jobs)) {
       try {
-        console.log(name, JSON.stringify(await run()));
+        const result = await run();
+        console.log(name, JSON.stringify(result));
+        // The sweep isolates its own steps, so it returns what failed instead of throwing.
+        if (result && 'failed' in result && result.failed.length) failed.push(name);
       } catch (err) {
         console.error(name, 'failed', err);
         failed.push(name);

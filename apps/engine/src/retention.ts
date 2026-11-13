@@ -14,7 +14,8 @@
  * tokens (`pruneUcpLinks`). A sandboxed plugin's uninstall export (`plugin-exports/`) is deleted once it
  * is 30 days old, or the personal data retention if that is shorter (`expirePluginExports`), and a
  * channel intake body (`intake/`, raw Shopify and EDI) once it is 7 days old, or that retention if
- * shorter (`expireIntake`).
+ * shorter (`expireIntake`). Every step runs on its own: one that throws is logged and reported, and
+ * never skips the others.
  */
 
 import * as uc from '@commerceworker/application/commerce';
@@ -30,27 +31,48 @@ import { auditArchive, cartRuntime, retentionStore, shopperAuth, ucpLinks } from
 // The policy and the archive's keys are core rules, kept importable from here.
 export { auditArchiveKey, RETENTION } from '@commerceworker/core';
 
-/** Deletes everything past its retention, then runs each bounded step. Returns what each did. */
+/**
+ * Deletes everything past its retention, then runs each bounded step. Every step is its own
+ * attempt: one that throws is logged with its name and reported as `null` (and its name in
+ * `failed`), and the rest still run, so a step failing every day can't stop erasure, reseal or
+ * holds. Returns what each did.
+ */
 export async function sweep(env: Env, now = Date.now()) {
-  const pruned = await uc.pruneExpired({ retention: retentionStore(env) }, now, RETENTION);
-  return {
-    auditArchived: await archiveAudit(env, now),
-    cartsPurged: await purgeEndedCarts(env, now),
-    cartBuyersIndexed: await indexCartBuyers(env),
-    personalDataErased: await expirePersonalData(env, now),
-    addressesExpired: await expireAddresses(env, now),
-    membersExpired: await expireMembers(env, now),
-    addressesBackfilled: await backfillAddresses(env, now),
-    confirmations: await pruneConfirmations(env, now),
-    shopperAuth: await uc.pruneShopperAuth({ shoppers: shopperAuth(env) }, now),
-    ucpLinks: await uc.pruneUcpLinks({ links: ucpLinks(env) }, now),
-    aiUsageDays: await pruneUsage(env, now),
-    secrets: await resealSecrets(env),
-    cardHolds: await settleOrphanedHolds(env, now),
-    pluginExports: await expirePluginExports(env, now),
-    intakeBodies: await expireIntake(env, now),
-    ...pruned,
+  const failed: string[] = [];
+  const step = async <T>(name: string, run: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await run();
+    } catch (err) {
+      console.error(
+        JSON.stringify({ type: 'retention_step_failed', step: name, error: String(err) }),
+      );
+      failed.push(name);
+      return null;
+    }
   };
+  const pruned = await step('pruned', () =>
+    uc.pruneExpired({ retention: retentionStore(env) }, now, RETENTION),
+  );
+  const result = {
+    auditArchived: await step('auditArchived', () => archiveAudit(env, now)),
+    cartsPurged: await step('cartsPurged', () => purgeEndedCarts(env, now)),
+    cartBuyersIndexed: await step('cartBuyersIndexed', () => indexCartBuyers(env)),
+    personalDataErased: await step('personalDataErased', () => expirePersonalData(env, now)),
+    addressesExpired: await step('addressesExpired', () => expireAddresses(env, now)),
+    membersExpired: await step('membersExpired', () => expireMembers(env, now)),
+    addressesBackfilled: await step('addressesBackfilled', () => backfillAddresses(env, now)),
+    confirmations: await step('confirmations', () => pruneConfirmations(env, now)),
+    shopperAuth: await step('shopperAuth', () =>
+      uc.pruneShopperAuth({ shoppers: shopperAuth(env) }, now),
+    ),
+    ucpLinks: await step('ucpLinks', () => uc.pruneUcpLinks({ links: ucpLinks(env) }, now)),
+    aiUsageDays: await step('aiUsageDays', () => pruneUsage(env, now)),
+    secrets: await step('secrets', () => resealSecrets(env)),
+    cardHolds: await step('cardHolds', () => settleOrphanedHolds(env, now)),
+    pluginExports: await step('pluginExports', () => expirePluginExports(env, now)),
+    intakeBodies: await step('intakeBodies', () => expireIntake(env, now)),
+  };
+  return { ...result, ...pruned, failed };
 }
 
 /** Clears the chat, files and buyer of carts that ended past their retention. Returns how many. */

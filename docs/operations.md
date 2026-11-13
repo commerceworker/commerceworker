@@ -398,6 +398,10 @@ GROUP BY app, route_group
 
 Analytics Engine keeps data for 93 days. The metrics are for looking, not paging: what pages is above.
 
+### The retention sweep
+
+The daily cron (`30 3 * * *`) runs the retention sweep, then the label-void retry and the exchange rates, each whatever the others do. Inside the sweep every step is its own attempt (prune, audit archive, carts, personal data erasure, addresses, members, confirmations, shopper sign-ins, UCP links, AI usage, secret reseal, card holds, plugin exports): a step that throws is logged as an error-level line, `{"type":"retention_step_failed","step":"<name>","error"}`, which Workers Issues turns into an alert, and the steps after it still run. The sweep's logged result shows each step's count, `null` for one that failed, and `failed` lists their names; the invocation then fails, so the failure shows, and the step is tried again the next day.
+
 ### The Workflow instance sweep
 
 The engine's hourly cron (`15 * * * *`) compares each order D1 calls `running` whose row has been quiet for 15 minutes with its Workflow instance. An instance that is `errored`, `terminated`, `complete` (an order still running in D1 whose Workflow has ended) or not found leaves the order running for ever: nothing reports and nothing fails it. Each mismatch is logged as an error-level line, `{"type":"order_workflow_mismatch","orderId","instanceId","order":"running","workflow":"errored|terminated|complete|unknown"}`, which Workers Issues turns into an alert. It checks at most 200 orders an hour, least recently changed first (it logs `order_workflow_sweep_capped` when it stops there), and logs the same mismatch again every hour until someone acts: the sweep repairs nothing. Waiting orders (approvals, supplier waits) are not checked.
