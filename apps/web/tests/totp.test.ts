@@ -6,6 +6,7 @@ import {
   newRecoveryCodes,
   newTotpSecret,
   otpauthUri,
+  randomRecoveryChars,
   totpCode,
   totpStep,
   verifyTotp,
@@ -79,6 +80,28 @@ describe('recovery codes', () => {
     expect(codes).toHaveLength(10);
     expect(new Set(codes).size).toBe(10);
     for (const c of codes) expect(c).toMatch(/^[a-hjkmnp-z2-9]{5}-[a-hjkmnp-z2-9]{5}$/);
+  });
+
+  it('redraws the bytes that would favour the first characters', () => {
+    // 31 characters: bytes 248..255 are past the last whole multiple and are dropped.
+    const draws = [Uint8Array.of(255, 248, 0), Uint8Array.of(1, 247)];
+    const asked: number[] = [];
+    const out = randomRecoveryChars(3, (b) => {
+      asked.push(b.length);
+      return draws.shift() ?? b;
+    });
+    expect(out).toBe('ab9');
+    expect(asked).toEqual([3, 2]);
+  });
+
+  it('gives every character the same share of the bytes it accepts', () => {
+    // Every byte value once: 248 are kept, 8 for each of the 31 characters.
+    const all = Uint8Array.from({ length: 256 }, (_, i) => i);
+    const out = randomRecoveryChars(248, () => all);
+    const counts = new Map<string, number>();
+    for (const c of out) counts.set(c, (counts.get(c) ?? 0) + 1);
+    expect(counts.size).toBe(31);
+    expect(new Set(counts.values())).toEqual(new Set([8]));
   });
 
   it('ignores case, spaces and the dash when hashing a typed code', async () => {

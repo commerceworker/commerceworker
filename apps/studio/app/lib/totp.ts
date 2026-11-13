@@ -116,11 +116,30 @@ export const RECOVERY_CODE_COUNT = 10;
 /** No 0/o, 1/l/i: easy to read off paper. */
 const RECOVERY_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 
+/**
+ * `length` characters of the recovery alphabet, uniformly. 256 isn't a multiple of the alphabet's
+ * size, so a byte past the last whole multiple is dropped and redrawn rather than folded onto the
+ * first few characters (`b % n` would make those likelier). `fill` is the random source.
+ */
+export function randomRecoveryChars(
+  length: number,
+  fill: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array = (b) => crypto.getRandomValues(b),
+): string {
+  const n = RECOVERY_ALPHABET.length;
+  const limit = 256 - (256 % n);
+  let out = '';
+  while (out.length < length) {
+    for (const b of fill(new Uint8Array(length - out.length))) {
+      if (b < limit && out.length < length) out += RECOVERY_ALPHABET[b % n];
+    }
+  }
+  return out;
+}
+
 /** Ten codes like `k7mqp-3xw9d`, each good for one sign-in. */
 export function newRecoveryCodes(): string[] {
   return Array.from({ length: RECOVERY_CODE_COUNT }, () => {
-    const bytes = crypto.getRandomValues(new Uint8Array(10));
-    const s = [...bytes].map((b) => RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length]).join('');
+    const s = randomRecoveryChars(10);
     return `${s.slice(0, 5)}-${s.slice(5)}`;
   });
 }

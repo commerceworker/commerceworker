@@ -155,7 +155,14 @@ export function generatePassword(): string {
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
-export const isEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+/** One `@`, something on each side, a dot in the domain, no spaces. Linear: no backtracking regex. */
+export function isEmail(email: string): boolean {
+  const at = email.indexOf('@');
+  if (at < 1 || email.indexOf('@', at + 1) !== -1 || /\s/.test(email)) return false;
+  // A dot in the domain with something before and after it.
+  const dot = email.indexOf('.', at + 2);
+  return dot !== -1 && dot < email.length - 1;
+}
 
 const COMMON = new Set([
   'password',

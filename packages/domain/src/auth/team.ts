@@ -129,7 +129,14 @@ export interface SpaceMember {
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 
 /** A plausible email: one `@`, something on each side, a dot in the domain, no spaces. */
-export const isEmail = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+export function isEmail(email: string): boolean {
+  const at = email.indexOf('@');
+  if (at < 1 || email.indexOf('@', at + 1) !== -1 || /\s/.test(email)) return false;
+  // A dot in the domain with something before and after it.
+  const dot = email.indexOf('.', at + 2);
+  // Linear, unlike a backtracking pattern, whatever the length of the input.
+  return dot !== -1 && dot < email.length - 1;
+}
 
 /**
  * Refused because it would leave the space with no active administrator: the last admin can't

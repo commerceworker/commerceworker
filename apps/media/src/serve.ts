@@ -92,8 +92,19 @@ export function canonicalMediaUrl(
   }
 }
 
-/** `bytes=<first>-<last>`, either side optional (both absent is no range at all). */
-const BYTE_RANGE = /^bytes=\s*(\d*)\s*-\s*(\d*)\s*$/i;
+/**
+ * `bytes=<first>-<last>`, either side optional (both absent is no range at all). Split by hand:
+ * a pattern with whitespace around two optional digit runs backtracks badly on a long header.
+ */
+function parseByteRange(header: string): [first: string, last: string] | null {
+  if (!/^bytes=/i.test(header)) return null;
+  const spec = header.slice('bytes='.length);
+  const dash = spec.indexOf('-');
+  if (dash === -1) return null;
+  const first = spec.slice(0, dash).trim();
+  const last = spec.slice(dash + 1).trim();
+  return /^\d*$/.test(first) && /^\d*$/.test(last) ? [first, last] : null;
+}
 
 /**
  * The `Range` header to pass on: one `bytes=` range, as the client wrote it, or `null` for no
@@ -102,8 +113,8 @@ const BYTE_RANGE = /^bytes=\s*(\d*)\s*-\s*(\d*)\s*$/i;
  */
 export function singleByteRange(header: string | null): string | null {
   const h = header?.trim() ?? '';
-  const m = BYTE_RANGE.exec(h);
-  return m && (m[1] || m[2]) ? h : null;
+  const m = parseByteRange(h);
+  return m && (m[0] || m[1]) ? h : null;
 }
 
 /**
@@ -118,9 +129,9 @@ export function byteRange(
   size: number,
 ): { readonly offset: number; readonly length: number } | 'unsatisfiable' | null {
   const spec = singleByteRange(header);
-  const m = spec ? BYTE_RANGE.exec(spec) : null;
+  const m = spec ? parseByteRange(spec) : null;
   if (!m) return null;
-  const [, first = '', last = ''] = m;
+  const [first, last] = m;
   if (first === '') {
     const suffix = Number(last);
     if (suffix === 0 || size === 0) return 'unsatisfiable';

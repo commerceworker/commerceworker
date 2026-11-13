@@ -608,6 +608,24 @@ describe('byte ranges', () => {
     expect(byteRange('bytes=0-', 0)).toBe('unsatisfiable');
     expect(byteRange('bytes=-1', 0)).toBe('unsatisfiable');
     expect(byteRange(null, 10)).toBeNull();
+    expect(byteRange('bytes= 2 - 3 ', 10)).toEqual({ offset: 2, length: 2 });
+    for (const bad of [
+      'bytes=',
+      'bytes=-',
+      'bytes=1-2-3',
+      'bytes=a-2',
+      'bytes=1,2-3',
+      'items=1-2',
+    ]) {
+      expect(byteRange(bad, 10), bad).toBeNull();
+    }
+  });
+
+  it('reads a hostile Range header in linear time', () => {
+    const start = performance.now();
+    expect(byteRange(`bytes=${' '.repeat(100_000)}x`, 10)).toBeNull();
+    expect(byteRange(`bytes=${' '.repeat(100_000)}-${' '.repeat(100_000)}x`, 10)).toBeNull();
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });
 

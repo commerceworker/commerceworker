@@ -24,6 +24,25 @@ describe('scrubCredentials', () => {
     for (const [input, want] of cases) expect(scrubCredentials(input)).toBe(want);
   });
 
+  it('masks a private key of any kind, and one that never ends', () => {
+    expect(
+      scrubCredentials('a -----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY----- b'),
+    ).toBe('a [redacted] b');
+    expect(scrubCredentials('x -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA\nmore')).toBe(
+      'x [redacted]',
+    );
+    expect(scrubCredentials('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----')).toBe(
+      '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+    );
+  });
+
+  it('scrubs a text of unclosed key headers in linear time', () => {
+    const start = performance.now();
+    scrubCredentials('-----BEGIN PRIVATE KEY-----'.repeat(20_000));
+    scrubCredentials(`${'-----BEGIN '.repeat(20_000)}PRIVATE KEY-----`);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
+
   it('masks long random runs but leaves ordinary text and ids', () => {
     expect(scrubCredentials('id Zq8vP2xK9mW4tR7yB3nL6cF1hJ5dS0gA')).toBe('id [redacted]');
     expect(scrubCredentials('order ord_northwind_2026_shipment_label done')).toBe(
