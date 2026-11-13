@@ -155,6 +155,9 @@ interface ParsedUri {
 const URI_RE = /^([A-Za-z][A-Za-z0-9+.-]*):(\/\/([^/?#]*))?([^?#]*)(\?[^#]*)?(#.*)?$/;
 
 function parseUri(raw: string): ParsedUri | null {
+  // A line break is never part of a URI. It is also the one input `(#.*)?$` can fail on, which
+  // sends the pattern back through the authority and path splits: refuse it up front.
+  if (/[\r\n]/.test(raw)) return null;
   const m = URI_RE.exec(raw);
   if (!m) return null;
   const authority = m[3] ?? '';

@@ -29,7 +29,8 @@ export function wrapUntrusted(content: string): string {
   return `<user_content>\n${stripDelimiters(content)}\n</user_content>`;
 }
 
-const DELIMITER = /<\s*\/?\s*user_content\s*>/gi;
+// `\s*` never abuts another `\s*`: with `\s*\/?\s*` a run of spaces could split two ways at every `<`.
+const DELIMITER = /<\s*(?:\/\s*)?user_content\s*>/gi;
 
 /**
  * Removes every delimiter tag, spaced or not, until none is left: one pass over

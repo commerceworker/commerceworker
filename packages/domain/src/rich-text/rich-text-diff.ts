@@ -112,7 +112,9 @@ function blocksOf(value: unknown): Unit[] {
       }
     } else if (node.nodeType === 'table') {
       for (const row of node.content ?? []) {
-        const cells = (row.content ?? []).map((cell) => blockText(cell).replace(/\s*\n\s*/g, ' '));
+        const cells = (row.content ?? []).map((cell) =>
+          blockText(cell).replace(/\s+/g, (run) => (run.includes('\n') ? ' ' : run)),
+        );
         push(row, cells.join(' | '), depth, 'table');
       }
     } else if (node.nodeType === 'embed') {

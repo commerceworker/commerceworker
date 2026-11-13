@@ -50,10 +50,12 @@ export function parseMailboxes(raw: string | undefined): Record<string, string> 
 }
 
 export function splitAddress(address: string): { local: string; domain: string } {
-  const a = address
-    .trim()
-    .toLowerCase()
-    .replace(/^.*<|>.*$/g, '');
+  // `Name <orders@acme.test>` → the part inside the brackets (by index: `.*<` backtracks on a long run of `>`).
+  let a = address.trim().toLowerCase();
+  const open = a.lastIndexOf('<');
+  if (open !== -1) a = a.slice(open + 1);
+  const close = a.indexOf('>');
+  if (close !== -1) a = a.slice(0, close);
   const at = a.lastIndexOf('@');
   return at < 0 ? { local: a, domain: '' } : { local: a.slice(0, at), domain: a.slice(at + 1) };
 }
@@ -153,16 +155,52 @@ export function composeDocument(input: {
     : doc;
 }
 
-/** Strips tags from an HTML-only body well enough for extraction. */
+const ENTITIES: Record<string, string> = { nbsp: ' ', amp: '&', lt: '<', gt: '>' };
+
+/** A tag that ends a line: `<br>`, `<br/>`, `</p>`, `</div>`, `</tr>`, `</li>`, `</h1>`. */
+const LINE_BREAK_TAG = /^(?:br\s*\/?|\/(?:p|div|tr|li|h\d))$/i;
+
+/**
+ * Strips tags from an HTML-only body well enough for extraction. A scan with `indexOf`, not a
+ * lazy `[\s\S]*?` pattern: the body is whatever a stranger mailed in, and a pattern that backtracks
+ * on `<style<style<style…` is quadratic in it. Entities are decoded in one pass so `&amp;lt;`
+ * comes out `&lt;`, never `<`.
+ */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+  const lower = html.toLowerCase();
+  let out = '';
+  let at = 0;
+  // Once a search finds nothing, nothing later will either; don't repeat it for every `<`.
+  const noClose = new Set<string>();
+  for (;;) {
+    const first = html.indexOf('<', at);
+    if (first === -1) break;
+    const gt = html.indexOf('>', first + 1);
+    if (gt === -1) break; // no tag can close: the rest is text
+    // The tag is the last `<` before its `>`; any `<` before that is a bracket in the text.
+    const lt = html.lastIndexOf('<', gt - 1);
+    out += html.slice(at, lt);
+    if (gt === lt + 1) {
+      out += '<>';
+      at = gt + 1;
+      continue;
+    }
+    const name = /^<(script|style)/.exec(lower.slice(lt, lt + 7))?.[1];
+    if (name && !noClose.has(name)) {
+      const close = lower.indexOf(`</${name}>`, lt);
+      if (close !== -1) {
+        // A script or style element goes whole, content and all.
+        at = close + name.length + 3;
+        continue;
+      }
+      noClose.add(name);
+    }
+    out += LINE_BREAK_TAG.test(html.slice(lt + 1, gt)) ? '\n' : ' ';
+    at = gt + 1;
+  }
+  out += html.slice(at);
+  return out
+    .replace(/&(nbsp|amp|lt|gt);/g, (_m, name: string) => ENTITIES[name] ?? '')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n\s*\n+/g, '\n\n')
     .trim();

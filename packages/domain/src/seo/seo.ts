@@ -131,6 +131,12 @@ export function normalizeSitePath(path: string): string {
   return encoded.length > 1 && encoded.endsWith('/') ? encoded.slice(0, -1) : encoded;
 }
 
+/** Where a path ends and its query or fragment begins (its length when it has neither). */
+function pathEnd(value: string): number {
+  const end = value.search(/[?#]/);
+  return end === -1 ? value.length : end;
+}
+
 /**
  * The site path a canonical URL names (without query or fragment), or null when it is on another
  * site. A path (`/guide/setup`) is a site path already, like the ones URL patterns make. An
@@ -138,7 +144,7 @@ export function normalizeSitePath(path: string): string {
  * prefix, is elsewhere; the prefix is taken off the rest. Without `site` it is judged by its path.
  */
 function canonicalSitePath(value: string, site?: SiteLocation): string | null {
-  if (value.startsWith('/')) return normalizeSitePath(value.replace(/[?#].*$/, ''));
+  if (value.startsWith('/')) return normalizeSitePath(value.slice(0, pathEnd(value)));
   const url = parseAbsoluteUrl(value);
   if (!url) return null;
   const path = normalizeSitePath(url.pathname);

@@ -233,6 +233,15 @@ describe('guidance in prompts', () => {
     expect(stripDelimiters('<user_<user_content>content>x')).toBe('x');
   });
 
+  it('strips delimiters from hostile content in linear time', () => {
+    expect(stripDelimiters('a< \n / \t user_content \n >b')).toBe('ab');
+    const start = performance.now();
+    stripDelimiters(`<${' '.repeat(100_000)}x`);
+    stripDelimiters('< '.repeat(50_000));
+    stripDelimiters(`<${' '.repeat(50_000)}/${' '.repeat(50_000)}x`);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
   it('reaches autofill as data, with the guard in the system prompt', async () => {
     store.seedSpace({ spaceId: 's1', defaultLocale: 'en-US', locales: ['en-US'] });
     await createContentType(ctx, SYSTEM_CALLER, source, {

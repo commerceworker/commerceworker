@@ -106,6 +106,18 @@ describe('createCfEmailSender', () => {
       /EMAIL_FROM/,
     );
   });
+
+  it('judges an address by its shape, and a hostile one in linear time', () => {
+    const make = (from: string) => () => createCfEmailSender(fakeBinding().binding, { from });
+    expect(make('a@b.c')).not.toThrow();
+    for (const bad of ['a@b', 'a@@b.c', '@b.c', 'a@b.', 'a@.b', 'a b@c.d', 'Ann <a@b.c>']) {
+      expect(make(bad), bad).toThrow(/EMAIL_FROM/);
+    }
+    const start = performance.now();
+    expect(make(`!@${'!.'.repeat(50_000)}`)).not.toThrow();
+    expect(make(`!@${'!'.repeat(100_000)}`)).toThrow(/EMAIL_FROM/);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
 });
 
 describe('withFallbackSender', () => {

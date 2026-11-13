@@ -8,6 +8,7 @@ import {
   MAX_DOCUMENT_CHARS,
   parseMailboxes,
   resolveSender,
+  splitAddress,
 } from '../src';
 
 const customers = [
@@ -143,5 +144,32 @@ describe('document', () => {
     expect(
       htmlToText('<p>Ship <b>5</b> x WID-100</p><style>p{}</style><div>Thanks &amp; regards</div>'),
     ).toBe('Ship 5 x WID-100\n Thanks & regards');
+  });
+
+  it('decodes an entity once, drops script and style whole, keeps a stray bracket', () => {
+    expect(htmlToText('a &amp;lt; b &lt;i&gt; c&nbsp;d')).toBe('a &lt; b <i> c d');
+    expect(htmlToText('x<SCRIPT type="a">alert(1)</SCRIPT>y<style>p{}</style>z')).toBe('xyz');
+    expect(htmlToText('a < b and c<br/>d<br >e</h2>f')).toBe('a < b and c\nd\ne\nf');
+    expect(htmlToText('<script>never closed')).toBe('never closed');
+  });
+
+  it('reads a hostile body in linear time', () => {
+    const start = performance.now();
+    htmlToText('<style'.repeat(50_000));
+    htmlToText(`<script>${'<script>'.repeat(50_000)}`);
+    htmlToText('<'.repeat(100_000));
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  it('takes the address out of a display name, and survives a long run of brackets', () => {
+    expect(splitAddress('Acme Orders <Orders+X@Acme.test>')).toEqual({
+      local: 'orders+x',
+      domain: 'acme.test',
+    });
+    expect(splitAddress('  a@b.c ')).toEqual({ local: 'a', domain: 'b.c' });
+    const start = performance.now();
+    splitAddress(`>${'>'.repeat(100_000)}`);
+    splitAddress('<'.repeat(100_000));
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });

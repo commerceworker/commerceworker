@@ -580,6 +580,19 @@ describe('rich text diff', () => {
     ]);
   });
 
+  it('folds a line break in a table cell to one space, however long the whitespace around it', () => {
+    const cell = (s: string) => block('table-cell', p(s));
+    const only = (s: string) =>
+      diffRichText(
+        doc(block('table', block('table-row', cell(s)))),
+        doc(block('table', block('table-row', cell(s)))),
+      )[0]?.text;
+    expect(only('a \n\n  b')).toEqual([{ kind: 'unchanged', text: 'a b' }]);
+    const start = performance.now();
+    only(`a${' '.repeat(100_000)}b`);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
   it('diffs a table by row', () => {
     const cell = (s: string) => block('table-cell', p(s));
     const row = (...cells: string[]) => block('table-row', ...cells.map(cell));

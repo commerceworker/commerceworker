@@ -73,6 +73,16 @@ describe('redirect URI policy', () => {
     expect(() => assertRegisterableRedirectUri('/relative')).toThrow(OAuthError);
   });
 
+  it('rejects a URI with a line break, and does so quickly for a hostile one', () => {
+    expect(() => assertRegisterableRedirectUri('https://x.example.com/c\nb')).toThrow(OAuthError);
+    const start = performance.now();
+    expect(() => assertRegisterableRedirectUri(`https://a${'/'.repeat(50_000)}#x\n`)).toThrow(
+      OAuthError,
+    );
+    expect(() => assertRegisterableRedirectUri(`A:${'"'.repeat(50_000)}#\n`)).toThrow(OAuthError);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
   it('matches exactly — a shared prefix is not a match', () => {
     const client = { redirectUris: ['https://app.example.com/cb'] };
     expect(resolveRedirectUri(client, 'https://app.example.com/cb')).toBe(

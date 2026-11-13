@@ -38,7 +38,13 @@ export interface CfEmailSenderOptions {
   readonly maxRecipients?: number;
 }
 
-const ADDRESS = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/** One `@`, a dot inside the domain, no spaces or angle brackets; linear, with no backtracking pattern. */
+function isAddress(value: string): boolean {
+  const at = value.indexOf('@');
+  if (at < 1 || value.indexOf('@', at + 1) !== -1 || /[\s<>]/.test(value)) return false;
+  const dot = value.indexOf('.', at + 2);
+  return dot !== -1 && dot < value.length - 1;
+}
 
 /**
  * The errors a second sender can answer: the primary's sender domain isn't (or is no longer)
@@ -81,7 +87,7 @@ export function createCfEmailSender(
   options: CfEmailSenderOptions,
 ): EmailSender {
   const from = options.from.trim();
-  if (!ADDRESS.test(from)) {
+  if (!isAddress(from)) {
     throw new Error(`EMAIL_FROM must be an email address on an onboarded domain (got "${from}")`);
   }
   const sender: string | SendEmailAddress = options.fromName?.trim()
@@ -93,7 +99,7 @@ export function createCfEmailSender(
     async send(message: EmailMessage): Promise<EmailSendResult> {
       const to = [...new Set(message.to.map((t) => t.trim()).filter(Boolean))];
       if (to.length === 0) return { delivered: false, error: 'No recipients' };
-      const bad = to.find((t) => !ADDRESS.test(t));
+      const bad = to.find((t) => !isAddress(t));
       if (bad) return { delivered: false, error: 'Not an email address' };
       if (to.length > max) {
         return { delivered: false, error: `At most ${max} recipients per message` };

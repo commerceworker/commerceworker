@@ -84,6 +84,17 @@ describe('credentials', () => {
     expect(isEmail('ada@example.com')).toBe(true);
     expect(isEmail('ada@example')).toBe(false);
   });
+
+  it('judges an email by its shape, and a hostile one in linear time', () => {
+    for (const ok of ['a@b.c', 'a.b+c@d.e.f', 'a@.b.c']) expect(isEmail(ok), ok).toBe(true);
+    for (const bad of ['', 'a@b', 'a@@b.c', '@b.c', 'a@b.', 'a@.b', 'a b@c.d', 'a@b .c']) {
+      expect(isEmail(bad), bad).toBe(false);
+    }
+    const start = performance.now();
+    expect(isEmail(`!@${'!.'.repeat(50_000)}`)).toBe(true);
+    expect(isEmail(`!@${'!'.repeat(100_000)}`)).toBe(false);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
 });
 
 describe('passwordProblem', () => {

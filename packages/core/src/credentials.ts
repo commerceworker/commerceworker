@@ -8,9 +8,40 @@
 
 const MASK = '[redacted]';
 
+/** The `-----BEGIN … PRIVATE KEY-----` armour line at or after `from`, as `[start, end)`. */
+function armour(text: string, word: 'BEGIN' | 'END', from: number): [number, number] | null {
+  const head = `-----${word} `;
+  const tail = 'PRIVATE KEY-----';
+  for (let at = text.indexOf(head, from); at !== -1; at = text.indexOf(head, at + 1)) {
+    // The key type (`RSA `, `ENCRYPTED `, `OPENSSH `) is short: look only that far, so many
+    // armour heads can't each scan the whole text for a tail.
+    const typeAt = at + head.length;
+    const window = text.slice(typeAt, typeAt + 32 + tail.length);
+    const kind = window.indexOf(tail);
+    if (kind !== -1 && /^[A-Z ]*$/.test(window.slice(0, kind)))
+      return [at, typeAt + kind + tail.length];
+  }
+  return null;
+}
+
+/**
+ * PEM private keys, whole: BEGIN through the next END. A scan, not a lazy `[\s\S]*?` pattern,
+ * so a text with thousands of BEGIN lines and no END can't cost quadratic time. A BEGIN that is
+ * never closed masks to the end of the text: the key's body must not outlive its header.
+ */
+function maskPrivateKeys(text: string): string {
+  let out = '';
+  let at = 0;
+  for (let begin = armour(text, 'BEGIN', 0); begin; begin = armour(text, 'BEGIN', at)) {
+    const end = armour(text, 'END', begin[1]);
+    out += text.slice(at, begin[0]) + MASK;
+    at = end ? end[1] : text.length;
+    if (!end) break;
+  }
+  return out + text.slice(at);
+}
+
 const PATTERNS: RegExp[] = [
-  // PEM private keys, whole.
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   // Keys with a well-known prefix: OpenAI/Anthropic/Stripe-style, GitHub, Slack, AWS access keys.
   /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{8,}\b/g,
   /\bsk-[A-Za-z0-9_-]{16,}\b/g,
@@ -50,6 +81,7 @@ export function scrubCredentials(text: string, known: readonly string[] = []): s
   // Longest first, so a value that contains another is replaced whole.
   for (const k of [...known].filter((x) => x.length >= 4).sort((a, b) => b.length - a.length))
     out = out.split(k).join(MASK);
+  out = maskPrivateKeys(out);
   for (const re of PATTERNS)
     out = out.replace(re, (_match, scheme) =>
       typeof scheme === 'string' && /^(bearer|basic)$/i.test(scheme) ? `${scheme} ${MASK}` : MASK,

@@ -6,7 +6,7 @@
  */
 export function extractJson(text: string): unknown {
   const trimmed = text.trim();
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const fence = trimmed.match(/```(?:json)?([\s\S]*?)```/i);
   const candidates = [fence?.[1], trimmed].filter((c): c is string => Boolean(c));
   for (const candidate of candidates) {
     const body = candidate.trim();
