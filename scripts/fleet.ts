@@ -21,6 +21,7 @@
  *                                                 PRINCIPAL_KEY from the environment
  *   node scripts/fleet.ts names <id>              resource names, as shell variables (provisioning)
  *   node scripts/fleet.ts logpush <id>            its Logpush job's name, bucket, filter and fields, as JSON
+ *   node scripts/fleet.ts alerts <id>             the policies, Health Checks and destinations to create (null: off)
  *   node scripts/fleet.ts logpush-foreign <id>    fail if another Logpush job (the API's list, on stdin)
  *                                                 would take its Workers' logs
  *   node scripts/fleet.ts logpush-token <id> <account> [check <group id>]  the Logpush R2 token to
@@ -229,7 +230,7 @@ export type RedundancyPart = (typeof REDUNDANCY_PARTS)[number];
 export const OFFSITE_PROVIDERS = ['s3', 'gcs', 'azure'] as const;
 export type OffsiteProvider = (typeof OFFSITE_PROVIDERS)[number];
 
-/** The registry's `redundancy`, with its defaults. `alerts` and `offsite` are checked but not acted on yet. */
+/** The registry's `redundancy`, with its defaults. `alerts` is acted on by `provision.sh` (`alertSpec`); `offsite` is checked but not yet. */
 export type Redundancy = {
   /** Days the commerce D1 backups are kept and locked: at least 31, at most `personalDataRetentionDays`. Default 35. */
   backupDays: number;
@@ -1154,6 +1155,10 @@ export const names = (d: Deployment) => ({
   logpushJob: `commerceworker-workers${d.suffix}`,
   logpushToken: `commerceworker-logpush${d.suffix}`,
   // Analytics Engine dataset names allow letters, digits and underscores.
+  /** The operational metrics web, engine and storefront write (`METRICS`); made on first write. */
+  opsDataset: `commerceworker_ops${d.suffix.replaceAll('-', '_')}`,
+  /** A Health Check on an app's `/health/deep` (zone level, with its notification policy). */
+  healthCheck: (app: 'web' | 'storefront') => `commerceworker-${app}${d.suffix}`,
   catalogDataset: `commerceworker_catalog_delivery${d.suffix.replaceAll('-', '_')}`,
   /** A plugin's Worker and its D1 database share a name. */
   plugin: (p: string) => `commerceworker-plugin-${p}${d.suffix}`,
@@ -1211,6 +1216,84 @@ export const LOG_FIELDS = [
   'CPUTimeMs',
   'WallTimeMs',
 ];
+
+/** Whether the deployment's alerts are created: `redundancy.alerts` set, `alerts` not an exception. */
+export const alertsOn = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy?.alerts && !d.redundancy.except.includes('alerts');
+
+/**
+ * The account's notification policies, named as docs/operations.md ("Alerting") names them.
+ * Account-wide: one set covers every deployment on the account, so `provision.sh` finds each by
+ * name and adds its destinations rather than making a second.
+ */
+export const ALERT_POLICIES = [
+  {
+    name: 'CommerceWorker: Worker issues',
+    alert_type: 'workers_observability_real_time_issue',
+    description: 'A new or recurring issue on a Worker with Issues on (an error-level log, a 5xx).',
+  },
+  {
+    name: 'CommerceWorker: HTTP DDoS',
+    alert_type: 'dos_attack_l7',
+    description: "An HTTP DDoS attack mitigated on one of the account's zones.",
+  },
+  {
+    name: 'CommerceWorker: Universal SSL',
+    alert_type: 'universal_ssl_event_type',
+    description: 'Universal certificate validation, issuance, renewal and expiry.',
+  },
+  {
+    name: 'CommerceWorker: Advanced certificates',
+    alert_type: 'dedicated_ssl_certificate_event_type',
+    description: 'Advanced certificate validation, issuance, renewal and expiry.',
+  },
+] as const;
+
+/** The deep health path both Health Checks probe: D1, R2 and the engine behind each app. */
+export const HEALTH_DEEP_PATH = '/health/deep';
+
+/**
+ * What `provision.sh` creates for a deployment's detection: the policies above, the destinations,
+ * and a Health Check a minute on each app's deep health. A check is made by host and path; its
+ * policy (`health_check_status_notification`, filtered to the check's id) is made once the check
+ * exists, so it carries no id here. Null when the deployment has alerts off.
+ */
+export function alertSpec(d: Deployment) {
+  if (!alertsOn(d)) return null;
+  const n = names(d);
+  const check = (app: 'web' | 'storefront', host: string) => ({
+    name: n.healthCheck(app),
+    policy: `CommerceWorker: ${n.healthCheck(app)} health`,
+    host,
+    body: {
+      name: n.healthCheck(app),
+      description: `${app} deep health (D1, R2 and the engine) for ${d.id}`,
+      address: host,
+      type: 'HTTPS',
+      interval: 60,
+      timeout: 10,
+      retries: 2,
+      consecutive_fails: 2,
+      consecutive_successes: 2,
+      check_regions: ['WEU', 'ENAM'],
+      http_config: {
+        method: 'GET',
+        path: HEALTH_DEEP_PATH,
+        port: 443,
+        expected_codes: ['200'],
+        follow_redirects: false,
+        allow_insecure: false,
+        header: { Host: [host] },
+      },
+    },
+  });
+  return {
+    policies: ALERT_POLICIES,
+    webhookName: `commerceworker-alerts${d.suffix}`,
+    pagerduty: !!d.redundancy.alerts?.pagerduty,
+    healthChecks: [check('web', d.domain), check('storefront', d.storefrontDomain)],
+  };
+}
 
 /** Logpush refuses a filter longer than about 1,000 bytes. */
 const LOGPUSH_FILTER_MAX = 1000;
@@ -1567,9 +1650,17 @@ function docsReplicaBindings(config: Config, d: Deployment) {
   };
 }
 
+/** Points an app's `METRICS` binding at the deployment's own dataset (always on: no registry flag). */
+function opsMetricsBinding(config: Config, d: Deployment) {
+  config.analytics_engine_datasets = config.analytics_engine_datasets.map((a: Config) =>
+    a.binding === 'METRICS' ? { ...a, dataset: names(d).opsDataset } : a,
+  );
+}
+
 export function renderEngine(base: Config, d: Deployment): Config {
   const config = structuredClone(base);
   config.name = names(d).engine;
+  opsMetricsBinding(config, d);
   // Workflow names are unique per account, so each deployment's carry its suffix.
   config.workflows = config.workflows.map((w: Config) => ({ ...w, name: `${w.name}${d.suffix}` }));
   storage(config, d);
@@ -1788,6 +1879,7 @@ function rateLimits(ratelimits: Config[], d: Deployment): Config[] {
 export function renderStorefront(base: Config, d: Deployment): Config {
   const config = structuredClone(base);
   config.name = names(d).storefront;
+  opsMetricsBinding(config, d);
   config.routes = [{ pattern: d.storefrontDomain, custom_domain: true }];
   config.workers_dev = false;
   config.preview_urls = false;
@@ -1804,6 +1896,7 @@ export function renderWeb(base: Config, d: Deployment): Config {
   const config = structuredClone(base);
   const n = names(d);
   config.name = n.web;
+  opsMetricsBinding(config, d);
   config.routes = [{ pattern: d.domain, custom_domain: true }];
   config.workers_dev = false;
   config.preview_urls = false;
@@ -2355,6 +2448,9 @@ export function shellVars(d: Deployment): Record<string, string> {
     LOG_RETENTION_DAYS: String(d.logRetentionDays),
     LOGPUSH_JOB: n.logpushJob,
     LOGPUSH_TOKEN: n.logpushToken,
+    // Detection: `true` creates the notification policies, destinations and Health Checks (`fleet.ts alerts <id>`).
+    ALERTS: String(alertsOn(d)),
+    ALERT_WEBHOOK_FALLBACK: d.redundancy?.alerts?.webhook ?? '',
     // The content stack: `true` creates its resources too. The rest are empty without it.
     CONTENT: String(d.content),
     CONTENT_D1: d.content ? n.contentD1 : '',
@@ -2601,6 +2697,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'write-check') await writeCheck(args[0]);
     else if (cmd === 'names') shellNames(args[0]);
     else if (cmd === 'logpush') console.log(JSON.stringify(logpushJob(byId(args[0]))));
+    else if (cmd === 'alerts') console.log(JSON.stringify(alertSpec(byId(args[0]))));
     else if (cmd === 'logpush-foreign') logpushForeign(args[0]);
     else if (cmd === 'logpush-token') logpushTokenCmd(args[0], args[1], args[2], args[3]);
     else if (cmd === 'set-d1') setD1(args[0], args[1]);
@@ -2613,7 +2710,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|logpush-foreign|logpush-token|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);

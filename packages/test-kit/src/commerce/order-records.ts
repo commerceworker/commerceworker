@@ -37,8 +37,12 @@ export class InMemoryOrderRecords implements OrderRecords {
   async index(orderId: string, row: OrderIndexRow) {
     if (!this.rows.has(orderId)) return false;
     this.rows.set(orderId, { ...row });
+    this.changed.set(orderId, this.clock.now().getTime());
     return true;
   }
+
+  /** When each row last changed, as D1's `updated_at`. */
+  private readonly changed = new Map<string, number>();
 
   private readonly created = new Map<string, NewOrderRow>();
 
@@ -62,6 +66,14 @@ export class InMemoryOrderRecords implements OrderRecords {
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(0, limit)
       .map((o) => ({ id: o.id, instanceId: o.instanceId }));
+  }
+
+  async staleRunning(before: number, limit: number) {
+    return [...this.rows.entries()]
+      .filter(([id, r]) => r?.status === 'running' && (this.changed.get(id) ?? 0) < before)
+      .sort(([a], [b]) => (this.changed.get(a) ?? 0) - (this.changed.get(b) ?? 0))
+      .slice(0, limit)
+      .map(([id, r]) => ({ id, instanceId: r?.instanceId ?? null }));
   }
 
   async failQueued(orderId: string, reason: string) {

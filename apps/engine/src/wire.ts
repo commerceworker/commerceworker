@@ -105,6 +105,7 @@ import type {
   WebhookOutbox,
   WorkspaceStore,
 } from '@commerceworker/ports/commerce';
+import { ops } from './metrics';
 import { cartAgent, orderAgent } from './namespaces';
 import { provide } from './providers';
 
@@ -222,7 +223,10 @@ export function docsReader(env: Pick<Env, 'DOCS'> & DocsReplica): ObjectReader {
     const replica = env.DOCS_REPLICA;
     reader = replica
       ? createReplicaFallbackBucket(env.DOCS, replica, {
-          onFallback: (e) => console.warn(JSON.stringify({ type: 'docs_replica_read', ...e })),
+          onFallback: (e) => {
+            ops().failover('docs_replica_read');
+            console.warn(JSON.stringify({ type: 'docs_replica_read', ...e }));
+          },
         })
       : env.DOCS;
     docsReaders.set(env.DOCS, reader);

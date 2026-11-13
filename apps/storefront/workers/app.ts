@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers';
 import {
   LINK_METADATA_PATH,
   runHealthChecks,
@@ -6,6 +7,7 @@ import {
 } from '@commerceworker/core';
 import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
+import { opsMetrics, routeGroup } from '@commerceworker/telemetry/metrics';
 import { createRequestHandler } from 'react-router';
 import { APPLE_PAY_PATH, applePayFile } from '../app/lib/apple-pay.server';
 import { cartGuest } from '../app/lib/cart-guest.server';
@@ -36,9 +38,30 @@ const requestHandler = createRequestHandler(
   import.meta.env.MODE,
 );
 
+/** Request outcomes are counted by these groups, never by path: an id in a URL is no label. */
+const ROUTE_GROUPS = [
+  ['/health', 'health'],
+  [UCP_PATH, 'ucp'],
+  [UCP_PROFILE_PATH, 'ucp'],
+  ['/agents', 'agents'],
+  ['/assets', 'assets'],
+] as const;
+
 export default {
   async fetch(request) {
-    return withSecurityHeaders(await route(request), new URL(request.url));
+    const url = new URL(request.url);
+    const ops = opsMetrics(env.METRICS, 'storefront');
+    const group = routeGroup(url.pathname, ROUTE_GROUPS);
+    const started = Date.now();
+    let response: Response;
+    try {
+      response = await route(request);
+    } catch (err) {
+      ops.request(group, 500, Date.now() - started);
+      throw err;
+    }
+    ops.request(group, response.status, Date.now() - started);
+    return withSecurityHeaders(response, url);
   },
 } satisfies ExportedHandler<Env>;
 

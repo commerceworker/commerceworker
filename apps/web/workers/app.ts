@@ -12,6 +12,7 @@ import {
 import { withSecurityHeaders } from '@commerceworker/security/csp';
 import { crossOrigin } from '@commerceworker/security/origin';
 import { SECURITY_TXT_PATH, securityTxtResponse } from '@commerceworker/security/security-txt';
+import { opsMetrics, routeGroup } from '@commerceworker/telemetry/metrics';
 import { createRequestHandler, RouterContextProvider } from 'react-router';
 import { handleShopifyOrder, handleSignedEvent, handleSignedOrder } from '../app/lib/api.server';
 import { apiRoute } from '../app/lib/api-route.server';
@@ -36,7 +37,13 @@ import { handleStripeWebhook } from '../app/lib/stripe.server';
  */
 async function deepHealth(env: Env): Promise<Response> {
   const report = await runHealthChecks('commerceworker-web', {
-    db: () => env.DB.prepare('select 1').first(),
+    db: async () => {
+      // The probe runs every minute from outside, so this is D1's latency series, whoever is or
+      // isn't using the app.
+      const started = Date.now();
+      await env.DB.prepare('select 1').first();
+      opsMetrics(env.METRICS, 'web').d1('health', Date.now() - started);
+    },
     docs: () => env.DOCS.head('health'),
     engine: async () => {
       const r = await engine().health();
@@ -156,9 +163,32 @@ async function viewText(res: Response): Promise<string | null> {
   return new TextDecoder().decode(all);
 }
 
+/** Request outcomes are counted by these groups, never by path: an id in a URL is no label. */
+const ROUTE_GROUPS = [
+  ['/health', 'health'],
+  ['/api', 'api'],
+  ['/mcp', 'mcp'],
+  ['/a2a', 'a2a'],
+  ['/agents', 'agents'],
+  [SCIM_PATH, 'scim'],
+  ['/assets', 'assets'],
+] as const;
+
 export default {
   async fetch(request, env, ctx) {
-    return withSecurityHeaders(await route(request, env, ctx), new URL(request.url));
+    const url = new URL(request.url);
+    const ops = opsMetrics(env.METRICS, 'web');
+    const group = isOAuthPath(url.pathname) ? 'oauth' : routeGroup(url.pathname, ROUTE_GROUPS);
+    const started = Date.now();
+    let response: Response;
+    try {
+      response = await route(request, env, ctx);
+    } catch (err) {
+      ops.request(group, 500, Date.now() - started);
+      throw err;
+    }
+    ops.request(group, response.status, Date.now() - started);
+    return withSecurityHeaders(response, url);
   },
 } satisfies ExportedHandler<Env>;
 

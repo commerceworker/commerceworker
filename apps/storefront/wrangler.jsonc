@@ -39,6 +39,10 @@
   "services": [
     { "binding": "ENGINE", "service": "commerceworker-engine", "entrypoint": "StorefrontApi" }
   ],
+  // Operational metrics (packages/telemetry/src/metrics.ts): one data point per request outcome,
+  // order-step failure, D1 round trip and failover. Always on; scripts/fleet.ts gives each deployment
+  // its own dataset, shared by web, engine and storefront (docs/operations.md, "Metrics").
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "commerceworker_ops" }],
   // Per caller (app/lib/rate-limit.ts): a cart's buyer on product search, each UCP platform, and
   // each UCP platform's catalog search and lookup (its own budget: a search is cheap to ask for and
   // reads many documents, and must not use up what the platform's checkouts need). The registry's

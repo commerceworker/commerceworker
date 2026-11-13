@@ -52,7 +52,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `personalDataRetentionDays` | none (kept) | Whole days after an order finishes that the daily sweep erases its buyer's personal data; at least 30 (refused below). Rendered into the engine's `PERSONAL_DATA_RETENTION_DAYS`; see [Retention](data-model.md#personal-data-on-finished-orders) |
 | `auditArchiveDays` | none (kept) | Whole days (at least 1; refused below) the R2 archive keeps audit events. `provision.sh` replaces the bucket's lifecycle rule `audit-archive` (prefix `audit/`) with that expiry on every run, and removes it when unset. It also locks `audit/` for the same number of days, or indefinitely when unset ([Bucket locks](#bucket-locks)) |
 | `catalogBackupDays` | `90` | Whole days (at least 31, so a backup outlives Durable Objects' 30 days of point-in-time recovery; refused below or fractional) the catalog's daily backups are kept. `provision.sh` replaces the catalog bucket's lifecycle rule `backups` (prefix `backups/`) with that expiry, and its lock rule `catalog-backups` with the same age, on every run ([Catalog backups](#catalog-backups), [Bucket locks](#bucket-locks)) |
-| `redundancy` | none (off) | `true`, or `{ "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`. Turns on the commerce D1's daily backup and its restore drill ([Redundancy](#redundancy)); off, the deployment renders, provisions and deploys exactly what it did before the field existed. `backupDays`: whole days (default 35, at least 31 so a backup outlives Time Travel's 30; refused above `personalDataRetentionDays`, which would keep personal data the sweep erased; the default is lowered to `personalDataRetentionDays` when that is shorter) a backup is kept and locked. `backupHourUtc`: the hour, 0 to 23 UTC, the daily backup starts (default 1). `drill`: `weekly` (Sundays) or `monthly` (the 1st), six hours after the backup's hour (default `weekly`). `except`: parts to leave off, from `d1Backup`, `objectBackup`, `r2Replica`, `kvBackup`, `queues`, `email`, `intake`, `aiFallback`, `alerts`, `canary`, `readReplicas`; today `d1Backup` (turns off the backup, the drill, the bucket and the standby) and `r2Replica` (turns off the docs replica, its queues and its reconcile) do something, and the rest are reserved for what comes later. `alerts` (`{ "webhook"?: "https://…", "pagerduty"?: "<routing key>" }`) and `offsite` (`{ "provider": "s3" \| "gcs" \| "azure", "bucket", "region" }`) are parsed and validated now but **not acted on yet**. An unknown key or `except` name, a `backupDays` out of range, an `offsite.provider` that is none of those three, and the field on a `demo` are refused. `commerceworker` sets `true` |
+| `redundancy` | none (off) | `true`, or `{ "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`. Turns on the commerce D1's daily backup and its restore drill ([Redundancy](#redundancy)); off, the deployment renders, provisions and deploys exactly what it did before the field existed. `backupDays`: whole days (default 35, at least 31 so a backup outlives Time Travel's 30; refused above `personalDataRetentionDays`, which would keep personal data the sweep erased; the default is lowered to `personalDataRetentionDays` when that is shorter) a backup is kept and locked. `backupHourUtc`: the hour, 0 to 23 UTC, the daily backup starts (default 1). `drill`: `weekly` (Sundays) or `monthly` (the 1st), six hours after the backup's hour (default `weekly`). `except`: parts to leave off, from `d1Backup`, `objectBackup`, `r2Replica`, `kvBackup`, `queues`, `email`, `intake`, `aiFallback`, `alerts`, `canary`, `readReplicas`; today `d1Backup` (turns off the backup, the drill, the bucket and the standby), `r2Replica` (turns off the docs replica, its queues and its reconcile) and `alerts` (turns off the alert policies and Health Checks) do something, and the rest are reserved for what comes later. `alerts` (`{ "webhook"?: "https://…", "pagerduty"?: "<routing key>" }`) makes the notification policies, the webhook and PagerDuty destinations and two Health Checks when `provision.sh` runs ([Alerting](#alerting)); `offsite` (`{ "provider": "s3" \| "gcs" \| "azure", "bucket", "region" }`) is parsed and validated now but **not acted on yet**. An unknown key or `except` name, a `backupDays` out of range, an `offsite.provider` that is none of those three, and the field on a `demo` are refused. `commerceworker` sets `true` |
 | `logRetentionDays` | `400`, or `personalDataRetentionDays` when set | Whole days (at least 30; refused below or fractional, and refused above `personalDataRetentionDays` when that is set) the logs bucket `commerceworker-logs<suffix>` keeps the Workers' trace events Logpush writes there. `provision.sh` replaces the bucket's lifecycle rule `logs` (prefix `workers/`) with that expiry on every run ([Logs](#logs)) |
 | `aiPersonalData` | `redact` | `redact` or `send` (anything else is refused). `send` lets the workflow AI nodes and the assistant's `assess_order` see buyers' contact details, names and addresses; see [Personal data](data-model.md#personal-data). Rendered into the engine's `AI_PERSONAL_DATA` |
 | `payments` | `mock` on staging and internal entries with no `storefrontDomain`; otherwise required | `stripe` or `mock` (anything else is refused). `stripe` takes payments through Stripe with the environment's `STRIPE_SECRET_KEY`, and a deploy without that secret stops before it migrates anything. `mock` records payments without taking money. An unset field renders `mock`, so the fleet refuses to load an entry that leaves it out when it is on the `canary` or `general` ring, or has a `storefrontDomain` (a demo is exempt and is always `mock`): the error names the file and the two choices. `mock` is a deliberate choice for staging and internal deployments and canary trials, and is refused on `general`. A demo can't be `stripe`. Rendered into the engine's `PAYMENTS_MODE`. There is no `none` for an on-account deployment with no cards yet |
@@ -343,8 +343,9 @@ Failures reach a person through Cloudflare Notifications, which are set on the a
 Worker. Every app Worker turns on Workers Issues (`observability.issues.enabled` in its
 `wrangler.jsonc`): uncaught exceptions, failed invocations, `5xx` responses and logs written with
 `console.error` become issues, so an error-level log line (a dead letter's `dlq_message`, a failed
-retention sweep, a model call that fell back to the heuristic) alerts without a rule of its own. The order lifecycle logs `order_index_failed`, `order_index_stuck` (a D1 index row still behind after five retries: the order's list row and its retention erasure are wrong until it lands), `order_index_missing` (the order has no D1 row), `rollback_failed` (a failed order's rollback did not complete: look at the order's timeline for what was left) and `cancel_terminate_failed` / `cancel_not_stopped` (a cancel couldn't stop the Workflow; the order is not cancelled and the agent keeps retrying). The account holds these notification policies,
-all sent to the account's email:
+retention sweep, a model call that fell back to the heuristic) alerts without a rule of its own. The order lifecycle logs `order_index_failed`, `order_index_stuck` (a D1 index row still behind after five retries: the order's list row and its retention erasure are wrong until it lands), `order_index_missing` (the order has no D1 row), `rollback_failed` (a failed order's rollback did not complete: look at the order's timeline for what was left), `cancel_terminate_failed` / `cancel_not_stopped` (a cancel couldn't stop the Workflow; the order is not cancelled and the agent keeps retrying) and `order_workflow_mismatch` (see [the Workflow sweep](#the-workflow-instance-sweep)).
+
+**What gets made.** With `redundancy.alerts` set in the registry (and `alerts` not in `except`), `./scripts/provision.sh <id>` creates, on the deployment's account:
 
 | Policy | Alert type | Fires on |
 |---|---|---|
@@ -352,13 +353,70 @@ all sent to the account's email:
 | CommerceWorker: HTTP DDoS | `dos_attack_l7` | An HTTP DDoS attack mitigated on one of the account's zones |
 | CommerceWorker: Universal SSL | `universal_ssl_event_type` | Universal certificate validation, issuance, renewal and expiry |
 | CommerceWorker: Advanced certificates | `dedicated_ssl_certificate_event_type` | Advanced certificate validation, issuance, renewal and expiry |
+| CommerceWorker: commerceworker-web<suffix> health, and the same for `-storefront` | `health_check_status_notification` | A Health Check going unhealthy or recovering |
 
-They were created through the API (2026-10-25); nothing in the repo provisions them. On a shared
-account one set covers every deployment there. A deployment on its own Cloudflare account needs
-the same four policies created on that account (dashboard **Notifications**, or the API's
-`/alerting/v3/policies`), sent to whoever is on call for it. Add a webhook or PagerDuty destination
-to a policy when email isn't enough. Log-match alert rules (Workers Observability alerts on a
-query) can only be made in the dashboard; prefer an error-level log, which Issues already catches.
+The four named policies are the account's: on a shared account one set covers every deployment, so the script finds each by name and adds this deployment's destinations to it, never a second policy and never removing one already there. Health Checks are zone level: `commerceworker-web<suffix>` on `https://<app host>/health/deep` and `commerceworker-storefront<suffix>` on `https://<storefront host>/health/deep`, every minute from Western Europe and Eastern North America, unhealthy after two failures in a row (the deep check is a 200 only when D1, R2 and the engine behind the app answer). Each has a policy of its own, filtered to its check. The script finds each by name first and creates what is missing; a second run changes nothing but the webhook's URL and the checks' settings, which it sets again.
+
+**Destinations.** A policy sends to every destination below that is set:
+
+| Destination | How |
+|---|---|
+| Webhook | Export `ALERT_WEBHOOK_URL` in the shell that runs `provision.sh` (a secret: Slack, an incident tool or your own endpoint; it is sent to the API in a request body, never printed or written). The registry's `alerts.webhook`, a URL that holds no secret, is used when the variable is unset. The destination is `commerceworker-alerts<suffix>`, updated in place on a re-run, so a rotated URL is one re-run |
+| PagerDuty | Set `alerts.pagerduty` in the registry. PagerDuty itself is connected **in the dashboard** (Notifications > Destinations > PagerDuty > Connect), since the API only lists a connected service; until it is, the script says so and the policies don't page it. Run `provision.sh` again after connecting |
+| Email | Export `ALERT_EMAIL` (an address verified on the account) |
+
+With none of them the script stops: alerts that go nowhere are worse than none. `CLOUDFLARE_API_TOKEN` needs Notifications Write, Health Checks Write and Zone Read besides the permissions provisioning already asks for. Without a token the script says it skipped the alerts. Create nothing by hand that the script makes: it finds by name.
+
+Policies that exist from before the script (the account's email ones, created 2026-10-25 under these same names) are kept and gain the new destinations. Log-match alert rules (Workers Observability alerts on a
+query) can only be made in the dashboard; prefer an error-level log, which Issues already catches. A deployment with `alerts` off still has Issues; it has no one told.
+
+### Metrics
+
+Web, engine and storefront write operational metrics to the deployment's Analytics Engine dataset `commerceworker_ops<suffix>` (binding `METRICS`, rendered by `scripts/fleet.ts`; the dataset is created by its first write). They are on for every deployment, with no registry flag: a data point is a non-blocking write with no cost on the request path, nothing is stored in D1 or R2, and the alerting above has nothing to read without a record of what the apps saw. Writing never blocks a request and never throws; a write that fails is dropped with a warning (not an error-level line, which would page).
+
+One data point per event. `index1` and `blob1` are the event, `blob2` the app (`web`, `engine`, `storefront`), `blob3` what it was about, `blob4` the status class for requests; `double1` is 1 (sum it) and `double2` is milliseconds.
+
+| Event (`blob1`) | `blob3` | Written when |
+|---|---|---|
+| `request` | The route group (`health`, `api`, `mcp`, `a2a`, `agents`, `oauth`, `scim`, `ucp`, `assets`, `app`), never a path | Every request to the web app, the storefront and the engine's fetch; `blob4` is `2xx` to `5xx` (a Worker that throws counts as `5xx`) |
+| `step_failed` | The node type that failed (`run` when none was to blame) | An order's run fails, once per run |
+| `d1` | The key path: `health` (the web app's deep health, so every minute) and `order_sweep` (the hourly sweep's query) | A D1 round trip, in `double2` |
+| `failover` | `ai_heuristic` (a model call answered from its heuristic because the model failed), `email_failed` (an order confirmation was refused or failed); `docs_replica_read` (a read of the docs bucket served from its replica) | The fallback is used |
+
+Query them from the dashboard (Analytics Engine, SQL API) or `GET /accounts/<id>/analytics_engine/sql`, for example the 5xx rate by app and group over the last hour:
+
+```sql
+SELECT blob2 AS app, blob3 AS route_group,
+       SUM(_sample_interval * double1) AS requests,
+       SUM(IF(blob4 = '5xx', _sample_interval * double1, 0)) AS errors
+FROM commerceworker_ops
+WHERE blob1 = 'request' AND timestamp > NOW() - INTERVAL '1' HOUR
+GROUP BY app, route_group
+```
+
+Analytics Engine keeps data for 93 days. The metrics are for looking, not paging: what pages is above.
+
+### The Workflow instance sweep
+
+The engine's hourly cron (`15 * * * *`) compares each order D1 calls `running` whose row has been quiet for 15 minutes with its Workflow instance. An instance that is `errored`, `terminated`, `complete` (an order still running in D1 whose Workflow has ended) or not found leaves the order running for ever: nothing reports and nothing fails it. Each mismatch is logged as an error-level line, `{"type":"order_workflow_mismatch","orderId","instanceId","order":"running","workflow":"errored|terminated|complete|unknown"}`, which Workers Issues turns into an alert. It checks at most 200 orders an hour, least recently changed first (it logs `order_workflow_sweep_capped` when it stops there), and logs the same mismatch again every hour until someone acts: the sweep repairs nothing. Waiting orders (approvals, supplier waits) are not checked.
+
+### When you're paged
+
+Start from the Worker issue or Health Check named in the page, then:
+
+**The deep health fails with D1 down** (`/health/deep` answers 503 with `"db":"fail"`; the web app's `5xx` rate jumps; `commerceworker_ops` shows `d1` latency rising or gone). Check [Cloudflare's status](https://www.cloudflarestatus.com) and the D1 dashboard for the database. A bad write or migration: restore from Time Travel ([Restoring D1](deploy.md#restoring-d1)); the database lost: [Restoring commerce D1 from a backup](#restoring-commerce-d1-from-a-backup). Orders that were running keep their Workflows and their OrderAgents (their state is in Durable Objects) and their D1 index rows catch up afterwards (`order_index_failed`, `order_index_stuck` clear on their own once D1 answers). Don't redeploy to "fix" it: CI migrates before it deploys.
+
+**The engine is down** (the deep health fails with `"engine":"fail"` on both apps while D1 is fine; every `request` group on the engine goes `5xx`, or none are written). The apps reach it only over the service binding. Look at the engine's latest deploy in the Actions run (a failed smoke test rolls the Workers back but not D1) and at its Worker issues; a bad deploy is fixed by merging the fix or reverting the change, never by hand ([Rollback](deploy.md)). Running orders resume when it is back: Workflows retry, and the OrderAgent catches up with the Workflow's reports. After an outage, look for `order_workflow_mismatch`: an order whose instance errored out needs a person.
+
+**Stripe is down** (card payments fail, `5xx` on the storefront's checkout group, authorize nodes failing: `step_failed` with `payments.authorize`). Check [Stripe's status](https://status.stripe.com). Orders fail or wait at the authorize node; nothing is charged twice, since every write is keyed by its step key. Nothing here to switch: with Stripe back, orders that failed are placed again by their buyers, and ones still waiting continue. Confirm on the Payments page and in Stripe's dashboard that no PaymentIntent is left with no order (`settleOrphanedHolds` voids a hold a card payment left behind within the hour).
+
+**Email is down** (`failover` with `email_failed` rising; a confirmation email logs `order confirmation failed`). Orders are not affected: a confirmation that can't be sent is recorded on the order's message and the order completes. Check Email Sending in the dashboard and the sender's domain ([Email sending](#email-sending)); the unsent confirmation is on the order's timeline ("its confirmation email was not sent"). Intake by email stops while Email Routing is down, and senders retry on their own.
+
+**The docs bucket** failing shows as `"docs":"fail"` in the web app's deep health, and `failover` with `docs_replica_read` rising on the engine's side: its reads are being served from the replica ([Redundancy](#redundancy)); the web app's own reads don't fall back. **Not covered yet:** KV and Queues failing over.
+
+### An outside probe (optional)
+
+Health Checks run from Cloudflare's network, so they say nothing when Cloudflare itself is the problem. For a probe that doesn't share its fate, point a second service at `https://<app host>/health/deep` (200 when healthy, 503 with the failing check named when not): Amazon Route 53 health checks (HTTPS, string match `"ok":true`, an SNS topic for the page) or Google Cloud uptime checks (an alerting policy to the channel that pages); Azure Monitor's availability tests work the same and are the last to consider. Nothing in the repo creates these: they are set up in that provider's console, with the same destination as `ALERT_WEBHOOK_URL` where it takes one.
 
 ## Logs
 
@@ -614,7 +672,7 @@ days.
 
 ## Redundancy
 
-`redundancy` in a deployment's registry entry turns on protection for the commerce database beyond Time Travel. Today that is two things: a daily backup of the commerce D1 into a bucket of its own, with a restore drill that proves each backup by rebuilding it in a second database; and a replica of the docs bucket (the order documents, the audit archive, plugin bundles and carts' files) that every create and delete is copied to as it happens. Later changes add the rest of what `except` names; `alerts` and `offsite` are accepted and checked now and **do nothing yet**. A deployment without the field renders, provisions and deploys exactly as it did before. `commerceworker` has it on.
+`redundancy` in a deployment's registry entry turns on protection for the commerce database beyond Time Travel. Today that is two things: a daily backup of the commerce D1 into a bucket of its own, with a restore drill that proves each backup by rebuilding it in a second database; and a replica of the docs bucket (the order documents, the audit archive, plugin bundles and carts' files) that every create and delete is copied to as it happens. Later changes add the rest of what `except` names; `alerts` is acted on by [Alerting](#alerting); `offsite` is accepted and checked now and **does nothing yet**. A deployment without the field renders, provisions and deploys exactly as it did before. `commerceworker` has it on.
 
 **Set it** in `deployments/<id>.jsonc`: `"redundancy": true` for the defaults, or an object ([The registry](#the-registry)). It must be provisioned before the merge that carries it: `./scripts/provision.sh <id>` creates the backups bucket `commerceworker-backups<suffix>` (in the deployment's jurisdiction, with a lifecycle rule and a bucket lock on `d1/` for `backupDays`, [Bucket locks](#bucket-locks)) and the standby D1 database `commerceworker-standby<suffix>`, and writes `standbyD1Id` into the entry (commit it). Each is read before it is created, so a re-run changes nothing but the retention, and it stops if the standby it finds is the live database. A deployment with `redundancy` and no `standbyD1Id` fails to render and stops the deploy plan, like one without `d1Id`; hold it (`"hold": true`) until it is provisioned.
 

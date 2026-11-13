@@ -7,6 +7,7 @@
 
 import { retryLabelVoids } from '@commerceworker/application/commerce';
 import { UCP_PATH } from '@commerceworker/core';
+import { opsMetrics, routeGroup } from '@commerceworker/telemetry/metrics';
 import { A2A_PATH, handleA2A } from './a2a/route';
 import { routeAgents } from './agent-routes';
 import { settleOrphanedHolds } from './checkout/hosted';
@@ -19,6 +20,7 @@ import {
 } from './docs-replica';
 import { receiveEmail } from './email';
 import { refreshRates } from './fx';
+import { sweepOrderInstances } from './instance-sweep';
 import { handleMcp, MCP_PATH } from './mcp';
 import { failUnstartedOrders } from './orders';
 import { reindexProducts } from './product-index';
@@ -55,19 +57,43 @@ export { Replenish } from './replenish';
 export { StorefrontApi } from './storefront-api';
 export { OrderWorkflow } from './workflow';
 
-/** The hourly cron in wrangler.jsonc: `reindexProducts`, `settleOrphanedHolds` and `failUnstartedOrders`. */
+/** The hourly cron in wrangler.jsonc: `reindexProducts`, `settleOrphanedHolds`, `failUnstartedOrders` and `sweepOrderInstances`. */
 const REINDEX_CRON = '15 * * * *';
+
+async function route(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname === '/health')
+    return Response.json({ ok: true, service: 'commerceworker-engine' });
+  if (url.pathname === MCP_PATH) return handleMcp(request);
+  if (url.pathname === A2A_PATH) return handleA2A(request, env);
+  if (url.pathname === UCP_PATH || url.pathname.startsWith(`${UCP_PATH}/`))
+    return handleUcp(request, env);
+  return routeAgents(request, env);
+}
+
+/** Request outcomes are counted by these groups, never by path: an id in a URL is no label. */
+const ROUTE_GROUPS = [
+  ['/health', 'health'],
+  [MCP_PATH, 'mcp'],
+  [A2A_PATH, 'a2a'],
+  [UCP_PATH, 'ucp'],
+  ['/agents', 'agents'],
+] as const;
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname === '/health')
-      return Response.json({ ok: true, service: 'commerceworker-engine' });
-    if (url.pathname === MCP_PATH) return handleMcp(request);
-    if (url.pathname === A2A_PATH) return handleA2A(request, env);
-    if (url.pathname === UCP_PATH || url.pathname.startsWith(`${UCP_PATH}/`))
-      return handleUcp(request, env);
-    return routeAgents(request, env);
+    const ops = opsMetrics(env.METRICS, 'engine');
+    const group = routeGroup(new URL(request.url).pathname, ROUTE_GROUPS);
+    const started = Date.now();
+    let response: Response;
+    try {
+      response = await route(request, env);
+    } catch (err) {
+      ops.request(group, 500, Date.now() - started);
+      throw err;
+    }
+    ops.request(group, response.status, Date.now() - started);
+    return response;
   },
 
   // `triggers.crons` in wrangler.jsonc: hourly, the product index catches up with `products`;
@@ -82,6 +108,7 @@ export default {
         'product index': () => reindexProducts(env),
         'card holds': () => settleOrphanedHolds(env),
         'unstarted orders': () => failUnstartedOrders(env),
+        'workflow instances': () => sweepOrderInstances(env),
       })) {
         try {
           await run();

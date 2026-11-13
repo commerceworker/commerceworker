@@ -47,6 +47,15 @@ export function d1OrderRecords(d1: D1Database, clock: Clock): OrderRecords {
         .limit(limit);
     },
 
+    async staleRunning(before, limit) {
+      return d
+        .select({ id: orders.id, instanceId: orders.instanceId })
+        .from(orders)
+        .where(and(eq(orders.status, 'running'), lt(orders.updatedAt, before)))
+        .orderBy(asc(orders.updatedAt))
+        .limit(limit);
+    },
+
     async failQueued(orderId, reason) {
       const done = await d
         .update(orders)

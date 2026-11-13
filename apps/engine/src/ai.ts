@@ -38,6 +38,7 @@ import {
   validateGraph,
   withDefaults,
 } from '@commerceworker/core';
+import { ops } from './metrics';
 import { registry } from './plugins';
 
 export type { AiSource } from '@commerceworker/core';
@@ -89,8 +90,10 @@ export function logAiCall(p: AiProvenance, ms: number, extra: Record<string, unk
   const line = JSON.stringify({ type: 'ai_call', ...p, ms, ...extra });
   if (p.source === 'heuristic' && p.fallback !== 'mock') console.warn(line);
   else console.log(line);
-  if (p.source === 'heuristic' && !EXPECTED_FALLBACKS.has(String(p.fallback)))
+  if (p.source === 'heuristic' && !EXPECTED_FALLBACKS.has(String(p.fallback))) {
+    ops().failover('ai_heuristic');
     console.error(new Error(`${p.prompt} answered from the heuristic: the model failed`));
+  }
 }
 
 /**

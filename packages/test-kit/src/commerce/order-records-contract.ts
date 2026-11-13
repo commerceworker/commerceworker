@@ -162,6 +162,20 @@ export function describeOrderRecordsContract(
       expect(await r.failQueued('oc_none', 'No.')).toBe(false);
     });
 
+    it('lists running orders whose row has been quiet, least recent first', async () => {
+      const r = await fresh();
+      await r.index('oc_order', { ...row, status: 'running', instanceId: 'wf_run' });
+      await r.index('oc_by_ada', { ...row, status: 'waiting' });
+      const far = Date.now() + 60_000;
+      const running = async (before: number) =>
+        (await r.staleRunning(before, 50)).filter((o) => o.id.startsWith('oc_'));
+      // Only a running order, with the Workflow its row names; a waiting one is not asked about.
+      expect(await running(far)).toEqual([{ id: 'oc_order', instanceId: 'wf_run' }]);
+      // A row that changed after the cutoff is a live one.
+      expect(await running(0)).toEqual([]);
+      expect(await r.staleRunning(far, 0)).toEqual([]);
+    });
+
     it('records each run once', async () => {
       const r = await fresh();
       await r.recordRun(run('reserve'));
