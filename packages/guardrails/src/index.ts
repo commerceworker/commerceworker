@@ -3,6 +3,7 @@ import {
   GUARDRAIL_MAX_REGEX_PATTERN_LENGTH,
   GUARDRAIL_MAX_SCAN_BYTES,
 } from './constants';
+import { containsEmail } from './email';
 
 export {
   GUARDRAIL_MAX_CHECKS,
@@ -33,16 +34,36 @@ export interface GuardrailPolicy {
 
 const DEFAULT_POLICY: GuardrailPolicy = { checks: [], defaultAction: 'log' };
 
-const PII_PATTERNS: { pattern: RegExp; label: string }[] = [
-  { pattern: /\b\d{3}-\d{2}-\d{4}\b/, label: 'SSN pattern detected' },
-  { pattern: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/, label: 'Card number pattern detected' },
-  { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/i, label: 'Email address detected' },
+const PII_PATTERNS: { test: (text: string) => boolean; label: string }[] = [
+  { test: (t) => /\b\d{3}-\d{2}-\d{4}\b/.test(t), label: 'SSN pattern detected' },
+  {
+    test: (t) => /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/.test(t),
+    label: 'Card number pattern detected',
+  },
+  { test: containsEmail, label: 'Email address detected' },
 ];
 
-const INJECTION_PATTERNS: { pattern: RegExp; label: string }[] = [
+/**
+ * A line break, then optional whitespace, then `system:`: `/\n\s*system\s*:/i`, which backtracks
+ * quadratically on a long run of line breaks. This finds each `system:` and looks back over the
+ * whitespace before it (runs before different matches don't overlap).
+ */
+function systemOverride(text: string): boolean {
+  const re = /system\s*:/gi;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    let i = m.index;
+    while (i > 0 && /\s/.test(text[i - 1] as string)) {
+      i--;
+      if (text[i] === '\n') return true;
+    }
+  }
+  return false;
+}
+
+const INJECTION_PATTERNS: { pattern: { test: (text: string) => boolean }; label: string }[] = [
   { pattern: /ignore\s+(all\s+)?previous\s+instructions/i, label: 'Prompt injection phrase' },
   { pattern: /disregard\s+(all\s+)?(above|previous)/i, label: 'Prompt injection phrase' },
-  { pattern: /\n\s*system\s*:/i, label: 'System prompt override attempt' },
+  { pattern: { test: systemOverride }, label: 'System prompt override attempt' },
 ];
 
 /** Truncates to at most `maxBytes` UTF-8 bytes (best-effort; avoids huge scans). */
@@ -59,8 +80,8 @@ export function truncateScanText(
 
 function checkPii(text: string, direction: 'input' | 'output'): string[] {
   const hits: string[] = [];
-  for (const { pattern, label } of PII_PATTERNS) {
-    if (pattern.test(text)) hits.push(`pii:${direction}:${label}`);
+  for (const { test, label } of PII_PATTERNS) {
+    if (test(text)) hits.push(`pii:${direction}:${label}`);
   }
   return hits;
 }

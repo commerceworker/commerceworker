@@ -28,12 +28,7 @@ query returns nothing for `refs/heads/main` until then.
 | 16 | `js/polynomial-redos` | `packages/domain/src/auth/oauth.ts:158` | `parseUri` refuses a line break up front (never valid in a URI, and the only input the pattern could fail on). |
 | 21 | `js/polynomial-redos` | `packages/domain/src/rich-text/rich-text-diff.ts:115` | Whitespace runs in a table cell fold with one `\s+` pass. |
 | 22 | `js/polynomial-redos` | `packages/domain/src/seo/seo.ts:141` | The query or fragment is cut by position (`pathEnd`), not by `[?#].*$`. |
-
-## Open
-
-| Alert | Rule | File | Why |
-|---|---|---|---|
-| 12 | `js/polynomial-redos` | `packages/core/src/redact.ts:55` | `EMAIL` and `PHONE` backtrack on a long run with no `@` or no closing digit. Free text reaches `maskPersonalText` with no length cap. Bounding the quantifiers would leave the tail of a long local part unmasked, so it wants an input cap decided with the callers. |
+| 12 | `js/polynomial-redos` | `packages/core/src/redact.ts:55` | `EMAIL` and `PHONE` are single-pass scanners (`maskEmails`, `maskPhones`) that mask exactly what the old patterns did, held to them by an oracle test over 20,000 random strings; a 100k-character local part is masked whole. The same email pattern in `packages/guardrails` and its quadratic `system:` injection check were rewritten the same way. |
 
 ## Dismiss
 
@@ -75,4 +70,4 @@ dismisses one. The owner runs these; no change in this repository does.
 - Dismiss the alerts above on GitHub.
 - Make the CodeQL check required in the `main` ruleset. It gates no merge today (`docs/deploy.md`),
   so a new alert only shows in the Security tab. Not changed here.
-- After the next analysis of `main`, confirm the fixed alerts closed and alert 12 is the only one left.
+- After the next analysis of `main`, confirm every fixed alert closed and only the dismissals below remain.
