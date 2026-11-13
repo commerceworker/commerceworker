@@ -115,7 +115,7 @@ describe('the database backup', () => {
   it('restores what it copied, and a chunk loaded twice leaves one copy of each row', async () => {
     const { store, manifest } = await backedUp();
     const target = new InMemoryDatabaseCopy();
-    await target.reset();
+    await target.reset({ migrationHead: null, backup: '2026-11-13' });
     await target.createTables(manifest.schema);
     expect(await verifyTable(store, manifest, 'items')).toBe(5);
     for (const n of [0, 1, 2, 2]) await loadChunk(store, target, manifest, 'items', n);
@@ -155,7 +155,7 @@ describe('the checks on a restored database', () => {
     const { store, manifest } = await backedUp();
     const target = new InMemoryDatabaseCopy();
     target.head = manifest.migrationHead;
-    await target.reset();
+    await target.reset({ migrationHead: null, backup: '2026-11-13' });
     await target.createTables(manifest.schema);
     for (const n of [0, 1, 2]) await loadChunk(store, target, manifest, 'items', n);
     await mutate?.(target);

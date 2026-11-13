@@ -36,10 +36,36 @@ if [ "$CONTENT" = true ]; then
   echo "   https://$STUDIO_DOMAIN (studio), https://$API_DOMAIN (api), https://$CDN_DOMAIN (delivery), https://$MEDIA_DOMAIN (media)"
 fi
 
-wrangler d1 create "$D1" ${j[@]+"${j[@]}"} || echo "D1 database $D1 already exists"
-uuid=$(wrangler d1 info "$D1" --json | jq -er .uuid)
-node scripts/fleet.ts set-d1 "$id" "$uuid"
-echo "Recorded d1Id $uuid in deployments/$id.jsonc"
+# live-d1:begin
+# Looked up by name in the account's list (`d1 info <name>` resolves the name against the engine's
+# own config first). The registry's id wins over what the name finds: after a standby promotion the
+# names and the ids disagree on purpose, so an id is never re-pointed from a name, and a name that
+# finds a database the registry doesn't know stops the script (`fleet.ts database-id`).
+d1_by_name() { wrangler d1 list --json | jq -r --arg n "$1" '[.[] | select(.name == $n) | .uuid][0] // empty'; }
+found=$(d1_by_name "$D1")
+# A plain assignment, so a refusal stops the script under set -e.
+action=$(node scripts/fleet.ts database-id "$id" live "$found")
+case "$action" in
+  create)
+    wrangler d1 create "$D1" ${j[@]+"${j[@]}"}
+    uuid=$(d1_by_name "$D1")
+    node scripts/fleet.ts set-d1 "$id" "$uuid"
+    echo "Recorded d1Id $uuid in deployments/$id.jsonc"
+    ;;
+  record)
+    uuid=$found
+    echo "D1 database $D1 already exists"
+    node scripts/fleet.ts set-d1 "$id" "$uuid"
+    echo "Recorded d1Id $uuid in deployments/$id.jsonc"
+    ;;
+  keep)
+    uuid=$D1_ID
+    wrangler d1 list --json | jq -e --arg u "$uuid" 'any(.[]; .uuid == $u)' >/dev/null ||
+      { echo "d1Id $uuid is in the registry but not in the account" >&2; exit 1; }
+    echo "d1Id $uuid kept as recorded in deployments/$id.jsonc"
+    ;;
+esac
+# live-d1:end
 
 wrangler r2 bucket create "$R2" ${j[@]+"${j[@]}"} || echo "R2 bucket $R2 already exists"
 
@@ -405,22 +431,32 @@ if [ -n "${BACKUPS_R2:-}" ]; then
 fi
 
 if [ -n "${STANDBY_D1:-}" ]; then
-  # Looked up by name in the account's list: `d1 info <name>` resolves the name against the
-  # engine's own config first, whose STANDBY_DB would answer with its placeholder id.
-  standby_id() { wrangler d1 list --json | jq -er --arg n "$STANDBY_D1" '.[] | select(.name == $n) | .uuid'; }
-  if standby=$(standby_id 2>/dev/null); then
-    echo "D1 database $STANDBY_D1 already exists"
-  else
-    wrangler d1 create "$STANDBY_D1" ${j[@]+"${j[@]}"}
-    standby=$(standby_id)
-  fi
-  # A restore wipes this database: it must never be the live one.
-  if [ "$standby" = "$uuid" ]; then
-    echo "$STANDBY_D1 is the live database ($uuid): a restore would wipe it" >&2
-    exit 1
-  fi
-  node scripts/fleet.ts set-standby-d1 "$id" "$standby"
-  echo "Recorded standbyD1Id $standby in deployments/$id.jsonc"
+  # standby-d1:begin
+  # By name, as the live database is, and the registry's id wins (see above). A restore wipes
+  # this database: it must never be the live one, which `database-id` refuses to record.
+  standby_by_name() { wrangler d1 list --json | jq -r --arg n "$STANDBY_D1" '[.[] | select(.name == $n) | .uuid][0] // empty'; }
+  standby_found=$(standby_by_name)
+  action=$(node scripts/fleet.ts database-id "$id" standby "$standby_found")
+  case "$action" in
+    create)
+      wrangler d1 create "$STANDBY_D1" ${j[@]+"${j[@]}"}
+      standby=$(standby_by_name)
+      node scripts/fleet.ts set-standby-d1 "$id" "$standby"
+      echo "Recorded standbyD1Id $standby in deployments/$id.jsonc"
+      ;;
+    record)
+      echo "D1 database $STANDBY_D1 already exists"
+      node scripts/fleet.ts set-standby-d1 "$id" "$standby_found"
+      echo "Recorded standbyD1Id $standby_found in deployments/$id.jsonc"
+      ;;
+    keep)
+      standby=$STANDBY_D1_ID
+      wrangler d1 list --json | jq -e --arg u "$standby" 'any(.[]; .uuid == $u)' >/dev/null ||
+        { echo "standbyD1Id $standby is in the registry but not in the account" >&2; exit 1; }
+      echo "standbyD1Id $standby kept as recorded in deployments/$id.jsonc"
+      ;;
+  esac
+  # standby-d1:end
 fi
 # redundancy:end
 

@@ -18,7 +18,13 @@ export interface DatabaseCopyHarness {
   /** The seeded source as a restore target: it holds tables no restore made. */
   unmarked: DatabaseRestoreTarget;
   seed(ddl: string, rows?: CopyRow[]): Promise<void>;
+  /** Makes the target's newest applied migration `name`, as if its migrations had run. */
+  setTargetHead(name: string): Promise<void>;
+  /** Creates a table in the target with rows, as live traffic would have written. */
+  writeToTarget(ddl: string, rows: CopyRow[]): Promise<void>;
 }
+
+const FROM = { migrationHead: '0002_second.sql', backup: '2026-11-13' };
 
 const ITEMS = 'CREATE TABLE copy_items (id TEXT PRIMARY KEY, label TEXT, qty INTEGER)';
 // Declared before its parent, to show the schema puts the parent first.
@@ -95,7 +101,7 @@ export function describeDatabaseCopyContract(
       const { source, target } = await seeded();
       const schema = await source.schema();
       for (const run of [1, 2]) {
-        await target.reset();
+        await target.reset(FROM);
         await target.createTables(schema);
         for (const t of schema.tables) {
           let cursor = 0;
@@ -121,9 +127,48 @@ export function describeDatabaseCopyContract(
 
     it('refuses to wipe a database a restore did not make', async () => {
       const { source, unmarked } = await seeded();
-      await expect(unmarked.reset()).rejects.toBeInstanceOf(BackupRefusal);
+      await expect(unmarked.reset(FROM)).rejects.toBeInstanceOf(BackupRefusal);
       // Nothing was wiped.
       expect((await source.page('copy_items', 0, 10)).rows).toEqual(items(5));
+    });
+
+    /** A target a restore has loaded, as the drill leaves the standby. */
+    async function restoredStandby() {
+      const h = await seeded();
+      const schema = await h.source.schema();
+      await h.target.reset(FROM);
+      await h.target.createTables(schema);
+      const page = await h.source.page('copy_items', 0, 10);
+      await h.target.load('copy_items', ['id', 'label', 'qty'], page.rows);
+      await h.target.finish(schema);
+      return h;
+    }
+
+    it('refuses a target migrated past the backup, and wipes nothing', async () => {
+      const { target, setTargetHead } = await restoredStandby();
+      await setTargetHead('0003_third.sql');
+      await expect(target.reset(FROM)).rejects.toThrow(/migrated to 0003_third.sql/);
+      expect(await target.rowCount('copy_items')).toBe(5);
+      // The backup's own head, or an older one, is a standby the backup may be restored over.
+      await setTargetHead('0002_second.sql');
+      await target.reset(FROM);
+      await setTargetHead('0001_first.sql');
+      await target.reset(FROM);
+    });
+
+    it('refuses a target holding writes newer than its restore, and wipes nothing', async () => {
+      const { target, writeToTarget } = await restoredStandby();
+      // A row older than the marker is what a restore loads: still a standby.
+      await writeToTarget('CREATE TABLE orders (id TEXT PRIMARY KEY, updated_at INTEGER)', [
+        { id: 'old', updated_at: 1_000 },
+      ]);
+      await target.reset(FROM);
+      // A standby that was promoted took traffic after its marker.
+      await writeToTarget('CREATE TABLE audit_events (id TEXT PRIMARY KEY, at INTEGER)', [
+        { id: 'live', at: Date.now() + 10 * 60_000 },
+      ]);
+      await expect(target.reset(FROM)).rejects.toThrow(/writes newer than its restore/);
+      expect(await target.rowCount('audit_events')).toBe(1);
     });
   });
 }

@@ -196,7 +196,16 @@ wrangler() {
         mv "${dir}/databases.next" "${dir}/databases.json" ;;
   esac
 }
-node() { echo "node $*" >> "$calls"; }
+# The decision is fleet.ts's (tested there and below); the fake answers it for these fixtures.
+node() {
+  if [ "$2" = database-id ]; then
+    if [ -z "\${5:-}" ]; then echo create
+    elif [ "$5" = "$uuid" ]; then echo "$3 is the live database: a restore would wipe the live one" >&2; return 1
+    else echo record; fi
+    return
+  fi
+  echo "node $*" >> "$calls"
+}
 j=(${opts.jurisdiction ? `--jurisdiction ${opts.jurisdiction}` : ''})
 id=acme
 uuid=aaaaaaaa-0000-0000-0000-000000000000
@@ -373,7 +382,7 @@ test('a standby that is the live database stops before it is recorded', () => {
     ],
   });
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /would wipe it/);
+  assert.match(r.stderr, /would wipe the live one/);
   assert.ok(!r.calls.some((c) => c.startsWith('node scripts/fleet.ts')));
 });
 
@@ -1149,4 +1158,133 @@ test('an existing intake queue is kept, and without intake nothing is called', (
   const off = runIntakeQueue({ vars: { INTAKE_QUEUE: '', INTAKE_DLQ: '' } });
   assert.equal(off.status, 0, off.stderr);
   assert.deepEqual(off.calls, []);
+});
+
+// The database sections of provision.sh (`live-d1`, `standby-d1`), run against a scratch registry
+// with the real `fleet.ts` and a fake `wrangler` that lists the databases a fixture names and
+// records what it is asked to create. They must never re-point an id from a name.
+const section2 = (name: string) =>
+  new RegExp(`# ${name}:begin\\n([\\s\\S]*?)# ${name}:end`).exec(script)?.[1];
+
+const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function databases(opts: { registry: Record<string, string>; account: [string, string][] }) {
+  const live = section2('live-d1');
+  const standby = section2('standby-d1');
+  assert.ok(live && standby, 'provision.sh has no live-d1 or standby-d1 section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-db-'));
+  const registry = join(dir, 'registry');
+  mkdirSync(registry);
+  const file = join(registry, 'aa.jsonc');
+  writeFileSync(
+    file,
+    JSON.stringify({
+      id: 'aa',
+      ring: 'canary',
+      slot: 1,
+      payments: 'mock',
+      redundancy: true,
+      ...opts.registry,
+    }),
+  );
+  const state = join(dir, 'account.json');
+  writeFileSync(state, JSON.stringify(opts.account.map(([name, uuid]) => ({ name, uuid }))));
+  const root = join(import.meta.dirname, '..');
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `set -euo pipefail
+cd "${root}"
+eval "$(node scripts/fleet.ts names aa)"
+id=aa
+j=()
+# Fake wrangler: \`d1 list --json\` answers from the fixture, \`d1 create\` adds to it and is recorded.
+wrangler() {
+  if [ "$1 $2" = "d1 list" ]; then cat "${state}"
+  elif [ "$1 $2" = "d1 create" ]; then
+    echo "create $3" >> "${dir}/calls"
+    jq --arg n "$3" '. + [{name: $n, uuid: "${C}"}]' "${state}" > "${state}.new" && mv "${state}.new" "${state}"
+  else echo "unexpected wrangler $*" >&2; exit 9; fi
+}
+${live}
+STANDBY_D1=\${STANDBY_D1:-x}
+${standby}
+`,
+    ],
+    {
+      env: { ...process.env, FLEET_DEPLOYMENTS: registry, CI: '', GITHUB_ACTIONS: '' },
+      encoding: 'utf8',
+    },
+  );
+  const ids = () => {
+    const r = JSON.parse(readFileSync(file, 'utf8'));
+    return { d1Id: r.d1Id, standbyD1Id: r.standbyD1Id };
+  };
+  const calls = () => {
+    try {
+      return readFileSync(join(dir, 'calls'), 'utf8').split('\n').filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr, ids, calls };
+}
+
+test('a first provision creates both databases and records their ids', () => {
+  const r = databases({ registry: {}, account: [] });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls(), ['create commerceworker-aa', 'create commerceworker-standby-aa']);
+  assert.equal(r.ids().d1Id, C);
+});
+
+test('a re-run after a standby promotion changes neither id', () => {
+  // The registry holds the promoted database (named for the standby) as d1Id, and the one it
+  // replaced as standbyD1Id: each name finds the other role's database.
+  const r = databases({
+    registry: { d1Id: B, standbyD1Id: A },
+    account: [
+      ['commerceworker-aa', A],
+      ['commerceworker-standby-aa', B],
+    ],
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ids(), { d1Id: B, standbyD1Id: A });
+  assert.deepEqual(r.calls(), []);
+  assert.match(r.stdout, /d1Id .* kept as recorded/);
+});
+
+test('a re-run stops, and changes no id, when a name finds a database the registry does not know', () => {
+  // The promoted database is the live one; a stale copy of the old live database is still there
+  // under the live name, and the registry's standby is a third.
+  const r = databases({
+    registry: { d1Id: B, standbyD1Id: C },
+    account: [
+      ['commerceworker-aa', A],
+      ['commerceworker-standby-aa', B],
+    ],
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(
+    r.stderr,
+    new RegExp(`commerceworker-aa is database ${A}, but the registry records d1Id ${B}`),
+  );
+  assert.match(r.stderr, /won't re-point an id from a name/);
+  assert.deepEqual(r.ids(), { d1Id: B, standbyD1Id: C });
+  assert.deepEqual(r.calls(), []);
+});
+
+test('a standby whose name finds the live database is never recorded', () => {
+  const r = databases({
+    registry: { d1Id: A },
+    account: [
+      ['commerceworker-aa', A],
+      ['commerceworker-standby-aa', A],
+    ],
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /would wipe the live one/);
+  assert.equal(r.ids().standbyD1Id, undefined);
 });

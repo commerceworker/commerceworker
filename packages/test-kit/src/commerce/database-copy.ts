@@ -12,6 +12,7 @@ import {
   type CopyTable,
   type DatabaseExport,
   type DatabaseRestoreTarget,
+  type RestoreSource,
 } from '@commerceworker/ports/commerce';
 
 interface Held {
@@ -31,10 +32,14 @@ const columnsOf = (ddl: string) =>
     .filter((c) => !/^(PRIMARY|UNIQUE|FOREIGN|CHECK|CONSTRAINT)\b/i.test(c))
     .map((c) => c.split(/\s+/)[0]!.replaceAll('"', ''));
 
+/** Clock skew a marker's time tolerates, shared with the D1 adapter's guard. */
+const MARKER_SLACK_MS = 60_000;
+
 export class InMemoryDatabaseCopy implements DatabaseExport, DatabaseRestoreTarget {
   private tables = new Map<string, Held>();
   private search: CopySchema['search'] = [];
-  private marked = false;
+  /** When the last restore into this target began (ms), null for a target no restore made. */
+  private restoredAt: number | null = null;
   /** What `migrationHead` answers. */
   head: string | null = null;
 
@@ -69,14 +74,35 @@ export class InMemoryDatabaseCopy implements DatabaseExport, DatabaseRestoreTarg
     return this.head;
   }
 
-  async reset() {
-    if (this.tables.size && !this.marked)
-      throw new BackupRefusal(
-        'the standby database holds tables a restore did not make: it may be the live database, so nothing was wiped',
-      );
+  async reset(from: RestoreSource) {
+    if (this.tables.size) {
+      if (this.restoredAt === null)
+        throw new BackupRefusal(
+          'the standby database holds tables a restore did not make: it may be the live database, so nothing was wiped',
+        );
+      if (this.head !== null && (from.migrationHead === null || this.head > from.migrationHead))
+        throw new BackupRefusal(
+          `the standby database is migrated to ${this.head}, past the backup's ${from.migrationHead ?? 'none'}: it may be the live database, so nothing was wiped`,
+        );
+      const wrote = this.newestWrite();
+      if (wrote !== null && wrote > this.restoredAt + MARKER_SLACK_MS)
+        throw new BackupRefusal(
+          'the standby database holds writes newer than its restore: it may be the live database, so nothing was wiped',
+        );
+    }
     this.tables.clear();
     this.search = [];
-    this.marked = true;
+    this.restoredAt = Date.now();
+  }
+
+  /** The newest `orders.updated_at` or `audit_events.at` held, as D1's guard reads them. */
+  private newestWrite(): number | null {
+    const at = (table: string, column: string) =>
+      (this.tables.get(table)?.rows ?? [])
+        .map((r) => r[column])
+        .filter((v) => typeof v === 'number');
+    const all = [...at('orders', 'updated_at'), ...at('audit_events', 'at')] as number[];
+    return all.length ? Math.max(...all) : null;
   }
 
   async createTables(schema: CopySchema) {

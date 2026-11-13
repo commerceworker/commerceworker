@@ -3547,3 +3547,128 @@ test('ai-routes prints the routes for the deployment, null without them', () => 
   assert.equal(run('commerceworker')?.[0].name, 'cw-text');
   assert.equal(run('commerceworker')?.[1].name, 'cw-assistant');
 });
+
+// A scratch registry with one deployment (redundancy on), and the real CLI run against it: the
+// ids' guards live in the commands, so they are tested through them.
+const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function scratchRegistry(extra: object = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  const file = join(dir, 'aa.jsonc');
+  writeFileSync(
+    file,
+    `// kept through every edit\n${JSON.stringify({ id: 'aa', ring: 'canary', slot: 1, payments: 'mock', redundancy: true, ...extra }, null, 2)}\n`,
+  );
+  const cli = (...args: string[]) =>
+    spawnSync(process.execPath, [join(import.meta.dirname, 'fleet.ts'), ...args], {
+      env: { ...process.env, FLEET_DEPLOYMENTS: dir, CI: '', GITHUB_ACTIONS: '' },
+      encoding: 'utf8',
+    });
+  return { dir, file, cli, registry: () => loadDeployments(dir)[0]! };
+}
+
+test('set-d1 and set-standby-d1 record an unset id, accept the same one, and refuse a change without --replace', () => {
+  const r = scratchRegistry();
+  try {
+    assert.equal(r.cli('set-d1', 'aa', A).status, 0);
+    assert.equal(r.cli('set-standby-d1', 'aa', B).status, 0);
+    assert.equal(r.registry().d1Id, A);
+    // The same id again changes nothing.
+    assert.equal(r.cli('set-d1', 'aa', A).status, 0);
+    for (const [cmd, now] of [
+      ['set-d1', A],
+      ['set-standby-d1', B],
+    ] as const) {
+      const refused = r.cli(cmd, 'aa', C);
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, /without --replace/);
+      assert.equal(now === A ? r.registry().d1Id : r.registry().standbyD1Id, now);
+    }
+    assert.equal(r.cli('set-d1', 'aa', C, '--replace').status, 0);
+    assert.equal(r.registry().d1Id, C);
+    assert.match(readFileSync(r.file, 'utf8'), /^\/\/ kept through every edit/);
+  } finally {
+    rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test('every other id writer refuses a change without --replace too', () => {
+  const kv = (c: string) => c.repeat(32);
+  const r = scratchRegistry({ catalogKvId: kv('1') });
+  try {
+    const refused = r.cli('set-catalog-kv', 'aa', kv('2'));
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /catalogKvId/);
+    assert.equal(r.registry().catalogKvId, kv('1'));
+    assert.equal(r.cli('set-catalog-kv', 'aa', kv('2'), '--replace').status, 0);
+    assert.equal(r.registry().catalogKvId, kv('2'));
+  } finally {
+    rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test('promote-standby swaps the two ids, prints what to run next and runs nothing', () => {
+  const r = scratchRegistry({ d1Id: A, standbyD1Id: B });
+  try {
+    const out = r.cli('promote-standby', 'aa');
+    assert.equal(out.status, 0, out.stderr);
+    const d = r.registry();
+    assert.equal(d.d1Id, B);
+    assert.equal(d.standbyD1Id, A);
+    assert.match(out.stdout, /DROP TABLE IF EXISTS _cw_standby/);
+    assert.match(out.stdout, /set-standby-d1 aa <its id> --replace/);
+    assert.match(readFileSync(r.file, 'utf8'), /^\/\/ kept through every edit/);
+    // Run again it swaps back: a promotion is a deliberate act, so there is no memory of it.
+    assert.equal(r.cli('promote-standby', 'aa').status, 0);
+    assert.equal(r.registry().d1Id, A);
+  } finally {
+    rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test('promote-standby needs both ids and refuses to run in CI', () => {
+  const r = scratchRegistry({ d1Id: A });
+  try {
+    assert.match(r.cli('promote-standby', 'aa').stderr, /no standby to promote/);
+    const inCi = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, 'fleet.ts'), 'promote-standby', 'aa'],
+      {
+        env: { ...process.env, FLEET_DEPLOYMENTS: r.dir, CI: 'true' },
+        encoding: 'utf8',
+      },
+    );
+    assert.match(inCi.stderr, /never in CI/);
+    assert.equal(r.registry().d1Id, A);
+  } finally {
+    rmSync(r.dir, { recursive: true, force: true });
+  }
+});
+
+test('database-id keeps a recorded id over what a name finds, and stops on a database the registry does not know', () => {
+  const r = scratchRegistry({ d1Id: B, standbyD1Id: A });
+  try {
+    // After a promotion each name finds the other role's database: that is the recorded swap.
+    assert.equal(r.cli('database-id', 'aa', 'live', A).stdout.trim(), 'keep');
+    assert.equal(r.cli('database-id', 'aa', 'standby', B).stdout.trim(), 'keep');
+    assert.equal(r.cli('database-id', 'aa', 'live', '').stdout.trim(), 'keep');
+    const stray = r.cli('database-id', 'aa', 'live', C);
+    assert.notEqual(stray.status, 0);
+    assert.match(stray.stderr, new RegExp(`${C}.*registry records d1Id ${B}`));
+  } finally {
+    rmSync(r.dir, { recursive: true, force: true });
+  }
+  const fresh = scratchRegistry({ d1Id: A });
+  try {
+    assert.equal(fresh.cli('database-id', 'aa', 'standby', '').stdout.trim(), 'create');
+    assert.equal(fresh.cli('database-id', 'aa', 'standby', B).stdout.trim(), 'record');
+    // A restore wipes the standby: its name must never find the live database.
+    const live = fresh.cli('database-id', 'aa', 'standby', A);
+    assert.notEqual(live.status, 0);
+    assert.match(live.stderr, /would wipe the live one/);
+  } finally {
+    rmSync(fresh.dir, { recursive: true, force: true });
+  }
+});
