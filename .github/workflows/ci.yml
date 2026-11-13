@@ -428,8 +428,31 @@ jobs:
       deployment: ${{ toJSON(fromJSON(needs.plan.outputs.deployments)[matrix.id]) }}
     secrets: inherit # zizmor: ignore[secrets-inherit] (see plan)
 
-  general:
+  # A soak between canary and general: the general ring starts only after the canary customers have
+  # run the new release for RING_SOAK_SECONDS (a repository variable, default 1800, at most 7200;
+  # 0 skips the wait). A GitHub environment wait_timer would not do: the deploy environments are
+  # one per deployment (`deploy-<id>`), not per ring, so a timer there would delay every ring.
+  # The job holds no secrets and does nothing but wait.
+  soak:
     needs: [plan, canary]
+    if: ${{ !failure() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.canary != '[]' && needs.plan.outputs.general != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    permissions: {}
+    env:
+      SOAK_SECONDS: ${{ vars.RING_SOAK_SECONDS || '1800' }}
+    steps:
+      - name: Wait before the general ring
+        run: |
+          if ! [[ "$SOAK_SECONDS" =~ ^[0-9]+$ ]] || [ "$SOAK_SECONDS" -gt 7200 ]; then
+            echo "::error::RING_SOAK_SECONDS must be a whole number of seconds, at most 7200 (got '$SOAK_SECONDS')"
+            exit 1
+          fi
+          echo "Soaking $SOAK_SECONDS s after the canary ring" | tee -a "$GITHUB_STEP_SUMMARY"
+          sleep "$SOAK_SECONDS"
+
+  general:
+    needs: [plan, canary, soak]
     if: ${{ !failure() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.general != '[]' }}
     strategy:
       fail-fast: false

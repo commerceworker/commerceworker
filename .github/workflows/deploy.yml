@@ -57,10 +57,10 @@ jobs:
     # all; a deployment with the content stack (`content`) has five more Workers to build and deploy
     # and its own smoke step of up to 20 minutes, so the limit is the same for every deployment: a
     # commerce-only one is bounded by the steps' own timeouts long before it. A gradual rollout adds
-    # its steps' timeouts (12 + 10 + 15 + 10 + 10 + 15 = 72 minutes at most), so the limit is their
-    # sum, 147, rounded up. It is not relied on to end a run: a step that times out fails the job
+    # its steps' timeouts (12 + 10 + 15 + 10 + 10 + 15 + 30 = 102 minutes at most, the last being the
+    # watch at full traffic and the triggers), so the limit is their sum, 177, rounded up. It is not relied on to end a run: a step that times out fails the job
     # and runs the rollback, which a job-level timeout (a cancellation) isn't guaranteed to.
-    timeout-minutes: 150
+    timeout-minutes: 180
     # The deployment's GitHub environment holds its secrets (PRINCIPAL_KEY and DATA_KEY, required,
     # and PRINCIPAL_KEY_PREVIOUS and DATA_KEY_PREVIOUS during a rotation; SETUP_TOKEN, SHOPIFY_WEBHOOK_SECRET,
     # STRIPE_WEBHOOK_SECRET, OIDC_CLIENT_SECRET, INTAKE_ALLOWLIST, SHIPPING_CARRIER_AUTH, STRIPE_SECRET_KEY,
@@ -94,6 +94,9 @@ jobs:
       # A gradual rollout (docs/deploy.md, "Gradual rollouts"): how long the new versions hold their
       # share, and the share of their invocations that may fail meanwhile (scripts/rollout.ts).
       ROLLOUT_HOLD_SECONDS: '600'
+      # How long every rolled-out Worker, the staged ones too, is watched at 100% before its triggers
+      # are applied (at most 1200: the step's timeout).
+      ROLLOUT_POST_PROMOTE_SECONDS: '600'
       ROLLOUT_MAX_ERROR_RATE: '0.02'
     # The Cloudflare API sometimes fails a request outright (codes 7403, 10013) and succeeds on
     # the next try. Each step below is idempotent, so `retry` runs it up to three times; without
@@ -454,7 +457,8 @@ jobs:
         timeout-minutes: 10
         run: scripts/rollout.sh promote
       # The staged Workers are asked once more, through the override, just before they take traffic,
-      # then go to 100% in deploy order; their routes, schedules and queue consumers are applied last.
+      # then go to 100% in deploy order. Their routes, schedules and queue consumers are applied only
+      # after the watch below passes, so a rollback to the earlier versions never has to undo them.
       - name: Smoke test staged versions
         id: smoke-staged
         if: env.GRADUAL == 'true'
@@ -472,6 +476,17 @@ jobs:
         if: env.GRADUAL == 'true'
         timeout-minutes: 15
         run: scripts/rollout.sh promote-staged
+      # Every rolled-out Worker now serves all traffic, the staged ones (the engine, web app,
+      # storefront, catalog, pipeline, studio) for the first time. Their invocation errors are read
+      # for ROLLOUT_POST_PROMOTE_SECONDS with the same thresholds as the hold; a failure fails the job
+      # before any trigger changed, and the rollback step puts every Worker back on its earlier
+      # version. Only a pass applies the triggers (wrangler triggers deploy: routes, custom domains,
+      # cron schedules, queue consumers and Workflows), which a version rollback can't revert.
+      - name: Watch at full traffic, then apply triggers
+        id: rollout-settle
+        if: env.GRADUAL == 'true'
+        timeout-minutes: 30
+        run: scripts/rollout.sh settle
       # A new domain's certificate can take a few minutes to issue, so each check retries for up
       # to five minutes before it counts as failed, a request at most 20 s: each curl ends within
       # about 5 min 20 s and the write check within 5 min, under 27 min for the five. The step's own

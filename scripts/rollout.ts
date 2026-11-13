@@ -18,6 +18,8 @@
  *   node scripts/rollout.ts overrides          the Cloudflare-Workers-Version-Overrides header value
  *   node scripts/rollout.ts smoke-urls [mode...] the URLs the override smoke test requests (of these modes)
  *   node scripts/rollout.ts watch <since>       hold, and fail if a new version's error rate rises
+ *   node scripts/rollout.ts watch-promoted <since>  after every Worker is at 100%: watch the gradual
+ *                                             and staged versions for ROLLOUT_POST_PROMOTE_SECONDS
  *
  * Modes: `full` is `wrangler deploy`; `gradual` is upload, 0% (smoke test by override), 10%, hold and
  * watch, 100%; `staged` (a Worker that serves hashed static assets or runs Workflows) stays at 0%
@@ -38,6 +40,12 @@ export type Mode = 'full' | 'gradual' | 'staged';
 export const CANARY_PERCENT = 10;
 /** How long the new version holds that share, watched, before it takes the rest. */
 export const HOLD_SECONDS = 600;
+/**
+ * How long every rolled-out version (the staged Workers too) is watched at full traffic before its
+ * triggers are applied. The step running it has a 30 minute timeout, so the window is capped.
+ */
+export const POST_PROMOTE_SECONDS = 600;
+export const POST_PROMOTE_MAX_SECONDS = 1200;
 /** The share of a new version's invocations that may fail while it holds, as a fraction. */
 export const MAX_ERROR_RATE = 0.02;
 /** Fewer failures than this are noise, whatever the rate. */
@@ -674,17 +682,32 @@ async function main(cmd: string | undefined, args: string[]) {
     const modes = new Set(args.length ? args : ['gradual', 'staged']);
     for (const w of plan.workers)
       if (modes.has(w.mode) && w.newVersion) for (const u of w.smoke) console.log(u);
-  } else if (cmd === 'watch') {
+  } else if (cmd === 'watch' || cmd === 'watch-promoted') {
     const since = args[0];
     if (!since || Number.isNaN(Date.parse(since)))
-      throw new Error('usage: rollout.ts watch <ISO time the split began>');
+      throw new Error(`usage: rollout.ts ${cmd} <ISO time the rollout step began>`);
     const token = process.env.CLOUDFLARE_API_TOKEN ?? '';
     const account = process.env.CLOUDFLARE_ACCOUNT_ID ?? '';
-    const holdMs = number('ROLLOUT_HOLD_SECONDS', HOLD_SECONDS, (n) => n >= 0) * 1000;
+    const promoted = cmd === 'watch-promoted';
+    const holdMs = promoted
+      ? number(
+          'ROLLOUT_POST_PROMOTE_SECONDS',
+          POST_PROMOTE_SECONDS,
+          (n) => n >= 0 && n <= POST_PROMOTE_MAX_SECONDS,
+        ) * 1000
+      : number('ROLLOUT_HOLD_SECONDS', HOLD_SECONDS, (n) => n >= 0) * 1000;
     const maxRate = number('ROLLOUT_MAX_ERROR_RATE', MAX_ERROR_RATE, (n) => n > 0 && n < 1);
-    // Staged Workers are at 0% through the hold: nothing to watch.
-    const watched = plan.workers.filter((w) => w.mode === 'gradual' && w.newVersion);
-    if (!watched.length) return console.log('No Worker is taking a share: nothing to hold');
+    // The hold watches the Workers taking a share (staged ones are at 0% through it: nothing to
+    // watch). After promotion every rolled-out Worker serves all traffic, staged ones included.
+    const watched = plan.workers.filter(
+      (w) => (w.mode === 'gradual' || (promoted && w.mode === 'staged')) && w.newVersion,
+    );
+    if (!watched.length)
+      return console.log(
+        promoted
+          ? 'No Worker was rolled out: nothing to watch'
+          : 'No Worker is taking a share: nothing to hold',
+      );
     const retrying = async (w: { name: string; version: string }) => {
       for (let attempt = 1; ; attempt++) {
         try {
@@ -710,7 +733,7 @@ async function main(cmd: string | undefined, args: string[]) {
     }
   } else {
     throw new Error(
-      'usage: rollout.ts plan|get|keys|record|overrides|smoke-urls|watch (see the header)',
+      'usage: rollout.ts plan|get|keys|record|overrides|smoke-urls|watch|watch-promoted (see the header)',
     );
   }
 }

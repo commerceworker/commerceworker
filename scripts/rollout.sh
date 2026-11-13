@@ -8,8 +8,10 @@
 #       built app, whose config the build wrote.
 #   rollout.sh stage      gradual Workers to the canary share; staged ones stay at 0%
 #   rollout.sh promote    gradual Workers to 100%
-#   rollout.sh promote-staged   staged Workers to 100% (after every gradual one), then every
-#                         rolled-out Worker's triggers
+#   rollout.sh promote-staged   staged Workers to 100% (after every gradual one); versions only
+#   rollout.sh settle     watch every rolled-out Worker at full traffic, then (only if that passes)
+#                         apply every rolled-out Worker's triggers
+#   rollout.sh triggers   `wrangler triggers deploy` for every rolled-out Worker
 #   rollout.sh rollback <key> <message>   one attempt at putting <key> back on its earlier version
 set -eo pipefail
 
@@ -66,6 +68,8 @@ case "${1:-}" in
     done
     ;;
   promote)
+    # The post-promotion watch counts invocations from here.
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/promoted"
     keys=$(plan keys gradual)
     for key in $keys; do
       read -ra specs <<<"$(plan specs "$key" 100)"
@@ -79,8 +83,18 @@ case "${1:-}" in
       read -ra specs <<<"$(plan specs "$key" 100)"
       set_versions "$key" "Deploy ${GITHUB_SHA::7} at 100%" "${specs[@]}"
     done
-    # Routes, custom domains, cron schedules, queue consumers and Workflows aren't part of a version:
-    # `versions upload` leaves them as they were. They go live with the version that needs them.
+    ;;
+  settle)
+    # Watched first, so a bad version is rolled back (versions only) before its triggers are applied.
+    since=$(cat "$dir/promoted" 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+    plan watch-promoted "$since"
+    "$0" triggers
+    ;;
+  triggers)
+    # Routes, custom domains, workers.dev, cron schedules, queue consumers and Workflows (their
+    # limits and schedules) aren't part of a version: `versions upload` leaves them as they were, and
+    # a rollback to an earlier version can't put them back. So they go live last, once the new
+    # versions have served all traffic for the watch window without raising their error rate.
     keys=$(plan keys gradual staged)
     for key in $keys; do
       cfg_of "$key"
@@ -95,7 +109,7 @@ case "${1:-}" in
     pnpm --filter "$filter" exec wrangler versions deploy "${specs[@]}" -y --message "$message" "${cfg[@]}"
     ;;
   *)
-    echo "usage: rollout.sh ship|stage|promote|rollback (see the header)" >&2
+    echo "usage: rollout.sh ship|stage|promote|promote-staged|settle|triggers|rollback (see the header)" >&2
     exit 2
     ;;
 esac
