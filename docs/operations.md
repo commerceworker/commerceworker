@@ -938,6 +938,8 @@ Use this when a bad deploy or a bug corrupted what named orders or carts hold (t
    wrangler workflows trigger commerceworker-objects-restore<suffix> --params '{"class":"OrderAgent","names":["ord_1"],"bookmarks":{"ord_1":"<undo from the report>"}}'
    ```
 
+6. **Replay erasures since `at`** ([Replaying erasures after a restore](#replaying-erasures-after-a-restore)): an order rewound to before its buyer was erased holds the buyer again, in the object and in the report's `afterRestore` reminder. Run it as the last step, and again after an undo.
+
 Caveats: **the object is rewound, nothing around it is.** An order's Workflow instance, Stripe, carriers and webhooks already sent keep what they did, and the restored order may be behind them: restore an order whose Workflow has ended, or cancel its instance first, and reconcile payments by hand. D1 rows other than the order's and cart's own index row are not rewound. Retrying the Workflow is safe: an object whose undo is already kept is not rewound again. The copy under `objects/<date>/` is for what PITR can't reach.
 
 ### Restoring R2 objects from the replica
@@ -956,6 +958,7 @@ Use this when objects are missing or damaged in the docs bucket (deleted by mist
 4. **Copy objects back**, through the S3 API or `wrangler r2 object get <replica>/<key> --remote --file <tmp>` then `wrangler r2 object put commerceworker-docs<suffix>/<key> --remote --file <tmp> --content-type <type>` (with `--jurisdiction` as provisioned). Put back the original key (drop `deleted/<date>/`). Each restored object raises a create notification, which copies it into the replica again: that is expected and changes nothing.
 5. **A whole bucket lost:** recreate `commerceworker-docs<suffix>` with `provision.sh` (it sets the lifecycle rules, the locks and the notification rule), then copy every live key of the replica (everything outside `deleted/`, `replica/` and `dlq/`) back with the S3 API or Rclone, with each object's content type.
 6. **Check:** trigger `commerceworker-docs-reconcile<suffix>`; its report should read `clean` or `repaired` with no `held` or `failed` keys, and no extras beyond what you chose not to restore.
+7. **Replay erasures since the damage began** ([Replaying erasures after a restore](#replaying-erasures-after-a-restore)): whatever you copied back from the replica or the whole bucket's keys may belong to an order erased since. The replay empties `orders/<id>/` of every order marked erased from that time on.
 
 Caveats: the docs bucket's D1 records (`documents`) are in the database, not the bucket: a restored object is reachable again by its key. A copy keeps its content type and custom metadata, not other HTTP metadata (`cacheControl`, `contentDisposition`). An object written and deleted before its create event was applied has no copy. A restored `audit/` or `plugins/` object is refused if one with that key exists in the docs bucket.
 
@@ -990,6 +993,7 @@ Caveats: the docs bucket's D1 records (`documents`) are in the database, not the
    ```
 
    Commit and merge the registry change, and delete the database you replaced once you no longer need it.
+7. **Replay erasures since the backup began** ([Replaying erasures after a restore](#replaying-erasures-after-a-restore)), once the deploy is live: the backup holds everyone erased after it, and so does the standby you promoted. The drill's evidence says so (`afterPromotion`). Use the backup's date as `since`, or an hour before its manifest's `startedAt`.
 
 Caveats:
 
@@ -1028,6 +1032,7 @@ Use this when `OAUTH_KV` is lost, emptied or corrupted: connected agents and the
    ```
 
    A key that exists is overwritten with the dump's value; a key written after the export is left as it is.
+6. **Replay erasures since the export** ([Replaying erasures after a restore](#replaying-erasures-after-a-restore)), with the export's `finishedAt` as `since`: every restore ends this way. The dump holds the grants of the people on the team (their props are encrypted) and the apps they approved, never a buyer, and a replay doesn't read KV, so it finds nothing of this restore's own to erase; what it does is finish the restores that went before it (a D1 restore is often run with this one). A restored grant of someone removed from the team since stops working as a disabled person's does.
 
 What a restore brings back, and what not:
 
@@ -1035,6 +1040,30 @@ What a restore brings back, and what not:
 - **No access tokens that were issued after the export,** and none that expired meanwhile (they are skipped by their expiration). Access tokens last an hour: clients refresh.
 - **Sign-in state is not restored** ([OAuth grants](#oauth-grants)): a device sign-in or consent in progress starts again.
 - The restore does not touch D1: staff sessions, API tokens and the people who approved grants are not in KV. A grant whose person is disabled or gone stops working as it does anywhere else.
+
+### Replaying erasures after a restore
+
+Every restore puts back what was stored at its point, **including people erased after it**: Time Travel and a promoted backup bring back their rows, a rewound order or cart its state, and the bucket or the replica their files. Nothing erases them again by itself. The audit log records each erasure (`personal_data.erased`) but names the person only by a hash of their address, so there is no list of addresses to run again. **Replaying erasures** is the last step of every restore on this page, and of restoring D1 to a Time Travel bookmark ([Restoring D1](deploy.md#restoring-d1)).
+
+```bash
+export COMMERCEWORKER_API_TOKEN=…                         # an admin's API token on that deployment
+node scripts/fleet.ts replay-erasures <id> <since> --dry-run   # who would be erased again; erases nobody
+node scripts/fleet.ts replay-erasures <id> <since>
+```
+
+`<since>` is the restore point: an RFC 3339 time (`2026-11-12T09:30:00Z`, UTC when it names no zone), a date, or epoch milliseconds. Use the bookmark's time, the backup's date or `startedAt`, or the `at` of an objects restore. An earlier `since` than needed is safe: the replay is idempotent, it only reads more. The command is REST's `POST /api/v1/erasures/replay` (`{ since, dryRun? }`), the same operation as the MCP and assistant tool `replay_erasures` (admin; a confirm card, a step-up for a person; an admin's API token needs none, which is why the command uses one). It refuses to run when `CI` or `GITHUB_ACTIONS` is set, and no workflow runs it: a restore is an operator's decision, and so is what follows it. It sends the call and does not print a `curl` line, so the step is the command and the token is never in a pasted line.
+
+The engine does the work, reading and erasing what is stored now:
+
+1. **The erasures since.** It reads `personal_data.erased` events at or after `since` from the database's audit log **and** from the R2 copies under `audit/chain/` (`copyAudit`), because a restore of the database rolls its log back too. The copies hold every sealed event from the day the sweep wrote it ([Retention](data-model.md#retention)). An erasure made after the last copy that the database restore then rolled back is in neither: erase that person again by hand (`POST /api/v1/data-subjects/erase`), from the request that asked for it.
+2. **Who they were.** The log holds a hash, not an address, so it hashes the addresses the stores hold (orders' contact emails, accounts, intake senders, message recipients, company members, carts' and checkouts' buyers, linked platforms, shopper sessions: `SubjectStore.addresses`, read by rowid, up to 500,000) and matches them. A person with nothing left in the stores is `clean`.
+3. **Erase again.** Each match is erased as an erasure request does, a batch of 100 orders at a time until done (`eraseDataSubject`). One with orders still running is `blocked` (`active_orders`), and one who **ordered again after they were erased** is `blocked` (`ordered_since`) and left alone: that is live data, a person's call (cancel or wait, then erase them on the privacy page). Neither is erased by a re-run until it changes.
+4. **The orders already marked erased since.** A rewound order agent or a restored bucket brings back state and files that the index (`orders.erased_at`) doesn't know about, and no address finds them. For each order marked erased since `since` (up to 2,000 a call; `orders.nextSince` says where the next call starts), it erases the agent's state again if it holds what an erasure removes, and empties `orders/<id>/`. An order a restore left running again is listed in `orders.running`: erase it when it ends. The retention sweep's erasures are included.
+5. **Record it.** A person whose erasure a restore dropped from the database's log is recorded again (`personal_data.erased`, `replayed: true`), so a cart indexed later is still erased as it is found, and one `personal_data.erasure_replayed` event says who ran it and the counts.
+
+**Read the answer**: `events` (how many people, and how many only the R2 copies held), `erased` (each by hash, with its counts and whether its erasure was still in the log), `orders`, `blocked` and `clean`. It names nobody: a hash, never an address. The command exits non-zero when anyone is `blocked` or an erasure didn't finish (`done: false`, which a 100-order batch limit on a very large subject can cause: run it again). **Run it twice**: the second answer has `erased: []` (everyone found is `clean`), `orders.erased: 0` and `orders.documents: 0`. A `--dry-run` doesn't delete files, so it can't count them.
+
+What it does not reach: Time Travel's own history and the backups (they keep the person until they expire, [Personal data that outlives an erasure](data-model.md#stores-that-outlive-an-erasure)); the standby database before its next drill rebuilds it; Workflow instance state; and a person who was never erased but whose request is still open. It erases what an erasure request erases, so it keeps the commercial record.
 
 ### What is recovered, and how fast
 
@@ -1051,6 +1080,7 @@ What a restore brings back, and what not:
 | The engine, its D1 or a flow is unavailable when a Shopify order or EDI 850 arrives | The raw body is already in the docs bucket and a pointer in the intake queue, which retries ([Channel intake](#channel-intake)); a dead letter is redriven | None: the sender was answered `202` only after both were written | The order starts within minutes of recovery; a redrive is one command once the cause is fixed |
 | The account or R2 is lost | Not covered yet: `offsite` is accepted and not acted on | The bucket's contents | None |
 | A bad deploy or bug corrupted named orders' or carts' live state, within the last 30 days | Point-in-time recovery through `commerceworker-objects-restore<suffix>` ([above](#restoring-an-orders-or-carts-live-state)); the restore's undo bookmark takes it back | The object's writes after the time you choose; to the second | Minutes: a bookmark and a restart for each object, 50 at most a run |
+| People erased after a restore's point come back with it | [Replaying erasures after a restore](#replaying-erasures-after-a-restore): the audit log's erasures since, in the database and its R2 copies, run again | None: they are erased again; a person with running orders, or who ordered again, is named | Minutes: a scan of the addresses and the erasures, as one command |
 | The same, past 30 days (a long-running subscription) | The nightly copy `objects/<date>/` of active orders and open carts, kept `backupDays` days | Up to 24 hours | By hand: no import tool |
 
 The backup and the replica are in the same Cloudflare account as what they protect: they survive losing D1 or an object, not losing the account.

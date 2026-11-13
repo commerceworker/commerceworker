@@ -65,6 +65,8 @@ export interface AuditArchive {
   put(key: string, rows: readonly AuditRow[]): Promise<void>;
   /** The daily copies (`auditCopyKey`), in chain order. */
   copies(): Promise<{ key: string; from: number; to: number; hash: string }[]>;
+  /** The events an object holds, in the order they were written; none for a key that isn't there. */
+  read(key: string): Promise<AuditRow[]>;
 }
 
 /** The cart agents the sweep wakes. */

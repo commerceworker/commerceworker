@@ -76,6 +76,20 @@ export interface SubjectStore {
   customerCarts(customerIds: readonly string[], limit: number): Promise<string[]>;
   /** Carts submitted as these orders. */
   orderCarts(orderIds: readonly string[]): Promise<string[]>;
+  /**
+   * A page of the addresses the stores hold about people (orders' contact emails, accounts,
+   * senders and recipients, company members, carts' buyers, checkouts' buyers, linked platforms,
+   * shopper sessions), lower-cased, with none already blanked. An address may come back on more
+   * than one page. Pass the `next` of the last page (none for the first); `next` is null once
+   * every store is read. It is how a restore's erasures are found again: the audit log names a
+   * person only by a hash (`subjectTarget`), so the stores' own addresses are hashed to match.
+   */
+  addresses(
+    cursor: string | null,
+    limit: number,
+  ): Promise<{ emails: string[]; next: string | null }>;
+  /** Orders marked erased at or after `since` (epoch ms), oldest first, up to `limit`. */
+  erasedOrders(since: number, limit: number): Promise<{ id: string; title: string; at: number }[]>;
   /** Whether an erasure of the subject with this audit target was recorded. */
   wasErased(target: string): Promise<boolean>;
   /** Marks an order erased: its contact email gone, `title` its own, its reason cleared if asked. */

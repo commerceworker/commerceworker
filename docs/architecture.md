@@ -214,6 +214,20 @@ its id and payload and the subscription's current signature, so there is no seco
 drift. The `WebhookOutbox` port's `delivery` and `unsent` (what a retry sends, never recording
 anything) serve it and the OrderAgent's retries.
 
+`POST /api/v1/erasures/replay` is a `REST_OPERATIONS` row for the `replay_erasures` tool (admin, a
+confirm card; `since`, `dryRun?`): after a restore it erases again the people erased since its point
+(`replayErasures` in `packages/application/src/commerce/erasure-replay.ts`, bound by
+`apps/engine/src/subjects.ts`, the card and audit in `apps/engine/src/assistant/erasures.ts`). It reads
+`personal_data.erased` from the database's audit log and the R2 copies of it (`AuditArchive.read`),
+hashes the addresses the stores hold (`SubjectStore.addresses`, by rowid) to find who the hashes
+name, runs `eraseDataSubject` for each, and for the orders marked erased since (`erasedOrders`)
+erases an agent's restored state and empties `orders/<id>/`. A person needs a step-up (the card
+carries `stepUp`), which REST can't give, so it is run over REST with an admin's API token
+(`stepUpNeeded`, the same rule as turning a plugin off); a dry run needs none. It audits
+`personal_data.erasure_replayed`, and `personal_data.erased` (`replayed: true`) for each person whose
+erasure the restore dropped from the log. `node scripts/fleet.ts replay-erasures`
+(`scripts/replay-erasures.ts`) is the operator's call to it ([Operations](operations.md#replaying-erasures-after-a-restore)).
+
 Business events are audited at the first place that knows the actor: the web app's routes and API
 handlers write them with `audit` (`apps/web/app/lib/audit.server.ts`), the engine writes them with
 `recordAudit` (`apps/engine/src/audit.ts`) for the order socket (`via: 'app'`), the assistant, MCP

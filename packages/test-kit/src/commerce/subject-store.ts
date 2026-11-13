@@ -19,6 +19,7 @@ export interface SubjectFixture {
     status: string;
     contactEmail: string | null;
     customerId: string | null;
+    createdAt?: number;
   }[];
   inboundEmails?: { id: string; sender: string; orderId: string | null; r2Key: string | null }[];
   messages?: { id: string; orderId: string; recipient: string }[];
@@ -144,7 +145,7 @@ export class InMemorySubjectStore implements SubjectStore {
         status: o.status,
         channel: 'api',
         externalId: null,
-        createdAt: 0,
+        createdAt: o.createdAt ?? 0,
         customerId: o.customerId,
         currency: 'USD',
         total: 0,
@@ -199,6 +200,45 @@ export class InMemorySubjectStore implements SubjectStore {
 
   async orderCarts(orderIds: readonly string[]) {
     return this.f.carts.filter((c) => c.orderId && orderIds.includes(c.orderId)).map((c) => c.id);
+  }
+
+  async erasedOrders(since: number, limit: number) {
+    return this.f.orders
+      .filter((o) => o.erasedAt !== null && o.erasedAt >= since)
+      .sort((a, b) => a.erasedAt! - b.erasedAt! || (a.id < b.id ? -1 : 1))
+      .slice(0, limit)
+      .map((o) => ({ id: o.id, title: o.title, at: o.erasedAt! }));
+  }
+
+  async addresses(cursor: string | null, limit: number) {
+    const f = this.f;
+    const sources: (string | null | undefined)[][] = [
+      f.orders.map((o) => o.contactEmail),
+      f.customers.map((c) => c.email),
+      f.inboundEmails.map((r) => r.sender),
+      f.messages.map((m) => m.recipient),
+      f.companyMembers.map((m) => m.email),
+      f.carts.map((c) => c.buyerId),
+      f.checkouts.map((c) => c.email),
+    ];
+    const [at = '0', after = '0'] = (cursor ?? '').split(':');
+    const i = Number(at) || 0;
+    const all = sources[i];
+    if (!all) return { emails: [], next: null };
+    const from = Number(after) || 0;
+    const page = all.slice(from, from + limit);
+    const emails = page
+      .filter((e): e is string => !!e && e !== ERASED && !/^erased-.+@erased\.invalid$/.test(e))
+      .map(lower);
+    return {
+      emails,
+      next:
+        from + limit < all.length
+          ? `${i}:${from + limit}`
+          : i + 1 < sources.length
+            ? `${i + 1}:0`
+            : null,
+    };
   }
 
   async wasErased(target: string) {

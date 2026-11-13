@@ -126,6 +126,7 @@ export const OPERATIONS = {
   redeliver_webhook_delivery: { method: 'POST', path: '/api/v1/webhook-deliveries/{deliveryId}/redeliver', pathParams: ["deliveryId"], input: 'body' },
   reindex_catalog: { method: 'POST', path: '/api/v1/catalog/reindex', pathParams: [], input: 'none' },
   remove_company_member: { method: 'POST', path: '/api/v1/companies/{companyId}/members/{memberId}/remove', pathParams: ["companyId", "memberId"], input: 'body' },
+  replay_erasures: { method: 'POST', path: '/api/v1/erasures/replay', pathParams: [], input: 'body' },
   resolve_catalog_alias: { method: 'GET', path: '/api/v1/catalog/aliases/{alias}', pathParams: ["alias"], input: 'query' },
   restart_order: { method: 'POST', path: '/api/v1/orders/{orderId}/restart', pathParams: ["orderId"], input: 'body' },
   revise_quote: { method: 'POST', path: '/api/v1/quotes/{quoteId}/revise', pathParams: ["quoteId"], input: 'body' },
@@ -2204,6 +2205,90 @@ export type RemoveCompanyMemberResult = {
   href?: string;
 } & { [key: string]: unknown };
 
+/** Replay erasures after a restore (Admin) (request) */
+export type ReplayErasuresInput = {
+  /** The restore point, epoch ms (the backup’s or bookmark’s time): erasures recorded from then on are run again */
+  since: number;
+  /** List who would be erased again and erase nobody */
+  dryRun?: boolean;
+};
+
+export type ReplayErasuresResult = {
+  preview?: {
+    title: string;
+    consequences: string[];
+    href?: string;
+  } & { [key: string]: unknown };
+  /** Send it back with the same input once agreed */
+  confirmation?: string;
+  expiresAt?: number;
+  next?: string;
+  /** What happened, once the action ran */
+  done?: string;
+  href?: string;
+  /** Epoch ms */
+  since?: number;
+  /** Nothing was erased: `erased` is what a replay would erase */
+  dryRun?: boolean;
+  /** Distinct people erased since then */
+  events?: {
+    total: number;
+    /** Read from the database’s audit log */
+    database: number;
+    /** Read from the R2 copies of it, which a restore does not touch */
+    archive: number;
+  };
+  /** Addresses hashed to find them */
+  scanned?: number;
+  /** People found in the stores and erased again */
+  erased?: {
+    /** False when more orders are left: call again to continue */
+    done: boolean;
+    orders: number;
+    customers: number;
+    documents: number;
+    messages: number;
+    inboundEmails: number;
+    carts: number;
+    taxCertificates: number;
+    addresses: number;
+    companyMembers: number;
+    purchaseOrders: number;
+    quotes: number;
+    shopperSignIns: number;
+    shopperSessions: number;
+    ucpLinks: number;
+    /** The audit log’s name for them: a hash, never the address */
+    target: string;
+    /** When they were first erased */
+    at: number;
+    /** Their erasure is in the database’s audit log */
+    recorded: boolean;
+  }[];
+  /** Orders erased since, whose agent state or files a restore brought back */
+  orders?: {
+    /** Orders marked erased since then */
+    checked: number;
+    /** Those whose agent held what an erasure removes, erased again */
+    erased: number;
+    /** Files deleted again from their folders in the documents bucket */
+    documents: number;
+    /** Orders a restore left running again: erase them once they end */
+    running: string[];
+    /** Set when more were left than one replay checks: run again with this `since` */
+    nextSince?: number;
+  };
+  /** People left alone, and why */
+  blocked?: ({
+    target: string;
+    /** `active_orders`: cancel them or wait, then replay again. `ordered_since`: they ordered after they were erased, so a person decides */
+    reason: "active_orders" | "ordered_since";
+    orders: string[];
+  })[];
+  /** People the stores hold nothing about */
+  clean?: string[];
+} & { [key: string]: unknown };
+
 /** The product holding a SKU, GTIN (any length: a UPC finds its EAN) or slug (`sku:ABC`, `gtin:…`, `slug:en:…`) (request) */
 export type ResolveCatalogAliasInput = {
   alias: string;
@@ -4253,6 +4338,8 @@ export interface OperationTypes {
   reindex_catalog: { input: ReindexCatalogInput; result: ReindexCatalogResult };
   /** Remove a company member (Operator) */
   remove_company_member: { input: RemoveCompanyMemberInput; result: RemoveCompanyMemberResult };
+  /** Replay erasures after a restore (Admin) */
+  replay_erasures: { input: ReplayErasuresInput; result: ReplayErasuresResult };
   /** The product holding a SKU, GTIN (any length: a UPC finds its EAN) or slug (`sku:ABC`, `gtin:…`, `slug:en:…`) */
   resolve_catalog_alias: { input: ResolveCatalogAliasInput; result: ResolveCatalogAliasResult };
   /** Restart an order (Operator) */

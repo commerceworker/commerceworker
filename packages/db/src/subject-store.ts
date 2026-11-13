@@ -13,7 +13,9 @@ import {
 import type { Subject, SubjectStore } from '@commerceworker/ports/commerce';
 import {
   and,
+  asc,
   eq,
+  gte,
   inArray,
   isNull,
   ne,
@@ -73,6 +75,23 @@ const checkoutBuyer = (email: string) =>
 /** A checkout opened for this account (a hosted one names its customer). */
 const checkoutCustomer = (customerId: string) =>
   sql`json_extract(${checkoutSessions.data}, '$.customerId') = ${customerId}`;
+
+/**
+ * Where addresses are kept, one table at a time: the table and the SQL for its address column.
+ * Read by rowid, so a page costs what it returns whatever the table holds (no table here is
+ * WITHOUT ROWID).
+ */
+const ADDRESS_SOURCES = [
+  ['orders', 'contact_email'],
+  ['customers', 'email'],
+  ['inbound_emails', 'sender'],
+  ['messages', 'recipient'],
+  ['company_members', 'email'],
+  ['carts', 'buyer_id'],
+  ['ucp_link_grants', 'email'],
+  ['shopper_sessions', 'email'],
+  ['checkout_sessions', "json_extract(data, '$.buyer.email')"],
+] as const;
 
 export function d1SubjectStore(d1: D1Database): SubjectStore {
   const d = createDb(d1);
@@ -230,6 +249,40 @@ export function d1SubjectStore(d1: D1Database): SubjectStore {
         d.select({ id: carts.id }).from(carts).where(inArray(carts.orderId, r)),
       );
       return rows.map((r) => r.id);
+    },
+
+    async erasedOrders(since, limit) {
+      const rows = await d
+        .select({ id: orders.id, title: orders.title, at: orders.erasedAt })
+        .from(orders)
+        .where(gte(orders.erasedAt, since))
+        .orderBy(asc(orders.erasedAt), asc(orders.id))
+        .limit(limit);
+      return rows.map((r) => ({ ...r, at: r.at! }));
+    },
+
+    async addresses(cursor, limit) {
+      const [at = '0', after = '0'] = (cursor ?? '').split(':');
+      const i = Number(at) || 0;
+      const source = ADDRESS_SOURCES[i];
+      if (!source) return { emails: [], next: null };
+      const [table, column] = source;
+      // What an erasure left behind is not an address to find: blanked, or the placeholder.
+      const { results } = await d1
+        .prepare(
+          `select rowid as r, lower(${column}) as e from ${table}
+           where rowid > ?1 and ${column} is not null and ${column} not in ('', ?2)
+             and ${column} not like 'erased-%@erased.invalid'
+           order by rowid limit ?3`,
+        )
+        .bind(Number(after) || 0, ERASED, limit)
+        .all<{ r: number; e: string }>();
+      const last = results.at(-1);
+      const nextSource = i + 1 < ADDRESS_SOURCES.length ? `${i + 1}:0` : null;
+      return {
+        emails: results.map((x) => x.e),
+        next: results.length < limit ? nextSource : `${i}:${last!.r}`,
+      };
     },
 
     async wasErased(target) {

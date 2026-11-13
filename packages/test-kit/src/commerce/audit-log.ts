@@ -15,6 +15,7 @@ import type {
   AuditArchive,
   AuditEvent,
   AuditLog,
+  AuditRow,
 } from '@commerceworker/ports/commerce';
 
 export class InMemoryAuditLog implements AuditLog {
@@ -97,6 +98,10 @@ export class InMemoryAuditArchive implements AuditArchive {
   async put(key: string, rows: readonly Record<string, unknown>[]) {
     if (this.objects.has(key)) throw new Error(`${key} is locked`);
     this.objects.set(key, [...rows]);
+  }
+
+  async read(key: string) {
+    return [...(this.objects.get(key) ?? [])] as AuditRow[];
   }
 
   async copies() {

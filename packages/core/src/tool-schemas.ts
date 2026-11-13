@@ -50,6 +50,7 @@ import {
 } from './cart';
 import { MAX_CHECKOUT_LINES, MAX_LINE_QUANTITY } from './checkout';
 import { CREDIT_ENTRY_KINDS, MAX_CREDIT_ADJUSTMENT } from './credit';
+import { erasureReplaySchema } from './erasure-schemas';
 import { FX_SOURCES } from './fx';
 import { hostedBuyerSchema } from './hosted-checkout';
 import { flowGraphSchema } from './order-schemas';
@@ -858,6 +859,16 @@ export const TOOL_INPUTS = {
       ),
   }),
   delete_webhook_subscription: z.object({ subscriptionId: z.string().min(1).max(60) }),
+  replay_erasures: z.object({
+    since: z
+      .number()
+      .int()
+      .positive()
+      .describe(
+        'The restore point, epoch ms (the backup’s or bookmark’s time): erasures recorded from then on are run again',
+      ),
+    dryRun: z.boolean().optional().describe('List who would be erased again and erase nobody'),
+  }),
   list_integrations: z.object({}),
   revoke_integration: z.object({ integrationId: z.string().min(1).max(60) }),
   get_ucp_settings: z.object({}),
@@ -1346,6 +1357,7 @@ export const TOOL_OUTPUTS = {
       }),
     ),
   }),
+  replay_erasures: actionOutput.extend(erasureReplaySchema.partial().shape),
   redeliver_webhook_delivery: actionOutput.extend({
     id: z.string().optional().describe('The delivery sent again'),
     status: z
@@ -1642,6 +1654,7 @@ export const REST_OPERATION_TOOLS = [
   'expire_quote',
   'convert_quote',
   'redeliver_webhook_delivery',
+  'replay_erasures',
   'run_stock_review',
   'find_products',
   'assess_order',

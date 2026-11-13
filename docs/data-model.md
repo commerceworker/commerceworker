@@ -539,6 +539,8 @@ whose email is the subject's in any other company), and each
 target `subject:` and the first 16 hex characters of the SHA-256 of the normalised email
 (`fingerprintOf`), so the log does not hold the address.
 
+Where else the person stays, and for how long, is [Stores that outlive an erasure](#stores-that-outlive-an-erasure). A restore brings back anyone erased after its point, and `replay_erasures` erases them again (REST `POST /api/v1/erasures/replay`, `node scripts/fleet.ts replay-erasures`, [Replaying erasures after a restore](operations.md#replaying-erasures-after-a-restore)).
+
 Not reached: messages on staff carts or other buyers' carts that name the subject (until those carts'
 retention clears them), and an external cart opened before `buyer_id` was recorded (migration `0050`)
 until the retention sweep has indexed it (`indexCartBuyers`, 200 a run); the Workflow instance's params and step outputs, which Cloudflare Workflows retains (7 days after it finishes, 30 after it errors: `default_retention`); the
@@ -602,6 +604,32 @@ Not covered by the redaction:
   the only removal, which is why `logRetentionDays` defaults to `personalDataRetentionDays` when
   that is set and may not exceed it. The bucket never gets the request's URL, headers or client
   IP (`Event` isn't pushed).
+
+### Stores that outlive an erasure
+
+An erasure ([above](#export-and-erasure)) cleans the stores a deployment reads and writes. The copies it keeps for recovery, and the logs it writes, are not rewritten: each keeps the person until it expires. This is every store that can hold personal data, how long it outlives an erasure, and what removes it. **Expiry** is the store's own: a lifecycle rule, or a bucket lock, which is also what stops anyone from deleting the object sooner. **Replay** means the store is erased again after a restore from it, by `replay_erasures` ([Replaying erasures after a restore](operations.md#replaying-erasures-after-a-restore)): a restore puts back what was stored at its point, and nothing else erases it.
+
+| Store | Holds | Outlives an erasure | Purged by |
+|---|---|---|---|
+| The live stores: commerce D1, order and cart Durable Objects, `orders/<id>/` in R2, KV | Everything in [the table above](#personal-data) | Not at all | The erasure itself (`eraseDataSubject`, `eraseOrders`), or the [retention sweep](#personal-data-on-finished-orders) where `PERSONAL_DATA_RETENTION_DAYS` is set |
+| D1 Time Travel | The whole database, any minute of the last 30 days | Up to 30 days | Expiry. Restoring to a point before the erasure puts the person back: **replay** |
+| `d1/<date>/` in the backups bucket | Every table of record, daily (`redundancy`) | `backupDays` (default 35) from the backup's creation, **locked**: no one can delete it sooner | Lock and lifecycle expiry. A backup made after the erasure doesn't hold the person. Promoting an older one puts them back: **replay** |
+| The standby D1 (`standbyD1Id`) | A full copy of production, as of the newest backup the last drill restored | Until the next drill (weekly or monthly) wipes and rebuilds it from a newer backup. It is a production database once promoted: **replay** | The drill's rebuild; replay after a promotion |
+| Durable Object point-in-time recovery | Every order, cart, A2A and plugin-storage object, as it was at any moment of the last 30 days | Up to 30 days | Expiry. Rewinding an object to before the erasure puts its state back: **replay** (`orders` in the answer) |
+| `objects/<date>/` in the backups bucket | The live orders' and open carts' tables and state, nightly | `backupDays`, **locked** | Lock and lifecycle expiry. Read back by hand, so what is put back is erased again by **replay** |
+| `kv/<date>/oauth/` in the backups bucket | The OAuth provider's clients and grants, with props encrypted and tokens hashed: the people on the team and their apps, never a buyer | `backupDays`, **locked** | Lock and lifecycle expiry. A grant of someone removed since stops working as a disabled person's does; **replay** doesn't read KV |
+| `drills/` and the restore reports | Counts, bookmarks, the restored backup's date | No personal data | Kept; nothing to erase |
+| The docs replica, `deleted/<date>/<key>` | A copy of each object deleted from the docs bucket (an order's documents and inbound mail, a cart's files, a tax certificate) | 30 days | Lifecycle rule `deleted-copies`. Restoring from it puts files back: **replay** empties `orders/<id>/` of every order marked erased |
+| The docs replica, `dlq/` | Dead-lettered queue messages (R2 keys and ids; a sign-in's code and address are left out) | 30 days | Lifecycle rule `dlq`; `redriven/` markers with them |
+| `intake/<channel>/<date>/<id>` in the docs bucket | A Shopify or EDI body awaiting its order: the buyer's details | 7 days. An erasure doesn't reach it (filed by webhook id, not person) | The daily sweep, 7 days after it was written, or `PERSONAL_DATA_RETENTION_DAYS` if shorter. Not copied to the replica |
+| `audit/chain/`, `audit/<date>/` and `audit/anchors/` in the docs bucket and the replica | Every audit event: staff actors' emails or token names, targets (a person erased or exported is a hash), `detail` and `ip`; the chain's hashes | `auditArchiveDays` (indefinitely when unset), **locked** | Lifecycle and lock expiry. An erasure never removes an event: the log is append-only, and names a subject only by a hash. These objects are also what **replay** reads |
+| `plugin-exports/<id>/<time>.ndjson` in the docs bucket | A plugin's own storage, written when it is uninstalled | 30 days, or `PERSONAL_DATA_RETENTION_DAYS` if shorter | The daily sweep (`pluginExports`). An erasure can't match it to an address; delete one by hand if a request can't wait |
+| Workflow instances (`OrderWorkflow` and the others) | Params and memoized step results, which include node outputs | 7 days after an instance finishes, 30 after it errors (`default_retention`) | Cloudflare's own expiry. Outside the [jurisdiction](#data-residency) and not reachable by erasure |
+| Workers AI inference and AI Gateway | What a model call carried, redacted by default ([To the model](#to-the-model)); an entry's metadata and, with `aiGatewayLogs`, its model, tokens and ids, never the prompt | Until deleted in the dashboard, up to the gateway's 100,000 entries; the model keeps nothing | The gateway's own retention; [To AI Gateway and logs](#to-ai-gateway-and-logs) |
+| Workers Logs and the logs bucket (Logpush) | Each audit event as a JSON line, with `actor`, `target`, `detail` and `ip`; request logs | 7 days in Workers Logs; `logRetentionDays` (default 400, or `personalDataRetentionDays`) in the bucket | Expiry; erasure doesn't reach them |
+| Subscribers' systems and Stripe | The payloads sent to webhooks, the Stripe customer | Whatever the receiver or Stripe keeps | Outside CommerceWorker. Only the ids here are cleared |
+
+**After a restore, replay.** Of the rows above, every one marked **replay** is put back by a restore, and the single command erases them again ([Replaying erasures after a restore](operations.md#replaying-erasures-after-a-restore)). What the table gives as expiry is the only way a recovery copy loses a person: a backup is locked so that it can't be deleted, and so an erased person is in every backup made before their erasure for up to `backupDays`. Keep that in the answer to a data subject: say their erasure completes in the live stores at once and in the recovery copies when those expire.
 
 ## Retention
 

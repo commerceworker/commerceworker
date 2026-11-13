@@ -45,6 +45,10 @@ export async function stepUpNeeded(
     case 'set_plugin_enabled':
       // An admin API token may still turn a misbehaving plugin off; a person proves it's them.
       return input.enabled === true || p.kind === 'user';
+    case 'replay_erasures':
+      // A person proves it's them; an admin's API token (a restore runbook's) may run it, since it
+      // only repeats erasures an admin already made. A dry run changes nothing.
+      return p.kind === 'user' && input.dryRun !== true;
     case 'set_member_role':
       // Making someone an admin gives them this page.
       return input.role === 'admin' && (await roleOf(env, String(input.userId))) !== 'admin';

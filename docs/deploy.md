@@ -429,6 +429,8 @@ code needs the newer schema. Time Travel keeps 30 days; for any other point in t
 `wrangler d1 time-travel info commerceworker --timestamp=<RFC3339>` finds its bookmark. Durable Object
 state (live order state, assistant conversations) is not part of D1 and isn't restored.
 
+**Last step: replay erasures.** A restore also brings back anyone erased after its bookmark, and the audit log of the restored database lacks their erasure. Run `node scripts/fleet.ts replay-erasures <id> <the bookmark's time>` ([Replaying erasures after a restore](operations.md#replaying-erasures-after-a-restore)), with `--dry-run` first to see who.
+
 A deployment with `redundancy` also has a daily backup of the database and a restore drill, for a database that can't be restored in place or a point older than 30 days: [Restoring commerce D1 from a backup](operations.md#restoring-commerce-d1-from-a-backup).
 
 ## The docs site

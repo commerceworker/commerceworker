@@ -81,3 +81,55 @@ export const erasureResultSchema = z.discriminatedUnion('ok', [
   erasureDoneSchema,
   erasureRefusedSchema,
 ]);
+
+/** What `replay_erasures` reports (`ErasureReplay`, erasure.ts). */
+export const erasureReplaySchema = z.object({
+  since: z.number().int().describe('Epoch ms'),
+  dryRun: z.boolean().describe('Nothing was erased: `erased` is what a replay would erase'),
+  events: z
+    .object({
+      total: count,
+      database: count.describe('Read from the database’s audit log'),
+      archive: count.describe('Read from the R2 copies of it, which a restore does not touch'),
+    })
+    .describe('Distinct people erased since then'),
+  scanned: count.describe('Addresses hashed to find them'),
+  erased: z
+    .array(
+      erasureDoneSchema.omit({ ok: true, teamMember: true }).extend({
+        target: z.string().describe('The audit log’s name for them: a hash, never the address'),
+        at: z.number().int().describe('When they were first erased'),
+        recorded: z.boolean().describe('Their erasure is in the database’s audit log'),
+      }),
+    )
+    .describe('People found in the stores and erased again'),
+  orders: z
+    .object({
+      checked: count.describe('Orders marked erased since then'),
+      erased: count.describe('Those whose agent held what an erasure removes, erased again'),
+      documents: count.describe('Files deleted again from their folders in the documents bucket'),
+      running: z
+        .array(z.string())
+        .describe('Orders a restore left running again: erase them once they end'),
+      nextSince: z
+        .number()
+        .int()
+        .optional()
+        .describe('Set when more were left than one replay checks: run again with this `since`'),
+    })
+    .describe('Orders erased since, whose agent state or files a restore brought back'),
+  blocked: z
+    .array(
+      z.object({
+        target: z.string(),
+        reason: z
+          .enum(['active_orders', 'ordered_since'])
+          .describe(
+            '`active_orders`: cancel them or wait, then replay again. `ordered_since`: they ordered after they were erased, so a person decides',
+          ),
+        orders: z.array(z.string()),
+      }),
+    )
+    .describe('People left alone, and why'),
+  clean: z.array(z.string()).describe('People the stores hold nothing about'),
+});

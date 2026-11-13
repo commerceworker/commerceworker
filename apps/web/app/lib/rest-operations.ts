@@ -106,6 +106,7 @@ export const REST_OPERATIONS: readonly RestOperation[] = [
     path: '/webhook-deliveries/{deliveryId}/redeliver',
     tool: 'redeliver_webhook_delivery',
   },
+  { method: 'POST', path: '/erasures/replay', tool: 'replay_erasures' },
   { method: 'POST', path: '/stock/review', tool: 'run_stock_review' },
   { method: 'GET', path: '/stock', tool: 'find_products' },
   { method: 'POST', path: '/orders/{orderId}/assess', tool: 'assess_order' },
