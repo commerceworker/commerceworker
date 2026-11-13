@@ -19,9 +19,9 @@ wait: "oklch(0.49 0.115 62)"
 bad: "oklch(0.5 0.185 28)"
 undo: "oklch(0.485 0.135 42)"
 idle: "oklch(0.48 0 0)"
-brand: "oklch(0.45 0.19 262)"
+brand: "oklch(0.5 0.09 195)"
 brand-foreground: "oklch(0.985 0 0)"
-brand-subtle: "oklch(0.955 0.02 262)"
+brand-subtle: "oklch(0.955 0.02 195)"
 ai: "oklch(0.49 0.16 310)"
 sidebar: "oklch(0.985 0 0)"
 sidebar-accent: "oklch(0.945 0 0)"
@@ -31,8 +31,8 @@ ink-dark: "oklch(0.985 0 0)"
 muted-dark: "oklch(0.269 0 0)"
 muted-foreground-dark: "oklch(0.708 0 0)"
 link-dark: "oklch(0.76 0.1 238)"
-brand-dark: "oklch(0.72 0.13 262)"
-brand-subtle-dark: "oklch(0.27 0.06 262)"
+brand-dark: "oklch(0.78 0.12 195)"
+brand-subtle-dark: "oklch(0.27 0.05 195)"
 ai-dark: "oklch(0.75 0.09 305)"
 destructive-dark: "oklch(0.78 0.12 22.216)"
 typography:
@@ -128,7 +128,7 @@ Paths below are under `apps/studio/app/`: the shell and sign-in pages in `routes
 
 ## Colors
 
-Neutral greys with no tint carry everything; colour is reserved for the brand cobalt, one sky blue and
+Neutral greys with no tint carry everything; colour is reserved for the brand turquoise, one sky blue and
 status.
 
 ### Primary
@@ -138,7 +138,7 @@ status.
 
 ### Accent
 
-- **Brand** (`brand`, cobalt, hue 262): CommerceWorker's accent, the colour of its mark. It marks where you
+- **Brand** (`brand`, turquoise, hue 195): CommerceWorker's accent, the colour of its mark. It marks where you
   are and what you chose: the mark (sidebar, top bar, sign-in); the current item, in one rule
   everywhere (the sidebar, a page's own list such as Settings sections, content types, asset
   folders and taxonomy schemes) is its accent fill, ink and 500, with its icon in brand when it has
@@ -155,22 +155,23 @@ status.
 
   | Pair | Light | Dark |
   | --- | --- | --- |
-  | `brand-foreground` on a `brand` fill | 7.45:1 | 7.91:1 |
-  | `brand` words, and the `ring` edge, on paper | 7.78:1 | 7.91:1 |
-  | `brand` on a card | 7.78:1 | 7.16:1 |
-  | `brand` on muted, the worst ground | 7.13:1 | 6.04:1 |
-  | `brand` on `sidebar-accent` | 6.62:1 | 6.04:1 |
-  | `brand` words on `brand-subtle` | 6.82:1 | 6.05:1 |
-  | muted words on `brand-subtle` | 4.83:1 | 5.84:1 |
+  | `brand-foreground` on a `brand` fill | 5.45:1 | 10.38:1 |
+  | `brand` words, and the `ring` edge, on paper | 5.70:1 | 10.38:1 |
+  | `brand` on a card | 5.70:1 | 9.39:1 |
+  | `brand` on muted | 5.22:1 | 7.93:1 |
+  | `brand` on `sidebar-accent`, the worst ground | 4.85:1 | 7.93:1 |
+  | `brand` words on `brand-subtle` | 5.03:1 | 7.72:1 |
+  | muted words on `brand-subtle` | 4.87:1 | 5.68:1 |
 
-  The hue is 262: 27 degrees (light) and 24 degrees (dark) from the link, 43 or more from `ai`
-  and 110 or more from every status. The test holds each distance at 20 degrees or more, and the
-  accent more saturated than the link.
+  The hue is 195, Arizona turquoise: 40 degrees (light) and 43 (dark) from the link, 110 or more
+  from `ai`, 43 from `ok` and 120 or more from every other status. The test holds each distance at
+  20 degrees or more and the link at 35 or more: sRGB can't give turquoise more chroma than the
+  link at text contrast, so hue keeps the two apart.
 
 ### Secondary
 
 - **Work blue** (`link`, sky, hue 235 light and 238 dark): links, live work (`run`) and the
-  slow-page bar. Never a fill for a button. It sits apart from the cobalt `brand` so a link is never
+  slow-page bar. Never a fill for a button. It sits apart from the turquoise `brand` so a link is never
   mistaken for a chosen or current thing.
 
 ### Destructive
@@ -216,7 +217,7 @@ brand, no green button, no green decoration.
 
 **The One Meaning Rule.** A status colour is never used decoratively. If it isn't a status, it is
 grey. `ai` is the one status with a hue of its own, violet (310): a model's work reads as neither a
-link nor a chosen thing. Cobalt means "CommerceWorker: here or chosen", and a status never relies on
+link nor a chosen thing. Turquoise means "CommerceWorker: here or chosen", and a status never relies on
 a hue alone (an AI badge says so in words).
 
 ## Typography
@@ -1072,8 +1073,8 @@ for code and data blocks only.
 `public/manifest.webmanifest` and the apple-touch-icon put the admin on the Home Screen as its own
 app (`standalone`). The icons are rendered from the mark by `apps/studio/scripts/icons.sh`: the mark
 in white on a full-bleed brand tile, opaque, inside the central 60% so the same art is maskable. The
-favicon (`favicon.svg`, shared with the docs, and `favicon.ico`) is the mark itself in brand (`#0e49bc`), the
-lighter dark-theme brand (`#77a4f6`) where the browser is dark. `theme-color` follows the chosen theme: the inline theme script in `root.tsx`
+favicon (`favicon.svg`, shared with the docs, and `favicon.ico`) is the mark itself in brand (`#007373`), the
+lighter dark-theme brand (`#3bcfcf`) where the browser is dark. `theme-color` follows the chosen theme: the inline theme script in `root.tsx`
 (run before first paint under the CSP's nonce) keeps a `theme-color` meta of its own in step. The
 theme follows the system until the reader picks Light or Dark. There is no service worker: actions must reach the API.
 

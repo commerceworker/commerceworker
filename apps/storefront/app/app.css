@@ -189,11 +189,11 @@
   --edge-idle: oklch(0.88 0 0);
 
   color-scheme: light;
-  /* The brand accent: Ledger's CommerceWorker cobalt (hue 262; the link blue is 235, ai violet 310). Focus rings
+  /* The brand accent: Ledger's CommerceWorker turquoise (hue 195; the link blue is 235, ai violet 310). Focus rings
      and the mark; never a button fill. `brand-subtle` is its tint. Contrast is tested in packages/design. */
-  --brand: oklch(0.45 0.19 262);
+  --brand: oklch(0.5 0.09 195);
   --brand-foreground: oklch(0.985 0 0);
-  --brand-subtle: oklch(0.955 0.02 262);
+  --brand-subtle: oklch(0.955 0.02 195);
 }
 
 :root[data-theme="dark"] {
@@ -241,9 +241,9 @@
   --edge-idle: oklch(0.269 0 0);
 
   color-scheme: dark;
-  --brand: oklch(0.72 0.13 262);
+  --brand: oklch(0.78 0.12 195);
   --brand-foreground: oklch(0.145 0 0);
-  --brand-subtle: oklch(0.27 0.06 262);
+  --brand-subtle: oklch(0.27 0.05 195);
   --ai: oklch(0.75 0.09 305);
 }
 
@@ -301,7 +301,7 @@
     [data-theme="dark"] & {
       background-color: color-mix(in oklch, var(--input) 30%, transparent);
     }
-    /* The brand's cobalt, as DESIGN.md has a checked radio or checkbox: the same as a chosen row's edge. */
+    /* The brand's turquoise, as DESIGN.md has a checked radio or checkbox: the same as a chosen row's edge. */
     &:checked {
       border-color: var(--brand);
       background-color: var(--brand);

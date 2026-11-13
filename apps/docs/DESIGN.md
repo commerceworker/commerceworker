@@ -174,12 +174,12 @@ tokens, not approximations.
   figure. **Muted** is the tonal step: inline code, the sidebar's current page.
 - **Rule** is every hairline. **Input** is the stronger line under table header rows.
 - **Link** (the one blue) is links and selection; focus is a brand outline. It is not a status colour here, and
-  notes do not use it. It is sky (hue 235 light, 238 dark), 24 degrees or more from the brand.
-- **Brand** (the cobalt, `oklch(0.45 0.19 262)` light, `oklch(0.72 0.13 262)` dark) fills Starlight's
+  notes do not use it. It is sky (hue 235 light, 238 dark), 40 degrees or more from the brand.
+- **Brand** (the turquoise, `oklch(0.5 0.09 195)` light, `oklch(0.78 0.12 195)` dark) fills Starlight's
   accent slots (`--sl-color-accent*`) and the Scalar explorer's accent, from the generated theme.
   Text in it holds 6.04:1 or more on paper, a card and muted in both themes
-  (`packages/design/tests/accent.test.ts`); it is never a button fill, and links stay the work blue. The favicon is the mark in the brand (`#0e49bc`,
-  `#77a4f6` where the browser is dark), and the focus outline is the brand rather than ink.
+  (`packages/design/tests/accent.test.ts`); it is never a button fill, and links stay the work blue. The favicon is the mark in the brand (`#007373`,
+  `#3bcfcf` where the browser is dark), and the focus outline is the brand rather than ink.
 
 ### The status ramp (the only hue)
 

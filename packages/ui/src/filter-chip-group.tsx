@@ -34,7 +34,7 @@ export interface FilterChipGroupProps<TValue extends string = string> {
  * A wrapping row of multi-select filter chips under a visible group label.
  *
  * Selection is the accent's job (DESIGN.md, the One Voice Rule), so a selected chip takes
- * the cobalt state layer rather than a Panel Ink fill — an ink-filled chip reads as a
+ * the turquoise state layer rather than a Panel Ink fill — an ink-filled chip reads as a
  * primary action, and a row of them out-shouts the data it filters.
  *
  * Selection is never carried by colour alone: a selected chip gains a leading check. The
