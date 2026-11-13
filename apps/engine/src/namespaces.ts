@@ -41,6 +41,9 @@ export const pluginStorage = (env: Env, pluginId: string) =>
 /** The deploy smoke test's write check object (health.ts): the one, holding nothing between checks. */
 export const healthProbe = (env: Env) => scope(env, env.HEALTH_PROBE).getByName('health');
 
+/** The restore drill's object (objects.ts): apart from the smoke test's, so the two never share a row. */
+export const drillProbe = (env: Env) => scope(env, env.HEALTH_PROBE).getByName('drill');
+
 /** `env` with each namespace in the jurisdiction, for the Agents SDK's own routing. */
 export const scopedEnv = (env: Env): Env => ({
   ...env,

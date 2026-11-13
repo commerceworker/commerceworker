@@ -27,8 +27,10 @@ import {
   validateVersion,
 } from '@a2a-js/sdk/server';
 import { A2A_LEGACY_PROTOCOL_VERSION, A2A_PROTOCOL_VERSION, agentCard } from '@commerceworker/core';
+import type { ObjectExport } from '@commerceworker/ports/commerce';
 import { Refused } from '../assistant/data';
 import { runTool } from '../assistant/tools';
+import { bookmarkForTime, exportTables, pitrObject, restoreInPlace } from '../object-pitr';
 import { forwardedPrincipal, stillActive } from '../principal';
 import { OrderExecutor, PrincipalUser, principalOf } from './executor';
 import { PushSender, SqlPushStore } from './push';
@@ -127,6 +129,21 @@ export class A2AAgent extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     if (await this.ownerActive()) await this.push.deliver();
     else await this.dropPushes();
+  }
+
+  // ── Restore tooling: reached only through the engine's own stub (object-pitr.ts) ──
+
+  pitrBookmark(at: number): Promise<string> {
+    return bookmarkForTime(pitrObject(this.ctx, this.env), at);
+  }
+
+  /** Restarts restored to `bookmark`, keeping the undo bookmark at `undoKey`; the call fails as the object aborts. */
+  restoreTo(bookmark: string, undoKey: string): Promise<void> {
+    return restoreInPlace(pitrObject(this.ctx, this.env), bookmark, undoKey);
+  }
+
+  exportState(): ObjectExport {
+    return exportTables(this.ctx.storage.sql);
   }
 
   /** Forgets every push config and what is still queued: how many configs there were. */

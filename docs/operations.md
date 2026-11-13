@@ -52,7 +52,7 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `personalDataRetentionDays` | none (kept) | Whole days after an order finishes that the daily sweep erases its buyer's personal data; at least 30 (refused below). Rendered into the engine's `PERSONAL_DATA_RETENTION_DAYS`; see [Retention](data-model.md#personal-data-on-finished-orders) |
 | `auditArchiveDays` | none (kept) | Whole days (at least 1; refused below) the R2 archive keeps audit events. `provision.sh` replaces the bucket's lifecycle rule `audit-archive` (prefix `audit/`) with that expiry on every run, and removes it when unset. It also locks `audit/` for the same number of days, or indefinitely when unset ([Bucket locks](#bucket-locks)) |
 | `catalogBackupDays` | `90` | Whole days (at least 31, so a backup outlives Durable Objects' 30 days of point-in-time recovery; refused below or fractional) the catalog's daily backups are kept. `provision.sh` replaces the catalog bucket's lifecycle rule `backups` (prefix `backups/`) with that expiry, and its lock rule `catalog-backups` with the same age, on every run ([Catalog backups](#catalog-backups), [Bucket locks](#bucket-locks)) |
-| `redundancy` | none (off) | `true`, or `{ "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`. Turns on the commerce D1's daily backup and its restore drill ([Redundancy](#redundancy)); off, the deployment renders, provisions and deploys exactly what it did before the field existed. `backupDays`: whole days (default 35, at least 31 so a backup outlives Time Travel's 30; refused above `personalDataRetentionDays`, which would keep personal data the sweep erased; the default is lowered to `personalDataRetentionDays` when that is shorter) a backup is kept and locked. `backupHourUtc`: the hour, 0 to 23 UTC, the daily backup starts (default 1). `drill`: `weekly` (Sundays) or `monthly` (the 1st), six hours after the backup's hour (default `weekly`). `except`: parts to leave off, from `d1Backup`, `objectBackup`, `r2Replica`, `kvBackup`, `queues`, `email`, `intake`, `aiFallback`, `alerts`, `canary`, `readReplicas`; today `d1Backup` (turns off the backup, the drill, the bucket and the standby), `r2Replica` (turns off the docs replica, its queues and its reconcile) and `alerts` (turns off the alert policies and Health Checks) do something, and the rest are reserved for what comes later. `alerts` (`{ "webhook"?: "https://…", "pagerduty"?: "<routing key>" }`) makes the notification policies, the webhook and PagerDuty destinations and two Health Checks when `provision.sh` runs ([Alerting](#alerting)); `offsite` (`{ "provider": "s3" \| "gcs" \| "azure", "bucket", "region" }`) is parsed and validated now but **not acted on yet**. An unknown key or `except` name, a `backupDays` out of range, an `offsite.provider` that is none of those three, and the field on a `demo` are refused. `commerceworker` sets `true` |
+| `redundancy` | none (off) | `true`, or `{ "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`. Turns on the commerce D1's daily backup and its restore drill ([Redundancy](#redundancy)); off, the deployment renders, provisions and deploys exactly what it did before the field existed. `backupDays`: whole days (default 35, at least 31 so a backup outlives Time Travel's 30; refused above `personalDataRetentionDays`, which would keep personal data the sweep erased; the default is lowered to `personalDataRetentionDays` when that is shorter) a backup is kept and locked. `backupHourUtc`: the hour, 0 to 23 UTC, the daily backup starts (default 1). `drill`: `weekly` (Sundays) or `monthly` (the 1st), six hours after the backup's hour (default `weekly`). `except`: parts to leave off, from `d1Backup`, `objectBackup`, `r2Replica`, `kvBackup`, `queues`, `email`, `intake`, `aiFallback`, `alerts`, `canary`, `readReplicas`; today `d1Backup` (turns off the backup, the drill and the standby), `objectBackup` (turns off the Durable Object copy, restore and drill; the backups bucket stays while either `d1Backup` or `objectBackup` is on), `r2Replica` (turns off the docs replica, its queues and its reconcile) and `alerts` (turns off the alert policies and Health Checks) do something, and the rest are reserved for what comes later. `alerts` (`{ "webhook"?: "https://…", "pagerduty"?: "<routing key>" }`) makes the notification policies, the webhook and PagerDuty destinations and two Health Checks when `provision.sh` runs ([Alerting](#alerting)); `offsite` (`{ "provider": "s3" \| "gcs" \| "azure", "bucket", "region" }`) is parsed and validated now but **not acted on yet**. An unknown key or `except` name, a `backupDays` out of range, an `offsite.provider` that is none of those three, and the field on a `demo` are refused. `commerceworker` sets `true` |
 | `logRetentionDays` | `400`, or `personalDataRetentionDays` when set | Whole days (at least 30; refused below or fractional, and refused above `personalDataRetentionDays` when that is set) the logs bucket `commerceworker-logs<suffix>` keeps the Workers' trace events Logpush writes there. `provision.sh` replaces the bucket's lifecycle rule `logs` (prefix `workers/`) with that expiry on every run ([Logs](#logs)) |
 | `aiPersonalData` | `redact` | `redact` or `send` (anything else is refused). `send` lets the workflow AI nodes and the assistant's `assess_order` see buyers' contact details, names and addresses; see [Personal data](data-model.md#personal-data). Rendered into the engine's `AI_PERSONAL_DATA` |
 | `payments` | `mock` on staging and internal entries with no `storefrontDomain`; otherwise required | `stripe` or `mock` (anything else is refused). `stripe` takes payments through Stripe with the environment's `STRIPE_SECRET_KEY`, and a deploy without that secret stops before it migrates anything. `mock` records payments without taking money. An unset field renders `mock`, so the fleet refuses to load an entry that leaves it out when it is on the `canary` or `general` ring, or has a `storefrontDomain` (a demo is exempt and is always `mock`): the error names the file and the two choices. `mock` is a deliberate choice for staging and internal deployments and canary trials, and is refused on `general`. A demo can't be `stripe`. Rendered into the engine's `PAYMENTS_MODE`. There is no `none` for an on-account deployment with no cards yet |
@@ -672,9 +672,9 @@ days.
 
 ## Redundancy
 
-`redundancy` in a deployment's registry entry turns on protection for the commerce database beyond Time Travel. Today that is two things: a daily backup of the commerce D1 into a bucket of its own, with a restore drill that proves each backup by rebuilding it in a second database; and a replica of the docs bucket (the order documents, the audit archive, plugin bundles and carts' files) that every create and delete is copied to as it happens. Later changes add the rest of what `except` names; `alerts` is acted on by [Alerting](#alerting); `offsite` is accepted and checked now and **does nothing yet**. A deployment without the field renders, provisions and deploys exactly as it did before. `commerceworker` has it on.
+`redundancy` in a deployment's registry entry turns on protection for the commerce database beyond Time Travel. Today that is three things: a daily backup of the commerce D1 into a bucket of its own, with a restore drill that proves each backup by rebuilding it in a second database; restore tooling and a nightly copy for the engine's Durable Objects ([Durable Object state](#durable-object-state)); and a replica of the docs bucket (the order documents, the audit archive, plugin bundles and carts' files) that every create and delete is copied to as it happens. Later changes add the rest of what `except` names; `alerts` is acted on by [Alerting](#alerting); `offsite` is accepted and checked now and **does nothing yet**. A deployment without the field renders, provisions and deploys exactly as it did before. `commerceworker` has it on.
 
-**Set it** in `deployments/<id>.jsonc`: `"redundancy": true` for the defaults, or an object ([The registry](#the-registry)). It must be provisioned before the merge that carries it: `./scripts/provision.sh <id>` creates the backups bucket `commerceworker-backups<suffix>` (in the deployment's jurisdiction, with a lifecycle rule and a bucket lock on `d1/` for `backupDays`, [Bucket locks](#bucket-locks)) and the standby D1 database `commerceworker-standby<suffix>`, and writes `standbyD1Id` into the entry (commit it). Each is read before it is created, so a re-run changes nothing but the retention, and it stops if the standby it finds is the live database. A deployment with `redundancy` and no `standbyD1Id` fails to render and stops the deploy plan, like one without `d1Id`; hold it (`"hold": true`) until it is provisioned.
+**Set it** in `deployments/<id>.jsonc`: `"redundancy": true` for the defaults, or an object ([The registry](#the-registry)). It must be provisioned before the merge that carries it: `./scripts/provision.sh <id>` creates the backups bucket `commerceworker-backups<suffix>` (in the deployment's jurisdiction, with a lifecycle rule and a bucket lock on `d1/` and on `objects/` for `backupDays`, [Bucket locks](#bucket-locks)) and the standby D1 database `commerceworker-standby<suffix>`, and writes `standbyD1Id` into the entry (commit it). Each is read before it is created, so a re-run changes nothing but the retention, and it stops if the standby it finds is the live database. A deployment with `redundancy` and no `standbyD1Id` fails to render and stops the deploy plan, like one without `d1Id`; hold it (`"hold": true`) until it is provisioned.
 
 **What runs.** The engine gets two Workflows, started by their `schedules`:
 
@@ -742,6 +742,66 @@ wrangler r2 object get commerceworker-docs-replica<suffix>/replica/<yyyy-mm-dd>.
 
 The replica is in the same Cloudflare account as the docs bucket: it survives losing an object, a bucket or R2 in a region, not the account. An object is copied within seconds of its write, so the replica trails by what is in the queue.
 
+### Durable Object state
+
+An order, a cart, an A2A caller's tasks and a sandboxed plugin's database each live in a Durable Object, which D1 backups and Time Travel don't cover. Their own protection is point-in-time recovery (PITR): any object can be rewound to any moment of the last 30 days. With `redundancy` on and `objectBackup` not an exception, the engine adds a way to use it, a nightly copy that outlasts the 30 days, and a drill. PITR does not run in local dev or in tests; what a restore does to an object can be seen only on a deployment.
+
+| Workflow | When | Does |
+|---|---|---|
+| `commerceworker-objects-restore<suffix>` (`ObjectsRestore`) | By hand only | Rewinds named objects to a time or a bookmark, and writes a report with each one's undo |
+| `commerceworker-objects-backup<suffix>` (`ObjectsBackup`) | daily, two hours after `backupHourUtc` (default 03:00 UTC) | Copies the live orders' and open carts' state to `objects/<yyyy-mm-dd>/` |
+| `commerceworker-objects-drill<suffix>` (`ObjectsDrill`) | with the D1 drill's `drill` days, an hour after it | Rewinds a probe object, checks it, undoes the rewind |
+
+The objects answer three internal calls (`pitrBookmark`, `restoreTo`, `exportState`), reachable only from the engine through its own Durable Object bindings: no route, socket or `@callable` reaches them. `restoreTo` sets the object to restart on the bookmark's storage, keeps the bookmark that undoes it in the backups bucket, and aborts the object, which restarts restored.
+
+**The nightly copy** (`apps/engine/src/objects.ts`, the logic in `packages/application/src/commerce/objects-restore.ts`) lists the orders that haven't reached a final status and the carts that are open from D1, 25 at a time in id order, and writes each one's tables (and the Agents SDK's synced state, which is where the order or cart itself is) as one line of a gzipped NDJSON chunk, a Workflow step a chunk:
+
+| Key | Holds |
+|---|---|
+| `objects/<yyyy-mm-dd>/OrderAgent/<n>.ndjson.gz`, `…/CartAgent/<n>.ndjson.gz` | A page of objects, `{ "name", "state": { "tables": … } }` a line, or `{ "name", "error" }` for one that couldn't be read; its SHA-256 and counts are in the object's metadata |
+| `objects/<yyyy-mm-dd>/manifest.json` | Written last: each class's chunks with their hashes, the object and error counts, and `capped`. A day without one didn't finish |
+| `objects/restores/<time>.json` | A restore's report (below) |
+
+At most 20,000 objects of a class are copied a night (`capped: true` says it stopped there), which keeps the run under the Workflow's 10,000 steps. A second run on a day that has a manifest copies nothing; a run that failed resumes after the chunks already stored. Objects are read while writes go on, so the copy is not one instant. A copy is kept and locked `backupDays` days, like `d1/`. A2A callers and plugin storage are not in the copy (a plugin's database is exported when it is uninstalled). **There is no import tool**: a copy is read and its rows put back by hand (`wrangler r2 object get … --pipe | gunzip | jq`), for the case where PITR's 30 days have passed.
+
+**The drill** writes a row to its own probe object (`HealthProbe` named `drill`, never the smoke test's), notes the bookmark, writes a second row, restores to the bookmark and checks only the first row is there, then restores to the undo bookmark and checks both are back. It writes `drills/objects-<yyyy-mm-dd>.json` (`outcome`, the two bookmarks, both checks, `minutes`). A failed drill says why in `error`, logs `objects restore drill failed` at error level and fails the instance.
+
+**Check the latest:**
+
+```bash
+wrangler r2 object get commerceworker-backups<suffix>/drills/objects-<yyyy-mm-dd>.json --remote --pipe | jq '{outcome, minutes, checks, error}'
+wrangler r2 object get commerceworker-backups<suffix>/objects/<yyyy-mm-dd>/manifest.json --remote --pipe | jq '.classes | map_values({objects, errors, capped})'
+```
+
+### Restoring an order's or cart's live state
+
+Use this when a bad deploy or a bug corrupted what named orders or carts hold (their state, timeline, waits or chat), and the damage is in the last 30 days. It rewinds those objects only: not D1, not other objects.
+
+1. **Find the objects and the time.** The names are the order ids (`ord_…`) or cart ids; one run takes at most 50, so run it again for more. Choose `at` just before the damage began, in RFC 3339 (`2026-11-12T09:30:00Z`): the deploy's time in CI, or the first bad entry in the order's timeline, minus a margin. Everything the object wrote after `at` is lost, including legitimate events: a smaller margin loses less. A time older than 30 days, or in the future, is refused, and nothing is changed.
+2. **Start it** The class is `OrderAgent`, `CartAgent`, `A2AAgent` or `PluginStorage`:
+
+   ```bash
+   wrangler workflows trigger commerceworker-objects-restore<suffix> --params '{"class":"OrderAgent","names":["ord_1","ord_2"],"at":"2026-11-12T09:30:00Z"}'
+   wrangler workflows instances describe commerceworker-objects-restore<suffix> latest
+   ```
+
+   It finds every object's bookmark before it touches one, so a time out of reach for any of them changes nothing. For each object it then records the bookmark that undoes the restore, sets the restore and aborts the object, which restarts restored; an OrderAgent or CartAgent then writes its D1 row again from the restored state. An object that fails is recorded and the others go on; the instance fails and says which.
+3. **Read the report**, `objects/restores/<time>.json` in `commerceworker-backups<suffix>`: `outcome`, each object's `bookmark`, `undo` and `reindexed`, and `undo`, the map to keep.
+
+   ```bash
+   wrangler r2 object list commerceworker-backups<suffix> --remote --prefix objects/restores/
+   wrangler r2 object get commerceworker-backups<suffix>/objects/restores/<time>.json --remote --pipe | jq '{outcome, objects, undo}'
+   ```
+
+4. **Check the index.** The Orders and Carts lists read D1, which the restore re-wrote from the restored state: open the order or cart and compare, or read the row (`wrangler d1 execute <db> --remote --command "SELECT id, status, updated_at FROM orders WHERE id = 'ord_1'"`). `reindexed: false` on an order or cart means the step failed: its error is in the report.
+5. **Undo it** by restoring to the undo bookmarks (the object keeps its `undo` for the same 30 days):
+
+   ```bash
+   wrangler workflows trigger commerceworker-objects-restore<suffix> --params '{"class":"OrderAgent","names":["ord_1"],"bookmarks":{"ord_1":"<undo from the report>"}}'
+   ```
+
+Caveats: **the object is rewound, nothing around it is.** An order's Workflow instance, Stripe, carriers and webhooks already sent keep what they did, and the restored order may be behind them: restore an order whose Workflow has ended, or cancel its instance first, and reconcile payments by hand. D1 rows other than the order's and cart's own index row are not rewound. Retrying the Workflow is safe: an object whose undo is already kept is not rewound again. The copy under `objects/<date>/` is for what PITR can't reach.
+
 ### Restoring R2 objects from the replica
 
 Use this when objects are missing or damaged in the docs bucket (deleted by mistake, overwritten, or the bucket is gone), or the docs bucket is down for long enough that you want it repaired rather than waited out (reads already fall back).
@@ -782,7 +842,7 @@ Caveats: the docs bucket's D1 records (`documents`) are in the database, not the
 Caveats:
 
 - **What is lost is everything written since the backup began**, up to a day: orders, approvals, audit events and carts. Stripe and the carriers know about charges and shipments the database doesn't: reconcile them by hand. Files in the docs bucket for lost orders stay there, unreferenced.
-- **Durable Object state is not in D1** and is not restored: live orders' and carts' agents keep what they held, which may name rows the restore doesn't have. Check running orders against the restored `orders` table before resuming anything.
+- **Durable Object state is not in D1** and is not restored: live orders' and carts' agents keep what they held, which may name rows the restore doesn't have. Check running orders against the restored `orders` table before resuming anything; rewind objects with [Restoring an order's or cart's live state](#restoring-an-orders-or-carts-live-state) if they need it.
 - **The restore wipes and rebuilds the standby each time**, so promote only once you have what you need from the drill's result: a drill run after the promotion has a different standby.
 - **Webhook deliveries marked sent after the backup are pending again** and go out a second time; receivers dedupe on the delivery id.
 - **`provision.sh` finds databases by name.** The promoted database keeps the name `commerceworker-standby<suffix>`, so re-running the script for the deployment would write the old database's id back as `d1Id`. Don't re-run it for a deployment after a promotion; until it learns the swap, resource names and ids disagree on purpose and the ids are the truth. `wrangler d1 time-travel` works from the new `d1Id` as usual.
@@ -797,7 +857,8 @@ Caveats:
 | The database is lost or can't be restored in place; or the point is older than 30 days | The daily backup in `commerceworker-backups<suffix>`, restored into the standby and promoted ([above](#restoring-commerce-d1-from-a-backup)) | Up to 24 hours (since the last backup began); kept `backupDays` days (default 35) | The drill's `minutes` for the restore, which the latest evidence records, plus one deploy |
 | An order document, the audit archive or a plugin bundle is deleted or overwritten in the docs bucket, or the bucket is lost | The replica `commerceworker-docs-replica<suffix>`, filled by R2 event notifications ([The docs replica](#the-docs-replica), [Restoring R2 objects from the replica](#restoring-r2-objects-from-the-replica)); deleted files stay in its `deleted/` for 30 days | Seconds (an object is copied when written); anything still in the queue, which the nightly reconcile repairs | The time to copy the keys back. Reads of the docs bucket fall back to the replica after a 5xx or 3 seconds, so an outage of the docs bucket is not downtime for reads |
 | The account or R2 is lost | Not covered yet: `offsite` is accepted and not acted on | The bucket's contents | None |
-| Durable Object state (live orders, carts, assistants) | Durable Objects' own 30 days of point-in-time recovery; not part of this | | |
+| A bad deploy or bug corrupted named orders' or carts' live state, within the last 30 days | Point-in-time recovery through `commerceworker-objects-restore<suffix>` ([above](#restoring-an-orders-or-carts-live-state)); the restore's undo bookmark takes it back | The object's writes after the time you choose; to the second | Minutes: a bookmark and a restart for each object, 50 at most a run |
+| The same, past 30 days (a long-running subscription) | The nightly copy `objects/<date>/` of active orders and open carts, kept `backupDays` days | Up to 24 hours | By hand: no import tool |
 
 The backup and the replica are in the same Cloudflare account as what they protect: they survive losing D1 or an object, not losing the account.
 
@@ -805,7 +866,7 @@ The backup and the replica are in the same Cloudflare account as what they prote
 
 `provision.sh` sets two R2 bucket lock rules on the deployment's docs bucket
 (`commerceworker-docs<suffix>`, in its jurisdiction), one on its catalog bucket
-(`commerceworker-catalog<suffix>`) and, with `redundancy`, one on its backups bucket
+(`commerceworker-catalog<suffix>`) and, with `redundancy`, two on its backups bucket
 (`commerceworker-backups<suffix>`), so nothing (a person, a script, a compromised token) can delete what
 audits, rollbacks and restores rely on:
 
@@ -815,6 +876,7 @@ audits, rollbacks and restores rely on:
 | docs | `plugin-bundles` | `plugins/` | Indefinitely: a pinned sandboxed-plugin bundle is what a rollback loads again |
 | catalog | `catalog-backups` | `backups/` | `catalogBackupDays` days, the same as the lifecycle rule `backups` ([Catalog backups](#catalog-backups)) |
 | backups | `d1-backups` | `d1/` | `redundancy.backupDays` days, the same as the lifecycle rule `d1-backups` ([Redundancy](#redundancy)); `drills/` has no lock and is kept |
+| backups | `object-backups` | `objects/` | `redundancy.backupDays` days, the same as the lifecycle rule `object-backups`: the Durable Object copies and restore reports ([Durable Object state](#durable-object-state)); each rule exists only while its part (`d1Backup`, `objectBackup`) is on |
 | docs replica | `audit-archive`, `plugin-bundles` | `audit/`, `plugins/` | The same two rules as the docs bucket's, with the same retention ([The docs replica](#the-docs-replica)) |
 
 It writes them with `wrangler r2 bucket lock set`, which replaces the bucket's whole lock

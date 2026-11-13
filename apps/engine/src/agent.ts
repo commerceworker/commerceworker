@@ -53,12 +53,14 @@ import {
   TIMELINE_CAP,
   type TimelineEntry,
 } from '@commerceworker/core';
+import type { ObjectExport } from '@commerceworker/ports/commerce';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
 import { sendAiFeedback } from './ai';
 import { recordAudit } from './audit';
 import { releaseHold } from './checkout/payments';
 import { compensateOrder } from './connectors';
 import { a2aAgent } from './namespaces';
+import { bookmarkForTime, exportTables, pitrObject, restoreInPlace } from './object-pitr';
 import { emit, orderSummary, resend } from './outbox';
 import { forwardedPrincipal, livePrincipal, SESSION_ENDED } from './principal';
 import { separationRefusal } from './separation';
@@ -462,6 +464,27 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   // ── Called by EngineApi and the Workflow ───────────────────────────────────
+
+  // ── Restore tooling: reached only through the engine's own stub (object-pitr.ts) ──
+
+  pitrBookmark(at: number): Promise<string> {
+    return bookmarkForTime(pitrObject(this.ctx, this.env), at);
+  }
+
+  /** Restarts restored to `bookmark`, keeping the undo bookmark at `undoKey`; the call fails as the object aborts. */
+  restoreTo(bookmark: string, undoKey: string): Promise<void> {
+    return restoreInPlace(pitrObject(this.ctx, this.env), bookmark, undoKey);
+  }
+
+  exportState(): ObjectExport {
+    return exportTables(this.ctx.storage.sql);
+  }
+
+  /** After a restore: writes the order's D1 row again from the restored state. */
+  async reindex(): Promise<void> {
+    this.indexed = null;
+    await this.syncIndex();
+  }
 
   /** The whole state: the synced state with the pinned flow and the full timeline. */
   async snapshot(): Promise<OrderState> {

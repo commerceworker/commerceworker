@@ -63,9 +63,11 @@ import {
   quotedCart,
   storedCart,
 } from '@commerceworker/core';
+import type { ObjectExport } from '@commerceworker/ports/commerce';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
 import { quoteCheckout } from '../checkout/quote';
 import { loadFlowVersion } from '../flows';
+import { bookmarkForTime, exportTables, pitrObject, restoreInPlace } from '../object-pitr';
 import { startOrderOnce } from '../orders';
 import { emitCart } from '../outbox';
 import { pluginStub } from '../plugin-host';
@@ -126,6 +128,21 @@ export class CartAgent extends Agent<Env, CartState> {
   /** Browsers read the cart and call methods; they never write state. */
   override validateStateChange(_next: CartState, source: Connection | 'server') {
     if (source !== 'server') throw new Error('Cart state is read-only');
+  }
+
+  // ── Restore tooling: reached only through the engine's own stub (object-pitr.ts) ──
+
+  pitrBookmark(at: number): Promise<string> {
+    return bookmarkForTime(pitrObject(this.ctx, this.env), at);
+  }
+
+  /** Restarts restored to `bookmark`, keeping the undo bookmark at `undoKey`; the call fails as the object aborts. */
+  restoreTo(bookmark: string, undoKey: string): Promise<void> {
+    return restoreInPlace(pitrObject(this.ctx, this.env), bookmark, undoKey);
+  }
+
+  exportState(): ObjectExport {
+    return exportTables(this.ctx.storage.sql);
   }
 
   private tablesReady = false;

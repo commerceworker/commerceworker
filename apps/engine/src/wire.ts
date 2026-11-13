@@ -10,9 +10,10 @@ import {
   createR2ObjectBucket,
   createReplicaFallbackBucket,
 } from '@commerceworker/adapters/object-replica-r2';
-import type { ApprovalPorts } from '@commerceworker/application/commerce';
+import type { ApprovalPorts, DrillProbe } from '@commerceworker/application/commerce';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { createDb, probeDb } from '@commerceworker/db';
+import { d1ActiveObjects } from '@commerceworker/db/active-objects';
 import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
 import { d1BalanceStore } from '@commerceworker/db/balance-store';
@@ -53,6 +54,7 @@ import { d1WebhookOutbox } from '@commerceworker/db/webhook-outbox';
 import { d1WorkspaceStore } from '@commerceworker/db/workspace-store';
 import type { Clock, EmailSender } from '@commerceworker/ports';
 import type {
+  ActiveObjects,
   AddressBook,
   AuditArchive,
   AuditLog,
@@ -79,6 +81,7 @@ import type {
   MessageStore,
   ObjectBucket,
   ObjectReader,
+  ObjectState,
   ObjectStore,
   OrderQueries,
   OrderRecords,
@@ -106,7 +109,7 @@ import type {
   WorkspaceStore,
 } from '@commerceworker/ports/commerce';
 import { ops } from './metrics';
-import { cartAgent, orderAgent } from './namespaces';
+import { a2aAgent, cartAgent, drillProbe, orderAgent, pluginStorage } from './namespaces';
 import { provide } from './providers';
 
 /** Wall-clock time. Workflow code reads it only inside a step, as every effect does. */
@@ -359,6 +362,60 @@ export const databaseExport = (env: Pick<Env, 'DB'>): DatabaseExport => d1Databa
 export const restoreTarget = (env: Pick<Env, 'STANDBY_DB'>): DatabaseRestoreTarget =>
   d1RestoreTarget(env.STANDBY_DB);
 export const standbyAudit = (env: Pick<Env, 'STANDBY_DB'>): AuditLog => d1AuditLog(env.STANDBY_DB);
+
+/** The live orders and carts the nightly copy of Durable Object state walks. */
+export const activeObjects = (env: Pick<Env, 'DB'>): ActiveObjects => d1ActiveObjects(env.DB);
+
+/**
+ * The four classes' restore RPCs (object-pitr.ts) behind one port, through the namespaces so the
+ * deployment's jurisdiction applies. Only the engine's own Workflows hold it.
+ */
+export function objectState(env: Env): ObjectState {
+  return {
+    pitrBookmark: (cls, name, at) =>
+      cls === 'OrderAgent'
+        ? orderAgent(env, name).pitrBookmark(at)
+        : cls === 'CartAgent'
+          ? cartAgent(env, name).pitrBookmark(at)
+          : cls === 'A2AAgent'
+            ? a2aAgent(env, name).pitrBookmark(at)
+            : pluginStorage(env, name).pitrBookmark(at),
+    restoreTo: (cls, name, bookmark, key) =>
+      cls === 'OrderAgent'
+        ? orderAgent(env, name).restoreTo(bookmark, key)
+        : cls === 'CartAgent'
+          ? cartAgent(env, name).restoreTo(bookmark, key)
+          : cls === 'A2AAgent'
+            ? a2aAgent(env, name).restoreTo(bookmark, key)
+            : pluginStorage(env, name).restoreTo(bookmark, key),
+    exportState: async (cls, name) =>
+      cls === 'OrderAgent'
+        ? orderAgent(env, name).exportState()
+        : cls === 'CartAgent'
+          ? cartAgent(env, name).exportState()
+          : cls === 'A2AAgent'
+            ? a2aAgent(env, name).exportState()
+            : pluginStorage(env, name).exportState(),
+    async reindex(cls, name) {
+      // The classes with no D1 row never get here (`reindexObject`).
+      if (cls === 'OrderAgent') await orderAgent(env, name).reindex();
+      else if (cls === 'CartAgent') await cartAgent(env, name).reindex();
+    },
+  };
+}
+
+/** The restore drill's object, with the same restore RPCs as the four classes. */
+export function drillObject(env: Env): DrillProbe & {
+  restoreTo(cls: string, name: string, bookmark: string, key: string): Promise<void>;
+} {
+  const probe = drillProbe(env);
+  return {
+    mark: (label) => probe.drillMark(label),
+    labels: () => probe.drillLabels(),
+    reset: async () => probe.drillReset(),
+    restoreTo: (_cls, _name, bookmark, key) => probe.restoreTo(bookmark, key),
+  };
+}
 
 /** Audit events archived to R2 (`DOCS`, under `audit/`, which the bucket locks). */
 export function auditArchive(env: Pick<Env, 'DOCS'>): AuditArchive {

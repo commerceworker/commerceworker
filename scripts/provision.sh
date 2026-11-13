@@ -295,9 +295,11 @@ if [ -n "${DOCS_REPLICA_R2:-}" ]; then
 fi
 # docs-replica:end
 
-# Redundancy (docs/operations.md, "Redundancy"): the commerce D1's daily backups in a bucket of their
-# own, and the standby database the restore drill rebuilds the newest one in. Both are read before
-# they are created, so a re-run changes nothing but the retention. Empty without `redundancy`.
+# Redundancy (docs/operations.md, "Redundancy"): the backups bucket (the commerce D1's daily backups
+# under d1/, the Durable Object copies and restore reports under objects/), and the standby database
+# the D1 restore drill rebuilds the newest backup in. Each part is read before it is created, so a
+# re-run changes nothing but the retention. Empty without `redundancy`; BACKUP_D1 and BACKUP_OBJECTS
+# say which prefixes are kept (a deployment may except either part).
 # redundancy:begin
 if [ -n "${BACKUPS_R2:-}" ]; then
   if wrangler r2 bucket info "$BACKUPS_R2" ${j[@]+"${j[@]}"} >/dev/null 2>&1; then
@@ -306,20 +308,33 @@ if [ -n "${BACKUPS_R2:-}" ]; then
     wrangler r2 bucket create "$BACKUPS_R2" ${j[@]+"${j[@]}"}
   fi
   # Backups expire after backupDays, and nothing deletes or overwrites one before then: a lock of
-  # the same age on d1/, so the lifecycle rule and the lock never disagree (the catalog's backups
-  # work the same way). The drills' evidence under drills/ is kept. `lock set` replaces the
-  # bucket's whole lock configuration: this is the backups bucket's only rule.
-  wrangler r2 bucket lifecycle remove "$BACKUPS_R2" --name d1-backups ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
-  wrangler r2 bucket lifecycle add "$BACKUPS_R2" d1-backups d1/ --expire-days "$BACKUP_DAYS" \
-    --force ${j[@]+"${j[@]}"}
+  # the same age on each prefix, so a lifecycle rule and its lock never disagree (the catalog's
+  # backups work the same way). d1/ holds the D1 backups; objects/ the Durable Object copies and the
+  # restore reports (whose undo bookmarks reach only 30 days anyway). The drills' evidence under
+  # drills/ is kept. `lock set` replaces the bucket's whole lock configuration: the rules below are
+  # all of it.
+  locks='[]'
+  if [ -n "${BACKUP_D1:-}" ]; then
+    wrangler r2 bucket lifecycle remove "$BACKUPS_R2" --name d1-backups ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+    wrangler r2 bucket lifecycle add "$BACKUPS_R2" d1-backups d1/ --expire-days "$BACKUP_DAYS" \
+      --force ${j[@]+"${j[@]}"}
+    locks=$(jq -c --argjson d "$BACKUP_DAYS" '. + [{id: "d1-backups", enabled: true, prefix: "d1/", condition: {type: "Age", maxAgeSeconds: ($d * 86400)}}]' <<<"$locks")
+    echo "D1 backups in $BACKUPS_R2 kept and locked $BACKUP_DAYS days"
+  fi
+  if [ -n "${BACKUP_OBJECTS:-}" ]; then
+    wrangler r2 bucket lifecycle remove "$BACKUPS_R2" --name object-backups ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+    wrangler r2 bucket lifecycle add "$BACKUPS_R2" object-backups objects/ --expire-days "$BACKUP_DAYS" \
+      --force ${j[@]+"${j[@]}"}
+    locks=$(jq -c --argjson d "$BACKUP_DAYS" '. + [{id: "object-backups", enabled: true, prefix: "objects/", condition: {type: "Age", maxAgeSeconds: ($d * 86400)}}]' <<<"$locks")
+    echo "Durable Object copies in $BACKUPS_R2 kept and locked $BACKUP_DAYS days"
+  fi
   backup_locks=$(mktemp)
-  jq -n --argjson d "$BACKUP_DAYS" '{rules: [
-    {id: "d1-backups", enabled: true, prefix: "d1/", condition: {type: "Age", maxAgeSeconds: ($d * 86400)}}
-  ]}' >"$backup_locks"
+  jq -n --argjson r "$locks" '{rules: $r}' >"$backup_locks"
   wrangler r2 bucket lock set "$BACKUPS_R2" --file "$backup_locks" --force ${j[@]+"${j[@]}"}
   rm -f "$backup_locks"
-  echo "D1 backups in $BACKUPS_R2 kept and locked $BACKUP_DAYS days"
+fi
 
+if [ -n "${STANDBY_D1:-}" ]; then
   # Looked up by name in the account's list: `d1 info <name>` resolves the name against the
   # engine's own config first, whose STANDBY_DB would answer with its placeholder id.
   standby_id() { wrangler d1 list --json | jq -er --arg n "$STANDBY_D1" '.[] | select(.name == $n) | .uuid'; }

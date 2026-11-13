@@ -6,6 +6,8 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import type { ObjectExport } from '@commerceworker/ports/commerce';
+import { bookmarkForTime, exportTables, pitrObject, restoreInPlace } from './object-pitr';
 
 /** A probe row older than this is one whose check stopped before its delete; the next clears it. */
 const STALE_MS = 3_600_000;
@@ -26,6 +28,49 @@ export class HealthProbe extends DurableObject<Env> {
     if (row?.at !== at) throw new Error('health probe row not read back');
     sql.exec('DELETE FROM probes WHERE id = ? OR at < ?', id, at - STALE_MS);
     await this.ctx.storage.sync();
+  }
+
+  // ── The restore drill (objects.ts, ObjectsDrill) ─────────────────────────────
+  // Run on a probe of its own (`drillProbe` in namespaces.ts), never the one the smoke test uses.
+
+  /** Empties the drill's table, so a run starts from nothing. */
+  drillReset(): void {
+    const sql = this.ctx.storage.sql;
+    sql.exec('CREATE TABLE IF NOT EXISTS drill_rows (label TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    sql.exec('DELETE FROM drill_rows');
+  }
+
+  /** Writes a row, makes it durable, and returns the bookmark of the object just after it. */
+  async drillMark(label: string): Promise<string> {
+    this.ctx.storage.sql.exec(
+      'INSERT OR REPLACE INTO drill_rows (label, at) VALUES (?, ?)',
+      label,
+      Date.now(),
+    );
+    await this.ctx.storage.sync();
+    return this.ctx.storage.getCurrentBookmark();
+  }
+
+  drillLabels(): string[] {
+    return this.ctx.storage.sql
+      .exec<{ label: string }>('SELECT label FROM drill_rows ORDER BY label')
+      .toArray()
+      .map((r) => r.label);
+  }
+
+  // ── Restore tooling: reached only through the engine's own stub (object-pitr.ts) ──
+
+  pitrBookmark(at: number): Promise<string> {
+    return bookmarkForTime(pitrObject(this.ctx, this.env), at);
+  }
+
+  /** Restarts restored to `bookmark`, keeping the undo bookmark at `undoKey`; the call fails as the object aborts. */
+  restoreTo(bookmark: string, undoKey: string): Promise<void> {
+    return restoreInPlace(pitrObject(this.ctx, this.env), bookmark, undoKey);
+  }
+
+  exportState(): ObjectExport {
+    return exportTables(this.ctx.storage.sql);
   }
 }
 

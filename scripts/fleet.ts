@@ -624,16 +624,32 @@ function redundancyOf(
 export const backsUpD1 = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
   !!d.redundancy && !d.redundancy.except.includes('d1Backup');
 
-/** The two Workflows' cron schedules: the backup daily, the drill six hours later on Sundays or the 1st. */
+/** Whether live order and cart state is copied nightly and restorable: `redundancy` on, `objectBackup` not an exception. */
+export const backsUpObjects = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('objectBackup');
+
+/** Whether the backups bucket exists: either the D1 backups or the Durable Object copies are on. */
+export const holdsBackups = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  backsUpD1(d) || backsUpObjects(d);
+
 /** Whether `DOCS` has a replica: `redundancy` on, `r2Replica` not an exception. */
 export const replicatesDocs = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
   !!d.redundancy && !d.redundancy.except.includes('r2Replica');
 
+/**
+ * The cron schedules: the D1 backup daily and its drill six hours later on Sundays or the 1st; the
+ * Durable Object copy two hours after the backup, and its drill an hour after the D1 drill's, on
+ * the same days.
+ */
 export function redundancySchedules(r: Redundancy) {
   const drillHour = (r.backupHourUtc + 6) % 24;
+  const objectsDrillHour = (r.backupHourUtc + 7) % 24;
+  const days = (hour: number) => (r.drill === 'monthly' ? `0 ${hour} 1 * *` : `0 ${hour} * * 0`);
   return {
     backup: `0 ${r.backupHourUtc} * * *`,
-    restore: r.drill === 'monthly' ? `0 ${drillHour} 1 * *` : `0 ${drillHour} * * 0`,
+    restore: days(drillHour),
+    objectsBackup: `0 ${(r.backupHourUtc + 2) % 24} * * *`,
+    objectsDrill: days(objectsDrillHour),
   };
 }
 
@@ -1583,37 +1599,52 @@ function storage(config: Config, d: Deployment) {
  * jurisdiction, and the two Workflows at the registry's hour.
  */
 function redundancyBindings(config: Config, d: Deployment) {
-  const workflows = ['D1_BACKUP', 'D1_RESTORE'];
-  if (!backsUpD1(d)) {
-    config.d1_databases = config.d1_databases.filter((db: Config) => db.binding !== 'STANDBY_DB');
-    config.r2_buckets = config.r2_buckets.filter((b: Config) => b.binding !== 'BACKUPS');
-    config.workflows = config.workflows.filter((w: Config) => !workflows.includes(w.binding));
-    return;
-  }
-  if (!d.standbyD1Id)
-    throw new Error(`${d.id} has no standbyD1Id: run scripts/provision.sh ${d.id}`);
+  const strip = (
+    key: 'd1_databases' | 'r2_buckets' | 'workflows',
+    field: string,
+    names: string[],
+  ) => {
+    config[key] = config[key].filter((x: Config) => !names.includes(x[field]));
+  };
   const n = names(d);
+  // Each part switches off on its own: the standby and the D1 Workflows with `d1Backup`, the object
+  // Workflows with `objectBackup`; the bucket stays while either holds something in it.
+  if (!backsUpD1(d)) {
+    strip('d1_databases', 'binding', ['STANDBY_DB']);
+    strip('workflows', 'binding', ['D1_BACKUP', 'D1_RESTORE']);
+  }
+  if (!backsUpObjects(d))
+    strip('workflows', 'binding', ['OBJECTS_BACKUP', 'OBJECTS_RESTORE', 'OBJECTS_DRILL']);
+  if (!holdsBackups(d)) strip('r2_buckets', 'binding', ['BACKUPS']);
+  if (!d.redundancy) return;
   const cron = redundancySchedules(d.redundancy);
-  config.d1_databases = config.d1_databases.map((db: Config) =>
-    db.binding === 'STANDBY_DB'
-      ? { ...db, database_name: n.standbyD1, database_id: d.standbyD1Id }
-      : db,
-  );
-  config.r2_buckets = config.r2_buckets.map((b: Config) =>
-    b.binding === 'BACKUPS'
-      ? {
-          ...b,
-          bucket_name: n.backups,
-          ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
-        }
-      : b,
-  );
+  if (backsUpD1(d)) {
+    if (!d.standbyD1Id)
+      throw new Error(`${d.id} has no standbyD1Id: run scripts/provision.sh ${d.id}`);
+    config.d1_databases = config.d1_databases.map((db: Config) =>
+      db.binding === 'STANDBY_DB'
+        ? { ...db, database_name: n.standbyD1, database_id: d.standbyD1Id }
+        : db,
+    );
+  }
+  if (holdsBackups(d))
+    config.r2_buckets = config.r2_buckets.map((b: Config) =>
+      b.binding === 'BACKUPS'
+        ? {
+            ...b,
+            bucket_name: n.backups,
+            ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
+          }
+        : b,
+    );
+  const schedules: Record<string, string> = {
+    D1_BACKUP: cron.backup,
+    D1_RESTORE: cron.restore,
+    OBJECTS_BACKUP: cron.objectsBackup,
+    OBJECTS_DRILL: cron.objectsDrill,
+  };
   config.workflows = config.workflows.map((w: Config) =>
-    w.binding === 'D1_BACKUP'
-      ? { ...w, schedules: [cron.backup] }
-      : w.binding === 'D1_RESTORE'
-        ? { ...w, schedules: [cron.restore] }
-        : w,
+    schedules[w.binding] ? { ...w, schedules: [schedules[w.binding]] } : w,
   );
 }
 
@@ -2414,11 +2445,15 @@ export function shellVars(d: Deployment): Record<string, string> {
     // The product index (Vectorize); empty for a demo, which has none.
     PRODUCT_INDEX: d.demo ? '' : n.productIndex,
     CATALOG_R2: n.catalogR2,
-    // The commerce D1 backups: the bucket, the standby database and how long a backup is kept and
-    // locked. All empty without `redundancy` (or with `d1Backup` an exception).
-    BACKUPS_R2: backsUpD1(d) ? n.backups : '',
+    // The backups bucket (the commerce D1's, and the Durable Object copies'), the standby database and
+    // how long a backup is kept and locked. Empty without `redundancy` (the bucket and days also
+    // with both `d1Backup` and `objectBackup` exceptions, the standby with `d1Backup` one).
+    BACKUPS_R2: holdsBackups(d) ? n.backups : '',
     STANDBY_D1: backsUpD1(d) ? n.standbyD1 : '',
-    BACKUP_DAYS: backsUpD1(d) ? String(d.redundancy.backupDays) : '',
+    BACKUP_DAYS: holdsBackups(d) ? String(d.redundancy.backupDays) : '',
+    // Which prefixes of the backups bucket are kept and locked: d1/ and objects/.
+    BACKUP_D1: backsUpD1(d) ? 'true' : '',
+    BACKUP_OBJECTS: backsUpObjects(d) ? 'true' : '',
     // The docs replica: its bucket, the queue R2's notifications go to and that queue's dead-letter
     // queue. All empty without `redundancy` (or with `r2Replica` an exception).
     DOCS_REPLICA_R2: replicatesDocs(d) ? n.docsReplica : '',
