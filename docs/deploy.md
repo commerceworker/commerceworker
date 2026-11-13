@@ -218,7 +218,7 @@ checks their latency (the best of three requests to `/login`, `/health/deep`, th
 `/health` and the storefront's `/health/deep` against budgets of 1.5 s, 1 s, 0.5 s and 1 s; over budget is a warning on the run, never a
 failure or a rollback) and, for `commerceworker` only, deploys these docs, in that order, so a change never reaches a
 deployment before its migration. If anything fails once the catalog has deployed (the engine deploy,
-the web deploy or the smoke test), the job runs `wrangler rollback` for each Worker that deployed:
+the web deploy or the smoke test), the job runs `wrangler rollback` for each Worker that deployed (a deployment with [gradual rollouts](#gradual-rollouts) ships, watches and rolls back its Workers as versions instead):
 the engine first, then (with content) the pipeline, then the storefront and the web app, the plugins, the studio, api and media, delivery and the catalog. The engine goes
 first because it is the one that can refuse (Cloudflare won't roll a Worker back past a Durable
 Object migration): if it can't go back, the step fails with an error and leaves every other Worker
@@ -257,6 +257,94 @@ because the Cloudflare API occasionally fails a request outright (codes `7403`, 
 step is safe to repeat. If the job still fails, re-run its failed jobs in GitHub Actions rather
 than deploying from a laptop. The manual commands under [First deploy](#first-deploy) are for
 setting up a new account.
+
+### Gradual rollouts
+
+A deployment with `redundancy` on, and `canary` not in its `except`, ships each Worker as a new
+*version* instead of `wrangler deploy` putting it live at once. Every other deployment deploys as
+described above. The `Plan rollout` step (`scripts/rollout.ts`, read-only) decides how each Worker
+ships and lists the decision, and its reason, in the run summary. A Worker ships one of three ways:
+
+| Mode | Which Workers | Steps |
+|---|---|---|
+| `gradual` | media, api, delivery, plugins | Upload the version; deploy it at 0% beside the one serving traffic; smoke test it; 10% of requests; hold and watch; 100% |
+| `staged` | catalog, pipeline, engine (they run Workflows and Durable Objects), storefront, web, studio (they serve hashed static assets) | Upload; 0% through the whole hold; smoke test again; 100% after every gradual Worker, in deploy order |
+| `full` | all of them, whenever any one must | `wrangler deploy`, as before |
+
+A staged Worker is never split. A Workflow instance or an OrderAgent could run its steps on both
+versions during a split, and those invocations aren't in the analytics the hold reads. A page given
+by one version of a Worker that serves hashed assets would ask the other for files it doesn't have
+(that needs version affinity, a zone Transform Rule this repository doesn't provision).
+
+**How a run proceeds.** The deploy steps run in their usual order (catalog, then the content stack,
+delivery, plugins, engine, storefront, web, studio), each uploading a version and putting it at 0%.
+Nobody reaches a version at 0%. `Smoke test new versions` then calls every Worker with a public host
+(the web app, storefront, delivery, and with content the api, media and studio) with a
+`Cloudflare-Workers-Version-Overrides` header naming the new versions, which routes those requests
+to them. A Worker reached only by service-binding RPC (the engine, the pipeline, the catalog and the
+plugins) has no such check, because an RPC call can't carry the header. `Roll out to 10%` moves each
+gradual Worker to 10%. `Hold and watch error rates` then holds for ten minutes
+(`ROLLOUT_HOLD_SECONDS` in `deploy.yml`), reading each gradual version's invocations from the
+Workers GraphQL Analytics API every minute. It fails the run when a version has at least three
+failed invocations and more than 2% of its invocations failed (`ROLLOUT_MAX_ERROR_RATE`), at once
+rather than at the end of the hold. A failure is an unhandled exception, a limit exceeded or a
+runtime error; a response the Worker returns with a 5xx status isn't counted, and neither is a
+caller that disconnected or an internal error of Cloudflare's. A version with fewer than 20
+invocations is too quiet to judge: the hold passes it with a line in the log, and the smoke tests
+are what covered it. If analytics can't be read during the hold, the run fails and rolls back; it
+never passes unwatched. `Roll out to 100%` follows for the gradual Workers; then the staged Workers
+are smoke tested once more through the override and go to 100%, callees first; then each
+rolled-out Worker's routes, domains, cron schedules and queue consumers are applied (`wrangler
+triggers deploy`: they aren't part of a version, so a change to one takes effect then), and the usual
+smoke tests, write check and latency check run against the finished deployment.
+
+**Compatibility.** During a rollout a new caller can reach an old callee, and an old caller a new
+one (the web app at 10% calling the engine still at 0%, or the reverse once a stage is promoted).
+Every change to an RPC method, a route or a stored shape must therefore work with both versions
+for one release: add first, and remove in a later release.
+
+**Rolling back.** Any failure after the catalog shipped, including the error-rate check, puts every
+Worker back as before, and a Worker that shipped as a version returns with `wrangler versions deploy
+<earlier version>@100%` (the version recorded when the run began) where a full one uses `wrangler
+rollback`. The run summary lists each. D1 is not rolled back.
+
+**Stopping a run.** Cancel the workflow run in GitHub Actions. When the deployment is rolling out
+gradually the job's rollback step still runs, and puts every Worker back on its earlier version,
+whether the cancel came before the 10% step or after the 100% one. Check the run summary for what
+was rolled back. A deployment that ships in full is not rolled back by a cancel, as before (it has
+no split to leave behind). A version already at 100% from an earlier, finished run is not touched by
+cancelling anything: merge a revert, which goes through CI like any change. The job's own timeout
+(150 minutes, above the sum of the rollout steps' timeouts and the deploy, smoke and rollback steps)
+is not what ends a run: a step that times out fails the job and runs the rollback.
+
+**When every Worker deploys in full.** All or nothing: while a Worker goes live at once and
+unwatched, the others would sit at 0% or 10% for the length of the hold, and a rollback would leave
+the splits in place. So if any Worker in the deployment must ship in full, all of them do, and the
+summary says "<worker> ships in full" for the rest. The `Plan rollout` step reads each Worker's
+record at Cloudflare (an API read, never a change) and chooses `full` for a Worker that:
+
+- has a Durable Object migration to apply (the last tag in its config isn't the tag it last applied):
+  Cloudflare refuses to upload a version that changes a class, and a migration can't be rolled back
+  past, so it ships alone, as before;
+- has never been deployed (a first deploy has no earlier version to split with);
+- is already split between two versions (an earlier rollout was cancelled part way: a full deploy
+  ends it);
+- can't be read (an API error): never guessed;
+- belongs to a deployment with `redundancy` off or `canary` an exception.
+
+Before anything deploys, the step also asks Workers analytics a question. If Cloudflare says the
+token isn't allowed to read it (**Account Analytics Read** missing), the step warns and every Worker
+ships in full, so a missing permission never blocks a release. Any other answer (the query is
+rejected, the API stays down after three tries) fails the run before anything is migrated, so a
+broken check can't leave the rollout silently never running. Check the `Plan rollout` summary after
+the first run on a deployment.
+
+Notes: a Worker's secrets are versioned with it, so during the hold the old version still uses the
+old values. Don't rotate `PRINCIPAL_KEY` or `DATA_KEY` ([principal key](operations.md#rotating-the-principal-key),
+[data key](operations.md#rotating-the-data-key)) in a release that rolls out gradually: a new Worker signs
+with the new key, and an old one it calls doesn't know it. Put `canary` in `except` for that release.
+A new Workflow, queue consumer or cron schedule starts when the triggers are applied, after 100%.
+Cloudflare allows two versions in a deployment, so rollouts of one Worker never overlap.
 
 ### The content stack
 
