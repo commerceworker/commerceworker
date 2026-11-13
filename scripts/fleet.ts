@@ -22,6 +22,7 @@
  *   node scripts/fleet.ts names <id>              resource names, as shell variables (provisioning)
  *   node scripts/fleet.ts logpush <id>            its Logpush job's name, bucket, filter and fields, as JSON
  *   node scripts/fleet.ts alerts <id>             the policies, Health Checks and destinations to create (null: off)
+ *   node scripts/fleet.ts ai-routes <id>          the AI Gateway dynamic routes to create (null: off)
  *   node scripts/fleet.ts logpush-foreign <id>    fail if another Logpush job (the API's list, on stdin)
  *                                                 would take its Workers' logs
  *   node scripts/fleet.ts logpush-token <id> <account> [check <group id>]  the Logpush R2 token to
@@ -685,6 +686,105 @@ export const replicatesDocs = (d: Deployment): d is Deployment & { redundancy: R
  */
 export const queuesEmail = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
   !!d.redundancy && !d.redundancy.except.includes('email') && !!d.email;
+
+/**
+ * Whether the deployment's text and assistant models are called through AI Gateway routes that
+ * hold a second model: `redundancy` on, `aiFallback` not an exception. A demo mocks its models
+ * and can't have the flag.
+ */
+export const routesAi = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('aiFallback');
+
+/**
+ * The second model each route falls back to, both Workers AI's own: personal data stays on
+ * Cloudflare, and no third party sees a prompt. A third-party model is left to a registry opt-in
+ * that doesn't exist yet. The text route's must take JSON mode (it answers the `ai.*` nodes'
+ * schemas); the assistant's is the one the assistant tried second before routes
+ * (`ASSISTANT_FALLBACK_MODEL`, held to this by a test).
+ */
+export const AI_ROUTE_FALLBACKS = {
+  text: '@cf/meta/llama-3.1-8b-instruct',
+  assistant: '@cf/zai-org/glm-4.7-flash',
+} as const;
+
+/**
+ * What bounds a route, per prompt (the gateway keys a limit by a metadata field, and every call
+ * carries its `prompt`): a day's spend in dollars, then requests a minute. A request past either
+ * goes to the route's second model rather than failing; a model that fails or takes longer than
+ * `timeoutMs` does too. No retry on the route: the gateway retries a failed call itself (its
+ * settings), and a second try of the same model would eat the time the second model needs. The
+ * engine bounds a whole call at 20 s, so the two timeouts together fit inside it.
+ */
+export const AI_ROUTE_LIMITS = {
+  dailyBudgetUsd: 50,
+  perMinute: 100,
+  timeoutMs: 9000,
+  retries: 0,
+} as const;
+
+/** One AI Gateway dynamic route's `elements`, as the API takes them (`POST .../routes`). */
+function routeElements(primary: string, fallback: string) {
+  const model = (id: string, model: string, success: string, failure: string) => ({
+    id,
+    type: 'model',
+    properties: {
+      provider: 'workers-ai',
+      model,
+      timeout: AI_ROUTE_LIMITS.timeoutMs,
+      retries: AI_ROUTE_LIMITS.retries,
+    },
+    outputs: { success: { elementId: success }, fallback: { elementId: failure } },
+  });
+  return [
+    { id: 'start', type: 'start', outputs: { next: { elementId: 'budget' } } },
+    {
+      id: 'budget',
+      type: 'rate',
+      properties: {
+        limitType: 'cost',
+        key: 'metadata.prompt',
+        limit: AI_ROUTE_LIMITS.dailyBudgetUsd,
+        window: 86_400,
+      },
+      outputs: { success: { elementId: 'rate' }, fallback: { elementId: 'second' } },
+    },
+    {
+      id: 'rate',
+      type: 'rate',
+      properties: {
+        limitType: 'count',
+        key: 'metadata.prompt',
+        limit: AI_ROUTE_LIMITS.perMinute,
+        window: 60,
+      },
+      outputs: { success: { elementId: 'first' }, fallback: { elementId: 'second' } },
+    },
+    model('first', primary, 'end', 'second'),
+    model('second', fallback, 'end', 'end'),
+    { id: 'end', type: 'end', outputs: {} },
+  ];
+}
+
+/**
+ * What `provision.sh` creates in the deployment's gateway: the routes the engine calls as
+ * `dynamic/<name>` (`AI_ROUTE`, `ASSISTANT_ROUTE`). The first model is the engine's own `AI_MODEL`
+ * or `ASSISTANT_MODEL`, from its base config, so the route and the engine can't name different
+ * ones. Null when the deployment has no routes.
+ */
+export function aiRoutes(d: Deployment, engineBase: Config) {
+  if (!routesAi(d)) return null;
+  const vars = engineBase.vars;
+  return [
+    {
+      name: vars.AI_ROUTE as string,
+      elements: routeElements(vars.AI_MODEL as string, AI_ROUTE_FALLBACKS.text),
+    },
+    {
+      name: vars.ASSISTANT_ROUTE as string,
+      elements: routeElements(vars.ASSISTANT_MODEL as string, AI_ROUTE_FALLBACKS.assistant),
+    },
+  ];
+}
 
 export function redundancySchedules(r: Redundancy) {
   const drillHour = (r.backupHourUtc + 6) % 24;
@@ -1903,6 +2003,12 @@ export function renderEngine(base: Config, d: Deployment): Config {
   const store = storeSecrets(d, sandboxedPlugins(d), storeBinding);
   if (store.length)
     config.secrets_store_secrets = [...(config.secrets_store_secrets ?? []), ...store];
+  // The gateway routes the models are called through, when the deployment has them. The base
+  // config names app.commerceworker.com's, so a deployment without them must not keep them.
+  if (!routesAi(d)) {
+    const { AI_ROUTE: _text, ASSISTANT_ROUTE: _assistant, ...vars } = config.vars;
+    config.vars = vars;
+  }
   config.vars = {
     ...config.vars,
     AI_GATEWAY_ID: names(d).aiGateway,
@@ -2739,6 +2845,8 @@ export function shellVars(d: Deployment): Record<string, string> {
     // Detection: `true` creates the notification policies, destinations and Health Checks (`fleet.ts alerts <id>`).
     ALERTS: String(alertsOn(d)),
     ALERT_WEBHOOK_FALLBACK: d.redundancy?.alerts?.webhook ?? '',
+    // `true` creates the gateway's dynamic routes (`fleet.ts ai-routes <id>`).
+    AI_ROUTES: String(routesAi(d)),
     // The content stack: `true` creates its resources too. The rest are empty without it.
     CONTENT: String(d.content),
     CONTENT_D1: d.content ? n.contentD1 : '',
@@ -3102,6 +3210,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'names') shellNames(args[0]);
     else if (cmd === 'logpush') console.log(JSON.stringify(logpushJob(byId(args[0]))));
     else if (cmd === 'alerts') console.log(JSON.stringify(alertSpec(byId(args[0]))));
+    else if (cmd === 'ai-routes')
+      console.log(
+        JSON.stringify(
+          aiRoutes(byId(args[0]), readJsonc(join(ROOT, 'apps', 'engine', 'wrangler.jsonc'))),
+        ),
+      );
     else if (cmd === 'logpush-foreign') logpushForeign(args[0]);
     else if (cmd === 'logpush-token') logpushTokenCmd(args[0], args[1], args[2], args[3]);
     else if (cmd === 'kv-restore') await kvRestore(args[0], args[1], args.slice(2));

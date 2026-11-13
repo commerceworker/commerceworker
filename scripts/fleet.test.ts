@@ -9,7 +9,10 @@ import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
 import {
+  AI_ROUTE_FALLBACKS,
+  AI_ROUTE_LIMITS,
   ALERT_POLICIES,
+  aiRoutes,
   alertSpec,
   alertsOn,
   backsUpKv,
@@ -50,6 +53,7 @@ import {
   renderStudio,
   renderWeb,
   replicatesDocs,
+  routesAi,
   sandboxedPlugins,
   secretsProblem,
   shellVars,
@@ -2511,7 +2515,8 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
     workflows: ['ORDER_WORKFLOW', 'REPLENISH'],
   });
   const on = renderEngine(base('engine'), protectedAcme());
-  // What the flag adds is exactly those bindings, and the replica's queue consumers.
+  // What the flag adds is exactly those bindings, the replica's queue consumers and the gateway
+  // routes' names (held by the AI Gateway routes tests).
   assert.deepEqual(
     {
       ...on,
@@ -2519,8 +2524,13 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
       r2_buckets: off.r2_buckets,
       workflows: off.workflows,
       queues: undefined,
+      vars: off.vars,
     },
     { ...off, queues: undefined },
+  );
+  assert.deepEqual(
+    Object.keys(on.vars).filter((k) => !(k in off.vars)),
+    ['AI_ROUTE', 'ASSISTANT_ROUTE'],
   );
   assert.equal(off.queues, undefined);
   // d1Backup, objectBackup and r2Replica as exceptions turn their bindings off, each apart from the others.
@@ -3256,4 +3266,158 @@ test('R2 requests are signed with SigV4 and its list answer is read', () => {
   );
   // `&amp;` is decoded last, so an escaped entity stays an entity.
   assert.deepEqual(parseList('<R><Key>dlq/x&amp;lt;y.json</Key></R>').keys, ['dlq/x&lt;y.json']);
+});
+
+// --- AI Gateway routes: a second model, and a spend limit ---
+
+const engineBase = () => base('engine');
+/** The route named `name`, as `fleet.ts ai-routes` prints it. */
+const routeNamed = (d: ReturnType<typeof toDeployment>, name: string) =>
+  aiRoutes(d, engineBase())!.find((r) => r.name === name)!;
+type Element = { id: string; type: string; properties?: Record<string, unknown>; outputs: unknown };
+const element = (r: { elements: Element[] }, id: string) => r.elements.find((e) => e.id === id)!;
+
+test('routes are on with redundancy and aiFallback not an exception', () => {
+  assert.equal(routesAi(acme), false);
+  assert.equal(routesAi(protectedAcme()), true);
+  assert.equal(routesAi(protectedAcme({ except: ['aiFallback'] })), false);
+  // The other exceptions don't touch them.
+  assert.equal(routesAi(protectedAcme({ except: ['d1Backup', 'email', 'alerts'] })), true);
+  assert.equal(aiRoutes(acme, engineBase()), null);
+  assert.equal(aiRoutes(protectedAcme({ except: ['aiFallback'] }), engineBase()), null);
+  assert.equal(shellVars(protectedAcme()).AI_ROUTES, 'true');
+  assert.equal(shellVars(acme).AI_ROUTES, 'false');
+  assert.equal(shellVars(protectedAcme({ except: ['aiFallback'] })).AI_ROUTES, 'false');
+});
+
+test('the engine names the routes with the flag on, and strips them with it off or excepted', () => {
+  const on = renderEngine(base('engine'), protectedAcme()).vars;
+  assert.equal(on.AI_ROUTE, 'cw-text');
+  assert.equal(on.ASSISTANT_ROUTE, 'cw-assistant');
+  // The route's first model stays the fixed one the vars name.
+  assert.equal(on.AI_MODEL, engineBase().vars.AI_MODEL);
+  assert.equal(on.ASSISTANT_MODEL, engineBase().vars.ASSISTANT_MODEL);
+  for (const d of [acme, protectedAcme({ except: ['aiFallback'] })]) {
+    const vars = renderEngine(base('engine'), d).vars;
+    assert.ok(!('AI_ROUTE' in vars) && !('ASSISTANT_ROUTE' in vars));
+    assert.equal(vars.AI_MODEL, engineBase().vars.AI_MODEL);
+  }
+  // A demo has no flag, so no routes: it mocks its models.
+  const demo = toDeployment({ ...acme, id: 'showcase', demo: true });
+  assert.ok(!('AI_ROUTE' in renderEngine(base('engine'), demo).vars));
+});
+
+test('each route is held field by field: first model, second model, limits, outputs', () => {
+  const d = protectedAcme();
+  const routes = aiRoutes(d, engineBase())!;
+  assert.deepEqual(
+    routes.map((r) => r.name),
+    ['cw-text', 'cw-assistant'],
+  );
+  const models = {
+    'cw-text': [engineBase().vars.AI_MODEL, AI_ROUTE_FALLBACKS.text],
+    'cw-assistant': [engineBase().vars.ASSISTANT_MODEL, AI_ROUTE_FALLBACKS.assistant],
+  };
+  for (const [name, [first, second]] of Object.entries(models)) {
+    const r = routeNamed(d, name);
+    assert.deepEqual(
+      r.elements.map((e) => [e.id, e.type]),
+      [
+        ['start', 'start'],
+        ['budget', 'rate'],
+        ['rate', 'rate'],
+        ['first', 'model'],
+        ['second', 'model'],
+        ['end', 'end'],
+      ],
+    );
+    assert.deepEqual(element(r, 'start').outputs, { next: { elementId: 'budget' } });
+    // The spend budget, then the rate limit: past either, the second model answers rather than a 429.
+    assert.deepEqual(element(r, 'budget'), {
+      id: 'budget',
+      type: 'rate',
+      properties: { limitType: 'cost', key: 'metadata.prompt', limit: 50, window: 86_400 },
+      outputs: { success: { elementId: 'rate' }, fallback: { elementId: 'second' } },
+    });
+    assert.deepEqual(element(r, 'rate'), {
+      id: 'rate',
+      type: 'rate',
+      properties: { limitType: 'count', key: 'metadata.prompt', limit: 100, window: 60 },
+      outputs: { success: { elementId: 'first' }, fallback: { elementId: 'second' } },
+    });
+    const timing = { timeout: AI_ROUTE_LIMITS.timeoutMs, retries: AI_ROUTE_LIMITS.retries };
+    assert.deepEqual(element(r, 'first'), {
+      id: 'first',
+      type: 'model',
+      properties: { provider: 'workers-ai', model: first, ...timing },
+      outputs: { success: { elementId: 'end' }, fallback: { elementId: 'second' } },
+    });
+    assert.deepEqual(element(r, 'second'), {
+      id: 'second',
+      type: 'model',
+      properties: { provider: 'workers-ai', model: second, ...timing },
+      outputs: { success: { elementId: 'end' }, fallback: { elementId: 'end' } },
+    });
+    assert.deepEqual(element(r, 'end'), { id: 'end', type: 'end', outputs: {} });
+  }
+});
+
+test('every element is reachable and every output names an element that exists', () => {
+  for (const r of aiRoutes(protectedAcme(), engineBase())!) {
+    const ids = new Set(r.elements.map((e) => e.id));
+    const seen = new Set<string>(['start']);
+    const walk = (id: string) => {
+      const e = element(r, id);
+      for (const o of Object.values(e.outputs as Record<string, { elementId: string }>)) {
+        assert.ok(ids.has(o.elementId), `${r.name}: ${id} points at ${o.elementId}`);
+        if (!seen.has(o.elementId)) {
+          seen.add(o.elementId);
+          walk(o.elementId);
+        }
+      }
+    };
+    walk('start');
+    assert.deepEqual([...seen].sort(), [...ids].sort(), `${r.name} has an unreachable element`);
+  }
+});
+
+test('the routes hold only Workers AI models: no third party sees a prompt', () => {
+  for (const r of aiRoutes(protectedAcme(), engineBase())!)
+    for (const e of r.elements.filter((x) => x.type === 'model')) {
+      const props = e.properties as Record<string, unknown>;
+      assert.equal(props.provider, 'workers-ai');
+      assert.match(String(props.model), /^@cf\//);
+    }
+  // The second model is a different one from the first, or the route would retry the same failure.
+  for (const [first, second] of [
+    [engineBase().vars.AI_MODEL, AI_ROUTE_FALLBACKS.text],
+    [engineBase().vars.ASSISTANT_MODEL, AI_ROUTE_FALLBACKS.assistant],
+  ])
+    assert.notEqual(first, second);
+});
+
+test('the assistant route falls back to the model the assistant tried second before routes', () => {
+  const src = readFileSync(
+    join(import.meta.dirname, '..', 'apps', 'engine', 'src', 'assistant', 'model.ts'),
+    'utf8',
+  );
+  assert.equal(
+    /export const ASSISTANT_FALLBACK_MODEL = '([^']+)'/.exec(src)?.[1],
+    AI_ROUTE_FALLBACKS.assistant,
+  );
+});
+
+test('both models’ timeouts fit the engine’s 20 s bound on a model call', () => {
+  assert.ok(AI_ROUTE_LIMITS.timeoutMs * 2 <= 20_000);
+});
+
+test('ai-routes prints the routes for the deployment, null without them', () => {
+  const run = (id: string) =>
+    JSON.parse(
+      execFileSync('node', [join(import.meta.dirname, 'fleet.ts'), 'ai-routes', id], {
+        encoding: 'utf8',
+      }),
+    );
+  assert.equal(run('commerceworker')?.[0].name, 'cw-text');
+  assert.equal(run('commerceworker')?.[1].name, 'cw-assistant');
 });

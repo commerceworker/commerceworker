@@ -233,6 +233,12 @@
     "ASSISTANT_MODEL": "@cf/moonshotai/kimi-k2.6",
     // Multimodal decision model for Assess (probabilities per option); Clef's request body is fixed.
     "ASSESS_MODEL": "@cf/cloudflare/clef",
+    // The AI Gateway dynamic routes (cw-text, cw-assistant) that try a second model when the first
+    // fails and carry a spend limit. Set with the registry's `redundancy` (scripts/fleet.ts strips
+    // them without it, or with `aiFallback` excepted); then AI_MODEL and ASSISTANT_MODEL name the
+    // route's first model. scripts/provision.sh creates the routes. Empty: the fixed models above.
+    "AI_ROUTE": "cw-text",
+    "ASSISTANT_ROUTE": "cw-assistant",
     // AI Gateway for every model call: logs, analytics and a rate limit (120 a minute, sliding).
     // Empty calls Workers AI directly; local dev does, so it never shares production's limit.
     "AI_GATEWAY_ID": "commerceworker",

@@ -24,11 +24,11 @@ export interface MetricsSink {
 export type MetricsApp = 'web' | 'engine' | 'storefront';
 
 /**
- * What a failover counter counts: the model's heuristic answered, a DOCS read was served from its
- * replica, a transactional email was refused or failed. Each is working as designed and still a
- * sign something upstream is down.
+ * What a failover counter counts: the model's heuristic answered, the gateway route's second
+ * model answered, a DOCS read was served from its replica, a transactional email was refused or
+ * failed. Each is working as designed and still a sign something upstream is down.
  */
-export type Failover = 'ai_heuristic' | 'docs_replica_read' | 'email_failed';
+export type Failover = 'ai_heuristic' | 'ai_fallback' | 'docs_replica_read' | 'email_failed';
 
 export interface OpsMetrics {
   /** One request: its route group, status and time. */

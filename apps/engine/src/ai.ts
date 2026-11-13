@@ -76,6 +76,42 @@ export function gatewayOptions(
     : undefined;
 }
 
+/**
+ * The model a structured call is made as: the deployment's gateway route (`AI_ROUTE`, rendered
+ * with `redundancy`) when it has one, so the gateway tries a second model when the first fails,
+ * else the fixed `AI_MODEL`. A route belongs to a gateway, so without one (local dev) the fixed
+ * model is called.
+ */
+export const textModel = (env: Env) =>
+  env.AI_ROUTE && env.AI_GATEWAY_ID ? `dynamic/${env.AI_ROUTE}` : String(env.AI_MODEL);
+
+/** The same for the assistant's conversation (`ASSISTANT_ROUTE`, else `ASSISTANT_MODEL`). */
+export const assistantModelId = (env: Env) =>
+  env.ASSISTANT_ROUTE && env.AI_GATEWAY_ID
+    ? `dynamic/${env.ASSISTANT_ROUTE}`
+    : String(env.ASSISTANT_MODEL);
+
+/** The fixed model a route tries first: the vars hold it beside the route's name. */
+function routePrimary(env: Env, model: string) {
+  if (model === `dynamic/${env.AI_ROUTE}`) return String(env.AI_MODEL);
+  if (model === `dynamic/${env.ASSISTANT_ROUTE}`) return String(env.ASSISTANT_MODEL);
+  return undefined;
+}
+
+/**
+ * What a route's answer says about who served it. The gateway names the model in the
+ * `cf-aig-model` response header (it sets no step number for a route, as it does for the
+ * Universal Endpoint's `cf-aig-step`), so a model other than the route's first is its fallback
+ * serving: counted as `failover('ai_fallback')`. Returns the model that served, if the header said.
+ */
+export function routeServed(env: Env, model: string, headers: Headers): string | undefined {
+  const primary = routePrimary(env, model);
+  if (!primary) return undefined;
+  const served = headers.get('cf-aig-model') ?? undefined;
+  if (served && served !== primary) ops().failover('ai_fallback');
+  return served;
+}
+
 /** Heuristic answers that aren't a failure: mock mode, and a forecast with nothing to ask about. */
 const EXPECTED_FALLBACKS = new Set(['mock', 'nothing to reorder']);
 
@@ -193,7 +229,7 @@ export async function runJson<T>(
     input?: Record<string, unknown>;
   } = {},
 ): Promise<{ value: T; tokens?: number } & AiProvenance> {
-  const model = opts.model ?? String(env.AI_MODEL);
+  const model = opts.model ?? textModel(env);
   const id = promptId(prompt);
   const started = Date.now();
   const heuristic = (reason: string, extra: Record<string, unknown> = {}) => {
@@ -204,19 +240,34 @@ export async function runJson<T>(
   if (String(env.AI_MODE) === 'mock') return heuristic('mock');
   let res: ModelAnswer;
   let logId: string | undefined;
+  let served: string | undefined;
+  const routed = model.startsWith('dynamic/');
   try {
+    const input = {
+      messages,
+      response_format: { type: 'json_schema', json_schema: schema },
+      max_tokens: opts.maxTokens ?? 2048,
+      temperature: 0.2,
+      ...opts.input,
+    } as never;
     res = (await withTimeout(
-      env.AI.run(
-        model as keyof AiModels,
-        {
-          messages,
-          response_format: { type: 'json_schema', json_schema: schema },
-          max_tokens: opts.maxTokens ?? 2048,
-          temperature: 0.2,
-          ...opts.input,
-        } as never,
-        callOptions(env, id, opts.orderId),
-      ),
+      routed
+        ? // A route's answer carries the model that served it in a header, which only the raw
+          // response shows. A refusal the gateway makes (a spent budget, a limit, both models
+          // down) is a status, not a throw, so it is turned into one here.
+          env.AI.run(model as keyof AiModels, input, {
+            ...callOptions(env, id, opts.orderId),
+            returnRawResponse: true,
+          }).then(async (r: Response) => {
+            if (!r.ok) throw new Error(`the gateway route answered ${r.status}`);
+            served = routeServed(env, model, r.headers);
+            return (await r.json()) as ModelAnswer;
+          })
+        : (env.AI.run(
+            model as keyof AiModels,
+            input,
+            callOptions(env, id, opts.orderId),
+          ) as Promise<ModelAnswer>),
       opts.timeoutMs ?? AI_TIMEOUT_MS,
     )) as ModelAnswer;
     // Read at once: the binding holds only its latest call's id, and another call in this isolate
@@ -238,7 +289,12 @@ export async function runJson<T>(
     const value = (typeof raw === 'string' ? JSON.parse(raw) : raw) as T;
     if (value === undefined || value === null) throw new Error('empty response');
     if (!conforms(value, schema)) throw new Error('response does not match the schema');
-    const p: AiProvenance = { source: 'model', model, prompt: id, ...(logId ? { logId } : {}) };
+    const p: AiProvenance = {
+      source: 'model',
+      model: served ?? model,
+      prompt: id,
+      ...(logId ? { logId } : {}),
+    };
     logAiCall(p, Date.now() - started, used);
     return { value, ...p, ...(tokens !== undefined ? { tokens } : {}) };
   } catch (err) {

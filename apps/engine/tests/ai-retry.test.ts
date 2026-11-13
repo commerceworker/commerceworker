@@ -23,6 +23,9 @@ function model(reply: () => unknown, over: Record<string, unknown> = {}) {
     ...env,
     AI_MODE: 'model',
     AI_GATEWAY_ID: '',
+    // The fixed model: the gateway routes have their own tests (ai-routes.test.ts).
+    AI_ROUTE: '',
+    ASSISTANT_ROUTE: '',
     ...over,
     AI: {
       run: async (model: string, input: Record<string, unknown>, options: unknown) => {

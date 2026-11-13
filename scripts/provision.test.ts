@@ -960,3 +960,135 @@ test('without mail queues (no redundancy, no sender, email an exception), nothin
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls, []);
 });
+
+// The AI routes section (`ai-routes:begin` to `ai-routes:end`), against the same fake `curl`.
+// A write answers from `post` in the fixture directory when there is one (the API's answer to a
+// created route), else with a bare id. `ai_routes` is what `fleet.ts ai-routes <id>` prints.
+const aiRoutes = /# ai-routes:begin\n([\s\S]*?)# ai-routes:end/.exec(script)?.[1];
+const ROUTES_CURL = FAKE_CURL.replace(
+  `echo '{"success":true,"result":{"id":"new-id"}}'; exit 0`,
+  `if [ -f "$FIX/post" ]; then cat "$FIX/post"; else echo '{"success":true,"result":{"id":"new-id"}}'; fi; exit 0`,
+);
+const ROUTE = (name: string, model = 'm1') => ({
+  name,
+  elements: [{ id: 'first', type: 'model', properties: { provider: 'workers-ai', model } }],
+});
+const ROUTES_PATH = `/accounts/${ACCOUNT}/ai-gateway/gateways/gw/routes`;
+
+function runAiRoutes(opts: {
+  live?: unknown[];
+  post?: unknown;
+  routes?: unknown[];
+  env?: Record<string, string>;
+}) {
+  assert.ok(aiRoutes, 'provision.sh has no ai-routes section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-routes-'));
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'curl'), ROUTES_CURL);
+  chmodSync(join(bin, 'curl'), 0o755);
+  writeFileSync(
+    join(dir, GET(ROUTES_PATH)),
+    JSON.stringify({ success: true, data: { routes: opts.live ?? [] } }),
+  );
+  if (opts.post) writeFileSync(join(dir, 'post'), JSON.stringify(opts.post));
+  const result = spawnSync('bash', ['-c', `set -euo pipefail\n${aiRoutes}`], {
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      FIX: dir,
+      AI_ROUTES: 'true',
+      AI_GATEWAY: 'gw',
+      CLOUDFLARE_API_TOKEN: 'token',
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      ai_routes: JSON.stringify(opts.routes ?? [ROUTE('cw-text'), ROUTE('cw-assistant', 'm2')]),
+      ...opts.env,
+    },
+    encoding: 'utf8',
+  });
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(dir, name), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    calls: read('calls').split('\n').filter(Boolean),
+    bodies: read('bodies')
+      .split('\n')
+      .filter(Boolean)
+      .map((b) => JSON.parse(b)),
+  };
+}
+const CREATED = { success: true, result: { id: 'r1', deployment: { deployment_id: 'd1' } } };
+
+test('with the routes off, nothing is called', () => {
+  const r = runAiRoutes({ env: { AI_ROUTES: 'false' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, []);
+});
+
+test('it reads the gateway’s routes first, then creates each one that is missing, as rendered', () => {
+  const r = runAiRoutes({ post: CREATED });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, [
+    `GET ${ROUTES_PATH}?per_page=100`,
+    `POST ${ROUTES_PATH}`,
+    `POST ${ROUTES_PATH}`,
+  ]);
+  assert.deepEqual(r.bodies, [ROUTE('cw-text'), ROUTE('cw-assistant', 'm2')]);
+  assert.match(r.stdout, /Created AI route cw-text/);
+  assert.match(r.stdout, /Created AI route cw-assistant/);
+});
+
+test('a route that exists is kept, not created again', () => {
+  const r = runAiRoutes({ post: CREATED, live: [{ id: 'r0', ...ROUTE('cw-text') }] });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, [`GET ${ROUTES_PATH}?per_page=100`, `POST ${ROUTES_PATH}`]);
+  assert.deepEqual(r.bodies, [ROUTE('cw-assistant', 'm2')]);
+  assert.match(r.stdout, /AI route cw-text already exists\n/);
+});
+
+test('a route that differs is reported and left alone', () => {
+  const r = runAiRoutes({
+    live: [
+      { id: 'r0', ...ROUTE('cw-text', 'edited') },
+      { id: 'r1', ...ROUTE('cw-assistant', 'm2') },
+    ],
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, [`GET ${ROUTES_PATH}?per_page=100`]);
+  assert.match(r.stdout, /cw-text already exists and differs from commerceworker's/);
+  assert.match(r.stdout, /AI route cw-assistant already exists\n/);
+});
+
+test('a created route that wasn’t deployed with its first version is deployed', () => {
+  const r = runAiRoutes({
+    routes: [ROUTE('cw-text')],
+    post: { success: true, result: { id: 'r1', version: { version_id: 'v1' } } },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, [
+    `GET ${ROUTES_PATH}?per_page=100`,
+    `POST ${ROUTES_PATH}`,
+    `POST ${ROUTES_PATH}/r1/deployments`,
+  ]);
+  assert.deepEqual(r.bodies[1], { version_id: 'v1' });
+});
+
+test('an API failure stops provisioning, naming the call', () => {
+  const r = runAiRoutes({ post: { success: false, errors: [{ message: 'no such gateway' }] } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Cloudflare API POST .*routes: no such gateway/);
+});
+
+test('without an API token the routes are skipped, not half made', () => {
+  const r = runAiRoutes({ env: { CLOUDFLARE_API_TOKEN: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Skipped the AI routes/);
+  assert.deepEqual(r.calls, []);
+});
