@@ -13,10 +13,18 @@
  * and offers the ones a dropped webhook never delivered.
  *
  * Each event id is claimed in `payment_events` before it is acted on: Stripe redelivers for up to
- * three days, far past the signed-webhook receipts' window, and a repeat (or a concurrent second
- * delivery) does nothing. The claim is dropped when the outcome is `retry` or the handling throws,
- * so Stripe's next delivery tries again. Settling is idempotent, so a retried `invoice.paid`
- * changes nothing before it delivers.
+ * three days, far past the signed-webhook receipts' window, and a repeat does nothing. The claim says
+ * `processing` and when; success marks it `done`, and the outcome `retry` or a throw gives it back, so
+ * Stripe's next delivery tries again. A claim whose handler died (an evicted isolate, a CPU limit, a
+ * deploy cutting over) stays `processing` and is claimable again after `CLAIM_STALE_MS`; until then a
+ * second delivery answers `retry` rather than `duplicate`, so neither Stripe nor the reconciliation
+ * gives up on an event nobody finished. So a handler may run twice over a partly applied event, and
+ * every one is idempotent: settling an invoice, the ledger's capture and refund rows keyed by the
+ * event's ids, a cancel, and an order event the agent remembers it delivered.
+ *
+ * An event that throws is counted. With `poisonAfter` (the reconciliation passes it) the failure that
+ * reaches it marks the event `poisoned`: logged once, counted, and a duplicate from then on, so the
+ * reconciliation's cursor moves past it. A webhook delivery counts failures but never poisons.
  */
 
 import {
@@ -32,6 +40,7 @@ import {
   TERMINAL_ORDER_STATUSES,
 } from '@commerceworker/core';
 import { settleInvoice } from './billing';
+import { ops } from './metrics';
 import { orderAgent } from './namespaces';
 import { markIntentCanceled, orderForIntent, paymentMode } from './payments';
 import { paymentEventLog, paymentLedger } from './wire';
@@ -68,21 +77,46 @@ function reconciled(o: ReconcileOutcome): PaymentEventResult {
   };
 }
 
+/** What the handler answers: the public result, and `poisoned` for the reconciliation alone. */
+export type HandledEvent = PaymentEventResult & { poisoned?: true };
+
+/** A claim still `processing` after this long belongs to a handler that died. */
+export const CLAIM_STALE_MS = 10 * 60_000;
+
 export async function handleStripeEvent(
   env: Env,
   event: PaymentEvent,
-): Promise<PaymentEventResult> {
+  now = Date.now(),
+  poisonAfter?: number,
+): Promise<HandledEvent> {
   const log = paymentEventLog(env);
-  if (!(await log.claim(event.id, 'stripe', event.type, Date.now())))
-    return { outcome: 'duplicate' };
-  let result: PaymentEventResult | undefined;
+  const claim = await log.claim(event.id, 'stripe', event.type, now, CLAIM_STALE_MS);
+  if (claim === 'processing')
+    return { outcome: 'retry', reason: 'Another delivery is handling this event' };
+  if (claim === 'done') return { outcome: 'duplicate' };
+  if (claim === 'poisoned') return { outcome: 'duplicate', reason: 'Poisoned' };
+  let result: PaymentEventResult;
   try {
     result = await dispatch(env, event);
     if (result.orderId) await log.link(event.id, result.orderId);
-    return result;
-  } finally {
-    if (!result || result.outcome === 'retry') await log.release(event.id);
+  } catch (err) {
+    const f = await log.fail(event.id, poisonAfter);
+    if (!f.poisoned) throw err;
+    console.error(
+      JSON.stringify({
+        type: 'stripe_event_poisoned',
+        event: event.id,
+        eventType: event.type,
+        failures: f.failures,
+      }),
+      err,
+    );
+    ops().reconcileMismatch('poisoned');
+    return { outcome: 'ignored', reason: `Poisoned after ${f.failures} failures`, poisoned: true };
   }
+  if (result.outcome === 'retry') await log.release(event.id);
+  else await log.finish(event.id, result.outcome);
+  return result;
 }
 
 async function dispatch(env: Env, event: PaymentEvent): Promise<PaymentEventResult> {

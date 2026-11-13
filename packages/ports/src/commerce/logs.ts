@@ -26,13 +26,37 @@ export interface IntakeLog {
   record(email: InboundEmail): Promise<void>;
 }
 
+/**
+ * What a claim came to: `claimed` (this taker handles the event), `done` (handled already),
+ * `processing` (another taker holds it and is not yet stale: ask again later) or `poisoned` (it threw
+ * too often; an operator decides).
+ */
+export type EventClaim = 'claimed' | 'done' | 'processing' | 'poisoned';
+
 export interface PaymentEventLog {
-  /** Claims an event to handle: false when it was handled (or is being handled) already. */
-  claim(id: string, provider: string, type: string, now: number): Promise<boolean>;
+  /**
+   * Claims an event to handle. A new id, a `released` one, and one still `processing` after
+   * `staleMs` (its taker died) are claimed, by one guarded write, so of any number of concurrent
+   * takers exactly one gets `claimed`.
+   */
+  claim(
+    id: string,
+    provider: string,
+    type: string,
+    now: number,
+    staleMs: number,
+  ): Promise<EventClaim>;
   /** Notes the order an event was about. */
   link(id: string, orderId: string): Promise<void>;
-  /** Frees an event whose handling failed, so a redelivery handles it. */
+  /** Marks a claimed event handled, with its outcome (`handled`, `ignored`). */
+  finish(id: string, outcome: string): Promise<void>;
+  /** Gives a claim back without counting a failure (the answer was `retry`): a redelivery handles it. */
   release(id: string): Promise<void>;
+  /**
+   * Counts a failed handling and gives the claim back. With `poisonAfter`, the failure that reaches
+   * it marks the event `poisoned` instead, and `poisoned` is true for that one call only.
+   */
+  fail(id: string, poisonAfter?: number): Promise<{ failures: number; poisoned: boolean }>;
   /** Where the provider's reconciliation left off (a Unix second), or undefined before its first run. */
   cursor(provider: string): Promise<number | undefined>;
   /** Moves the cursor forward; an older value than the stored one changes nothing. */

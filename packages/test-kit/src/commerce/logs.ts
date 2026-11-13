@@ -20,12 +20,40 @@ export class InMemoryIntakeLog implements IntakeLog {
 }
 
 export class InMemoryPaymentEventLog implements PaymentEventLog {
-  readonly events = new Map<string, { provider: string; type: string; orderId: string | null }>();
+  readonly events = new Map<
+    string,
+    {
+      provider: string;
+      type: string;
+      orderId: string | null;
+      status: 'processing' | 'released' | 'done' | 'poisoned';
+      claimedAt: number;
+      failures: number;
+      outcome: string | null;
+    }
+  >();
 
-  async claim(id: string, provider: string, type: string) {
-    if (this.events.has(id)) return false;
-    this.events.set(id, { provider, type, orderId: null });
-    return true;
+  // No await between the read and the write, so two takers can't both win, as the D1 store's one
+  // guarded statement does.
+  async claim(id: string, provider: string, type: string, now: number, staleMs: number) {
+    const e = this.events.get(id);
+    if (!e) {
+      this.events.set(id, {
+        provider,
+        type,
+        orderId: null,
+        status: 'processing',
+        claimedAt: now,
+        failures: 0,
+        outcome: null,
+      });
+      return 'claimed' as const;
+    }
+    if (e.status === 'done' || e.status === 'poisoned') return e.status;
+    if (e.status === 'processing' && e.claimedAt > now - staleMs) return 'processing' as const;
+    e.status = 'processing';
+    e.claimedAt = now;
+    return 'claimed' as const;
   }
 
   async link(id: string, orderId: string) {
@@ -33,8 +61,26 @@ export class InMemoryPaymentEventLog implements PaymentEventLog {
     if (e) e.orderId = orderId;
   }
 
+  async finish(id: string, outcome: string) {
+    const e = this.events.get(id);
+    if (e) {
+      e.status = 'done';
+      e.outcome = outcome;
+    }
+  }
+
   async release(id: string) {
-    this.events.delete(id);
+    const e = this.events.get(id);
+    if (e && e.status === 'processing') e.status = 'released';
+  }
+
+  async fail(id: string, poisonAfter?: number) {
+    const e = this.events.get(id);
+    if (!e) return { failures: 0, poisoned: false };
+    e.failures++;
+    const poisoned = poisonAfter !== undefined && e.failures >= poisonAfter;
+    e.status = poisoned ? 'poisoned' : 'released';
+    return { failures: e.failures, poisoned };
   }
 
   private readonly cursors = new Map<string, number>();

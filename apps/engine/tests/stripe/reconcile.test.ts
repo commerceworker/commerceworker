@@ -3,8 +3,8 @@ import type { Order } from '@commerceworker/core';
 import { createDb, payments } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleStripeEvent } from '../../src/payment-events';
-import { reconcileStripe } from '../../src/payment-reconcile';
+import { CLAIM_STALE_MS, handleStripeEvent } from '../../src/payment-events';
+import { POISON_AFTER, reconcileStripe } from '../../src/payment-reconcile';
 import { authorizePayment, capturePayment, refund, voidAuthorizations } from '../../src/payments';
 import { paymentEventLog } from '../../src/wire';
 import { installStripeFake, type StripeFake } from '../stripe-fake';
@@ -229,7 +229,8 @@ describe('ordering and windows', () => {
       const out: boolean[] = [];
       // A claim that succeeds means it was never handled: give it straight back.
       for (const id of ids) {
-        const fresh = await log.claim(id, 'stripe', 'payment_intent.succeeded', 1);
+        const fresh =
+          (await log.claim(id, 'stripe', 'payment_intent.succeeded', 1, 0)) === 'claimed';
         if (fresh) await log.release(id);
         out.push(!fresh);
       }
@@ -301,5 +302,108 @@ describe('the cursor', () => {
     stripe.failNext(/\/v1\/events/);
     await expect(reconcileStripe(env, Date.now() + 2 * hour)).rejects.toThrow();
     expect(await log.cursor('stripe')).toBe(later);
+  });
+});
+
+const MIN = 60_000;
+
+/** A time past where the shared cursor stands (earlier tests move it ahead), and events made then. */
+async function afterCursor(...made: { created: number }[]) {
+  const cursor = (await paymentEventLog(env).cursor('stripe')) ?? 0;
+  const t0 = Math.max(Date.now(), (cursor + 2) * 1000);
+  for (const e of made) e.created = Math.floor(t0 / 1000);
+  return t0;
+}
+
+describe('a claim whose handler died', () => {
+  it('is applied on the next delivery or pass once ten minutes have gone', async () => {
+    const { o, pi } = await authorized(stripe, 'ord_rc_dead');
+    const cap = stripe.dashboardCapture(pi.id);
+    const t0 = await afterCursor(cap);
+    // The isolate was evicted after the claim: a `processing` row and no handler.
+    expect(await paymentEventLog(env).claim(cap.id, 'stripe', cap.type, t0, CLAIM_STALE_MS)).toBe(
+      'claimed',
+    );
+
+    // Neither Stripe's redelivery nor the reconciliation may take it for handled meanwhile.
+    expect(await handleStripeEvent(env, asEvent(cap), t0 + 9 * MIN)).toMatchObject({
+      outcome: 'retry',
+    });
+    const early = await reconcileStripe(env, t0 + 9 * MIN);
+    expect(early).toMatchObject({ unresolved: expect.any(Number), failed: 0 });
+    expect((early as { unresolved: number }).unresolved).toBeGreaterThan(0);
+    expect((await rows(o.id)).map((r) => r.status)).toEqual(['authorized']);
+
+    // The pass held its cursor at the event, so the next one offers it again, and takes the claim.
+    const late = await reconcileStripe(env, t0 + 11 * MIN);
+    expect(late).toMatchObject({ failed: 0 });
+    const after = await rows(o.id);
+    expect(after.find((r) => r.kind.startsWith('authorization'))?.status).toBe('captured');
+    expect(after.filter((r) => r.kind === 'capture')).toHaveLength(1);
+
+    // Done now: a repeat is a duplicate, however long after.
+    expect(await handleStripeEvent(env, asEvent(cap), t0 + 60 * MIN)).toEqual({
+      outcome: 'duplicate',
+    });
+  });
+
+  it('is applied by a webhook redelivery after ten minutes, and a re-run of a partly applied event changes nothing twice', async () => {
+    const { o, pi } = await authorized(stripe, 'ord_rc_dead2');
+    const cap = stripe.dashboardCapture(pi.id);
+    const t0 = await afterCursor(cap);
+    // The handler applied the capture and died before it marked the claim done.
+    expect(await handleStripeEvent(env, asEvent(cap), t0)).toMatchObject({ outcome: 'handled' });
+    await env.DB.prepare(
+      "UPDATE payment_events SET status = 'processing', claimed_at = ?, outcome = NULL WHERE id = ?",
+    )
+      .bind(t0, cap.id)
+      .run();
+    expect(await handleStripeEvent(env, asEvent(cap), t0 + 11 * MIN)).toMatchObject({
+      outcome: 'handled',
+      reason: 'Already in the ledger',
+    });
+    expect((await rows(o.id)).filter((r) => r.kind === 'capture')).toHaveLength(1);
+  });
+});
+
+describe('a poison event', () => {
+  it('lets the cursor move on after five failures, and logs it once', async () => {
+    const { o, pi } = await authorized(stripe, 'ord_rc_poison');
+    await capturePayment(env, o, 'capture#1');
+    const { charged, created } = stripe.dashboardRefund(pi.id, 2000);
+    stripe.events.splice(stripe.events.indexOf(created), 1);
+    // `charge.refunded` asks Stripe for the refund, which fails every time.
+    const nextHourFails = () => stripe.failNext(/\/v1\/refunds/);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const poisonLines = () =>
+      err.mock.calls.filter((c) => String(c[0]).includes('stripe_event_poisoned'));
+    const hour = 3_600_000;
+    const base = await afterCursor(charged);
+
+    for (let n = 1; n < POISON_AFTER; n++) {
+      nextHourFails();
+      await expect(reconcileStripe(env, base + n * hour)).rejects.toThrow(/1 events failed/);
+      // The cursor stays at the event: every hour reads Stripe's events from there again.
+      expect((await paymentEventLog(env).cursor('stripe'))!).toBeLessThanOrEqual(charged.created);
+    }
+    expect(poisonLines()).toHaveLength(0);
+
+    nextHourFails();
+    const fifth = await reconcileStripe(env, base + POISON_AFTER * hour);
+    expect(fifth).toMatchObject({ poisoned: 1, failed: 0, unresolved: 0 });
+    expect(poisonLines()).toHaveLength(1);
+    // Held at the event until now; with it set aside the pass is unblocked and the cursor is free to
+    // move to the newest event seen (here the same second), then on with the clock.
+    expect((await paymentEventLog(env).cursor('stripe'))!).toBeGreaterThanOrEqual(charged.created);
+
+    // Set aside: later passes neither fail, nor log it again, nor stop the cursor.
+    const sixth = await reconcileStripe(env, base + (POISON_AFTER + 1) * hour);
+    expect(sixth).toMatchObject({ poisoned: 0, failed: 0, unresolved: 0, duplicate: 1 });
+    expect(poisonLines()).toHaveLength(1);
+    expect((await rows(o.id)).filter((r) => r.kind === 'refund')).toHaveLength(0);
+    expect(await handleStripeEvent(env, asEvent(charged))).toMatchObject({
+      outcome: 'duplicate',
+      reason: 'Poisoned',
+    });
   });
 });

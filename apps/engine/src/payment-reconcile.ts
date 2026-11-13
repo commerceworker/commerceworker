@@ -17,6 +17,12 @@
  * moves to just behind the newest event applied; listing is inclusive and the claim makes a repeat
  * free. A difference the handler can't fix (`mismatch`) is logged at error level and counted, once,
  * since its event is claimed.
+ *
+ * An event whose handling throws is counted by the handler; the fifth failure marks it `poisoned`
+ * (logged once as `stripe_event_poisoned`, counted as `reconcile_mismatch` with `what: poisoned`), and
+ * from then on it is a duplicate, so it no longer holds the cursor and the pass stops re-reading up to
+ * 29 days of Stripe's events for it. A claim whose handler died (still `processing` after ten minutes)
+ * is taken again by the next pass; until then it answers `retry` and holds the cursor.
  */
 import { stripeFor, stripeMode } from './gateway';
 import { ops } from './metrics';
@@ -30,6 +36,8 @@ const FIRST_LOOKBACK = 3 * DAY;
 const MAX_LOOKBACK = 29 * DAY;
 /** Pages of 100 per read of a window. */
 const MAX_PAGES = 50;
+/** An event that throws this many times is set aside, so the cursor moves past it. */
+export const POISON_AFTER = 5;
 /** The cursor stays this far behind the newest event, in case Stripe lists one late. */
 const SETTLE = 300;
 
@@ -38,6 +46,8 @@ export type ReconcileSummary = {
   handled: number;
   duplicate: number;
   mismatched: number;
+  /** Events that reached `POISON_AFTER` failures in this pass and were set aside. */
+  poisoned: number;
   unresolved: number;
   failed: number;
   cursor?: number;
@@ -94,19 +104,21 @@ export async function reconcileStripe(
     handled: 0,
     duplicate: 0,
     mismatched: 0,
+    poisoned: 0,
     unresolved: 0,
     failed: 0,
   };
   let blocked: number | undefined;
   for (const ev of events) {
     try {
-      const r = await handleStripeEvent(env, {
-        provider: 'stripe',
-        id: ev.id,
-        type: ev.type,
-        data: ev.data,
-      });
+      const r = await handleStripeEvent(
+        env,
+        { provider: 'stripe', id: ev.id, type: ev.type, data: ev.data },
+        nowMs,
+        POISON_AFTER,
+      );
       if (r.outcome === 'duplicate') summary.duplicate++;
+      else if (r.poisoned) summary.poisoned++;
       else summary.handled++;
       if (r.mismatch) {
         summary.mismatched++;
