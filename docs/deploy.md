@@ -421,6 +421,8 @@ pnpm --filter @commerceworker/web exec wrangler d1 time-travel restore commercew
 
 For a customer's deployment the database is `commerceworker-<id>`; the content stack's is `commerceworker-content` (`commerceworker-content-<id>`), restored from its own bookmark, `pnpm --filter @commerceworker/pipeline exec wrangler d1 time-travel restore …` against its rendered config.
 
+Each plugin that runs as its own Worker owns its own D1 database, and the deploy records that database's bookmark in the summary too (`Plugin <id> D1 bookmark …`), right before it applies the plugin's migrations; restore it the same way, with `./plugins/<id>` as the filter and its database name.
+
 A restore replaces the whole database, so every write since the bookmark is lost: orders started,
 approvals decided and audit events after that point. Roll the Workers back first if the deployed
 code needs the newer schema. Time Travel keeps 30 days; for any other point in that window,
