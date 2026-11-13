@@ -2504,8 +2504,31 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
   });
   assert.equal(
     redundancySchedules(protectedAcme({ backupHourUtc: 20 }).redundancy!).restore,
-    '0 2 * * 0',
+    '0 2 * * 1',
   );
+  // A drill that passes midnight UTC rolls its day too: Sunday becomes Monday, the 1st the 2nd.
+  const at = (backupHourUtc: number, drill: 'weekly' | 'monthly') =>
+    redundancySchedules(protectedAcme({ backupHourUtc, drill }).redundancy!);
+  // Hour 17: the restore drill (+6) is 23:00 the same day, the objects drill (+7) wraps to 00:00.
+  assert.deepEqual(
+    [at(17, 'weekly').restore, at(17, 'weekly').objectsDrill],
+    ['0 23 * * 0', '0 0 * * 1'],
+  );
+  assert.deepEqual(
+    [at(17, 'monthly').restore, at(17, 'monthly').objectsDrill],
+    ['0 23 1 * *', '0 0 2 * *'],
+  );
+  // Hour 23: both wrap.
+  assert.deepEqual(
+    [at(23, 'weekly').restore, at(23, 'weekly').objectsDrill],
+    ['0 5 * * 1', '0 6 * * 1'],
+  );
+  assert.deepEqual(
+    [at(23, 'monthly').restore, at(23, 'monthly').objectsDrill],
+    ['0 5 2 * *', '0 6 2 * *'],
+  );
+  // Hour 16 is the last that doesn't: +7 is 23:00.
+  assert.equal(at(16, 'weekly').objectsDrill, '0 23 * * 0');
   // Only the engine carries any of it.
   for (const [app, render] of [
     ['web', renderWeb],

@@ -26,6 +26,7 @@
     "@ai-sdk/react": "catalog:",
     "@cloudflare/ai-chat": "catalog:",
     "@cloudflare/workers-oauth-provider": "catalog:",
+    "@commerceworker/adapters": "workspace:*",
     "@commerceworker/application": "workspace:*",
     "@commerceworker/cart": "workspace:*",
     "@commerceworker/core": "workspace:*",

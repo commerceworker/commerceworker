@@ -3,7 +3,7 @@
  * workerd (packages/db). The chain is the log's own, so a case reads it from the events it appended.
  */
 import { auditRow, sealAuditRow } from '@commerceworker/core';
-import type { AuditLog } from '@commerceworker/ports/commerce';
+import type { AuditAnchors, AuditLog } from '@commerceworker/ports/commerce';
 import { describe, expect, it } from 'vitest';
 
 export function describeAuditLogContract(name: string, make: () => Promise<AuditLog>) {
@@ -49,6 +49,40 @@ export function describeAuditLogContract(name: string, make: () => Promise<Audit
       expect((await log.sealedAfter(b.seq, 10)).map((e) => e.id)).toEqual(['al_c']);
       expect(await log.link(b.seq)).toEqual({ seq: b.seq, hash: b.hash });
       expect(await log.link(c.seq + 100)).toBeUndefined();
+      // The head is the newest sealed event.
+      expect(await log.head()).toMatchObject({ id: 'al_c', seq: c.seq, hash: c.hash });
+    });
+  });
+}
+
+/** What every `AuditAnchors` keeps, run on the in-memory twin and on the R2 adapter. */
+export function describeAuditAnchorsContract(name: string, make: () => Promise<AuditAnchors>) {
+  describe(`${name}: the audit anchors contract`, () => {
+    const HOUR = 3_600_000;
+    const T = Date.UTC(2026, 10, 13, 9, 30);
+    const anchor = (anchoredAt: number, seq: number) => ({
+      seq,
+      hash: `h${seq}`,
+      eventId: `aud_${seq}`,
+      eventAt: anchoredAt - 1000,
+      anchoredAt,
+    });
+
+    it('writes an hour once and never replaces it', async () => {
+      const anchors = await make();
+      expect(await anchors.write(anchor(T, 5))).toBe(true);
+      expect(await anchors.write(anchor(T + 10 * 60_000, 9))).toBe(false);
+      expect(await anchors.latest(T + HOUR)).toEqual(anchor(T, 5));
+    });
+
+    it('reads the newest anchor of the last week, across days, and none older', async () => {
+      const anchors = await make();
+      expect(await anchors.latest(T)).toBeUndefined();
+      await anchors.write(anchor(T - 30 * HOUR, 1));
+      await anchors.write(anchor(T - 2 * HOUR, 2));
+      expect(await anchors.latest(T)).toEqual(anchor(T - 2 * HOUR, 2));
+      expect(await anchors.latest(T + 6 * 86_400_000)).toEqual(anchor(T - 2 * HOUR, 2));
+      expect(await anchors.latest(T + 9 * 86_400_000)).toBeUndefined();
     });
   });
 }

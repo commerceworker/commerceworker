@@ -3,10 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('cloudflare:workers', () => ({ env: {} }));
 
 /** The hash chain in memory; `failing` makes the next append throw, as a D1 outage would. */
-const { InMemoryAuditLog } = await import('@commerceworker/test-kit/commerce');
+const { InMemoryAuditAnchors, InMemoryAuditLog } = await import(
+  '@commerceworker/test-kit/commerce'
+);
 let log = new InMemoryAuditLog();
+let anchors = new InMemoryAuditAnchors();
 let failing = false;
 vi.mock('~/lib/wire.server', () => ({
+  auditAnchors: () => anchors,
   auditLog: () =>
     failing
       ? {
@@ -18,6 +22,7 @@ vi.mock('~/lib/wire.server', () => ({
 }));
 
 const { audit, listAudit, verifyAudit } = await import('~/lib/audit.server');
+const { anchorAudit } = await import('@commerceworker/application/commerce');
 
 const request = new Request('https://app.test/team', {
   headers: { 'cf-connecting-ip': '198.51.100.4' },
@@ -26,6 +31,7 @@ const ada = { kind: 'user' as const, id: 'usr_ada', name: 'Ada', role: 'admin' a
 
 afterEach(() => {
   log = new InMemoryAuditLog();
+  anchors = new InMemoryAuditAnchors();
   failing = false;
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -77,5 +83,28 @@ describe('the audit trail', () => {
     expect(await verifyAudit(first!.seq + 99)).toMatchObject({ ok: false, checked: 0 });
     Object.assign(second!, { target: 'tampered' });
     expect(await verifyAudit()).toMatchObject({ ok: false });
+  });
+
+  it('checks the chain against the newest anchor and finds one rewritten and re-hashed', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    for (const target of ['a', 'b', 'c'])
+      await audit(request, 'flow.saved', { actor: ada, target });
+    await anchorAudit({ audit: log, anchors }, Date.now());
+    expect(await verifyAudit()).toMatchObject({ ok: true, checked: 3 });
+
+    // Rewrite event 1 and seal the chain again from it: every hash is consistent, but not the
+    // one the anchor recorded.
+    const { auditRow, sealAuditRow } = await import('@commerceworker/core');
+    const forged = new InMemoryAuditLog();
+    for (const e of log.events) {
+      const row = auditRow(e.id, e.action, { target: e.seq === 1 ? 'forged' : e.target }, e.at);
+      await forged.append((h) => sealAuditRow(row, h));
+    }
+    log = forged;
+    expect(await verifyAudit()).toMatchObject({
+      ok: false,
+      brokenAt: 3,
+      reason: expect.stringContaining('anchor'),
+    });
   });
 });

@@ -5,9 +5,10 @@
  * delete addresses last used before it. Each step is bounded, so one sweep never runs unbounded
  * work; what is left waits for the next day's. Time comes in as `now`.
  */
-import { auditArchiveKey, type RetentionPolicy } from '@commerceworker/core';
+import { auditArchiveKey, auditCopyKey, type RetentionPolicy } from '@commerceworker/core';
 import type {
   AuditArchive,
+  AuditLog,
   AuditRow,
   CartRuntime,
   RetentionStore,
@@ -74,12 +75,15 @@ export async function indexCartBuyers(
  * each batch only once its object is written. Chained events go in chain order and stop at the
  * first one still inside the retention, so what stays is an unbroken chain; events from before the
  * chain go by time. A batch whose object is already there (a sweep that stopped before its delete)
- * is only deleted: an archive key is never written twice. Returns how many moved.
+ * is only deleted: an archive key is never written twice. A chained batch that the daily copy
+ * already holds (`copiedThrough`, from `auditCopiedThrough`) is only deleted too. Returns how many
+ * moved.
  */
 export async function archiveAudit(
   ports: { readonly retention: RetentionStore; readonly archive: AuditArchive },
   now: number,
   retentionDays: number,
+  copiedThrough = 0,
 ) {
   const cutoff = now - retentionDays * DAY;
   let moved = 0;
@@ -102,12 +106,52 @@ export async function archiveAudit(
     const old = batch.findIndex((r) => r.at >= cutoff);
     const rows = old === -1 ? batch : batch.slice(0, old);
     if (!rows.length) break;
-    await put(rows);
+    if (rows.at(-1)!.seq! > copiedThrough) await put(rows);
     await ports.retention.deleteChainedThrough(rows.at(-1)!.seq!);
     moved += rows.length;
     if (rows.length < batch.length || batch.length < ARCHIVE_BATCH) break;
   }
   return moved;
+}
+
+/** Daily copies `auditCopiedThrough` checks, newest first, before it gives up on finding one. */
+const COPIES_CHECKED = 5;
+
+/**
+ * The last chain seq the daily copies hold that the database still agrees with: the newest copy
+ * whose last event is still in the chain with the same hash. After a restore the lost events'
+ * copies no longer match, so it falls back to an earlier one, and 0 when none does (the chain is
+ * copied from its oldest kept event again).
+ */
+export async function auditCopiedThrough(ports: { audit: AuditLog; archive: AuditArchive }) {
+  const copies = (await ports.archive.copies()).slice(-COPIES_CHECKED).reverse();
+  for (const c of copies) {
+    const link = await ports.audit.link(c.to);
+    if (link?.hash.startsWith(c.hash)) return c.to;
+  }
+  return 0;
+}
+
+/**
+ * Copies sealed audit events that no copy holds yet to the archive, one object per batch, leaving
+ * them in the database: R2 then holds them long before `AUDIT_RETENTION_DAYS`, so a database
+ * restore (which drops every event after its bookmark) can't lose them. A copy's key names its
+ * range and last hash, so a run that stopped before the next one only writes what is missing.
+ * Returns how many it copied.
+ */
+export async function copyAudit(ports: { audit: AuditLog; archive: AuditArchive }) {
+  let through: number | undefined = (await auditCopiedThrough(ports)) || undefined;
+  let copied = 0;
+  while (copied < ARCHIVE_MAX) {
+    const rows = await ports.audit.sealedAfter(through, ARCHIVE_BATCH);
+    if (!rows.length) break;
+    const key = auditCopyKey(rows[0]!.seq, rows.at(-1)!.seq, rows.at(-1)!.hash);
+    if (!(await ports.archive.has(key))) await ports.archive.put(key, rows);
+    through = rows.at(-1)!.seq;
+    copied += rows.length;
+    if (rows.length < ARCHIVE_BATCH) break;
+  }
+  return copied;
 }
 
 /**

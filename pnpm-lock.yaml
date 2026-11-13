@@ -990,6 +990,9 @@ importers:
       '@cloudflare/workers-oauth-provider':
         specifier: 'catalog:'
         version: 1.2.4
+      '@commerceworker/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@commerceworker/application':
         specifier: workspace:*
         version: link:../../packages/application
@@ -1145,6 +1148,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261013.1
+      '@commerceworker/core':
+        specifier: workspace:*
+        version: link:../core
       '@commerceworker/test-kit':
         specifier: workspace:*
         version: link:../test-kit

@@ -2,7 +2,9 @@
  * Retention: a daily sweep (the Worker's cron trigger) that deletes rows nothing reads once they
  * are old. Orders and everything that is part of an order's record (payments, shipments, the stock
  * and balance ledgers, flow versions) are kept. Audit events past the deployment's retention
- * (`AUDIT_RETENTION_DAYS`, 400 days unless set) are archived to R2 first, then deleted. Where a
+ * (`AUDIT_RETENTION_DAYS`, 400 days unless set) are archived to R2 first, then deleted; every
+ * event is also copied to R2 the day it is sealed (`copyAuditEvents`), and the chain's head is
+ * anchored there every hour (`anchorAuditChain`), so a restore can't lose events unseen. Where a
  * deployment sets `PERSONAL_DATA_RETENTION_DAYS`, orders finished longer ago than that lose their
  * buyer's personal data, as an erasure request would remove it (`eraseOrders`); the commercial
  * record stays, and the customer addresses last shipped to before then are deleted. Orders started before customer
@@ -14,7 +16,8 @@
  * tokens (`pruneUcpLinks`). A sandboxed plugin's uninstall export (`plugin-exports/`) is deleted once it
  * is 30 days old, or the personal data retention if that is shorter (`expirePluginExports`), and a
  * channel intake body (`intake/`, raw Shopify and EDI) once it is 7 days old, or that retention if
- * shorter (`expireIntake`).
+ * shorter (`expireIntake`). Every step runs on its own: one that throws is logged and reported, and
+ * never skips the others.
  */
 
 import * as uc from '@commerceworker/application/commerce';
@@ -25,32 +28,62 @@ import { backfillAddresses } from './customer-addresses';
 import { resealSecrets } from './data-key';
 import { eraseIfErased, eraseOrders } from './subjects';
 import { pruneUsage } from './usage';
-import { auditArchive, cartRuntime, retentionStore, shopperAuth, ucpLinks } from './wire';
+import {
+  auditAnchors,
+  auditArchive,
+  auditLog,
+  cartRuntime,
+  retentionStore,
+  shopperAuth,
+  ucpLinks,
+} from './wire';
 
 // The policy and the archive's keys are core rules, kept importable from here.
 export { auditArchiveKey, RETENTION } from '@commerceworker/core';
 
-/** Deletes everything past its retention, then runs each bounded step. Returns what each did. */
+/**
+ * Deletes everything past its retention, then runs each bounded step. Every step is its own
+ * attempt: one that throws is logged with its name and reported as `null` (and its name in
+ * `failed`), and the rest still run, so a step failing every day can't stop erasure, reseal or
+ * holds. Returns what each did.
+ */
 export async function sweep(env: Env, now = Date.now()) {
-  const pruned = await uc.pruneExpired({ retention: retentionStore(env) }, now, RETENTION);
-  return {
-    auditArchived: await archiveAudit(env, now),
-    cartsPurged: await purgeEndedCarts(env, now),
-    cartBuyersIndexed: await indexCartBuyers(env),
-    personalDataErased: await expirePersonalData(env, now),
-    addressesExpired: await expireAddresses(env, now),
-    membersExpired: await expireMembers(env, now),
-    addressesBackfilled: await backfillAddresses(env, now),
-    confirmations: await pruneConfirmations(env, now),
-    shopperAuth: await uc.pruneShopperAuth({ shoppers: shopperAuth(env) }, now),
-    ucpLinks: await uc.pruneUcpLinks({ links: ucpLinks(env) }, now),
-    aiUsageDays: await pruneUsage(env, now),
-    secrets: await resealSecrets(env),
-    cardHolds: await settleOrphanedHolds(env, now),
-    pluginExports: await expirePluginExports(env, now),
-    intakeBodies: await expireIntake(env, now),
-    ...pruned,
+  const failed: string[] = [];
+  const step = async <T>(name: string, run: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await run();
+    } catch (err) {
+      console.error(
+        JSON.stringify({ type: 'retention_step_failed', step: name, error: String(err) }),
+      );
+      failed.push(name);
+      return null;
+    }
   };
+  const pruned = await step('pruned', () =>
+    uc.pruneExpired({ retention: retentionStore(env) }, now, RETENTION),
+  );
+  const result = {
+    auditCopied: await step('auditCopied', () => copyAuditEvents(env)),
+    auditArchived: await step('auditArchived', () => archiveAudit(env, now)),
+    cartsPurged: await step('cartsPurged', () => purgeEndedCarts(env, now)),
+    cartBuyersIndexed: await step('cartBuyersIndexed', () => indexCartBuyers(env)),
+    personalDataErased: await step('personalDataErased', () => expirePersonalData(env, now)),
+    addressesExpired: await step('addressesExpired', () => expireAddresses(env, now)),
+    membersExpired: await step('membersExpired', () => expireMembers(env, now)),
+    addressesBackfilled: await step('addressesBackfilled', () => backfillAddresses(env, now)),
+    confirmations: await step('confirmations', () => pruneConfirmations(env, now)),
+    shopperAuth: await step('shopperAuth', () =>
+      uc.pruneShopperAuth({ shoppers: shopperAuth(env) }, now),
+    ),
+    ucpLinks: await step('ucpLinks', () => uc.pruneUcpLinks({ links: ucpLinks(env) }, now)),
+    aiUsageDays: await step('aiUsageDays', () => pruneUsage(env, now)),
+    secrets: await step('secrets', () => resealSecrets(env)),
+    cardHolds: await step('cardHolds', () => settleOrphanedHolds(env, now)),
+    pluginExports: await step('pluginExports', () => expirePluginExports(env, now)),
+    intakeBodies: await step('intakeBodies', () => expireIntake(env, now)),
+  };
+  return { ...result, ...pruned, failed };
 }
 
 /** Clears the chat, files and buyer of carts that ended past their retention. Returns how many. */
@@ -66,13 +99,34 @@ export const indexCartBuyers = (env: Env) =>
     eraseIfErased(env, id, buyer),
   );
 
-/** Moves audit events past `AUDIT_RETENTION_DAYS` to R2, then deletes them. Returns how many. */
-export const archiveAudit = (env: Env, now = Date.now()) =>
-  uc.archiveAudit(
-    { retention: retentionStore(env), archive: auditArchive(env) },
+/**
+ * Copies audit events no copy holds yet to R2 (`audit/chain/`), leaving them in the database, so a
+ * restore of the database can't lose them. Returns how many it copied.
+ */
+export const copyAuditEvents = (env: Env) =>
+  uc.copyAudit({ audit: auditLog(env), archive: auditArchive(env) });
+
+/**
+ * Writes the audit chain's head hash, and the latest event's id and time, to the locked `audit/`
+ * prefix (`audit/anchors/<date>/<hour>.json`, once an hour: the hourly cron). Returns the anchor
+ * written, or null when there is no event yet or this hour's is already there.
+ */
+export const anchorAuditChain = (env: Env, now = Date.now()) =>
+  uc.anchorAudit({ audit: auditLog(env), anchors: auditAnchors(env) }, now);
+
+/**
+ * Moves audit events past `AUDIT_RETENTION_DAYS` to R2, then deletes them; events the daily copy
+ * already holds are only deleted. Returns how many.
+ */
+export async function archiveAudit(env: Env, now = Date.now()) {
+  const ports = { audit: auditLog(env), archive: auditArchive(env) };
+  return uc.archiveAudit(
+    { retention: retentionStore(env), archive: ports.archive },
     now,
     auditRetentionDays(env.AUDIT_RETENTION_DAYS),
+    await uc.auditCopiedThrough(ports),
   );
+}
 
 /** Erases the buyer from orders finished before the deployment's retention. Returns how many. */
 export async function expirePersonalData(env: Env, now = Date.now()) {

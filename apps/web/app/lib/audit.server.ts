@@ -17,7 +17,7 @@ import {
   sealAuditRow,
 } from '@commerceworker/core';
 import type { AuditAction, AuditGroup } from './audit';
-import { auditLog } from './wire.server';
+import { auditAnchors, auditLog } from './wire.server';
 
 export const clientIp = (request: Request) => request.headers.get('cf-connecting-ip') ?? 'local';
 
@@ -53,4 +53,5 @@ export const listAudit = (
   f: { group?: AuditGroup; before?: number; after?: number; limit?: number } = {},
 ) => listAuditEvents({ audit: auditLog() }, f);
 
-export const verifyAudit = (after?: number) => verifyAuditTrail({ audit: auditLog() }, after);
+export const verifyAudit = (after?: number) =>
+  verifyAuditTrail({ audit: auditLog(), anchors: auditAnchors() }, after);

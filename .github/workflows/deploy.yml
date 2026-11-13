@@ -328,12 +328,19 @@ jobs:
           scripts/rollout.sh ship delivery @commerceworker/delivery config "$secrets"
       # Each plugin's own D1 migrations, then its Worker: the engine and the web Worker bind to it,
       # so it goes before them. Like the core's, a plugin's migrations must be additive. Each one
-      # deployed is listed, so a failure rolls it back with the rest.
+      # deployed is listed, so a failure rolls it back with the rest. A plugin owns its own D1
+      # database, so each gets its Time Travel bookmark before its migrations, as the core's does.
       - name: Deploy plugins
         id: plugins
         if: env.PLUGINS != ''
         run: |
           for p in $PLUGINS; do
+            export p
+            # shellcheck disable=SC2016 # the inner shell expands $CONFIG, $RUNNER_TEMP and $p
+            retry bash -c 'pnpm --filter "./plugins/$p" exec wrangler d1 time-travel info DB --json --config "$CONFIG" > "$RUNNER_TEMP/plugin-$p-d1-bookmark.json"'
+            bookmark=$(jq -er .bookmark "$RUNNER_TEMP/plugin-$p-d1-bookmark.json")
+            echo "Plugin $p D1 bookmark for $ID before ${GITHUB_SHA::7}: \`$bookmark\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Plugin $p D1 bookmark for $ID before this deploy: $bookmark"
             retry pnpm --filter "./plugins/$p" exec wrangler d1 migrations apply DB --remote --config "$CONFIG"
             scripts/rollout.sh ship "plugin:$p" "./plugins/$p" config "$RUNNER_TEMP/plugin-$p-secrets.json"
             echo "$p" >> "$RUNNER_TEMP/plugins-deployed"

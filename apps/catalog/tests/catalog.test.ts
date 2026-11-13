@@ -7,7 +7,7 @@ import {
   productShard,
   productTypeSchema,
 } from '@commerceworker/core/product';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { alias, api, apparel, by, doc, product, settle, setup } from './helpers';
 
 beforeAll(setup);
@@ -197,6 +197,61 @@ describe('publishing passes', () => {
       expect(keys([a.key, b.key])).toEqual([]);
     });
     await settle();
+  });
+});
+
+describe('a failing alarm', () => {
+  it('logs, sets its own next alarm with backoff, and publishes once the failure clears', async () => {
+    const target = 13;
+    const [p] = (() => {
+      const out: ReturnType<typeof product>[] = [];
+      while (out.length < 1) {
+        const c = product();
+        if (productShard(c.key) === target) out.push(c);
+      }
+      return out;
+    })();
+    if (!p) throw new Error('no product');
+    await api.putProducts([p], { by });
+    const stub = env.SHARD.getByName(`shard-${target}`);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    type Failable = {
+      publishPass: (...a: unknown[]) => Promise<void>;
+      alarm(): Promise<void>;
+      alarmFailures: number;
+    };
+    await runInDurableObject(stub, async (shard, state) => {
+      const o = shard as unknown as Failable;
+      const real = o.publishPass;
+      o.publishPass = () => Promise.reject(new Error('R2 is down'));
+      expect(shard.pending()).toBe(1);
+      // The alarm doesn't throw (Cloudflare would retry it a few times, then drop it).
+      await o.alarm();
+      const first = (await state.storage.getAlarm()) ?? 0;
+      expect(first).toBeGreaterThan(Date.now() + 20_000);
+      expect(shard.pending()).toBe(1);
+      expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toMatchObject({
+        type: 'catalog_alarm_failed',
+        shard: target,
+        failures: 1,
+        retryInMs: 30_000,
+        error: 'Error: R2 is down',
+      });
+      // Failing again doubles the wait.
+      await o.alarm();
+      expect(JSON.parse(String(error.mock.calls[1]?.[0]))).toMatchObject({
+        failures: 2,
+        retryInMs: 60_000,
+      });
+      // The failure clears: the next alarm publishes and the backoff is forgotten.
+      o.publishPass = real;
+      await o.alarm();
+      expect(shard.pending()).toBe(0);
+      expect(o.alarmFailures).toBe(0);
+      expect(error).toHaveBeenCalledTimes(2);
+    });
+    error.mockRestore();
+    expect(await doc(p.key)).toMatchObject({ key: p.key });
   });
 });
 

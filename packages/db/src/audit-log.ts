@@ -42,6 +42,16 @@ export function d1AuditLog(d1: D1Database): AuditLog {
         )
         .orderBy(asc(auditEvents.seq))
         .limit(limit)) as SealedAuditRow[],
+    async head() {
+      const row = await d
+        .select()
+        .from(auditEvents)
+        .where(isNotNull(auditEvents.seq))
+        .orderBy(desc(auditEvents.seq))
+        .limit(1)
+        .get();
+      return row as SealedAuditRow | undefined;
+    },
     async link(seq) {
       const row = await d
         .select({ seq: auditEvents.seq, hash: auditEvents.hash })

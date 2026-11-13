@@ -707,7 +707,7 @@ describe('data subject requests and retention', () => {
       await db().select().from(ucpLinkTokens).where(eq(ucpLinkTokens.tokenHash, hash)),
     ).toHaveLength(1);
     const swept = await sweep(env, Date.now() + 31 * 86_400_000);
-    expect(swept.ucpLinks.grants).toBeGreaterThanOrEqual(1);
+    expect(swept.ucpLinks?.grants).toBeGreaterThanOrEqual(1);
     expect(
       await db().select().from(ucpLinkTokens).where(eq(ucpLinkTokens.tokenHash, hash)),
     ).toEqual([]);

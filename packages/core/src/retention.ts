@@ -40,3 +40,31 @@ export type RetentionPolicy = typeof RETENTION;
  */
 export const auditArchiveKey = (first: { at: number; id: string }, count: number) =>
   `audit/${new Date(first.at).toISOString().slice(0, 10)}/${first.at}-${first.id}-${count}.ndjson`;
+
+/**
+ * Where a daily copy of not-yet-expired audit events goes: named by the chain range it holds and
+ * the start of its last event's hash. The range and hash name the same events, so a key is never
+ * written with different content; after a restore the chain's new events reuse the lost ones'
+ * seqs but not their hashes, so they land under a key of their own.
+ */
+export const auditCopyKey = (from: number, to: number, hash: string) =>
+  `audit/chain/${String(from).padStart(10, '0')}-${String(to).padStart(10, '0')}-${hash.slice(0, 12)}.ndjson`;
+
+/** What `auditCopyKey` names, or null for a key that isn't one. */
+export function parseAuditCopyKey(key: string) {
+  const m = /^audit\/chain\/(\d{10})-(\d{10})-([0-9a-f]{12})\.ndjson$/.exec(key);
+  return m ? { key, from: Number(m[1]), to: Number(m[2]), hash: m[3]! } : null;
+}
+
+/**
+ * Where the chain's head is anchored: one object an hour, `audit/anchors/<date>/<hour>.json`. It
+ * lives under the bucket's locked `audit/` prefix, so a written anchor can be neither changed nor
+ * deleted; one key per hour makes the write once a day-hour, whichever run gets there first.
+ */
+export const auditAnchorKey = (at: number) => {
+  const iso = new Date(at).toISOString();
+  return `audit/anchors/${iso.slice(0, 10)}/${iso.slice(11, 13)}.json`;
+};
+
+/** Days back `latest` looks for an anchor before it reports there is none. */
+export const AUDIT_ANCHOR_LOOKBACK_DAYS = 7;

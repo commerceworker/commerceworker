@@ -834,15 +834,24 @@ export function aiRoutes(d: Deployment, engineBase: Config) {
   ];
 }
 
+/**
+ * The cron expressions of redundancy's Workflows. A drill runs some hours after the backup's, and
+ * when that passes midnight UTC the hour wraps and so does the day: the weekly drill's Sunday
+ * becomes Monday, and the monthly one's 1st the 2nd, so a drill never lands before the backup it
+ * checks.
+ */
 export function redundancySchedules(r: Redundancy) {
-  const drillHour = (r.backupHourUtc + 6) % 24;
-  const objectsDrillHour = (r.backupHourUtc + 7) % 24;
-  const days = (hour: number) => (r.drill === 'monthly' ? `0 ${hour} 1 * *` : `0 ${hour} * * 0`);
+  const drill = (offset: number) => {
+    const at = r.backupHourUtc + offset;
+    const wrapped = at >= 24 ? 1 : 0;
+    const hour = at % 24;
+    return r.drill === 'monthly' ? `0 ${hour} ${1 + wrapped} * *` : `0 ${hour} * * ${wrapped}`;
+  };
   return {
     backup: `0 ${r.backupHourUtc} * * *`,
-    restore: days(drillHour),
+    restore: drill(6),
     objectsBackup: `0 ${(r.backupHourUtc + 2) % 24} * * *`,
-    objectsDrill: days(objectsDrillHour),
+    objectsDrill: drill(7),
     kvBackup: `0 ${(r.backupHourUtc + 1) % 24} * * *`,
   };
 }

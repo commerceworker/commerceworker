@@ -5,7 +5,7 @@
  * never forks. `d1AuditLog` (packages/db) and `InMemoryAuditLog` (packages/test-kit) implement it,
  * held to one contract.
  */
-import type { AuditHead, AuditRow, SealedAuditRow } from '@commerceworker/core';
+import type { AuditAnchor, AuditHead, AuditRow, SealedAuditRow } from '@commerceworker/core';
 
 /** An event as stored: sealed into the chain (`seq` and its hashes), or from before the chain. */
 export type AuditEvent = AuditRow & {
@@ -32,4 +32,17 @@ export interface AuditLog {
   sealedAfter(after: number | undefined, limit: number): Promise<SealedAuditRow[]>;
   /** The sealed event at `seq`, as a chain link. */
   link(seq: number): Promise<AuditHead | undefined>;
+  /** The newest sealed event, or undefined before the first. */
+  head(): Promise<SealedAuditRow | undefined>;
+}
+
+/**
+ * The chain's head, written outside the database every hour (`audit/anchors/` in R2, locked), so
+ * the chain can be checked against something an admin of the database can't rewrite.
+ */
+export interface AuditAnchors {
+  /** Writes the anchor for the hour of `anchor.anchoredAt`; false when that hour's is already there. */
+  write(anchor: AuditAnchor): Promise<boolean>;
+  /** The newest anchor written in the week up to `now`, or undefined. */
+  latest(now: number): Promise<AuditAnchor | undefined>;
 }
