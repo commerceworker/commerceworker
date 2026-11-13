@@ -7,12 +7,13 @@
 import type { Clock } from '@commerceworker/ports';
 import {
   type DocumentStore,
+  deliveredBefore,
   documentKey,
   type MessageStore,
   messageId,
   type ObjectReader,
 } from '@commerceworker/ports/commerce';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { createDb } from './index';
 import { documents, messages } from './schema';
 
@@ -78,6 +79,10 @@ export function d1MessageStore(d1: D1Database, clock: Clock): MessageStore {
     body: messages.body,
     sentAt: messages.sentAt,
     error: messages.error,
+    providerId: messages.providerId,
+    deliveryStatus: messages.deliveryStatus,
+    deliveryAt: messages.deliveryAt,
+    deliveryDetail: messages.deliveryDetail,
   };
   return {
     async send(orderId, stepKey, m) {
@@ -105,10 +110,10 @@ export function d1MessageStore(d1: D1Database, clock: Clock): MessageStore {
       return row;
     },
 
-    async markSent(id, at) {
+    async markSent(id, at, providerId) {
       await d
         .update(messages)
-        .set({ sentAt: at, error: null })
+        .set({ sentAt: at, error: null, providerId: providerId ?? null })
         .where(and(eq(messages.id, id), isNull(messages.sentAt)));
     },
 
@@ -117,6 +122,30 @@ export function d1MessageStore(d1: D1Database, clock: Clock): MessageStore {
         .update(messages)
         .set({ error: error.slice(0, 500) })
         .where(and(eq(messages.id, id), isNull(messages.sentAt)));
+    },
+
+    async recordDelivery(providerId, status, at, detail) {
+      // The rule is in the WHERE, so two events racing can't put an older status over a newer.
+      const older = deliveredBefore(status);
+      await d
+        .update(messages)
+        .set({
+          deliveryStatus: status,
+          deliveryAt: at,
+          deliveryDetail: detail?.slice(0, 200) ?? null,
+        })
+        .where(
+          and(
+            eq(messages.providerId, providerId),
+            or(isNull(messages.deliveryStatus), inArray(messages.deliveryStatus, older)),
+          ),
+        );
+      const [row] = await d
+        .select({ id: messages.id })
+        .from(messages)
+        .where(eq(messages.providerId, providerId))
+        .limit(1);
+      return row !== undefined;
     },
   };
 }

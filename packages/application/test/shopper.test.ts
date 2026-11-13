@@ -11,7 +11,7 @@ import {
   SHOPPER_TOUCH_MS,
   shopperSignInEmail,
 } from '@commerceworker/core';
-import { RecordingEmailSender } from '@commerceworker/test-kit';
+import { RecordingEmailQueue, RecordingEmailSender } from '@commerceworker/test-kit';
 import { InMemoryShopperAuth } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
 import {
@@ -50,6 +50,49 @@ function mailed(email: RecordingEmailSender, n = email.sent.length - 1) {
     token: /\/account\/confirm\/([0-9a-f]{64})/.exec(text)![1]!,
   };
 }
+
+describe('a code the first attempt could not send', () => {
+  const refusing = () =>
+    new RecordingEmailSender({ delivered: false, error: 'E_INTERNAL_SERVER_ERROR' });
+
+  it('goes to the queue as the retry, with the code’s own expiry, and the shopper is told it is on its way', async () => {
+    const { ports, email } = setup(refusing());
+    const queue = new RecordingEmailQueue();
+    expect(await startShopperSignIn({ ...ports, queue }, 'pat@example.com', now)).toEqual({
+      status: 'sent',
+    });
+    // One inline attempt, then the job: the queue is not the first attempt.
+    expect(email.sent).toHaveLength(1);
+    expect(queue.jobs).toHaveLength(1);
+    expect(queue.jobs[0]).toMatchObject({
+      kind: 'sign_in',
+      to: 'pat@example.com',
+      expiresAt: now + SHOPPER_CODE_TTL_MS,
+    });
+    expect(queue.jobs[0]).toMatchObject({ text: email.sent[0]!.text });
+  });
+
+  it('queues nothing when the first attempt went', async () => {
+    const { ports } = setup();
+    const queue = new RecordingEmailQueue();
+    expect(await startShopperSignIn({ ...ports, queue }, 'pat@example.com', now)).toEqual({
+      status: 'sent',
+    });
+    expect(queue.jobs).toEqual([]);
+  });
+
+  it('answers failed, as without a queue, when the queue refuses too', async () => {
+    const { ports } = setup(refusing());
+    expect(await startShopperSignIn(ports, 'pat@example.com', now)).toEqual({ status: 'failed' });
+    const queue = new RecordingEmailQueue();
+    queue.failWith = new Error('queue unavailable');
+    expect(
+      await startShopperSignIn({ ...ports, queue }, 'pat@example.com', now + SHOPPER_COOLDOWN_MS),
+    ).toEqual({
+      status: 'failed',
+    });
+  });
+});
 
 describe('asking for a code', () => {
   it('mails a six-digit code and a link, and keeps only hashes of them', async () => {

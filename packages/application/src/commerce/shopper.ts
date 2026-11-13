@@ -6,7 +6,10 @@
  * never looks at orders, so its answer can't tell whether the address has any. Both are stored as
  * hashes and live ten minutes; asking again replaces them, at most once a minute, and an address
  * that spent its five tries (counted across its codes, so a new one resets nothing) is sent nothing
- * for fifteen minutes from its last try, and nothing past twenty a day. `redeemShopperCode` counts the try
+ * for fifteen minutes from its last try, and nothing past twenty a day. The mail is sent inline,
+ * the shopper waiting; one that fails goes to the mail queue when there is one (the code is valid
+ * for ten minutes, and the job carries that expiry so a late retry sends nothing), and the answer is
+ * `sent` since the code is on its way. `redeemShopperCode` counts the try
  * before it compares (in constant time, against a stand-in when there is nothing to compare, so a
  * missing sign-in takes as long as a wrong code) and uses the sign-in in one guarded write, so two
  * racing redemptions, of the code or of the link, can't both mint a session. A redemption mints
@@ -37,7 +40,7 @@ import {
   shopperLinkUrl,
   shopperSignInEmail,
 } from '@commerceworker/core';
-import type { EmailSender } from '@commerceworker/ports';
+import type { EmailQueue, EmailSender } from '@commerceworker/ports';
 import type { ShopperAuth } from '@commerceworker/ports/commerce';
 
 export type ShopperPorts = {
@@ -51,6 +54,11 @@ export type ShopperStartPorts = ShopperPorts & {
   readonly email: EmailSender | undefined;
   /** The storefront's origin, where the link goes. */
   readonly storefrontOrigin: string;
+  /**
+   * Where a code waits for another attempt when the first one fails; undefined sends once and
+   * answers `failed`. The first attempt is always inline: the shopper is waiting at the form.
+   */
+  readonly queue?: EmailQueue;
 };
 
 export async function startShopperSignIn(
@@ -95,7 +103,21 @@ export async function startShopperSignIn(
   } catch (err) {
     console.warn(JSON.stringify({ type: 'shopper_sign_in_unsent', error: String(err) }));
   }
-  return { status: 'failed' };
+  if (!ports.queue) return { status: 'failed' };
+  try {
+    await ports.queue.enqueue({
+      kind: 'sign_in',
+      to: email,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
+      expiresAt: now + SHOPPER_CODE_TTL_MS,
+    });
+    return { status: 'sent' };
+  } catch (err) {
+    console.warn(JSON.stringify({ type: 'shopper_sign_in_not_queued', error: String(err) }));
+    return { status: 'failed' };
+  }
 }
 
 /** A session for `email`, its secret returned once. */

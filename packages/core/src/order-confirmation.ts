@@ -193,6 +193,13 @@ export async function matchesOrderViewToken(
   return match;
 }
 
+/** `origin` without its trailing slashes, without a backtracking regex. */
+const trimSlashes = (origin: string): string => {
+  let end = origin.length;
+  while (end > 0 && origin.charCodeAt(end - 1) === 47) end -= 1;
+  return origin.slice(0, end);
+};
+
 /** The receipt page's address for an order, with its credential. */
 export const orderReceiptUrl = (origin: string, orderId: string, token?: string) =>
-  `${origin.replace(/\/+$/, '')}/orders/${encodeURIComponent(orderId)}${token ? `?t=${token}` : ''}`;
+  `${trimSlashes(origin)}/orders/${encodeURIComponent(orderId)}${token ? `?t=${token}` : ''}`;

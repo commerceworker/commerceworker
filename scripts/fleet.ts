@@ -32,6 +32,10 @@
  *   node scripts/fleet.ts set-plugin-d1 <id> <plugin> <uuid>  record a plugin's D1 database id
  *   node scripts/fleet.ts set-content-d1 <id> <uuid>  record the content database id (content only)
  *   node scripts/fleet.ts set-content-kv <id> <kv id>  record the content cache's KV namespace id
+ *   node scripts/fleet.ts redrive <id> <queue> [date] [--dry-run]  send the dead letters kept for <queue>
+ *                                                 (email, email-events, docs-replica, catalog-feed-parts,
+ *                                                 catalog-changes, catalog-purge) back to it, once each (operator
+ *                                                 credentials; never in CI)
  *   node scripts/fleet.ts demos                   the provisioned demo deployments, for the nightly reset
  *
  * A rendered config is the app's wrangler.jsonc with the deployment's names, ids and domain put
@@ -44,6 +48,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyEdits, modify, type ParseError, parse, printParseErrorCode } from 'jsonc-parser';
 import { deriveAssistantKey } from './derive-assistant-key.ts';
+import { cloudflareIo, operatorEnv, type RedriveTarget, redrive } from './redrive.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RINGS = ['staging', 'internal', 'canary', 'general'] as const;
@@ -358,9 +363,13 @@ export type Deployment = {
    * onboarded to Email Sending with `wrangler email sending enable <domain>`) and an optional
    * display name. It adds the engine's `send_email` binding (EMAIL) and sets EMAIL_FROM and
    * EMAIL_FROM_NAME. Without it the engine sends no email: an order confirmation is recorded
-   * unsent and says so.
+   * unsent and says so. `fallbackFrom` is a second address, on a second onboarded domain (never
+   * the first's): it adds the EMAIL_FALLBACK binding and EMAIL_FALLBACK_FROM, and a message the
+   * first refuses as not verified, or that fails inside Email Sending, goes from it instead. With
+   * `redundancy` (and `email` not an exception) mail waits in a queue with retries and a dead-letter
+   * queue instead of being sent inline.
    */
-  email?: { from: string; fromName?: string };
+  email?: { from: string; fromName?: string; fallbackFrom?: string };
   /**
    * The site key of this deployment's Turnstile widget (public; scripts/provision.sh creates the
    * widget and prints it). With it, password sign-in and /setup ask for a Turnstile check, and so
@@ -641,6 +650,13 @@ export const replicatesDocs = (d: Deployment): d is Deployment & { redundancy: R
  * Durable Object copy two hours after the backup, and its drill an hour after the D1 drill's, on
  * the same days.
  */
+/**
+ * Whether order and sign-in mail goes through a queue (with retries, a dead-letter queue and a
+ * fallback) rather than inline: `redundancy` on, `email` not an exception, and a sender to send from.
+ */
+export const queuesEmail = (d: Deployment): d is Deployment & { redundancy: Redundancy } =>
+  !!d.redundancy && !d.redundancy.except.includes('email') && !!d.email;
+
 export function redundancySchedules(r: Redundancy) {
   const drillHour = (r.backupHourUtc + 6) % 24;
   const objectsDrillHour = (r.backupHourUtc + 7) % 24;
@@ -657,6 +673,12 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   const id = raw.id;
   if (typeof id !== 'string' || !/^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){1,30}$/.test(id))
     throw new Error(`${file}: id must be lowercase letters, digits and dashes`);
+  // The mail queues are `commerceworker-email`, `-dlq` and `-events`, then the suffix: an id that
+  // starts like one of those would name another deployment's queue (the engine dispatches on the name).
+  if (/^(dlq|events)(-|$)/.test(id))
+    throw new Error(
+      `${file}: id can't be or start with "dlq" or "events": it would name a mail queue`,
+    );
   // CommerceWorker's own deployments name their domain; a customer's comes from the id.
   if (RESERVED.has(id) && typeof raw.domain !== 'string')
     throw new Error(
@@ -788,7 +810,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
   const email = raw.email as Record<string, unknown> | undefined;
   if (email !== undefined) {
     if (typeof email !== 'object' || email === null)
-      throw new Error(`${file}: email must be { "from", "fromName"? }`);
+      throw new Error(`${file}: email must be { "from", "fromName"?, "fallbackFrom"? }`);
     // The same shape the sender adapter accepts, so a typo fails here and not at the first order.
     if (typeof email.from !== 'string' || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email.from))
       throw new Error(
@@ -801,6 +823,24 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
         /[\r\n<>]/.test(email.fromName))
     )
       throw new Error(`${file}: email.fromName must be a plain display name`);
+    if (email.fallbackFrom !== undefined) {
+      if (
+        typeof email.fallbackFrom !== 'string' ||
+        !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email.fallbackFrom.trim())
+      )
+        throw new Error(
+          `${file}: email.fallbackFrom must be an address on a second domain onboarded to Email Sending`,
+        );
+      const domain = (a: string) =>
+        a
+          .trim()
+          .slice(a.indexOf('@') + 1)
+          .toLowerCase();
+      if (domain(email.fallbackFrom) === domain(email.from))
+        throw new Error(
+          `${file}: email.fallbackFrom is on ${domain(email.from)}, the same domain as email.from: a sender on the same domain fails the same way; use a second onboarded domain`,
+        );
+    }
   }
   const turnstile = raw.turnstileSiteKey;
   // Real keys are 0x…, Cloudflare's test keys 1x…–3x…; anything else is a paste of something else.
@@ -1025,6 +1065,7 @@ export function toDeployment(raw: Record<string, unknown>, file = 'deployment'):
           email: {
             from: (email.from as string).trim(),
             ...(email.fromName ? { fromName: (email.fromName as string).trim() } : {}),
+            ...(email.fallbackFrom ? { fallbackFrom: (email.fallbackFrom as string).trim() } : {}),
           },
         }
       : {}),
@@ -1145,6 +1186,11 @@ export const names = (d: Deployment) => ({
   docsReplica: `commerceworker-docs-replica${d.suffix}`,
   docsReplicaQueue: `commerceworker-docs-replica${d.suffix}`,
   docsReplicaDlq: `commerceworker-docs-replica-dlq${d.suffix}`,
+  /** The mail queue (`queuesEmail`), its dead letters, and the queue Email Sending's events go to, with its dead letters. */
+  emailQueue: `commerceworker-email${d.suffix}`,
+  emailDlq: `commerceworker-email-dlq${d.suffix}`,
+  emailEvents: `commerceworker-email-events${d.suffix}`,
+  emailEventsDlq: `commerceworker-email-events-dlq${d.suffix}`,
   catalogKv: `commerceworker-catalog-cards${d.suffix}`,
   catalogFeedParts: `commerceworker-catalog-feed-parts${d.suffix}`,
   catalogFeedPartsDlq: `commerceworker-catalog-feed-parts-dlq${d.suffix}`,
@@ -1658,7 +1704,6 @@ function docsReplicaBindings(config: Config, d: Deployment) {
   if (!replicatesDocs(d)) {
     config.r2_buckets = config.r2_buckets.filter((b: Config) => b.binding !== 'DOCS_REPLICA');
     config.workflows = config.workflows.filter((w: Config) => w.binding !== 'DOCS_RECONCILE');
-    delete config.queues;
     return;
   }
   const n = names(d);
@@ -1671,14 +1716,76 @@ function docsReplicaBindings(config: Config, d: Deployment) {
         }
       : b,
   );
-  config.queues = {
-    ...config.queues,
-    consumers: config.queues.consumers.map((c: Config) => ({
+}
+
+/**
+ * The mail queue's bindings, added to the engine for a deployment that queues mail (`queuesEmail`;
+ * not in the base config, which a deployment without an `email` sender renders unchanged): the
+ * producer, the queue's consumer with its dead-letter queue (kept in the docs replica and logged,
+ * src/email-queue.ts) and Email Sending's event queue with its own. Retries back off in the
+ * consumer; after `max_retries` a message goes to the dead-letter queue.
+ */
+const EMAIL_QUEUES = {
+  producers: [{ binding: 'EMAIL_QUEUE', queue: 'commerceworker-email' }],
+  consumers: [
+    {
+      queue: 'commerceworker-email',
+      max_batch_size: 10,
+      max_batch_timeout: 2,
+      max_retries: 6,
+      retry_delay: 30,
+      dead_letter_queue: 'commerceworker-email-dlq',
+    },
+    {
+      queue: 'commerceworker-email-dlq',
+      max_batch_size: 100,
+      max_batch_timeout: 5,
+      max_retries: 10,
+      retry_delay: 60,
+    },
+    {
+      queue: 'commerceworker-email-events',
+      max_batch_size: 50,
+      max_batch_timeout: 5,
+      max_retries: 5,
+      retry_delay: 30,
+      dead_letter_queue: 'commerceworker-email-events-dlq',
+    },
+    {
+      queue: 'commerceworker-email-events-dlq',
+      max_batch_size: 100,
+      max_batch_timeout: 5,
+      max_retries: 10,
+      retry_delay: 60,
+    },
+  ],
+};
+
+/**
+ * The engine's queues: the docs replica's consumers (the base config's, with `r2Replica`) and the
+ * mail queue's (`EMAIL_QUEUES`, with `queuesEmail`), each with its dead-letter queue and the
+ * deployment's suffix. With neither the engine has no queues at all.
+ */
+function queueBindings(config: Config, d: Deployment) {
+  const suffixed = (q: string) => `${q}${d.suffix}`;
+  const groups: { producers?: Config[]; consumers: Config[] }[] = [];
+  if (replicatesDocs(d)) groups.push(config.queues);
+  if (queuesEmail(d)) groups.push(structuredClone(EMAIL_QUEUES));
+  const consumers = groups
+    .flatMap((g) => g.consumers)
+    .map((c: Config) => ({
       ...c,
-      queue: `${c.queue}${d.suffix}`,
-      ...(c.dead_letter_queue ? { dead_letter_queue: `${c.dead_letter_queue}${d.suffix}` } : {}),
-    })),
-  };
+      queue: suffixed(c.queue),
+      ...(c.dead_letter_queue ? { dead_letter_queue: suffixed(c.dead_letter_queue) } : {}),
+    }));
+  const producers = groups
+    .flatMap((g) => g.producers ?? [])
+    .map((p: Config) => ({ ...p, queue: suffixed(p.queue) }));
+  if (!consumers.length) {
+    delete config.queues;
+    return;
+  }
+  config.queues = { ...(producers.length ? { producers } : {}), consumers };
 }
 
 /** Points an app's `METRICS` binding at the deployment's own dataset (always on: no registry flag). */
@@ -1697,6 +1804,7 @@ export function renderEngine(base: Config, d: Deployment): Config {
   storage(config, d);
   redundancyBindings(config, d);
   docsReplicaBindings(config, d);
+  queueBindings(config, d);
   // The product index ai.extract reads. A demo mocks every model, so it has none (and
   // scripts/provision.sh creates none).
   if (d.demo) delete config.vectorize;
@@ -1752,10 +1860,14 @@ export function renderEngine(base: Config, d: Deployment): Config {
   // Email Sending: the binding and its sender only where the registry sets `email`. The vars are
   // always set, so a deployment without one never keeps another's sender.
   if (d.email) config.send_email = [...(config.send_email ?? []), { name: 'EMAIL' }];
+  // A second sender on another onboarded domain, for when the first's is refused or Email Sending fails.
+  if (d.email?.fallbackFrom)
+    config.send_email = [...(config.send_email ?? []), { name: 'EMAIL_FALLBACK' }];
   config.vars = {
     ...config.vars,
     EMAIL_FROM: d.email?.from ?? '',
     EMAIL_FROM_NAME: d.email?.fromName ?? '',
+    EMAIL_FALLBACK_FROM: d.email?.fallbackFrom ?? '',
   };
   if (d.assistantDailyTokens !== undefined)
     config.vars = { ...config.vars, ASSISTANT_DAILY_TOKENS: String(d.assistantDailyTokens) };
@@ -2136,24 +2248,22 @@ function byId(id: string | undefined): Deployment {
   return d;
 }
 
-function render(id: string | undefined) {
-  const d = byId(id);
+/** Every config a deployment renders (its apps', the content stack's and each plugin's Worker), by the file it is written to. */
+export function renderAll(d: Deployment): { out: string; config: Config }[] {
   const template = (app: string, file = 'wrangler.jsonc') =>
     readJsonc(join(ROOT, 'apps', app, file));
-  const write = (app: string, config: Config) => {
-    const out = join(ROOT, 'apps', app, `wrangler.${d.id}.json`);
-    writeFileSync(out, `${JSON.stringify(config, null, 2)}\n`);
-    console.log(out);
-  };
+  const all: { out: string; config: Config }[] = [];
+  const add = (app: string, config: Config) =>
+    all.push({ out: join(ROOT, 'apps', app, `wrangler.${d.id}.json`), config });
   for (const [app, fn] of [
     ['catalog', renderCatalog],
     ['engine', renderEngine],
     ['storefront', renderStorefront],
     ['web', renderWeb],
   ] as const)
-    write(app, fn(template(app), d));
+    add(app, fn(template(app), d));
   // Catalog-only unless the deployment has content, which adds the dispatcher's content side.
-  write(
+  add(
     'delivery',
     renderDelivery(
       template('delivery', 'wrangler.catalog.jsonc'),
@@ -2168,11 +2278,18 @@ function render(id: string | undefined) {
       ['api', renderApi],
       ['studio', renderStudio],
     ] as const)
-      write(app, fn(template(app), d));
-  for (const p of workerPlugins(d)) {
-    const out = join(ROOT, 'plugins', p, `wrangler.${d.id}.json`);
-    const base = readJsonc(join(ROOT, 'plugins', p, 'wrangler.jsonc'));
-    writeFileSync(out, `${JSON.stringify(renderPlugin(base, d, p), null, 2)}\n`);
+      add(app, fn(template(app), d));
+  for (const p of workerPlugins(d))
+    all.push({
+      out: join(ROOT, 'plugins', p, `wrangler.${d.id}.json`),
+      config: renderPlugin(readJsonc(join(ROOT, 'plugins', p, 'wrangler.jsonc')), d, p),
+    });
+  return all;
+}
+
+function render(id: string | undefined) {
+  for (const { out, config } of renderAll(byId(id))) {
+    writeFileSync(out, `${JSON.stringify(config, null, 2)}\n`);
     console.log(out);
   }
 }
@@ -2433,6 +2550,71 @@ function pluginSecrets(out: string, plugin: string | undefined, id?: string) {
   console.log(`plugin ${plugin}: ${Object.keys(values).join(', ')}`);
 }
 
+/** The sending domains of a deployment's senders (the primary's first), which events are subscribed per. */
+export const emailDomains = (d: Deployment): string[] =>
+  [d.email?.from, d.email?.fallbackFrom]
+    .filter((a): a is string => !!a)
+    .map((a) => a.slice(a.indexOf('@') + 1).toLowerCase());
+
+/** The queues whose dead letters are kept in R2 and can be sent back (`fleet.ts redrive`), for a deployment. */
+export function redriveTargets(d: Deployment): RedriveTarget[] {
+  const n = names(d);
+  const out: RedriveTarget[] = [];
+  if (replicatesDocs(d)) {
+    out.push({
+      name: 'docs-replica',
+      bucket: 'docsReplica',
+      dlq: n.docsReplicaDlq,
+      queue: n.docsReplicaQueue,
+    });
+    // The mail queues' dead letters are kept in the replica too: without it the engine only logs them.
+    if (queuesEmail(d)) {
+      out.push({ name: 'email', bucket: 'docsReplica', dlq: n.emailDlq, queue: n.emailQueue });
+      out.push({
+        name: 'email-events',
+        bucket: 'docsReplica',
+        dlq: n.emailEventsDlq,
+        queue: n.emailEvents,
+      });
+    }
+  }
+  for (const [name, queue, dlq] of [
+    ['catalog-feed-parts', n.catalogFeedParts, n.catalogFeedPartsDlq],
+    ['catalog-changes', n.catalogChanges, n.catalogChangesDlq],
+    ['catalog-purge', n.catalogPurge, n.catalogPurgeDlq],
+  ] as const)
+    out.push({ name, bucket: 'catalogR2', dlq, queue });
+  return out;
+}
+
+async function redriveCmd(id: string | undefined, queue: string | undefined, rest: string[]) {
+  // It sends production messages with an operator's credentials: a person runs it, a workflow never does.
+  if (process.env.CI || process.env.GITHUB_ACTIONS)
+    throw new Error('redrive is run by an operator, never in CI');
+  const d = byId(id);
+  const targets = redriveTargets(d);
+  const target = targets.find((t) => t.name === queue);
+  if (!target)
+    throw new Error(
+      `redrive: ${d.id} has no queue "${queue}" (it has ${targets.map((t) => t.name).join(', ')})`,
+    );
+  const dryRun = rest.includes('--dry-run');
+  const date = rest.find((a) => !a.startsWith('--'));
+  const bucket = names(d)[target.bucket === 'docsReplica' ? 'docsReplica' : 'catalogR2'];
+  const report = await redrive(
+    cloudflareIo(operatorEnv(process.env), {
+      bucket,
+      queue: target.queue,
+      ...(d.jurisdiction ? { jurisdiction: d.jurisdiction } : {}),
+    }),
+    target,
+    date,
+    dryRun,
+  );
+  console.log(JSON.stringify({ queue: target.queue, dryRun, ...report }, null, 2));
+  if (report.failed.length) process.exitCode = 1;
+}
+
 /** What provision.sh reads (`names`): a deployment's resource names and settings. */
 export function shellVars(d: Deployment): Record<string, string> {
   const n = names(d);
@@ -2459,6 +2641,13 @@ export function shellVars(d: Deployment): Record<string, string> {
     DOCS_REPLICA_R2: replicatesDocs(d) ? n.docsReplica : '',
     DOCS_REPLICA_QUEUE: replicatesDocs(d) ? n.docsReplicaQueue : '',
     DOCS_REPLICA_DLQ: replicatesDocs(d) ? n.docsReplicaDlq : '',
+    // The mail queue, its dead-letter queue, the queue Email Sending's events go to and its dead
+    // letters, and the sending domains to subscribe (space-separated). All empty unless mail is queued.
+    EMAIL_QUEUE: queuesEmail(d) ? n.emailQueue : '',
+    EMAIL_DLQ: queuesEmail(d) ? n.emailDlq : '',
+    EMAIL_EVENTS: queuesEmail(d) ? n.emailEvents : '',
+    EMAIL_EVENTS_DLQ: queuesEmail(d) ? n.emailEventsDlq : '',
+    EMAIL_DOMAINS: queuesEmail(d) ? emailDomains(d).join(' ') : '',
     CATALOG_KV: n.catalogKv,
     CATALOG_FEED_PARTS: n.catalogFeedParts,
     CATALOG_FEED_PARTS_DLQ: n.catalogFeedPartsDlq,
@@ -2741,11 +2930,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'set-plugin-d1') setPluginD1(args[0], args[1], args[2]);
     else if (cmd === 'set-content-d1') setContentD1(args[0], args[1]);
     else if (cmd === 'set-content-kv') setContentKv(args[0], args[1]);
+    else if (cmd === 'redrive') await redriveCmd(args[0], args[1], args.slice(2));
     else if (cmd === 'demos')
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|redrive|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);

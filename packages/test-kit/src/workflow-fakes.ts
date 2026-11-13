@@ -2,8 +2,10 @@ import { durationMs, type WorkflowRunParams } from '@commerceworker/domain';
 import type {
   Clock,
   EmailMessage,
+  EmailQueue,
   EmailSender,
   EmailSendResult,
+  QueuedEmail,
   WorkflowDuration,
   WorkflowEngine,
   WorkflowStepConfig,
@@ -209,6 +211,17 @@ export class RecordingEmailSender implements EmailSender {
     return this.result.delivered
       ? { ...this.result, id: this.result.id ?? `email-${this.sent.length}` }
       : this.result;
+  }
+}
+
+/** An EmailQueue that keeps what was enqueued; `failWith` makes the next enqueues throw. */
+export class RecordingEmailQueue implements EmailQueue {
+  readonly jobs: QueuedEmail[] = [];
+  failWith: Error | null = null;
+
+  async enqueue(job: QueuedEmail): Promise<void> {
+    if (this.failWith) throw this.failWith;
+    this.jobs.push(job);
   }
 }
 

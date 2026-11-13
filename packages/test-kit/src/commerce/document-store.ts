@@ -6,9 +6,11 @@ import {
   type DocumentRecord,
   type DocumentStore,
   documentKey,
+  type MessageDelivery,
   type MessageRecord,
   type MessageStore,
   messageId,
+  replacesDelivery,
 } from '@commerceworker/ports/commerce';
 
 const byKey =
@@ -55,7 +57,17 @@ export class InMemoryMessageStore implements MessageStore {
   ) {
     const id = messageId(orderId, stepKey);
     if (!this.rows.has(id))
-      this.rows.set(id, { messageId: id, orderId, ...m, sentAt: null, error: null });
+      this.rows.set(id, {
+        messageId: id,
+        orderId,
+        ...m,
+        sentAt: null,
+        error: null,
+        providerId: null,
+        deliveryStatus: null,
+        deliveryAt: null,
+        deliveryDetail: null,
+      });
     return { messageId: id, recipient: m.recipient, subject: m.subject };
   }
 
@@ -69,13 +81,27 @@ export class InMemoryMessageStore implements MessageStore {
     return this.rows.get(messageId(orderId, stepKey));
   }
 
-  async markSent(id: string, at: number) {
+  async markSent(id: string, at: number, providerId?: string) {
     const r = this.rows.get(id);
-    if (r && r.sentAt === null) this.rows.set(id, { ...r, sentAt: at, error: null });
+    if (r && r.sentAt === null)
+      this.rows.set(id, { ...r, sentAt: at, error: null, providerId: providerId ?? null });
   }
 
   async markFailed(id: string, error: string) {
     const r = this.rows.get(id);
     if (r && r.sentAt === null) this.rows.set(id, { ...r, error: error.slice(0, 500) });
+  }
+
+  async recordDelivery(providerId: string, status: MessageDelivery, at: number, detail?: string) {
+    const r = [...this.rows.values()].find((m) => m.providerId === providerId);
+    if (!r) return false;
+    if (replacesDelivery(r.deliveryStatus, status))
+      this.rows.set(r.messageId, {
+        ...r,
+        deliveryStatus: status,
+        deliveryAt: at,
+        deliveryDetail: detail?.slice(0, 200) ?? null,
+      });
+    return true;
   }
 }

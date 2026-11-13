@@ -725,3 +725,136 @@ test('without an API token the alerts are skipped, not half made', () => {
   assert.match(r.stdout, /Skipped the alerts/);
   assert.deepEqual(r.writes, []);
 });
+
+// The mail queue section, against a fake `wrangler` (queues and event subscriptions are fixtures) and
+// a fake `curl` that answers the zone lookup. Every call is recorded; nothing reaches Cloudflare.
+const emailQueue = /# email-queue:begin\n([\s\S]*?)# email-queue:end/.exec(script)?.[1];
+
+function runEmailQueue(opts: {
+  queues?: string[];
+  subscriptions?: string;
+  zones?: Record<string, string>;
+  vars?: Record<string, string>;
+}) {
+  assert.ok(emailQueue, 'provision.sh has no email-queue section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-email-'));
+  writeFileSync(join(dir, 'queues'), (opts.queues ?? []).join('\n'));
+  writeFileSync(join(dir, 'subscriptions'), opts.subscriptions ?? '');
+  writeFileSync(join(dir, 'zones.json'), JSON.stringify(opts.zones ?? {}));
+  const prelude = `
+calls="${dir}/calls"
+wrangler() {
+  echo "wrangler $*" >> "$calls"
+  case "$1 $2 $3" in
+    "queues info "*) grep -qx "$3" "${dir}/queues" ;;
+    "queues subscription list") cat "${dir}/subscriptions" ;;
+  esac
+}
+curl() {
+  echo "curl $*" >> "$calls"
+  local url="" a
+  for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+  local name="\${url#*name=}"; name="\${name%%&*}"
+  jq -n --arg id "$(jq -r --arg n "$name" '.[$n] // empty' "${dir}/zones.json")" \\
+    'if $id == "" then {result: []} else {result: [{id: $id}]} end'
+}
+`;
+  const result = spawnSync('bash', ['-c', `set -euo pipefail\n${prelude}\n${emailQueue}`], {
+    env: {
+      ...process.env,
+      CLOUDFLARE_API_TOKEN: 'token',
+      CLOUDFLARE_ACCOUNT_ID: 'acct',
+      EMAIL_QUEUE: 'commerceworker-email-acme',
+      EMAIL_DLQ: 'commerceworker-email-dlq-acme',
+      EMAIL_EVENTS: 'commerceworker-email-events-acme',
+      EMAIL_EVENTS_DLQ: 'commerceworker-email-events-dlq-acme',
+      EMAIL_DOMAINS: 'mail.acme.test backup.example.net',
+      ...opts.vars,
+    },
+    encoding: 'utf8',
+  });
+  let calls: string[] = [];
+  try {
+    calls = readFileSync(join(dir, 'calls'), 'utf8').split('\n').filter(Boolean);
+  } catch {}
+  return { status: result.status, stderr: result.stderr, stdout: result.stdout, calls };
+}
+
+const MAIL_ZONES = { 'acme.test': 'zone-acme', 'example.net': 'zone-example' };
+
+test('the mail queues are created, and each sending domain subscribes to the events queue by its zone', () => {
+  const r = runEmailQueue({ zones: MAIL_ZONES });
+  assert.equal(r.status, 0, r.stderr);
+  for (const q of [
+    'commerceworker-email-acme',
+    'commerceworker-email-dlq-acme',
+    'commerceworker-email-events-acme',
+    'commerceworker-email-events-dlq-acme',
+  ]) {
+    assert.ok(r.calls.includes(`wrangler queues create ${q}`), `${q}\n${r.calls.join('\n')}`);
+    assert.ok(r.calls.some((c) => c.startsWith(`wrangler queues update ${q} --message-retention`)));
+  }
+  const subs = r.calls.filter((c) => c.startsWith('wrangler queues subscription create'));
+  assert.equal(subs.length, 2);
+  // The zone is the parent's: mail.acme.test is in the acme.test zone, backup.example.net in example.net.
+  assert.match(
+    subs[0]!,
+    /commerceworker-email-events-acme --source email.sending --zone-id zone-acme --domain mail.acme.test --events message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained/,
+  );
+  assert.match(subs[1]!, /--zone-id zone-example --domain backup.example.net/);
+  // Read before created.
+  const list = r.calls.indexOf(
+    'wrangler queues subscription list commerceworker-email-events-acme',
+  );
+  assert.ok(list >= 0 && list < r.calls.findIndex((c) => c.includes('subscription create')));
+});
+
+test('existing queues and subscriptions are kept: nothing is created twice', () => {
+  const r = runEmailQueue({
+    zones: MAIL_ZONES,
+    queues: [
+      'commerceworker-email-acme',
+      'commerceworker-email-dlq-acme',
+      'commerceworker-email-events-acme',
+      'commerceworker-email-events-dlq-acme',
+    ],
+    subscriptions:
+      'sub1  mail.acme.test  message.delivered\nsub2  backup.example.net  message.bounced',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(
+    r.calls.filter((c) => /queues create|subscription create/.test(c)),
+    [],
+  );
+  assert.ok(r.calls.some((c) => c.startsWith('wrangler queues update')));
+  assert.ok(!r.calls.some((c) => c.startsWith('curl')));
+});
+
+test('only the missing subscription is made, and a domain with no zone in the account is reported, not fatal', () => {
+  const some = runEmailQueue({
+    zones: MAIL_ZONES,
+    subscriptions: 'sub1  mail.acme.test  message.delivered',
+  });
+  assert.equal(some.status, 0, some.stderr);
+  assert.equal(some.calls.filter((c) => c.includes('subscription create')).length, 1);
+  // The subscription names the zone's own sending domain as a whole argument.
+  assert.match(
+    some.calls.find((c) => c.includes('subscription create'))!,
+    /(?:^|\s)backup\.example\.net(?:\s|$)/,
+  );
+  const none = runEmailQueue({ zones: {} });
+  assert.equal(none.status, 0, none.stderr);
+  assert.deepEqual(
+    none.calls.filter((c) => c.includes('subscription create')),
+    [],
+  );
+  assert.match(none.stderr, /No zone in this account holds mail.acme.test/);
+  // The queues are made regardless: the engine's consumers need them.
+  assert.ok(none.calls.includes('wrangler queues create commerceworker-email-acme'));
+});
+
+test('without mail queues (no redundancy, no sender, email an exception), nothing is called', () => {
+  const r = runEmailQueue({ vars: { EMAIL_QUEUE: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, []);
+});

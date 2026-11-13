@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createCfEmailSender, type SendEmailBinding } from '../../src/email-cf/index';
+import {
+  createCfEmailSender,
+  FALLBACK_CODES,
+  type SendEmailBinding,
+  withFallbackSender,
+} from '../../src/email-cf/index';
 
 type Sent = Parameters<SendEmailBinding['send']>[0];
 
@@ -61,6 +66,7 @@ describe('createCfEmailSender', () => {
     const r = await email.send({ to: ['a@example.com'], subject: 's', text: 't' });
     expect(r.delivered).toBe(false);
     expect(r.error).toBe('E_SENDER_NOT_VERIFIED: sender domain is not verified');
+    expect(r.code).toBe('E_SENDER_NOT_VERIFIED');
   });
 
   it('refuses a recipient that is not an address, sending nothing', async () => {
@@ -99,5 +105,66 @@ describe('createCfEmailSender', () => {
     expect(() => createCfEmailSender(fakeBinding().binding, { from: 'not-an-address' })).toThrow(
       /EMAIL_FROM/,
     );
+  });
+});
+
+describe('withFallbackSender', () => {
+  const failing = (code?: string) => Object.assign(new Error('refused'), code ? { code } : {});
+  const message = { to: ['buyer@example.com'], subject: 's', text: 't' };
+  const pair = (
+    primaryFails?: Error & { code?: string },
+    fallbackFails?: Error & { code?: string },
+  ) => {
+    const primary = fakeBinding(primaryFails);
+    const fallback = fakeBinding(fallbackFails);
+    return {
+      primary,
+      fallback,
+      sender: withFallbackSender(
+        createCfEmailSender(primary.binding, { from: 'orders@main.example.com' }),
+        createCfEmailSender(fallback.binding, { from: 'orders@backup.example.net' }),
+      ),
+    };
+  };
+
+  it('sends from the primary and never touches the fallback when it works', async () => {
+    const { sender, primary, fallback } = pair();
+    expect(await sender.send(message)).toEqual({ delivered: true, id: 'msg-1' });
+    expect(primary.sent).toHaveLength(1);
+    expect(fallback.sent).toHaveLength(0);
+  });
+
+  it.each([...FALLBACK_CODES])(
+    'sends from the fallback when the primary answers %s',
+    async (code) => {
+      const { sender, primary, fallback } = pair(failing(code));
+      expect(await sender.send(message)).toEqual({ delivered: true, id: 'msg-1' });
+      expect(primary.sent).toHaveLength(0);
+      expect(fallback.sent).toEqual([
+        { from: 'orders@backup.example.net', to: 'buyer@example.com', subject: 's', text: 't' },
+      ]);
+    },
+  );
+
+  it.each([
+    'E_RATE_LIMIT_EXCEEDED',
+    'E_DAILY_LIMIT_EXCEEDED',
+    'E_RECIPIENT_SUPPRESSED',
+    'E_ACCOUNT_SUSPENDED',
+    'E_VALIDATION_ERROR',
+    undefined,
+  ])('does not try the fallback for %s: it is the same account and message', async (code) => {
+    const { sender, fallback } = pair(failing(code));
+    const r = await sender.send(message);
+    expect(r.delivered).toBe(false);
+    expect(r.code).toBe(code);
+    expect(fallback.sent).toHaveLength(0);
+  });
+
+  it('reports both refusals when the fallback fails too', async () => {
+    const { sender } = pair(failing('E_SENDER_NOT_VERIFIED'), failing('E_INTERNAL_SERVER_ERROR'));
+    const r = await sender.send(message);
+    expect(r.delivered).toBe(false);
+    expect(r.error).toMatch(/E_SENDER_NOT_VERIFIED.*fallback: E_INTERNAL_SERVER_ERROR/);
   });
 });

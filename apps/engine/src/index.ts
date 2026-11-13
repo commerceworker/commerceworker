@@ -19,6 +19,16 @@ import {
   keepDeadLetters,
 } from './docs-replica';
 import { receiveEmail } from './email';
+import {
+  deliverEmails,
+  isEmailDlq,
+  isEmailEvents,
+  isEmailEventsDlq,
+  isEmailQueue,
+  keepEmailDeadLetters,
+  keepEmailEventDeadLetters,
+  recordEmailEvents,
+} from './email-queue';
 import { refreshRates } from './fx';
 import { sweepOrderInstances } from './instance-sweep';
 import { handleMcp, MCP_PATH } from './mcp';
@@ -142,9 +152,14 @@ export default {
     if (failed.length) throw new Error(`Daily jobs failed: ${failed.join(', ')}`);
   },
 
-  // The order documents replica's queue (R2 event notifications) and its dead-letter queue; names
-  // carry the deployment's suffix, and the dead-letter queue's starts like the queue's.
+  // The order documents replica's queue (R2 event notifications), the mail queue and Email Sending's
+  // event queue, each with its dead-letter queue; names carry the deployment's suffix, and the
+  // dead-letter queue's starts like the queue's.
   async queue(batch, env) {
+    if (isEmailEventsDlq(batch.queue)) return keepEmailEventDeadLetters(batch, env);
+    if (isEmailEvents(batch.queue)) return recordEmailEvents(batch, env);
+    if (isEmailDlq(batch.queue)) return keepEmailDeadLetters(batch, env);
+    if (isEmailQueue(batch.queue)) return deliverEmails(batch, env);
     if (isDocsReplicaDlq(batch.queue)) return keepDeadLetters(batch, env);
     if (isDocsReplicaQueue(batch.queue)) return applyObjectEvents(batch, env);
     console.error(JSON.stringify({ type: 'queue_unknown', queue: batch.queue }));

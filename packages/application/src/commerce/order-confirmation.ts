@@ -3,7 +3,11 @@
  *
  * `sendOrderConfirmation` mails a buyer once per order: the message is filed in `messages` under
  * the order and the `confirmation` kind (`CONFIRMATION_KIND`), so a repeat finds it and sends
- * nothing once it has gone. The email's link carries a fresh order-view credential, stored only as
+ * nothing once it has gone. With a queue (`ports.queue`) the message is filed and the send waits
+ * there for the consumer, which calls this again without one (the queue's job names the order and
+ * carries nothing else, so a dead letter holds no credential); a redelivery finds `sent_at` set and
+ * sends nothing. Email Sending's binding takes no idempotency key, so a crash between its accepting
+ * the mail and `markSent` can still send it twice. The email's link carries a fresh order-view credential, stored only as
  * a hash with an expiry; the stored message keeps the link without it, so the credential lives in
  * the email alone. A deployment with no Email Sending binding sends nothing and says so: the
  * message is recorded unsent with its reason (`messages.error`), where staff can find it.
@@ -23,7 +27,7 @@ import {
   ORDER_VIEW_TTL_MS,
   orderReceiptUrl,
 } from '@commerceworker/core';
-import type { EmailSender } from '@commerceworker/ports';
+import type { EmailQueue, EmailSender } from '@commerceworker/ports';
 import type {
   MessageStore,
   OrderConfirmations,
@@ -38,10 +42,14 @@ export type OrderConfirmationPorts = {
   readonly email: EmailSender | undefined;
   /** The storefront's origin, where the receipt link goes. */
   readonly storefrontOrigin: string;
+  /** Where the send waits, when the deployment queues mail; undefined sends inline. */
+  readonly queue?: EmailQueue;
 };
 
 export type OrderConfirmationOutcome =
   | { status: 'sent'; messageId: string }
+  /** Filed and queued: the consumer sends it. */
+  | { status: 'queued'; messageId: string }
   | { status: 'already_sent'; messageId: string }
   /** No Email Sending binding: recorded unsent, nothing mailed. */
   | { status: 'not_configured'; messageId: string }
@@ -77,6 +85,17 @@ export async function sendOrderConfirmation(
     return { status: 'not_configured', messageId };
   }
 
+  if (ports.queue) {
+    try {
+      await ports.queue.enqueue({ kind: 'confirmation', orderId, messageId });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      await ports.messages.markFailed(messageId, `Not queued: ${error}`);
+      return { status: 'failed', messageId, error };
+    }
+    return { status: 'queued', messageId };
+  }
+
   // At most one live credential per order: an earlier attempt's, which never reached anyone, goes.
   await ports.tokens.revoke([orderId]);
   const token = newOrderViewToken();
@@ -85,7 +104,7 @@ export async function sendOrderConfirmation(
     order.view,
     orderReceiptUrl(ports.storefrontOrigin, orderId, token),
   );
-  let result: { delivered: boolean; error?: string };
+  let result: { delivered: boolean; id?: string; error?: string };
   try {
     result = await ports.email.send({
       to: [order.recipient],
@@ -98,7 +117,7 @@ export async function sendOrderConfirmation(
     result = { delivered: false, error: err instanceof Error ? err.message : String(err) };
   }
   if (result.delivered) {
-    await ports.messages.markSent(messageId, now);
+    await ports.messages.markSent(messageId, now, result.id);
     return { status: 'sent', messageId };
   }
   // The credential in a message that didn't go reaches no one: take it away.

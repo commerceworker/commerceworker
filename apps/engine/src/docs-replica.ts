@@ -44,7 +44,7 @@ function eventOf(body: unknown): ObjectEvent | null {
 }
 
 /** Seconds before the next delivery on a message's `attempts`th failure: 30, doubling, up to 15 minutes. */
-const backoff = (attempts: number) => Math.min(30 * 2 ** Math.max(attempts - 1, 0), 900);
+export const backoff = (attempts: number) => Math.min(30 * 2 ** Math.max(attempts - 1, 0), 900);
 
 export async function applyObjectEvents(batch: MessageBatch, env: Env): Promise<void> {
   const primary = docsPrimary(env);
@@ -89,7 +89,12 @@ export async function applyObjectEvents(batch: MessageBatch, env: Env): Promise<
 }
 
 /** Keeps each dead letter in the replica (`dlq/<queue>/<date>/<id>.json`), logs it, then acknowledges it. */
-export async function keepDeadLetters(batch: MessageBatch, env: Env): Promise<void> {
+export async function keepDeadLetters(
+  batch: MessageBatch,
+  env: Env,
+  /** What of a body is kept: a queue whose messages hold a credential drops it. */
+  scrub: (body: unknown) => unknown = (body) => body,
+): Promise<void> {
   const replica = docsReplica(env);
   await Promise.all(
     batch.messages.map(async (msg) => {
@@ -102,7 +107,7 @@ export async function keepDeadLetters(batch: MessageBatch, env: Env): Promise<vo
             id: msg.id,
             timestamp: msg.timestamp.toISOString(),
             attempts: msg.attempts,
-            body: msg.body,
+            body: scrub(msg.body),
           }),
           { contentType: 'application/json; charset=utf-8' },
         );

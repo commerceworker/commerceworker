@@ -40,6 +40,41 @@ export interface CfEmailSenderOptions {
 
 const ADDRESS = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 
+/**
+ * The errors a second sender can answer: the primary's sender domain isn't (or is no longer)
+ * onboarded, or Email Sending itself failed (its only 5xx). Anything else would fail the same
+ * from the fallback's domain, since it is the same account: a bad recipient or message, a rate or
+ * daily limit, a suspended account. Those are left to the queue's retries or the caller. Codes are
+ * from the Workers binding's error table (Email Service, "Email Sending Workers API").
+ */
+export const FALLBACK_CODES: ReadonlySet<string> = new Set([
+  'E_SENDER_NOT_VERIFIED',
+  'E_SENDER_DOMAIN_NOT_AVAILABLE',
+  'E_INTERNAL_SERVER_ERROR',
+]);
+
+/**
+ * `primary`, then `fallback` when the primary refuses with one of `FALLBACK_CODES`. The fallback's
+ * answer is the answer (and says it was the fallback in `error` if it fails too, so a log shows both).
+ * The binding has no idempotency key, so a primary that failed after accepting the message could
+ * send it twice; the listed codes are all refusals before acceptance.
+ */
+export function withFallbackSender(primary: EmailSender, fallback: EmailSender): EmailSender {
+  return {
+    async send(message) {
+      const first = await primary.send(message);
+      if (first.delivered || !first.code || !FALLBACK_CODES.has(first.code)) return first;
+      const second = await fallback.send(message);
+      return second.delivered
+        ? second
+        : {
+            ...second,
+            error: `${first.error ?? first.code}; fallback: ${second.error ?? 'failed'}`,
+          };
+    },
+  };
+}
+
 /** Builds an `EmailSender` over the `send_email` binding. Throws on an unusable `from`. */
 export function createCfEmailSender(
   binding: SendEmailBinding,
@@ -82,6 +117,7 @@ export function createCfEmailSender(
         return {
           delivered: false,
           error: code && !text.includes(code) ? `${code}: ${text}` : text,
+          ...(code ? { code } : {}),
         };
       }
     },

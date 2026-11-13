@@ -5,6 +5,10 @@ interface Env {
    * when the registry sets `email`; unbound, no email is sent. Mail goes from `EMAIL_FROM`.
    */
   EMAIL?: SendEmail;
+  /** The mail queue's producer, added by scripts/fleet.ts with `redundancy` and an `email` sender; unbound, mail is sent inline. */
+  EMAIL_QUEUE?: Queue;
+  /** A second Email Sending binding, on another onboarded domain (`email.fallbackFrom`): sends from EMAIL_FALLBACK_FROM when EMAIL's sender is refused as unverified or Email Sending fails. */
+  EMAIL_FALLBACK?: SendEmail;
   /** Extra senders allowed to start orders by email: addresses or @domains, comma-separated. */
   INTAKE_ALLOWLIST?: string;
   /** Live shipping carriers' credentials: JSON of carrier id → Authorization header value. */

@@ -1,9 +1,15 @@
 import { type BuyerOrderView, ORDER_VIEW_TTL_MS } from '@commerceworker/core';
 import type { EmailMessage, EmailSender } from '@commerceworker/ports';
 import type { OrderConfirmations } from '@commerceworker/ports/commerce';
+import { RecordingEmailQueue } from '@commerceworker/test-kit';
 import { InMemoryMessageStore, InMemoryOrderViewTokens } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { NOT_CONFIGURED, orderReceipt, sendOrderConfirmation } from '../src/commerce';
+import {
+  deliverQueuedEmail,
+  NOT_CONFIGURED,
+  orderReceipt,
+  sendOrderConfirmation,
+} from '../src/commerce';
 
 const now = 1_800_000_000_000;
 const ORIGIN = 'https://shop.example';
@@ -181,6 +187,101 @@ describe('sendOrderConfirmation', () => {
     );
     expect(t.sent).toEqual([]);
     expect(await t.messages.messages(t.id)).toEqual([]);
+  });
+});
+
+describe('a confirmation with a queue', () => {
+  it('files the message, queues a job that names it and carries no credential, and sends nothing', async () => {
+    const t = setup();
+    const queue = new RecordingEmailQueue();
+    const r = await sendOrderConfirmation({ ...t.ports(), queue }, t.id, now);
+    expect(r).toEqual({ status: 'queued', messageId: `msg_${t.id}_confirmation` });
+    expect(queue.jobs).toEqual([
+      { kind: 'confirmation', orderId: t.id, messageId: `msg_${t.id}_confirmation` },
+    ]);
+    expect(t.sent).toEqual([]);
+    // The row is there first, unsent; no credential exists until the consumer sends.
+    expect(await t.messages.find(t.id, 'confirmation')).toMatchObject({
+      sentAt: null,
+      error: null,
+    });
+    expect(t.tokens.hashes()).toEqual([]);
+  });
+
+  it('is sent by the consumer, marked with the id Email Sending returned, and a redelivery sends nothing', async () => {
+    const t = setup();
+    const queue = new RecordingEmailQueue();
+    await sendOrderConfirmation({ ...t.ports(), queue }, t.id, now);
+    const job = queue.jobs[0];
+    expect(await deliverQueuedEmail(t.ports(), job, now + 5)).toEqual({ status: 'sent' });
+    expect(t.sent).toHaveLength(1);
+    expect(await t.messages.find(t.id, 'confirmation')).toMatchObject({
+      sentAt: now + 5,
+      providerId: 'm1',
+    });
+    expect(await deliverQueuedEmail(t.ports(), job, now + 9)).toEqual({
+      status: 'skipped',
+      why: 'already_sent',
+    });
+    expect(t.sent).toHaveLength(1);
+  });
+
+  it('asks the queue to retry a refusal, then sends when it clears, with one live credential', async () => {
+    const t = setup();
+    const job = { kind: 'confirmation', orderId: t.id, messageId: `msg_${t.id}_confirmation` };
+    t.failWith('E_RATE_LIMIT_EXCEEDED: slow down');
+    expect(await deliverQueuedEmail(t.ports(), job, now)).toMatchObject({
+      status: 'retry',
+      error: expect.stringContaining('slow down'),
+    });
+    expect(t.tokens.hashes()).toEqual([]);
+    t.failWith(null);
+    expect(await deliverQueuedEmail(t.ports(), job, now + 30_000)).toEqual({ status: 'sent' });
+    expect(t.tokens.hashes()).toHaveLength(1);
+  });
+
+  it('says so on the row, and fails, when the queue refuses the job', async () => {
+    const t = setup();
+    const queue = new RecordingEmailQueue();
+    queue.failWith = new Error('queue unavailable');
+    const r = await sendOrderConfirmation({ ...t.ports(), queue }, t.id, now);
+    expect(r).toMatchObject({ status: 'failed', error: 'queue unavailable' });
+    expect((await t.messages.find(t.id, 'confirmation'))?.error).toBe(
+      'Not queued: queue unavailable',
+    );
+    // The next call files nothing new and queues again.
+    queue.failWith = null;
+    expect((await sendOrderConfirmation({ ...t.ports(), queue }, t.id, now + 1)).status).toBe(
+      'queued',
+    );
+  });
+
+  it('does not queue when the deployment can’t send: it records why, as before', async () => {
+    const t = setup();
+    const queue = new RecordingEmailQueue();
+    const r = await sendOrderConfirmation({ ...t.ports(false), queue }, t.id, now);
+    expect(r.status).toBe('not_configured');
+    expect(queue.jobs).toEqual([]);
+  });
+
+  it('skips a job for an order that is gone, an address erased, and a body that is no job', async () => {
+    const t = setup({ recipient: null });
+    expect(
+      await deliverQueuedEmail(
+        t.ports(),
+        { kind: 'confirmation', orderId: 'ord_missing', messageId: 'x' },
+        now,
+      ),
+    ).toEqual({ status: 'skipped', why: 'unknown_order' });
+    expect(
+      await deliverQueuedEmail(
+        t.ports(),
+        { kind: 'confirmation', orderId: t.id, messageId: 'x' },
+        now,
+      ),
+    ).toEqual({ status: 'skipped', why: 'no_recipient' });
+    for (const body of [null, 'x', {}, { kind: 'confirmation' }, { kind: 'sign_in', to: 1 }])
+      expect(await deliverQueuedEmail(t.ports(), body, now)).toEqual({ status: 'unreadable' });
   });
 });
 

@@ -180,6 +180,8 @@
   // dead-letter queue, whose messages are kept in the replica under dlq/ and logged at error level.
   // The names get the deployment's suffix; scripts/provision.sh creates both queues and the
   // notification rule, and scripts/fleet.ts strips this with the bucket when `redundancy` is off.
+  // The mail queue's producer and consumers (src/email-queue.ts) aren't here: scripts/fleet.ts adds
+  // them to a deployment with `redundancy` and an `email` sender.
   "queues": {
     "consumers": [
       {
@@ -299,7 +301,10 @@
     // email. `send_email` (EMAIL) is added per deployment by scripts/fleet.ts when the registry
     // sets `email`, which sets these too; a bound EMAIL with no EMAIL_FROM sends nothing.
     "EMAIL_FROM": "",
-    "EMAIL_FROM_NAME": ""
+    "EMAIL_FROM_NAME": "",
+    // A second sender, on another onboarded domain, used when EMAIL_FROM's is refused as not
+    // verified or Email Sending fails (registry email.fallbackFrom; binds EMAIL_FALLBACK).
+    "EMAIL_FALLBACK_FROM": ""
   }
   // Secrets: INTAKE_ALLOWLIST — extra senders allowed to start orders by email, comma-separated
   // addresses or @domains (customers' own addresses are always allowed).
