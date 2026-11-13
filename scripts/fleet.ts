@@ -272,6 +272,8 @@ export type Redundancy = {
   except: RedundancyPart[];
   alerts?: { webhook?: string; pagerduty?: string };
   offsite?: { provider: OffsiteProvider; bucket: string; region: string };
+  /** The AI Gateway routes' limits, per prompt (`ai`): defaults from `AI_ROUTE_LIMITS`. */
+  ai: { dailyBudgetUsd: number; perMinute: number };
 };
 
 export const REDUNDANCY_BACKUP_DAYS = 35;
@@ -575,11 +577,11 @@ function redundancyOf(
   }
   if (r !== true && (typeof r !== 'object' || r === null || Array.isArray(r)))
     throw new Error(
-      `${file}: redundancy must be true or { "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"? }`,
+      `${file}: redundancy must be true or { "backupDays"?, "backupHourUtc"?, "drill"?, "except"?, "alerts"?, "offsite"?, "ai"? }`,
     );
   if (raw.demo === true) throw new Error(`${file}: a demo has no data to keep: drop redundancy`);
   const o = r === true ? {} : (r as Record<string, unknown>);
-  const known = ['backupDays', 'backupHourUtc', 'drill', 'except', 'alerts', 'offsite'];
+  const known = ['backupDays', 'backupHourUtc', 'drill', 'except', 'alerts', 'offsite', 'ai'];
   const unknown = Object.keys(o).filter((k) => !known.includes(k));
   if (unknown.length)
     throw new Error(
@@ -645,7 +647,35 @@ function redundancyOf(
         throw new Error(`${file}: redundancy.offsite.${k} must be a non-empty string`);
     offsite = f as Redundancy['offsite'];
   }
+  const ai: Redundancy['ai'] = {
+    dailyBudgetUsd: AI_ROUTE_LIMITS.dailyBudgetUsd,
+    perMinute: AI_ROUTE_LIMITS.perMinute,
+  };
+  if (o.ai !== undefined) {
+    const a = o.ai as Record<string, unknown>;
+    if (typeof a !== 'object' || a === null || Array.isArray(a))
+      throw new Error(`${file}: redundancy.ai must be { "dailyBudgetUsd"?, "perMinute"? }`);
+    const extra = Object.keys(a).filter((k) => k !== 'dailyBudgetUsd' && k !== 'perMinute');
+    if (extra.length) throw new Error(`${file}: redundancy.ai has no ${extra.join(', ')}`);
+    if (a.dailyBudgetUsd !== undefined) {
+      const v = a.dailyBudgetUsd;
+      if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > AI_ROUTE_MAX.dailyBudgetUsd)
+        throw new Error(
+          `${file}: redundancy.ai.dailyBudgetUsd must be a number of dollars above 0, at most ${AI_ROUTE_MAX.dailyBudgetUsd}`,
+        );
+      ai.dailyBudgetUsd = v;
+    }
+    if (a.perMinute !== undefined) {
+      const v = a.perMinute;
+      if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > AI_ROUTE_MAX.perMinute)
+        throw new Error(
+          `${file}: redundancy.ai.perMinute must be a whole number of calls from 1 to ${AI_ROUTE_MAX.perMinute}`,
+        );
+      ai.perMinute = v as number;
+    }
+  }
   return {
+    ai,
     backupDays: days as number,
     backupHourUtc: hour as number,
     drill,
@@ -722,8 +752,14 @@ export const AI_ROUTE_LIMITS = {
   retries: 0,
 } as const;
 
+/**
+ * The most a deployment's `redundancy.ai` may set: a guard against a typo (an extra zero) quietly
+ * lifting a spend cap, not a product limit. Raise it here when a customer needs more.
+ */
+export const AI_ROUTE_MAX = { dailyBudgetUsd: 10_000, perMinute: 10_000 } as const;
+
 /** One AI Gateway dynamic route's `elements`, as the API takes them (`POST .../routes`). */
-function routeElements(primary: string, fallback: string) {
+function routeElements(primary: string, fallback: string, limits: Redundancy['ai']) {
   const model = (id: string, model: string, success: string, failure: string) => ({
     id,
     type: 'model',
@@ -743,7 +779,7 @@ function routeElements(primary: string, fallback: string) {
       properties: {
         limitType: 'cost',
         key: 'metadata.prompt',
-        limit: AI_ROUTE_LIMITS.dailyBudgetUsd,
+        limit: limits.dailyBudgetUsd,
         window: 86_400,
       },
       outputs: { success: { elementId: 'rate' }, fallback: { elementId: 'second' } },
@@ -754,7 +790,7 @@ function routeElements(primary: string, fallback: string) {
       properties: {
         limitType: 'count',
         key: 'metadata.prompt',
-        limit: AI_ROUTE_LIMITS.perMinute,
+        limit: limits.perMinute,
         window: 60,
       },
       outputs: { success: { elementId: 'first' }, fallback: { elementId: 'second' } },
@@ -777,11 +813,15 @@ export function aiRoutes(d: Deployment, engineBase: Config) {
   return [
     {
       name: vars.AI_ROUTE as string,
-      elements: routeElements(vars.AI_MODEL as string, AI_ROUTE_FALLBACKS.text),
+      elements: routeElements(vars.AI_MODEL as string, AI_ROUTE_FALLBACKS.text, d.redundancy.ai),
     },
     {
       name: vars.ASSISTANT_ROUTE as string,
-      elements: routeElements(vars.ASSISTANT_MODEL as string, AI_ROUTE_FALLBACKS.assistant),
+      elements: routeElements(
+        vars.ASSISTANT_MODEL as string,
+        AI_ROUTE_FALLBACKS.assistant,
+        d.redundancy.ai,
+      ),
     },
   ];
 }
