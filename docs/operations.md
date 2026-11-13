@@ -197,6 +197,13 @@ when the one before it finished without a failure; an empty ring is skipped. Ins
 deployment is its own job (`general` runs four at a time), and one deployment failing doesn't stop
 the others in its ring, but it does stop later rings.
 
+Between `canary` and `general` a `soak` job waits `RING_SOAK_SECONDS` (a repository variable under
+Settings, Secrets and variables, Actions, Variables; default 1800, at most 7200; `0` skips the
+wait), so the canary customers run the release before the general ring starts. It is a job in
+`ci.yml` and not a GitHub environment wait timer because the environments are one per deployment,
+so a timer there would delay every ring. It is skipped when either ring is empty, and a failed
+canary ring stops it and `general` as before.
+
 Each deployment's job, `.github/workflows/deploy.yml`, runs in that deployment's environment:
 
 1. Render its configs and collect its secrets from the environment. With plugins installed, the **Collect plugin secrets** step also writes each Worker plugin's secrets file and, for sandboxed plugins on a shared account, the engine's `PLUGIN_SECRETS`. Then **Check plugin secrets** builds each plugin's bundle, reads its manifest and fails the deploy, before anything changes, if a required (not `optional`) secret isn't set: in the environment, or on a `secretsStore` deployment listed in the registry and present in the store (names only).
@@ -758,7 +765,7 @@ The backup is not a request path, so it changes no query count in `packages/db/t
 
 ### Gradual rollouts
 
-With `redundancy` on and `canary` not in `except`, a deploy puts each Worker's new version into service in steps, so a bad release reaches a tenth of requests for ten minutes instead of all of them at once. Without the field, or with `canary` an exception, every Worker deploys with `wrangler deploy` as before. How a run proceeds, how to stop one and when a Worker falls back to a full deploy are in [Deploy: Gradual rollouts](deploy.md#gradual-rollouts). Nothing to provision: the only addition is that `CLOUDFLARE_API_TOKEN` needs **Account Analytics Read**, which the rollout reads each version's error rate with. Without it the run says so (a warning on the plan step) and deploys every Worker in full; any other analytics error fails the run before it migrates anything.
+With `redundancy` on and `canary` not in `except`, a deploy puts each Worker's new version into service in steps, so a bad release reaches a tenth of requests for ten minutes instead of all of them at once. Without the field, or with `canary` an exception, every Worker deploys with `wrangler deploy` as before. How a run proceeds, how to stop one and when a Worker falls back to a full deploy are in [Deploy: Gradual rollouts](deploy.md#gradual-rollouts). After every Worker reaches 100% they are watched for ten more minutes (`ROLLOUT_POST_PROMOTE_SECONDS`, at most 1200), the engine, web app and other staged Workers included, and their triggers (routes, domains, crons, queue consumers, Workflows) are applied only once that passes. Nothing to provision: the only addition is that `CLOUDFLARE_API_TOKEN` needs **Account Analytics Read**, which the rollout reads each version's error rate with. Without it the run says so (a warning on the plan step) and deploys every Worker in full; any other analytics error fails the run before it migrates anything.
 
 ### The docs replica
 

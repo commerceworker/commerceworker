@@ -454,10 +454,27 @@ fi
 `,
 );
 writeFileSync(join(bin, 'retry'), '#!/usr/bin/env bash\n"$@"\n');
+// `node scripts/rollout.ts watch-promoted <since>` is logged and answers WATCH_EXIT (it would read
+// Cloudflare's analytics); every other node call is the real one.
+writeFileSync(
+  join(bin, 'node'),
+  `#!/usr/bin/env bash
+if [ "$2" = watch-promoted ]; then
+  echo "watch-promoted" >> "$LOG"
+  exit "\${WATCH_EXIT:-0}"
+fi
+exec "${process.execPath}" "$@"
+`,
+);
+chmodSync(join(bin, 'node'), 0o755);
 chmodSync(join(bin, 'pnpm'), 0o755);
 chmodSync(join(bin, 'retry'), 0o755);
 
-function ship(workers: Plan['workers'], steps: string[][]) {
+function ship(
+  workers: Plan['workers'],
+  steps: string[][],
+  opts: { env?: Record<string, string>; failing?: boolean } = {},
+) {
   const run = mkdtempSync(join(dir, 'run-'));
   const file = join(run, 'plan.json');
   writeFileSync(file, JSON.stringify({ id: 'acme', canaryPercent: 10, workers }));
@@ -470,6 +487,7 @@ function ship(workers: Plan['workers'], steps: string[][]) {
     LOG: log,
     CONFIG: 'wrangler.acme.json',
     GITHUB_SHA: 'abcdef0123456789',
+    ...opts.env,
   };
   const results = steps.map((args) =>
     spawnSync('bash', [join(ROOT, 'scripts/rollout.sh'), ...args], {
@@ -478,8 +496,9 @@ function ship(workers: Plan['workers'], steps: string[][]) {
       encoding: 'utf8',
     }),
   );
-  for (const r of results) assert.equal(r.status, 0, r.stderr + r.stdout);
+  if (!opts.failing) for (const r of results) assert.equal(r.status, 0, r.stderr + r.stdout);
   return {
+    statuses: results.map((r) => r.status),
     log: readFileSync(log, 'utf8').trim().split('\n').filter(Boolean),
     plan: JSON.parse(readFileSync(file, 'utf8')) as Plan,
   };
@@ -527,6 +546,7 @@ test('rollout.sh uploads a version, holds it at 0%, steps it to 10% and then 100
       ['stage'],
       ['promote'],
       ['promote-staged'],
+      ['settle'],
     ],
   );
   const e = '--filter @commerceworker/engine exec wrangler';
@@ -535,6 +555,7 @@ test('rollout.sh uploads a version, holds it at 0%, steps it to 10% and then 100
     `${e} versions deploy ${NEW}@0% ${OLD}@100% -y --message Deploy abcdef0 at 0% --config wrangler.acme.json`,
     `${e} versions deploy ${NEW}@10% ${OLD}@90% -y --message Deploy abcdef0 at 10% --config wrangler.acme.json`,
     `${e} versions deploy ${NEW}@100% -y --message Deploy abcdef0 at 100% --config wrangler.acme.json`,
+    'watch-promoted',
     `${e} triggers deploy --config wrangler.acme.json`,
   ]);
   assert.equal(after.workers[0]!.newVersion, NEW);
@@ -554,6 +575,7 @@ test('a staged Worker reaches 100% only after every gradual Worker has, and is n
       ['stage'],
       ['promote'],
       ['promote-staged'],
+      ['settle'],
     ],
   );
   const deploys = log.filter((l) => l.includes('versions deploy'));
@@ -589,6 +611,80 @@ test('rollout.sh rolls a Worker back to its earlier version', () => {
     `${w} versions deploy ${NEW}@0% ${OLD}@100% -y --message Deploy abcdef0 at 0%`,
     `${w} versions deploy ${OLD}@100% -y --message Deploy failed for abcdef0`,
   ]);
+});
+
+const mixed = () => [
+  planned({ key: 'web', name: 'w', filter: '@commerceworker/web', mode: 'staged' }),
+  planned({ key: 'engine', name: 'e', filter: '@commerceworker/engine', mode: 'staged' }),
+  planned({ key: 'media', name: 'm', filter: '@commerceworker/media', mode: 'gradual' }),
+];
+const shipMixed = [
+  ['ship', 'web', '@commerceworker/web', 'redirect'],
+  ['ship', 'engine', '@commerceworker/engine', 'config'],
+  ['ship', 'media', '@commerceworker/media', 'config'],
+  ['stage'],
+  ['promote'],
+  ['promote-staged'],
+];
+
+test('staged Workers reach 100%, then are watched, and only then get their triggers', () => {
+  const { log } = ship(mixed(), [...shipMixed, ['settle']]);
+  const watchAt = log.indexOf('watch-promoted');
+  assert.equal(log.filter((l) => l === 'watch-promoted').length, 1);
+  const lastVersions = log.findLastIndex((l) => l.includes('versions deploy'));
+  const triggers = log.flatMap((l, i) => (l.includes('triggers deploy') ? [i] : []));
+  assert.ok(lastVersions < watchAt, 'the watch follows the last promotion');
+  assert.equal(triggers.length, 3, 'one triggers deploy per rolled-out Worker, once');
+  assert.ok(
+    triggers.every((i) => i > watchAt),
+    'every triggers deploy follows the watch',
+  );
+  // promote-staged alone applies no trigger.
+  const before = ship(mixed(), shipMixed).log;
+  assert.equal(before.filter((l) => l.includes('triggers deploy')).length, 0);
+});
+
+test('a failed watch exits non-zero before any trigger changes, leaving the rollback to restore every version', () => {
+  const run = ship(mixed(), [...shipMixed, ['settle']], {
+    env: { WATCH_EXIT: '1' },
+    failing: true,
+  });
+  assert.equal(run.statuses.at(-1), 1);
+  assert.equal(run.log.filter((l) => l.includes('triggers deploy')).length, 0);
+  // What deploy.yml's rollback then runs for each: back to the earlier version at 100%.
+  const rolled = ship(mixed(), [
+    ...shipMixed,
+    ['rollback', 'web', 'm'],
+    ['rollback', 'engine', 'm'],
+    ['rollback', 'media', 'm'],
+  ]).log.filter((l) => l.includes(`versions deploy ${OLD}@100% -y --message m`));
+  assert.equal(rolled.length, 3);
+});
+
+test('deploy.yml watches after promoting the staged Workers, before the smoke test, and rolls every Worker back on failure', () => {
+  const yml = readFileSync(join(ROOT, '.github/workflows/deploy.yml'), 'utf8');
+  const at = (needle: string) => yml.indexOf(needle);
+  assert.ok(at('id: rollout-promote-staged') < at('id: rollout-settle'));
+  assert.ok(at('id: rollout-settle') < at('id: smoke\n'));
+  assert.match(
+    yml,
+    /id: rollout-settle\n\s+if: env\.GRADUAL == 'true'\n\s+timeout-minutes: 30\n\s+run: scripts\/rollout\.sh settle/,
+  );
+  assert.match(yml, /ROLLOUT_POST_PROMOTE_SECONDS: '600'/);
+  assert.match(yml, /if: \(failure\(\) \|\| \(cancelled\(\) && env\.GRADUAL == 'true'\)\)/);
+  // The job's timeout covers the deploy, smoke and rollback steps and every rollout step.
+  const timeout = Number(
+    /timeout-minutes: (\d+)\n\s+# The deployment's GitHub environment/.exec(yml)?.[1],
+  );
+  const rollout = [12, 10, 15, 10, 10, 15, 30].reduce((a, b) => a + b);
+  assert.ok(timeout >= 75 + rollout, `job timeout ${timeout} must exceed ${75 + rollout}`);
+});
+
+test('ci.yml soaks between canary and general', () => {
+  const yml = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(yml, /\n {2}soak:\n {4}needs: \[plan, canary\]/);
+  assert.match(yml, /\n {2}general:\n {4}needs: \[plan, canary, soak\]/);
+  assert.match(yml, /SOAK_SECONDS: \$\{\{ vars\.RING_SOAK_SECONDS \|\| '1800' \}\}/);
 });
 
 const denied = async () => reply(403, { success: false });

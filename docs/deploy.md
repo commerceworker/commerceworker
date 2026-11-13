@@ -300,10 +300,24 @@ caller that disconnected or an internal error of Cloudflare's. A version with fe
 invocations is too quiet to judge: the hold passes it with a line in the log, and the smoke tests
 are what covered it. If analytics can't be read during the hold, the run fails and rolls back; it
 never passes unwatched. `Roll out to 100%` follows for the gradual Workers; then the staged Workers
-are smoke tested once more through the override and go to 100%, callees first; then each
-rolled-out Worker's routes, domains, cron schedules and queue consumers are applied (`wrangler
-triggers deploy`: they aren't part of a version, so a change to one takes effect then), and the usual
-smoke tests, write check and latency check run against the finished deployment.
+are smoke tested once more through the override and go to 100%, callees first.
+
+`Watch at full traffic, then apply triggers` follows. The staged Workers (the engine, web app,
+storefront, catalog, pipeline and studio) have had no error-rate check until now, so every
+rolled-out Worker, gradual and staged, is watched at 100% for ten minutes
+(`ROLLOUT_POST_PROMOTE_SECONDS` in `deploy.yml`, at most 1200; the step stops at 30 minutes), with
+the thresholds of the hold above. A failure fails the run, and the rollback puts every rolled-out
+Worker back on its earlier version. Only when the watch passes are the triggers applied
+(`wrangler triggers deploy` for each rolled-out Worker). That command covers routes, custom domains
+and `workers.dev`, cron schedules, queue consumers, and a Worker's Workflows (their limits and
+schedules). None of them is part of a version, so a rollback with `versions deploy` can't revert
+them; applying them last means a failed watch never has to. The cost is that a new cron, queue
+consumer or route starts about ten minutes after the new code is serving: code that needs one must
+work without it for that long (add first, as for any change). The usual smoke tests, write check
+and latency check then run against the finished deployment. If one of them fails, the Workers go
+back to their earlier versions but the triggers stay as applied: a removed cron or consumer is
+re-added by the next deploy, and a new one runs against the old code until then, so keep trigger
+changes additive.
 
 **Compatibility.** During a rollout a new caller can reach an old callee, and an old caller a new
 one (the web app at 10% calling the engine still at 0%, or the reverse once a stage is promoted).
@@ -321,7 +335,7 @@ whether the cancel came before the 10% step or after the 100% one. Check the run
 was rolled back. A deployment that ships in full is not rolled back by a cancel, as before (it has
 no split to leave behind). A version already at 100% from an earlier, finished run is not touched by
 cancelling anything: merge a revert, which goes through CI like any change. The job's own timeout
-(150 minutes, above the sum of the rollout steps' timeouts and the deploy, smoke and rollback steps)
+(180 minutes, above the sum of the rollout steps' timeouts and the deploy, smoke and rollback steps)
 is not what ends a run: a step that times out fails the job and runs the rollback.
 
 **When every Worker deploys in full.** All or nothing: while a Worker goes live at once and
@@ -350,7 +364,7 @@ Notes: a Worker's secrets are versioned with it, so during the hold the old vers
 old values. Don't rotate `PRINCIPAL_KEY` or `DATA_KEY` ([principal key](operations.md#rotating-the-principal-key),
 [data key](operations.md#rotating-the-data-key)) in a release that rolls out gradually: a new Worker signs
 with the new key, and an old one it calls doesn't know it. Put `canary` in `except` for that release.
-A new Workflow, queue consumer or cron schedule starts when the triggers are applied, after 100%.
+A new Workflow, queue consumer or cron schedule starts when the triggers are applied, after 100% and the watch at full traffic.
 Cloudflare allows two versions in a deployment, so rollouts of one Worker never overlap.
 
 ### The content stack
