@@ -3,7 +3,7 @@ import { env, exports } from 'cloudflare:workers';
 import { DOC_FORMAT, paths } from '@commerceworker/core/product/paths';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import worker from '../../src';
-import { FRESH, MISSING } from '../../src/catalog/delivery';
+import { CatalogDelivery, FRESH, MISSING } from '../../src/catalog/delivery';
 import { backoff, drain, PURGE_CALLS, PURGE_PACE_MS } from '../../src/catalog/gateway';
 import { CatalogRead } from '../../src/catalog/read';
 
@@ -185,6 +185,105 @@ describe('batches', () => {
     await env.CARDS.put(paths.card(DOC_FORMAT, 'web', 'en', 81), card('cap', 'New cap'));
     expect(await (await get('/v1/web/en/products?keys=cap')).json()).toEqual({
       products: [{ key: 'cap', title: 'New cap' }],
+    });
+  });
+
+  describe('when KV fails', () => {
+    // The entrypoint with the cards namespace as a stub, the rest of the bindings real.
+    const edge = (cards: Partial<KVNamespace>, points: unknown[] = []) =>
+      new CatalogDelivery({} as ExecutionContext, {
+        PUBLISHED: env.PUBLISHED,
+        CATALOG: env.CATALOG,
+        CARDS: cards as KVNamespace,
+        ANALYTICS: { writeDataPoint: (p: unknown) => points.push(p) } as AnalyticsEngineDataset,
+      });
+    const batch = (e: CatalogDelivery, keys: string) =>
+      e.fetch(new Request(`https://catalog.internal/v1/web/en/products?keys=${keys}`));
+    const down = {
+      get: async () => {
+        throw new Error('KV GET failed: 500');
+      },
+    };
+
+    it('answers a batch from the published documents, counts it, and keeps it only briefly', async () => {
+      const points: unknown[] = [];
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const r = await batch(edge(down, points), 'hat,nope,tee');
+      expect(r.status).toBe(200);
+      // A card made from each document (its attributes the one thing a document can't say), null for a key with none.
+      expect(await r.json()).toEqual({
+        products: [
+          { key: 'hat', version: 1, title: 'Hat', variants: 0, attributes: {} },
+          null,
+          { key: 'tee', version: 1, title: 'Tee', variants: 0, attributes: {} },
+        ],
+      });
+      expect(r.headers.get('cache-control')).toBe(MISSING);
+      expect(points).toEqual([
+        {
+          indexes: ['failover'],
+          blobs: ['failover', 'catalog-edge', 'cards_kv_read', ''],
+          doubles: [1, 0],
+        },
+      ]);
+      expect(log).toHaveBeenCalledWith(
+        'catalog edge failover',
+        expect.stringContaining('KV GET failed: 500'),
+      );
+      log.mockRestore();
+    });
+
+    it('builds the card a listing shows from the whole document', async () => {
+      await env.PUBLISHED.put(
+        paths.doc(DOC_FORMAT, 'web', 'en', 'jacket'),
+        JSON.stringify({
+          key: 'jacket',
+          version: 3,
+          title: 'Jacket',
+          slug: 'jacket',
+          brand: 'Acme',
+          media: [{ src: '/a.jpg', alt: 'Front', width: 800, height: 600 }, { src: '/b.jpg' }],
+          attributes: { color: 'red' },
+          variants: [{ sku: 'J-S' }, { sku: 'J-M' }],
+          price: { amount: 9900, currency: 'USD' },
+          priceRange: {
+            min: { amount: 9900, currency: 'USD' },
+            max: { amount: 12900, currency: 'USD' },
+          },
+        }),
+      );
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const body = (await (await batch(edge(down), 'jacket')).json()) as { products: unknown[] };
+      expect(body.products).toEqual([
+        {
+          key: 'jacket',
+          version: 3,
+          title: 'Jacket',
+          slug: 'jacket',
+          brand: 'Acme',
+          image: { src: '/a.jpg', alt: 'Front', width: 800, height: 600 },
+          price: { amount: 9900, currency: 'USD' },
+          priceRange: {
+            min: { amount: 9900, currency: 'USD' },
+            max: { amount: 12900, currency: 'USD' },
+          },
+          variants: 2,
+          attributes: {},
+        },
+      ]);
+      log.mockRestore();
+    });
+
+    it('does not fall back for a miss: an unknown key stays null, at the normal freshness', async () => {
+      const points: unknown[] = [];
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // KV answers, with nothing for these keys; a document sits in R2 for `tee` all the same.
+      const r = await batch(edge({ get: async () => new Map() as never }, points), 'tee,ghost');
+      expect(await r.json()).toEqual({ products: [null, null] });
+      expect(r.headers.get('cache-control')).toBe(FRESH);
+      expect(points).toEqual([]);
+      expect(log).not.toHaveBeenCalled();
+      log.mockRestore();
     });
   });
 

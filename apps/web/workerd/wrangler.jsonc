@@ -1,0 +1,13 @@
+{
+  // The Worker the KvBackup tests run in: the Workflow (workers/kv-backup.ts) beside local KV and R2,
+  // bound as the web app's wrangler.jsonc binds them.
+  "name": "commerceworker-web-kv-backup-test",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "00000000000000000000000000000000" }],
+  "r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "commerceworker-backups" }],
+  "workflows": [
+    { "name": "commerceworker-kv-backup", "binding": "KV_BACKUP", "class_name": "KvBackup" }
+  ]
+}

@@ -70,8 +70,9 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
   return new Uint8Array(await new Response(body).arrayBuffer());
 }
 
-const gzip = (text: string) => pipe(new TextEncoder().encode(text), new CompressionStream('gzip'));
-const gunzip = async (bytes: Uint8Array) =>
+export const gzip = (text: string) =>
+  pipe(new TextEncoder().encode(text), new CompressionStream('gzip'));
+export const gunzip = async (bytes: Uint8Array) =>
   new TextDecoder().decode(await pipe(bytes, new DecompressionStream('gzip')));
 
 /**

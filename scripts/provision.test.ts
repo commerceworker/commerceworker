@@ -209,6 +209,7 @@ uuid=aaaaaaaa-0000-0000-0000-000000000000
       BACKUP_DAYS: '35',
       BACKUP_D1: 'true',
       BACKUP_OBJECTS: 'true',
+      BACKUP_KV: 'true',
       ...opts.vars,
     },
     encoding: 'utf8',
@@ -265,9 +266,42 @@ test('the backups bucket and the standby database are created when they do not e
     prefix,
     condition: { type: 'Age', maxAgeSeconds: days * 86400 },
   });
+  // So does the OAuth grant export under kv/.
+  assert.ok(
+    r.calls.some((c) =>
+      c.startsWith(
+        'wrangler r2 bucket lifecycle add commerceworker-backups-acme kv-backups kv/ --expire-days 35',
+      ),
+    ),
+  );
   assert.deepEqual(r.lock, {
-    rules: [rule('d1-backups', 'd1/', 35), rule('object-backups', 'objects/', 35)],
+    rules: [
+      rule('d1-backups', 'd1/', 35),
+      rule('object-backups', 'objects/', 35),
+      rule('kv-backups', 'kv/', 35),
+    ],
   });
+});
+
+test('with the OAuth export an exception the bucket keeps no kv/ rule', () => {
+  const r = runRedundancy({ vars: { BACKUP_KV: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.calls.some((c) => c.includes('kv-backups')), r.calls.join('\n'));
+  assert.deepEqual(
+    r.lock.rules.map((x: { prefix: string }) => x.prefix),
+    ['d1/', 'objects/'],
+  );
+});
+
+test('with only the OAuth export on, the bucket exists for kv/ and no standby is made', () => {
+  const r = runRedundancy({ vars: { BACKUP_D1: '', BACKUP_OBJECTS: '', STANDBY_D1: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.calls.includes('wrangler r2 bucket create commerceworker-backups-acme'));
+  assert.deepEqual(
+    r.lock.rules.map((x: { prefix: string }) => x.prefix),
+    ['kv/'],
+  );
+  assert.ok(!r.calls.some((c) => c.startsWith('wrangler d1 ')));
 });
 
 test('with the D1 backup an exception the bucket keeps only objects/, and no standby is made', () => {
@@ -278,7 +312,10 @@ test('with the D1 backup an exception the bucket keeps only objects/, and no sta
   assert.ok(!r.calls.some((c) => c.startsWith('wrangler d1 ') || c.startsWith('node ')));
   assert.deepEqual(
     r.lock.rules.map((x: { id: string; prefix: string }) => [x.id, x.prefix]),
-    [['object-backups', 'objects/']],
+    [
+      ['object-backups', 'objects/'],
+      ['kv-backups', 'kv/'],
+    ],
   );
 });
 
@@ -289,7 +326,7 @@ test('with the object backup an exception the bucket keeps only d1/, and the sta
   assert.ok(r.calls.includes('wrangler d1 create commerceworker-standby-acme'));
   assert.deepEqual(
     r.lock.rules.map((x: { prefix: string }) => x.prefix),
-    ['d1/'],
+    ['d1/', 'kv/'],
   );
 });
 
@@ -509,6 +546,71 @@ test('a deployment without the replica creates nothing', () => {
   });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls, []);
+});
+
+// The KV namespaces: made in the deployment's jurisdiction when it has one (KV fixes it at
+// creation, GA since 2026-10-02), and one that already exists is kept as it is. The catalog's
+// section (`kv:begin` to `kv:end`) holds the helper the content stack's cache namespace uses too.
+const kvSection = /# kv:begin\n([\s\S]*?)# kv:end/.exec(script)?.[1];
+
+function runKv(opts: { existing?: string; jurisdiction?: string }) {
+  assert.ok(kvSection, 'provision.sh has no kv section');
+  const dir = mkdtempSync(join(tmpdir(), 'provision-'));
+  const prelude = `
+calls="${dir}/calls"
+wrangler() {
+  echo "wrangler $*" >> "$calls"
+  case "$1 $2 $3" in
+    "kv namespace list") echo '${JSON.stringify(opts.existing ? [{ title: 'commerceworker-catalog-cards-acme', id: opts.existing }] : [])}' ;;
+  esac
+}
+j=(${opts.jurisdiction ? `--jurisdiction ${opts.jurisdiction}` : ''})
+`;
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `set -euo pipefail\n${prelude}\n${kvSection}\necho "kv=$kv"\nkv_create commerceworker-content-cache-acme`,
+    ],
+    { env: { ...process.env, CATALOG_KV: 'commerceworker-catalog-cards-acme' }, encoding: 'utf8' },
+  );
+  let calls: string[] = [];
+  try {
+    calls = readFileSync(join(dir, 'calls'), 'utf8').split('\n').filter(Boolean);
+  } catch {}
+  return { status: result.status, stderr: result.stderr, stdout: result.stdout, calls };
+}
+
+test('a new KV namespace is created in the deployment’s jurisdiction', () => {
+  // The fake lists none, so the lookup after the create finds none either: the script stops there,
+  // which is after the create call this test reads.
+  const r = runKv({ jurisdiction: 'eu' });
+  assert.ok(
+    r.calls.includes(
+      'wrangler kv namespace create commerceworker-catalog-cards-acme --jurisdiction eu',
+    ),
+    r.calls.join('\n'),
+  );
+});
+
+test('a new KV namespace outside a jurisdiction is created without the flag', () => {
+  const r = runKv({});
+  assert.ok(r.calls.includes('wrangler kv namespace create commerceworker-catalog-cards-acme'));
+  assert.ok(!r.calls.some((c) => c.includes('--jurisdiction')));
+});
+
+test('an existing KV namespace is kept, and never moved into a jurisdiction', () => {
+  const r = runKv({ existing: 'a'.repeat(32), jurisdiction: 'eu' });
+  assert.match(r.stdout, /kv=a{32}/);
+  assert.ok(
+    !r.calls.some((c) => c.startsWith('wrangler kv namespace create commerceworker-catalog')),
+  );
+});
+
+test('the content stack’s cache namespace is made by the same helper', () => {
+  assert.match(script, /kv_create "\$CONTENT_KV"/);
+  // The helper is the one place a namespace is created, so none is made without the jurisdiction.
+  assert.equal(script.split('wrangler kv namespace create').length - 1, 1);
 });
 
 // The detection section (`alerts:begin` to `alerts:end`), run against a fake `curl` that records

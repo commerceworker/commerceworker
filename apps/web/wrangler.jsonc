@@ -43,8 +43,27 @@
       "migrations_dir": "../../packages/db/migrations"
     }
   ],
-  // Same bucket as the engine: the web app serves invoices, POs and inbound documents from it.
-  "r2_buckets": [{ "binding": "DOCS", "bucket_name": "commerceworker-docs" }],
+  "r2_buckets": [
+    // Same bucket as the engine: the web app serves invoices, POs and inbound documents from it.
+    { "binding": "DOCS", "bucket_name": "commerceworker-docs" },
+    // The engine's backups bucket, where KvBackup writes OAUTH_KV's export under kv/ (the registry's
+    // redundancy; scripts/fleet.ts strips the binding and the Workflow below without it).
+    { "binding": "BACKUPS", "bucket_name": "commerceworker-backups" }
+  ],
+  "workflows": [
+    {
+      // Nightly export of OAUTH_KV, the only copy of OAuth client registrations and grants
+      // (workers/kv-backup.ts): gzip NDJSON chunks under kv/<date>/oauth/, the manifest last. The
+      // registry's redundancy.backupHourUtc + 1 sets the hour; commerceworker's is 02:00 UTC.
+      "name": "commerceworker-kv-backup",
+      "binding": "KV_BACKUP",
+      "class_name": "KvBackup",
+      "schedules": ["0 2 * * *"],
+      // A page of keys a step: the most steps a Workflow may have.
+      "limits": { "steps": 10000 },
+      "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
+    }
+  ],
   "services": [
     { "binding": "ENGINE", "service": "commerceworker-engine", "entrypoint": "EngineApi" },
     // The product catalog's admin API (/api/v1/catalog).

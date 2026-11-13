@@ -75,10 +75,14 @@ for p in $SANDBOXED_PLUGINS; do
   echo "Plugin $p is sandboxed: nothing to create (the deploy publishes its bundle)"
 done
 
-# The catalog: published documents in R2, listing cards in KV (KV has no jurisdictions).
+# The catalog: published documents in R2, listing cards in KV. A namespace is made in the deployment's
+# jurisdiction, which KV fixes at creation: one that already exists is kept as it is, wherever it is.
 wrangler r2 bucket create "$CATALOG_R2" ${j[@]+"${j[@]}"} || echo "R2 bucket $CATALOG_R2 already exists"
+# kv:begin
+kv_create() { wrangler kv namespace create "$1" ${j[@]+"${j[@]}"} >/dev/null; }
 kv_id() { wrangler kv namespace list | jq -er --arg t "$CATALOG_KV" '.[] | select(.title == $t) | .id'; }
-kv=$(kv_id 2>/dev/null) || { wrangler kv namespace create "$CATALOG_KV" >/dev/null; kv=$(kv_id); }
+kv=$(kv_id 2>/dev/null) || { kv_create "$CATALOG_KV"; kv=$(kv_id); }
+# kv:end
 node scripts/fleet.ts set-catalog-kv "$id" "$kv"
 echo "Recorded catalogKvId $kv in deployments/$id.jsonc"
 # Feed files and their parts are only needed while a feed imports. Replaced on each run, like the
@@ -146,9 +150,9 @@ if [ "$CONTENT" = true ]; then
   fi
 
   # The KV namespace the api, pipeline, delivery and media share (delivery cache, cached principals,
-  # the published-asset gate). KV has no jurisdictions.
+  # the published-asset gate). In the deployment's jurisdiction when it is new (see the catalog's, above).
   content_kv_id() { wrangler kv namespace list | jq -er --arg t "$CONTENT_KV" '.[] | select(.title == $t) | .id'; }
-  content_kv=$(content_kv_id 2>/dev/null) || { wrangler kv namespace create "$CONTENT_KV" >/dev/null; content_kv=$(content_kv_id); }
+  content_kv=$(content_kv_id 2>/dev/null) || { kv_create "$CONTENT_KV"; content_kv=$(content_kv_id); }
   node scripts/fleet.ts set-content-kv "$id" "$content_kv"
   echo "Recorded contentKvId $content_kv in deployments/$id.jsonc"
 
@@ -337,10 +341,11 @@ fi
 # email-queue:end
 
 # Redundancy (docs/operations.md, "Redundancy"): the backups bucket (the commerce D1's daily backups
-# under d1/, the Durable Object copies and restore reports under objects/), and the standby database
+# under d1/, the Durable Object copies and restore reports under objects/, the OAuth grant export under
+# kv/), and the standby database
 # the D1 restore drill rebuilds the newest backup in. Each part is read before it is created, so a
 # re-run changes nothing but the retention. Empty without `redundancy`; BACKUP_D1 and BACKUP_OBJECTS
-# say which prefixes are kept (a deployment may except either part).
+# say which prefixes are kept (a deployment may except any part).
 # redundancy:begin
 if [ -n "${BACKUPS_R2:-}" ]; then
   if wrangler r2 bucket info "$BACKUPS_R2" ${j[@]+"${j[@]}"} >/dev/null 2>&1; then
@@ -351,8 +356,8 @@ if [ -n "${BACKUPS_R2:-}" ]; then
   # Backups expire after backupDays, and nothing deletes or overwrites one before then: a lock of
   # the same age on each prefix, so a lifecycle rule and its lock never disagree (the catalog's
   # backups work the same way). d1/ holds the D1 backups; objects/ the Durable Object copies and the
-  # restore reports (whose undo bookmarks reach only 30 days anyway). The drills' evidence under
-  # drills/ is kept. `lock set` replaces the bucket's whole lock configuration: the rules below are
+  # restore reports (whose undo bookmarks reach only 30 days anyway); kv/ the OAuth grant export.
+  # The drills' evidence under drills/ is kept. `lock set` replaces the bucket's whole lock configuration: the rules below are
   # all of it.
   locks='[]'
   if [ -n "${BACKUP_D1:-}" ]; then
@@ -368,6 +373,13 @@ if [ -n "${BACKUPS_R2:-}" ]; then
       --force ${j[@]+"${j[@]}"}
     locks=$(jq -c --argjson d "$BACKUP_DAYS" '. + [{id: "object-backups", enabled: true, prefix: "objects/", condition: {type: "Age", maxAgeSeconds: ($d * 86400)}}]' <<<"$locks")
     echo "Durable Object copies in $BACKUPS_R2 kept and locked $BACKUP_DAYS days"
+  fi
+  if [ -n "${BACKUP_KV:-}" ]; then
+    wrangler r2 bucket lifecycle remove "$BACKUPS_R2" --name kv-backups ${j[@]+"${j[@]}"} >/dev/null 2>&1 || true
+    wrangler r2 bucket lifecycle add "$BACKUPS_R2" kv-backups kv/ --expire-days "$BACKUP_DAYS" \
+      --force ${j[@]+"${j[@]}"}
+    locks=$(jq -c --argjson d "$BACKUP_DAYS" '. + [{id: "kv-backups", enabled: true, prefix: "kv/", condition: {type: "Age", maxAgeSeconds: ($d * 86400)}}]' <<<"$locks")
+    echo "OAuth grant exports in $BACKUPS_R2 kept and locked $BACKUP_DAYS days"
   fi
   backup_locks=$(mktemp)
   jq -n --argjson r "$locks" '{rules: $r}' >"$backup_locks"
