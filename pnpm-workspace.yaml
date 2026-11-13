@@ -79,7 +79,7 @@ catalog:
   # Tracks the `engines.node` floor (scripts/toolchain.test.ts), not .nvmrc: newer types let code call APIs the floor lacks.
   '@types/node': ^24
   '@xyflow/react': ^12.12.0
-  astro: ^7.3.8
+  astro: ^7.4.12
   esbuild: 0.28.2
   isbot: ^5.1.36
   jose: 6.2.14
