@@ -4,5 +4,14 @@ import { describeDatabaseCopyContract } from '../src/commerce/database-copy-cont
 describeDatabaseCopyContract('in memory', async () => {
   const source = new InMemoryDatabaseCopy();
   const target = new InMemoryDatabaseCopy();
-  return { source, target, unmarked: source, seed: async (ddl, rows) => source.seed(ddl, rows) };
+  return {
+    source,
+    target,
+    unmarked: source,
+    seed: async (ddl, rows) => source.seed(ddl, rows),
+    setTargetHead: async (name) => {
+      target.head = name;
+    },
+    writeToTarget: async (ddl, rows) => target.seed(ddl, rows),
+  };
 });

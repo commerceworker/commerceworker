@@ -15,10 +15,17 @@ import {
   type CopyTable,
   type DatabaseExport,
   type DatabaseRestoreTarget,
+  type RestoreSource,
 } from '@commerceworker/ports/commerce';
 
 /** Marks a database a restore made, which may be wiped and restored into again. */
 export const RESTORE_MARKER = '_cw_standby';
+
+/**
+ * Clock skew a marker's time tolerates. A refusal is the safe error, but a standby that refused
+ * itself every week would hide a real drill failure, so the slack is a minute, not zero.
+ */
+const MARKER_SLACK_MS = 60_000;
 
 /** An FTS5 table keeps its data in these shadow tables, named after it. */
 const FTS_SHADOWS = ['_data', '_idx', '_content', '_docsize', '_config'];
@@ -199,14 +206,61 @@ async function runAll(db: D1Database, statements: string[], deferForeignKeys = f
   }
 }
 
+/** The newest write time (ms) in `table.column`, null where the table is missing or empty. */
+async function newest(db: D1Database, table: string, column: string): Promise<number | null> {
+  try {
+    const row = await db
+      .prepare(`SELECT max(${column}) AS t FROM ${table}`)
+      .first<{ t: number | null }>();
+    return typeof row?.t === 'number' ? row.t : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Throws unless `db` looks like a standby a restore made and nothing has used since. Three signs
+ * of a live database, each cheap and checked before anything is dropped:
+ *  - no marker: the tables aren't a restore's;
+ *  - a `d1_migrations` head past the backup's: a migration ran here that the backup predates, so
+ *    this is a database the deployed code migrates (a standby is only ever restored into). Names
+ *    are zero-padded, so they compare as text;
+ *  - an order or audit row newer than the marker's `restored_at`: a restore loads only rows older
+ *    than itself, so a newer one was written by traffic. `orders.updated_at` moves on every order
+ *    write (indexed by `orders_updated`) and `audit_events.at` is written by every sign-in and
+ *    change (indexed by `audit_events_at`), so one of them moves on any live deployment.
+ */
+async function assertStandby(db: D1Database, objects: Master[], from: RestoreSource) {
+  if (!objects.some((m) => m.name === RESTORE_MARKER))
+    throw new BackupRefusal(
+      'the standby database holds tables a restore did not make: it may be the live database, so nothing was wiped',
+    );
+  const head = await migrationHead(db);
+  if (head !== null && (from.migrationHead === null || head > from.migrationHead))
+    throw new BackupRefusal(
+      `the standby database is migrated to ${head}, past the backup's ${from.migrationHead ?? 'none'}: it may be the live database, so nothing was wiped`,
+    );
+  const marker = await db
+    .prepare(`SELECT restored_at FROM ${RESTORE_MARKER} ORDER BY restored_at DESC LIMIT 1`)
+    .first<{ restored_at: string }>()
+    .catch(() => null);
+  const restoredAt = marker ? Date.parse(marker.restored_at) : Number.NaN;
+  if (Number.isNaN(restoredAt)) return;
+  const wrote = Math.max(
+    (await newest(db, 'orders', 'updated_at')) ?? 0,
+    (await newest(db, 'audit_events', 'at')) ?? 0,
+  );
+  if (wrote > restoredAt + MARKER_SLACK_MS)
+    throw new BackupRefusal(
+      'the standby database holds writes newer than its restore: it may be the live database, so nothing was wiped',
+    );
+}
+
 export function d1RestoreTarget(db: D1Database): DatabaseRestoreTarget {
   return {
-    async reset() {
+    async reset(from: RestoreSource) {
       const objects = await master(db);
-      if (objects.length && !objects.some((m) => m.name === RESTORE_MARKER))
-        throw new BackupRefusal(
-          'the standby database holds tables a restore did not make: it may be the live database, so nothing was wiped',
-        );
+      if (objects.length) await assertStandby(db, objects, from);
       const drops = [
         ...objects.filter((m) => m.type === 'trigger').map((m) => `DROP TRIGGER ${quote(m.name)}`),
         ...objects.filter((m) => m.type === 'view').map((m) => `DROP VIEW ${quote(m.name)}`),
@@ -218,9 +272,16 @@ export function d1RestoreTarget(db: D1Database): DatabaseRestoreTarget {
           .map((m) => `DROP TABLE ${quote(m.name)}`),
       ];
       await runAll(db, drops, true);
-      await db
-        .prepare(`CREATE TABLE IF NOT EXISTS ${RESTORE_MARKER} (restored_at TEXT NOT NULL)`)
-        .run();
+      // Made again, not kept: it names this restore's time and backup, which the next guard reads.
+      await db.batch([
+        db.prepare(`DROP TABLE IF EXISTS ${RESTORE_MARKER}`),
+        db.prepare(
+          `CREATE TABLE ${RESTORE_MARKER} (restored_at TEXT NOT NULL, backup TEXT NOT NULL)`,
+        ),
+        db
+          .prepare(`INSERT INTO ${RESTORE_MARKER} (restored_at, backup) VALUES (?, ?)`)
+          .bind(new Date().toISOString(), from.backup),
+      ]);
     },
 
     async createTables(schema) {

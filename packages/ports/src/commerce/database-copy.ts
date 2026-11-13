@@ -50,12 +50,23 @@ export interface DatabaseExport {
   migrationHead(): Promise<string | null>;
 }
 
+/** The backup a restore is about to load: what a target is checked against before it is wiped. */
+export interface RestoreSource {
+  /** The backup's newest applied migration (`BackupManifest.migrationHead`). */
+  readonly migrationHead: string | null;
+  /** The backup's date, recorded in the target's marker. */
+  readonly backup: string;
+}
+
 export interface DatabaseRestoreTarget {
   /**
-   * Empties the target and marks it as a restore's. Refuses a database that holds tables and
-   * wasn't made by a restore, so a binding pointed at the live database can't be wiped.
+   * Empties the target and marks it as a restore's, recording when and from which backup. Refuses
+   * a database that looks live, so a binding pointed at the live database can't be wiped: one
+   * that holds tables and wasn't made by a restore, one whose migration head is newer than the
+   * backup's (it has been migrated past it), and one holding writes newer than its own marker
+   * (a standby that was promoted and took traffic).
    */
-  reset(): Promise<void>;
+  reset(from: RestoreSource): Promise<void>;
   /** Creates the tables and search indexes, with no rows. */
   createTables(schema: CopySchema): Promise<void>;
   /** Writes rows keyed as the source had them (a row that exists is replaced: a retry is safe). */

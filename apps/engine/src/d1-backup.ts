@@ -142,7 +142,11 @@ export class D1Restore extends WorkflowEntrypoint<Env, RestoreParams> {
           refusing(async () => verifyTable(store, await manifest(), table.name)),
         );
 
-      await step.do('reset standby', COPY, () => refusing(() => target.reset()));
+      await step.do('reset standby', COPY, () =>
+        refusing(async () =>
+          target.reset({ migrationHead: (await manifest()).migrationHead, backup: found.date }),
+        ),
+      );
       await step.do('create tables', COPY, async () =>
         target.createTables((await manifest()).schema),
       );

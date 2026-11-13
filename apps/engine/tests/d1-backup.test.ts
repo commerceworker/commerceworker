@@ -200,7 +200,9 @@ describe('the daily backup and the restore drill', () => {
   it('never restores over a database a restore did not make', async () => {
     // What the standby binding would be if it were pointed at the live database.
     const { d1RestoreTarget } = await import('@commerceworker/db/database-copy');
-    await expect(d1RestoreTarget(env.DB).reset()).rejects.toThrow(/may be the live database/);
+    await expect(
+      d1RestoreTarget(env.DB).reset({ migrationHead: null, backup: today }),
+    ).rejects.toThrow(/may be the live database/);
     expect(await dump(env.DB, 'SELECT count(*) AS n FROM orders')).toBeTruthy();
     expect(
       (

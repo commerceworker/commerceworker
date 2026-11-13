@@ -43,8 +43,8 @@ Each deployment is a file, `deployments/<id>.jsonc`. `scripts/fleet.ts` reads th
 | `contentD1Id`, `contentKvId` | none | The content database's id and the content cache's KV namespace id (32 hex characters), written by `scripts/provision.sh` (`fleet.ts set-content-d1`, `set-content-kv`). Only with `content: true`; required to render the content Workers or to deploy (the plan stops without them, like `d1Id`) |
 | `suffix` | `-<id>` | Added to every resource name. `commerceworker` uses `""`, so its resources keep the base names |
 | `environment` | `deploy-<id>` | The GitHub environment holding the deployment's secrets. `commerceworker` uses `production` |
-| `d1Id` | none | The D1 database's id, written by `scripts/provision.sh`. Every resource id in the registry (`d1Id`, `catalogKvId`, `contentD1Id`, `contentKvId` and each plugin's `d1Id`) belongs to one deployment: the fleet refuses to load two entries, or one entry twice, that share an id, which is what a copied registry file with a stale id would do. Provision the new deployment instead of copying ids |
-| `standbyD1Id` | none | The standby D1 database's id (`commerceworker-standby<suffix>`), written by `scripts/provision.sh` (`fleet.ts set-standby-d1`). Only with `redundancy`, and never the same database as `d1Id` (refused: a restore wipes it). Required to render the engine's config or to deploy with `redundancy` (the plan stops without it, like `d1Id`) |
+| `d1Id` | none | The D1 database's id, written by `scripts/provision.sh`; once recorded, no `set-*` command (`set-d1`, `set-standby-d1`, `set-catalog-kv`, `set-plugin-d1`, `set-content-d1`, `set-content-kv`) changes an id without `--replace`, and `provision.sh` never passes it. Every resource id in the registry (`d1Id`, `catalogKvId`, `contentD1Id`, `contentKvId` and each plugin's `d1Id`) belongs to one deployment: the fleet refuses to load two entries, or one entry twice, that share an id, which is what a copied registry file with a stale id would do. Provision the new deployment instead of copying ids |
+| `standbyD1Id` | none | The standby D1 database's id (`commerceworker-standby<suffix>` until a promotion, when it is whichever database `fleet.ts promote-standby` and `set-standby-d1 --replace` recorded), written by `scripts/provision.sh` (`fleet.ts set-standby-d1`). Only with `redundancy`, and never the same database as `d1Id` (refused: a restore wipes it). Required to render the engine's config or to deploy with `redundancy` (the plan stops without it, like `d1Id`) |
 | `catalogKvId` | none | The id (32 hex characters; anything else is refused) of the catalog's KV namespace of listing cards, written by `scripts/provision.sh` (`fleet.ts set-catalog-kv`). Like `d1Id` (which the catalog's config also binds as its `DB`), required to render the catalog's config or to deploy |
 | `jurisdiction` | none | `eu` or `fedramp`: where D1 and R2 (the docs and the catalog's buckets) keep data, set when they are created, and where the engine's Durable Objects (`OrderAgent`, `AssistantAgent`, `A2AAgent`) and the catalog's (`CatalogShard`, `CatalogMeta`, `CatalogFeeds`, `ListingIndexer`, `SearchShard`, `CatalogPublisher`) are created. Rendered into the engine's and the catalog's `DATA_JURISDICTION`; `renderEngine` and `renderCatalog` omit it when unset, leaving the base `""`. The KV namespaces `provision.sh` makes (the catalog's cards and, with `content`, the content cache) are created in it too; a namespace's jurisdiction can only be set when it is created, so one that already exists is never moved, and `OAUTH_KV`, which the web Worker's first deploy creates, has none. Fixed for a deployment's life: see [Data residency](data-model.md#data-residency) |
 | `limits` | none | Requests a minute per caller, replacing the base budgets it names: `api` (`/api/v1`, 600), `agents` (each of `/mcp` and `/a2a`, and each UCP platform's checkout calls, 300), `catalog` (each UCP platform's catalog search and lookup, 120), `webhooks` (each integration, 1,200). For example `"limits": { "webhooks": 6000 }` for a customer whose ERP sends in bursts |
@@ -972,10 +972,24 @@ Caveats: the docs bucket's D1 records (`documents`) are in the database, not the
    wrangler workflows instances describe commerceworker-d1-restore<suffix> latest
    ```
 
-   Read `drills/<today>.json`: the outcome is `passed` only when every check is. A chunk that fails its hash, or a standby that isn't empty and wasn't made by a restore, stops it before anything is written.
+   Read `drills/<today>.json`: the outcome is `passed` only when every check is. A chunk that fails its hash, or a standby that isn't empty and wasn't made by a restore, stops it before anything is written. So does a standby that looks live: one whose `d1_migrations` head is newer than the backup's, or that holds an order or audit event written after its own marker's `restored_at` (the marker records when and from which backup it was restored).
 4. **Look before you promote.** The standby is a complete database: `wrangler d1 execute <standby name> --remote --command "SELECT count(*) FROM orders"`, and its `d1_migrations` head against what is deployed. A deploy applies any migration after the head, so a backup older than a migration is fine.
-5. **Promote it.** In `deployments/<id>.jsonc` put the standby's id in `d1Id` (and keep the old `d1Id` aside), remove `hold`, and merge: CI renders `d1Id` into the web, engine and catalog configs, applies the migrations after the backup's head, and deploys. The standby needs no schema step of its own.
-6. **Provision a new standby** for the next drill: the promoted database can't also be one. Create another D1 database (`wrangler d1 create`), write its id as `standbyD1Id`, and delete the database you replaced once you no longer need it.
+5. **Promote it.** From a checkout, as an operator (it runs nothing remote and refuses to run in CI):
+
+   ```bash
+   node scripts/fleet.ts promote-standby <id>
+   ```
+
+   It swaps `d1Id` and `standbyD1Id` in `deployments/<id>.jsonc` (the one place an id is changed on purpose) and prints what to run next. Remove `hold` and merge: CI renders `d1Id` into the web, engine and catalog configs, applies the migrations after the backup's head, and deploys. The standby needs no schema step of its own.
+6. **Make the promoted database stop looking like a standby, then provision the next one.** The restore leaves a `_cw_standby` marker table in the standby, and the drill wipes any database that has one (unless it is migrated past the backup or holds writes newer than the marker, which it refuses; those checks are a second line, not a plan). So, before the next drill:
+
+   ```bash
+   wrangler d1 execute <the promoted database's name> --remote --command "DROP TABLE IF EXISTS _cw_standby"
+   wrangler d1 create <a new standby name>     # names are unique per account: not the promoted database's
+   node scripts/fleet.ts set-standby-d1 <id> <the new database's id> --replace
+   ```
+
+   Commit and merge the registry change, and delete the database you replaced once you no longer need it.
 
 Caveats:
 
@@ -983,7 +997,7 @@ Caveats:
 - **Durable Object state is not in D1** and is not restored: live orders' and carts' agents keep what they held, which may name rows the restore doesn't have. Check running orders against the restored `orders` table before resuming anything; rewind objects with [Restoring an order's or cart's live state](#restoring-an-orders-or-carts-live-state) if they need it.
 - **The restore wipes and rebuilds the standby each time**, so promote only once you have what you need from the drill's result: a drill run after the promotion has a different standby.
 - **Webhook deliveries marked sent after the backup are pending again** and go out a second time; receivers dedupe on the delivery id.
-- **`provision.sh` finds databases by name.** The promoted database keeps the name `commerceworker-standby<suffix>`, so re-running the script for the deployment would write the old database's id back as `d1Id`. Don't re-run it for a deployment after a promotion; until it learns the swap, resource names and ids disagree on purpose and the ids are the truth. `wrangler d1 time-travel` works from the new `d1Id` as usual.
+- **After a promotion, names and ids disagree on purpose, and the ids are the truth.** The promoted database keeps the name `commerceworker-standby<suffix>`. `provision.sh` finds databases by name but never changes a recorded `d1Id` or `standbyD1Id`: it keeps the registry's ids (it says so), accepts a name that finds the other role's database (the swap), and stops, writing nothing, when a name finds a database the registry doesn't record (typically the replaced database still under the live name: delete it, or fix the registry with `set-d1 --replace` if the registry is what's wrong). It is safe to re-run after a promotion. `wrangler d1 time-travel` works from the new `d1Id` as usual.
 - **AUTOINCREMENT counters** start again after the highest row loaded (SQLite's `sqlite_sequence` is not copied), which only matters for ids a deleted row once held.
 - A backup older than 30 days has no Time Travel behind it; a restore from it is the only recovery for its date.
 

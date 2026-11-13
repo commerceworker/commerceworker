@@ -27,12 +27,20 @@
  *                                                 would take its Workers' logs
  *   node scripts/fleet.ts logpush-token <id> <account> [check <group id>]  the Logpush R2 token to
  *                                                 create (permission groups on stdin), or check one (token on stdin)
- *   node scripts/fleet.ts set-d1 <id> <uuid>      record the D1 database id in the registry
- *   node scripts/fleet.ts set-standby-d1 <id> <uuid>  record the standby D1 database id (with redundancy)
- *   node scripts/fleet.ts set-catalog-kv <id> <kv id>  record the catalog's card KV namespace id
- *   node scripts/fleet.ts set-plugin-d1 <id> <plugin> <uuid>  record a plugin's D1 database id
- *   node scripts/fleet.ts set-content-d1 <id> <uuid>  record the content database id (content only)
- *   node scripts/fleet.ts set-content-kv <id> <kv id>  record the content cache's KV namespace id
+ *   node scripts/fleet.ts set-d1 <id> <uuid> [--replace]  record the D1 database id in the registry
+ *   node scripts/fleet.ts set-standby-d1 <id> <uuid> [--replace]  record the standby D1 database id (with redundancy)
+ *   node scripts/fleet.ts set-catalog-kv <id> <kv id> [--replace]  record the catalog's card KV namespace id
+ *   node scripts/fleet.ts set-plugin-d1 <id> <plugin> <uuid> [--replace]  record a plugin's D1 database id
+ *   node scripts/fleet.ts set-content-d1 <id> <uuid> [--replace]  record the content database id (content only)
+ *   node scripts/fleet.ts set-content-kv <id> <kv id> [--replace]  record the content cache's KV namespace id
+ *                                                 (every set-* refuses to change an id that is already set
+ *                                                 unless given --replace: an id is the truth, a name is not)
+ *   node scripts/fleet.ts database-id <id> live|standby [found uuid]  what provision.sh does with the database
+ *                                                 it found by name: create, record <uuid> or keep (the registry's
+ *                                                 id wins); fails when the name finds a database the registry
+ *                                                 doesn't know
+ *   node scripts/fleet.ts promote-standby <id>    swap d1Id and standbyD1Id after restoring into the standby, and
+ *                                                 print what to run next (nothing remote; never in CI)
  *   node scripts/fleet.ts redrive <id> <queue> [date] [--dry-run]  send the dead letters kept for <queue>
  *                                                 (intake, email, email-events, docs-replica, catalog-feed-parts,
  *                                                 catalog-changes, catalog-purge) back to it, once each (operator
@@ -1299,7 +1307,10 @@ export function resourceIds(d: Deployment): [field: string, id: string][] {
   return ids.filter((x): x is [string, string] => typeof x[1] === 'string' && x[1] !== '');
 }
 
-export function loadDeployments(dir = join(ROOT, 'deployments')): Deployment[] {
+/** Where the registry lives; `FLEET_DEPLOYMENTS` points the CLI at another one for tests. */
+const registryDir = () => process.env.FLEET_DEPLOYMENTS ?? join(ROOT, 'deployments');
+
+export function loadDeployments(dir = registryDir()): Deployment[] {
   const list = readdirSync(dir)
     .filter((f) => f.endsWith('.jsonc'))
     .sort()
@@ -2482,8 +2493,8 @@ export function renderStudio(base: Config, d: Deployment): Config {
   return c;
 }
 
-function byId(id: string | undefined): Deployment {
-  const d = loadDeployments().find((x) => x.id === id);
+function byId(id: string | undefined, dir = registryDir()): Deployment {
+  const d = loadDeployments(dir).find((x) => x.id === id);
   if (!d) throw new Error(`no deployment ${JSON.stringify(id)} in deployments/`);
   return d;
 }
@@ -2874,6 +2885,9 @@ export function shellVars(d: Deployment): Record<string, string> {
     // with `d1Backup`, `objectBackup` and `kvBackup` all exceptions, the standby with `d1Backup` one).
     BACKUPS_R2: holdsBackups(d) ? n.backups : '',
     STANDBY_D1: backsUpD1(d) ? n.standbyD1 : '',
+    // The ids the registry records (empty until provisioned): provision.sh keeps them over a name.
+    D1_ID: d.d1Id ?? '',
+    STANDBY_D1_ID: d.standbyD1Id ?? '',
     BACKUP_DAYS: holdsBackups(d) ? String(d.redundancy.backupDays) : '',
     // Which prefixes of the backups bucket are kept and locked: d1/, objects/ and kv/.
     BACKUP_D1: backsUpD1(d) ? 'true' : '',
@@ -2996,64 +3010,148 @@ function shellNames(id: string | undefined) {
   for (const [k, v] of Object.entries(shellVars(byId(id)))) console.log(`${k}='${v}'`);
 }
 
+type IdField = 'd1Id' | 'standbyD1Id' | 'catalogKvId' | 'contentD1Id' | 'contentKvId';
+
+/** Edits `text` (a registry file) to set `path` to `value`, keeping its comments. */
+const withValue = (text: string, path: (string | number)[], value: string) =>
+  applyEdits(
+    text,
+    modify(text, path, value, { formattingOptions: { insertSpaces: true, tabSize: 2 } }),
+  );
+
+/**
+ * An id that is already recorded is the truth about which database a deployment uses: a name is
+ * not, since a promoted standby keeps its name. Changing it needs `--replace`, so a script that
+ * found a database by name can't re-point a deployment at an abandoned one.
+ */
+function refuseSwap(d: Deployment, label: string, have: string | undefined, value: string) {
+  if (have === undefined || have === value) return;
+  throw new Error(
+    `${d.id} already records ${label} ${have}; refusing to change it to ${value} without --replace. An id is not re-pointed by a name lookup: if this is a deliberate change (a promotion is \`promote-standby\`), pass --replace`,
+  );
+}
+
 /** Writes one field into deployments/<id>.jsonc, keeping its comments. */
 function setField(
   id: string | undefined,
-  field: 'd1Id' | 'standbyD1Id' | 'catalogKvId' | 'contentD1Id' | 'contentKvId',
+  field: IdField,
   value: string,
+  replace: boolean,
+  dir = registryDir(),
 ) {
-  const d = byId(id);
+  const d = byId(id, dir);
   if (field.startsWith('content') && !d.content)
     throw new Error(
       `${d.id} has the content stack off: set "content": true before recording ${field}`,
     );
-  const file = join(ROOT, 'deployments', `${d.id}.jsonc`);
-  const text = readFileSync(file, 'utf8');
-  const edits = modify(text, [field], value, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  });
-  writeFileSync(file, applyEdits(text, edits));
+  if (!replace) refuseSwap(d, field, d[field], value);
+  const file = join(dir, `${d.id}.jsonc`);
+  writeFileSync(file, withValue(readFileSync(file, 'utf8'), [field], value));
 }
 
-function setPluginD1(id: string | undefined, plugin: string | undefined, uuid: string | undefined) {
+function setPluginD1(
+  id: string | undefined,
+  plugin: string | undefined,
+  uuid: string | undefined,
+  replace: boolean,
+) {
   if (!plugin || !uuid || !/^[0-9a-f-]{36}$/.test(uuid))
-    throw new Error('set-plugin-d1 <id> <plugin> <uuid>');
+    throw new Error('set-plugin-d1 <id> <plugin> <uuid> [--replace]');
   const d = byId(id);
   if (!(plugin in d.plugins)) throw new Error(`${d.id} doesn't install plugin ${plugin}`);
-  const file = join(ROOT, 'deployments', `${d.id}.jsonc`);
-  const text = readFileSync(file, 'utf8');
-  const edits = modify(text, ['plugins', plugin, 'd1Id'], uuid, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  });
-  writeFileSync(file, applyEdits(text, edits));
+  if (!replace) refuseSwap(d, `plugins.${plugin}.d1Id`, d.plugins[plugin]?.d1Id, uuid);
+  const file = join(registryDir(), `${d.id}.jsonc`);
+  writeFileSync(file, withValue(readFileSync(file, 'utf8'), ['plugins', plugin, 'd1Id'], uuid));
 }
 
-function setD1(id: string | undefined, uuid: string | undefined) {
-  if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('set-d1 <id> <uuid>');
-  setField(id, 'd1Id', uuid);
+const UUID = /^[0-9a-f-]{36}$/;
+
+function setD1(id: string | undefined, uuid: string | undefined, replace: boolean) {
+  if (!uuid || !UUID.test(uuid)) throw new Error('set-d1 <id> <uuid> [--replace]');
+  setField(id, 'd1Id', uuid, replace);
 }
 
-function setStandbyD1(id: string | undefined, uuid: string | undefined) {
-  if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('set-standby-d1 <id> <uuid>');
+function setStandbyD1(id: string | undefined, uuid: string | undefined, replace: boolean) {
+  if (!uuid || !UUID.test(uuid)) throw new Error('set-standby-d1 <id> <uuid> [--replace]');
   const d = byId(id);
   if (!backsUpD1(d))
     throw new Error(`${d.id} has no redundancy: set it before recording standbyD1Id`);
-  setField(id, 'standbyD1Id', uuid);
+  setField(id, 'standbyD1Id', uuid, replace);
 }
 
-function setCatalogKv(id: string | undefined, kvId: string | undefined) {
-  if (!kvId || !/^[0-9a-f]{32}$/.test(kvId)) throw new Error('set-catalog-kv <id> <namespace id>');
-  setField(id, 'catalogKvId', kvId);
+function setCatalogKv(id: string | undefined, kvId: string | undefined, replace: boolean) {
+  if (!kvId || !/^[0-9a-f]{32}$/.test(kvId))
+    throw new Error('set-catalog-kv <id> <namespace id> [--replace]');
+  setField(id, 'catalogKvId', kvId, replace);
 }
 
-function setContentD1(id: string | undefined, uuid: string | undefined) {
-  if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('set-content-d1 <id> <uuid>');
-  setField(id, 'contentD1Id', uuid);
+function setContentD1(id: string | undefined, uuid: string | undefined, replace: boolean) {
+  if (!uuid || !UUID.test(uuid)) throw new Error('set-content-d1 <id> <uuid> [--replace]');
+  setField(id, 'contentD1Id', uuid, replace);
 }
 
-function setContentKv(id: string | undefined, kvId: string | undefined) {
-  if (!kvId || !/^[0-9a-f]{32}$/.test(kvId)) throw new Error('set-content-kv <id> <namespace id>');
-  setField(id, 'contentKvId', kvId);
+function setContentKv(id: string | undefined, kvId: string | undefined, replace: boolean) {
+  if (!kvId || !/^[0-9a-f]{32}$/.test(kvId))
+    throw new Error('set-content-kv <id> <namespace id> [--replace]');
+  setField(id, 'contentKvId', kvId, replace);
+}
+
+/**
+ * What provision.sh does with the database it found by name (`found`, empty when none). The
+ * registry's id wins: a name can lead to a database that was abandoned, since a promoted standby
+ * keeps its name. Prints `create` (nothing recorded, nothing found), `record` (nothing recorded,
+ * found one) or `keep` (an id is recorded: nothing is written). Throws when the name finds a
+ * database the registry doesn't know, or one the live database's role has no business with.
+ */
+export function databaseId(
+  d: Deployment,
+  role: 'live' | 'standby',
+  found: string,
+): 'create' | 'record' | 'keep' {
+  const mine = role === 'live' ? d.d1Id : d.standbyD1Id;
+  const other = role === 'live' ? d.standbyD1Id : d.d1Id;
+  const name = role === 'live' ? names(d).d1 : names(d).standbyD1;
+  if (mine === undefined) {
+    if (!found) return 'create';
+    if (found === other)
+      throw new Error(
+        `${d.id}: ${name} is database ${found}, which the registry records as the ${role === 'live' ? 'standby' : 'live database'}: a restore would wipe the live one. Nothing was recorded`,
+      );
+    return 'record';
+  }
+  // A promotion leaves each name on the other role's database: the registry's ids are the truth.
+  if (found && found !== mine && found !== other)
+    throw new Error(
+      `${d.id}: ${name} is database ${found}, but the registry records ${role === 'live' ? 'd1Id' : 'standbyD1Id'} ${mine}. provision.sh won't re-point an id from a name: if ${found} is a database you replaced, delete it once nothing needs it; if ${mine} is wrong, fix the registry with \`set-${role === 'live' ? 'd1' : 'standby-d1'} --replace\`. Nothing was recorded`,
+    );
+  return 'keep';
+}
+
+/**
+ * Swaps d1Id and standbyD1Id after a restore into the standby: the registry change of the commerce
+ * D1 restore runbook, made one way. Returns what the operator runs next.
+ */
+export function promoteStandby(id: string | undefined, dir = registryDir()): string[] {
+  const d = byId(id, dir);
+  if (!backsUpD1(d) || !d.d1Id || !d.standbyD1Id)
+    throw new Error(`${d.id} has no standby to promote: it needs redundancy, d1Id and standbyD1Id`);
+  const file = join(dir, `${d.id}.jsonc`);
+  // One write, so the registry is never read with the two ids equal.
+  let text = withValue(readFileSync(file, 'utf8'), ['d1Id'], d.standbyD1Id);
+  text = withValue(text, ['standbyD1Id'], d.d1Id);
+  writeFileSync(file, text);
+  return [
+    `${d.id}: d1Id is now ${d.standbyD1Id} (the restored database); standbyD1Id is ${d.d1Id} (the one it replaces). Nothing remote was run.`,
+    '',
+    'Run next, in this order, from an operator shell:',
+    `  1. Make the promoted database stop looking like a standby (its restore marker is what lets a drill wipe it):`,
+    `       wrangler d1 execute <the restored database's name: ${names(d).standbyD1} after a first promotion; its id is ${d.standbyD1Id}> --remote --command "DROP TABLE IF EXISTS _cw_standby"`,
+    `  2. Create the next standby (D1 names are unique per account, so not ${names(d).standbyD1}) and record it:`,
+    `       wrangler d1 create <new standby name>`,
+    `       node scripts/fleet.ts set-standby-d1 ${d.id} <its id> --replace`,
+    `  3. Delete the database you replaced (${d.d1Id}) once nothing needs it; until then provision.sh keeps the registry's ids and says so.`,
+    `  4. Remove "hold" from deployments/${d.id}.jsonc, commit and merge: CI renders the new ids and deploys.`,
+  ];
 }
 
 async function status() {
@@ -3275,7 +3373,9 @@ async function kvRestore(id: string | undefined, date: string | undefined, rest:
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [cmd, ...args] = process.argv.slice(2);
+  const raw = process.argv.slice(2);
+  const replace = raw.includes('--replace');
+  const [cmd, ...args] = raw.filter((a) => a !== '--replace');
   try {
     if (cmd === 'render') render(args[0]);
     else if (cmd === 'matrix') console.log(JSON.stringify(matrix(loadDeployments())));
@@ -3295,18 +3395,27 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'logpush-foreign') logpushForeign(args[0]);
     else if (cmd === 'logpush-token') logpushTokenCmd(args[0], args[1], args[2], args[3]);
     else if (cmd === 'kv-restore') await kvRestore(args[0], args[1], args.slice(2));
-    else if (cmd === 'set-d1') setD1(args[0], args[1]);
-    else if (cmd === 'set-standby-d1') setStandbyD1(args[0], args[1]);
-    else if (cmd === 'set-catalog-kv') setCatalogKv(args[0], args[1]);
-    else if (cmd === 'set-plugin-d1') setPluginD1(args[0], args[1], args[2]);
-    else if (cmd === 'set-content-d1') setContentD1(args[0], args[1]);
-    else if (cmd === 'set-content-kv') setContentKv(args[0], args[1]);
-    else if (cmd === 'redrive') await redriveCmd(args[0], args[1], args.slice(2));
+    else if (cmd === 'set-d1') setD1(args[0], args[1], replace);
+    else if (cmd === 'set-standby-d1') setStandbyD1(args[0], args[1], replace);
+    else if (cmd === 'set-catalog-kv') setCatalogKv(args[0], args[1], replace);
+    else if (cmd === 'set-plugin-d1') setPluginD1(args[0], args[1], args[2], replace);
+    else if (cmd === 'set-content-d1') setContentD1(args[0], args[1], replace);
+    else if (cmd === 'set-content-kv') setContentKv(args[0], args[1], replace);
+    else if (cmd === 'database-id') {
+      if (args[1] !== 'live' && args[1] !== 'standby')
+        throw new Error('database-id <id> live|standby [found uuid]');
+      console.log(databaseId(byId(args[0]), args[1], args[2] ?? ''));
+    } else if (cmd === 'promote-standby') {
+      // A person decides to promote; a workflow never does.
+      if (process.env.CI || process.env.GITHUB_ACTIONS)
+        throw new Error('promote-standby is run by an operator, never in CI');
+      console.log(promoteStandby(args[0]).join('\n'));
+    } else if (cmd === 'redrive') await redriveCmd(args[0], args[1], args.slice(2));
     else if (cmd === 'demos')
       console.log(JSON.stringify(loadDeployments().filter((d) => d.demo && d.d1Id)));
     else
       throw new Error(
-        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|kv-restore|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|redrive|demos (see the header)',
+        'usage: fleet.ts render|matrix|secrets|check-plugin-secrets|status|write-check|names|logpush|alerts|logpush-foreign|logpush-token|kv-restore|set-d1|set-standby-d1|set-catalog-kv|set-plugin-d1|set-content-d1|set-content-kv|database-id|promote-standby|redrive|demos (see the header)',
       );
   } catch (err) {
     console.error((err as Error).message);
