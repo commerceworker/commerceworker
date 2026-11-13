@@ -6,7 +6,7 @@
  */
 
 import { assistantDailyTokens, type Principal, promptId, usageDay } from '@commerceworker/core';
-import { logAiCall } from './ai';
+import { assistantModelId, logAiCall } from './ai';
 import type { ModelSource } from './assistant/model';
 import { usageStore } from './wire';
 
@@ -45,7 +45,7 @@ export async function finishTurn(
   logAiCall(
     {
       source: used.source,
-      model: model ? (used.model ?? String(env.ASSISTANT_MODEL)) : null,
+      model: model ? (used.model ?? assistantModelId(env)) : null,
       prompt: promptId('assistant'),
       ...(model ? {} : { fallback: String(env.AI_MODE) === 'mock' ? 'mock' : 'model unavailable' }),
     },

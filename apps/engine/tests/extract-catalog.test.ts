@@ -59,6 +59,8 @@ function live(reply: unknown, index?: Partial<VectorizeIndex>) {
     ...env,
     DB: testEnv.EXTRACT_DB,
     AI_MODE: 'live',
+    AI_ROUTE: '',
+    ASSISTANT_ROUTE: '',
     AI_GATEWAY_ID: 'gw-test',
     AI: {
       run: async (model: string, input: Record<string, unknown>, options?: Sent['options']) => {

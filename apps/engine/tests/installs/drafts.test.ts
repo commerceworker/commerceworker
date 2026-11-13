@@ -36,6 +36,8 @@ const answering = (reply: unknown) =>
   ({
     ...env,
     AI_MODE: 'model',
+    AI_ROUTE: '',
+    ASSISTANT_ROUTE: '',
     AI: { run: async () => ({ response: reply }) },
   }) as unknown as Env;
 
@@ -172,6 +174,8 @@ describe('plugins the assistant drafts', () => {
     const counted = {
       ...env,
       AI_MODE: 'model',
+      AI_ROUTE: '',
+      ASSISTANT_ROUTE: '',
       ASSISTANT_DAILY_TOKENS: '500',
       AI: {
         run: async (_model: string, input: Record<string, unknown>) => {
@@ -203,6 +207,8 @@ describe('plugins the assistant drafts', () => {
     const cut = {
       ...env,
       AI_MODE: 'model',
+      AI_ROUTE: '',
+      ASSISTANT_ROUTE: '',
       ASSISTANT_DAILY_TOKENS: '500',
       AI: {
         run: async () => ({
@@ -226,6 +232,8 @@ describe('plugins the assistant drafts', () => {
     const slow = {
       ...env,
       AI_MODE: 'model',
+      AI_ROUTE: '',
+      ASSISTANT_ROUTE: '',
       AI: {
         run: () => new Promise((ok) => setTimeout(() => ok({ response: { ok: true } }), 100)),
       },

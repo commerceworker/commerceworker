@@ -12,7 +12,9 @@
 # Needs `wrangler login` (or CLOUDFLARE_API_TOKEN) and `gh auth login`. The AI Gateway, the
 # Turnstile widget and the Logpush job are created through the API, so they also need
 # CLOUDFLARE_API_TOKEN (for the widget, with Turnstile Sites Write) and CLOUDFLARE_ACCOUNT_ID;
-# without them it prints what to create instead, or says what it skipped.
+# without them it prints what to create instead, or says what it skipped. With `redundancy` it also
+# creates the gateway's dynamic routes (cw-text, cw-assistant) with the same token, reading each
+# before it creates it. See docs/operations.md, "AI fallback".
 #
 # With `redundancy.alerts` in the registry it also creates the account's notification policies, a
 # webhook destination from ALERT_WEBHOOK_URL (exported in this shell) and a Health Check on each
@@ -438,6 +440,60 @@ else
   echo "Skipped the AI Gateway: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, or create"
   echo "\"$AI_GATEWAY\" in the dashboard (AI > AI Gateway) with commerceworker's settings."
 fi
+
+ai_routes=$(node scripts/fleet.ts ai-routes "$id")
+# The gateway's dynamic routes (registry `redundancy`, `aiFallback` not an exception): cw-text and
+# cw-assistant, each a Workers AI model, then a second one when it fails or a spend or rate limit
+# is hit (docs/operations.md, "AI fallback"). The engine calls them as dynamic/<name>. A route that
+# exists is read and kept, never replaced: a differing one is reported, since an edit in the
+# dashboard may be on purpose. `ai_routes` is what `fleet.ts ai-routes <id>` prints.
+# ai-routes:begin
+if [ "$AI_ROUTES" = true ]; then
+  if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    echo "Skipped the AI routes: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, and run this again."
+  else
+    routes_api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai-gateway/gateways/$AI_GATEWAY/routes"
+    # One API call, its response on stdout; a failure stops provisioning, naming the call.
+    cfr() {
+      local out
+      if [ "$1" = GET ]; then
+        out=$(curl -sS "$routes_api$2" -H @<(printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN"))
+      else
+        out=$(curl -sS -X "$1" "$routes_api$2" -H @<(printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN") \
+          -H 'Content-Type: application/json' --data-binary @-)
+      fi
+      if ! jq -e .success >/dev/null 2>&1 <<<"$out"; then
+        echo "Cloudflare API $1 ${routes_api#https://api.cloudflare.com/client/v4}$2: $(jq -r '[.errors[]?.message] | join("; ")' <<<"$out" 2>/dev/null)" >&2
+        return 1
+      fi
+      printf '%s' "$out"
+    }
+    existing_routes=$(cfr GET "?per_page=100")
+    while IFS= read -r route; do
+      route_name=$(jq -r .name <<<"$route")
+      live=$(jq -c --arg n "$route_name" '[.data.routes[]? | select(.name == $n)][0] // empty' <<<"$existing_routes")
+      if [ -n "$live" ]; then
+        if [ "$(jq -S -c .elements <<<"$live")" = "$(jq -S -c .elements <<<"$route")" ]; then
+          echo "AI route $route_name already exists"
+        else
+          echo "AI route $route_name already exists and differs from commerceworker's (a model, timeout or"
+          echo "  limit was changed, or the API added fields): kept as it is. To use commerceworker's, delete it in"
+          echo "  the dashboard (AI > AI Gateway > $AI_GATEWAY > Routing) and run this again."
+        fi
+        continue
+      fi
+      created=$(cfr POST "" <<<"$route")
+      # A new route is deployed with its first version; deploy it if the answer says it wasn't.
+      if [ -z "$(jq -r '.result.deployment.deployment_id // empty' <<<"$created")" ]; then
+        route_id=$(jq -er .result.id <<<"$created")
+        version=$(jq -er '.result.version.version_id' <<<"$created")
+        jq -n --arg v "$version" '{version_id: $v}' | cfr POST "/$route_id/deployments" >/dev/null
+      fi
+      echo "Created AI route $route_name"
+    done < <(jq -c '.[]' <<<"$ai_routes")
+  fi
+fi
+# ai-routes:end
 
 # The logs bucket: Logpush writes the deployment's Workers' trace events there, under workers/<date>/
 # (docs/operations.md, "Logs"). A bucket of its own, so the R2 token Logpush holds can write nothing

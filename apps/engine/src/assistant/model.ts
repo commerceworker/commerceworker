@@ -3,7 +3,8 @@
  * Workers AI model, with a deterministic heuristic model behind both. The heuristic speaks the same
  * protocol, so it calls the same tools through the same approvals; it runs when AI_MODE is "mock",
  * and takes over a turn when the models error or produce nothing within the AI timeout. The
- * assistant never blocks on a model.
+ * assistant never blocks on a model. A deployment with `redundancy` calls its AI Gateway route
+ * (`ASSISTANT_ROUTE`) instead, which holds the second model and a spend limit on the gateway.
  */
 
 import type {
@@ -21,7 +22,7 @@ import {
   promptId,
 } from '@commerceworker/core';
 import { createAI, type GatewayOptions, type WorkersAIModelId } from 'agents/models/ai-sdk';
-import { gatewayOptions, NO_LOG_PAYLOAD } from '../ai';
+import { assistantModelId, gatewayOptions, NO_LOG_PAYLOAD, routeServed } from '../ai';
 import { orderRef } from './data';
 
 /** Matches the AI nodes: a slow model must not hold a person hostage either. */
@@ -113,16 +114,44 @@ export async function assistantModel(
     return fallback;
   }
   const { gateway, headers } = await assistantGateway(env, turn);
-  const ai = createAI({ binding: env.AI, gateway });
-  const model = String(env.ASSISTANT_MODEL) as WorkersAIModelId;
+  const model = assistantModelId(env) as WorkersAIModelId;
+  // With the deployment's route the gateway holds the second model (and the spend limit), so this
+  // Worker lists none; it reads which model served from each answer's `cf-aig-model` header.
+  const routed = model.startsWith('dynamic/');
+  const served: { model?: string } = {};
+  const ai = createAI({
+    binding: routed ? servedBy(env, model, served) : env.AI,
+    gateway,
+  });
   const primary = ai(model, {
-    fallback: model === ASSISTANT_FALLBACK_MODEL ? [] : [ASSISTANT_FALLBACK_MODEL],
+    fallback: routed || model === ASSISTANT_FALLBACK_MODEL ? [] : [ASSISTANT_FALLBACK_MODEL],
     // Workers AI's prefix cache: the system prompt and tools (most of a turn's input) repeat
     // within a conversation, so its turns go to the same replica.
     sessionAffinity: await sha256(`conversation:${turn.principalId}:${turn.conversation}`),
     headers,
   });
-  return withFallback(primary, fallback, used);
+  return withFallback(primary, fallback, used, () => served.model);
+}
+
+/**
+ * The AI binding, noting on each route answer which model served it (`routeServed` counts a
+ * fallback). createAI reports only the model it asked for, which for a route is the route's name,
+ * so the header is read where the answer passes, and `withFallback` reports what was seen.
+ */
+function servedBy(env: Env, route: string, seen: { model?: string }): Ai {
+  return new Proxy(env.AI, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (prop !== 'run') return typeof value === 'function' ? value.bind(target) : value;
+      return async (...args: Parameters<Ai['run']>) => {
+        const out = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+        if (out instanceof Response) {
+          seen.model = routeServed(env, route, out.headers) ?? seen.model;
+        }
+        return out;
+      };
+    },
+  });
 }
 
 function timeout<T>(p: PromiseLike<T>, ms: number): Promise<T> {
@@ -151,6 +180,8 @@ export function withFallback(
   primary: LanguageModelV4,
   fallback: LanguageModelV4,
   used: ModelSource,
+  /** The model a route's answer said served it, when it said. */
+  served: () => string | undefined = () => undefined,
 ): LanguageModelV4 {
   return {
     specificationVersion: 'v4',
@@ -161,7 +192,7 @@ export function withFallback(
       try {
         const res = await timeout(primary.doGenerate(options), AI_TIMEOUT_MS);
         used.source = 'model';
-        used.model = answeredBy(res.providerMetadata) ?? primary.modelId;
+        used.model = served() ?? answeredBy(res.providerMetadata) ?? primary.modelId;
         return res;
       } catch (err) {
         console.warn('assistant fallback', err instanceof Error ? err.message : err);
@@ -190,10 +221,11 @@ export function withFallback(
         }
         if (finished && !held.some((p) => CONTENT.has(p.type))) throw new Error('empty answer');
         used.source = 'model';
-        used.model = primary.modelId;
+        used.model = served() ?? primary.modelId;
         // The finish part names the model that answered once the stream ends.
         const note = (p: LanguageModelV4StreamPart) => {
-          if (p.type === 'finish') used.model = answeredBy(p.providerMetadata) ?? used.model;
+          if (p.type === 'finish')
+            used.model = served() ?? answeredBy(p.providerMetadata) ?? used.model;
           return p;
         };
         return {
