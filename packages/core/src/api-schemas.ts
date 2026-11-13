@@ -119,6 +119,10 @@ export const paymentEventResultSchema = z.object({
   orderId: z.string().optional(),
   delivered: z.string().optional().describe('The order event delivered to a waiting node'),
   reason: z.string().optional(),
+  mismatch: z
+    .literal(true)
+    .optional()
+    .describe('What the event says does not match the payments ledger and cannot be fixed from it'),
 });
 
 /** What a refused request answers: why, and for an invalid body one issue per field. */

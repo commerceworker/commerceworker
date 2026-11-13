@@ -3,11 +3,12 @@
  * ./payment-ledger-contract.ts holds it to the same behaviour as the D1 ledger.
  */
 import type { Clock } from '@commerceworker/ports';
-import type {
-  NewPayment,
-  PayingCustomer,
-  PaymentLedger,
-  PaymentRecord,
+import {
+  type NewPayment,
+  type PayingCustomer,
+  PaymentClaimedError,
+  type PaymentLedger,
+  type PaymentRecord,
 } from '@commerceworker/ports/commerce';
 
 export interface PaymentLedgerFixture {
@@ -16,6 +17,11 @@ export interface PaymentLedgerFixture {
 
 const oldestFirst = (a: PaymentRecord, b: PaymentRecord) =>
   a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/** The rows the D1 ledger's unique index on a processor id holds to one each. */
+const claims = (p: Pick<NewPayment, 'kind' | 'status' | 'externalId'>) =>
+  !!p.externalId &&
+  (p.kind === 'refund' || (p.kind.startsWith('authorization:') && p.status !== 'declined'));
 
 export class InMemoryPaymentLedger implements PaymentLedger {
   private readonly rows = new Map<string, PaymentRecord>();
@@ -47,7 +53,12 @@ export class InMemoryPaymentLedger implements PaymentLedger {
   }
 
   async record(p: NewPayment) {
-    if (!this.rows.has(p.id))
+    if (!this.rows.has(p.id)) {
+      if (
+        claims(p) &&
+        [...this.rows.values()].some((r) => r.externalId === p.externalId && claims(r))
+      )
+        throw new PaymentClaimedError(p.externalId!);
       this.rows.set(p.id, {
         ...p,
         ref: p.ref ?? null,
@@ -55,6 +66,7 @@ export class InMemoryPaymentLedger implements PaymentLedger {
         currency: p.currency ?? null,
         createdAt: this.clock.now().getTime(),
       });
+    }
     return this.rows.get(p.id)!;
   }
 

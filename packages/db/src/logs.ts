@@ -11,7 +11,7 @@ import type {
 } from '@commerceworker/ports/commerce';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { createDb } from './index';
-import { aiUsage, inboundEmails, paymentEvents, webhookReceipts } from './schema';
+import { aiUsage, inboundEmails, paymentCursors, paymentEvents, webhookReceipts } from './schema';
 
 export function d1IntakeLog(d1: D1Database): IntakeLog {
   const d = createDb(d1);
@@ -38,6 +38,23 @@ export function d1PaymentEventLog(d1: D1Database): PaymentEventLog {
     },
     async release(id) {
       await d.delete(paymentEvents).where(eq(paymentEvents.id, id));
+    },
+    async cursor(provider) {
+      const row = await d
+        .select({ cursor: paymentCursors.cursor })
+        .from(paymentCursors)
+        .where(eq(paymentCursors.provider, provider))
+        .get();
+      return row?.cursor;
+    },
+    async advance(provider, cursor, now) {
+      await d
+        .insert(paymentCursors)
+        .values({ provider, cursor, updatedAt: now })
+        .onConflictDoUpdate({
+          target: paymentCursors.provider,
+          set: { cursor: sql`MAX(${paymentCursors.cursor}, ${cursor})`, updatedAt: now },
+        });
     },
   };
 }

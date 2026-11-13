@@ -82,8 +82,11 @@ import {
   deliveredEventProblem,
   flowForOrder,
   type InboundOrder,
+  type IntakeMessage,
   inboundFingerprint,
   inboundOrderSchema,
+  mapEdiIntake,
+  mapShopifyIntake,
   operationCall,
   orderListItem,
   PLUGIN_BUNDLE_MAX_BYTES,
@@ -137,6 +140,7 @@ import { sha256Hex } from './credentials';
 import { decodeCursor, encodeCursor } from './cursor';
 import { engine } from './env.server';
 import { ensureSeeded, listFlows } from './flows.server';
+import { acceptIntake, intakeQueue } from './intake.server';
 import {
   createIntegration,
   findIntegration,
@@ -1019,6 +1023,7 @@ export async function handleShopifyOrder(request: Request): Promise<Response> {
   if (limited) return limited;
   const topic = request.headers.get('x-shopify-topic');
   if (topic !== 'orders/create') return json({ ignored: true, topic });
+  if (intakeQueue()) return acceptShopifyOrder(raw, request);
   let order: ShopifyOrder;
   try {
     order = JSON.parse(raw) as ShopifyOrder;
@@ -1039,6 +1044,48 @@ export async function handleShopifyOrder(request: Request): Promise<Response> {
 }
 
 /**
+ * With the intake queue bound, a verified Shopify order is made durable and answered `202`: its
+ * mapping is checked here (a body that can never start an order is a `400` Shopify shows the shop),
+ * and the engine starts it from the queue, once per channel and external id.
+ */
+async function acceptShopifyOrder(raw: string, request: Request): Promise<Response> {
+  const mapped = mapShopifyIntake(raw);
+  if (!mapped.ok) return json({ error: mapped.error }, 400);
+  const shop = (request.headers.get('x-shopify-shop-domain') ?? '').toLowerCase();
+  const o = mapped.order;
+  try {
+    if (!(await currencies()).some((c) => c.currency === o.currency))
+      return json(
+        { error: `Unsupported currency ${o.currency}; there is no exchange rate for it` },
+        400,
+      );
+  } catch (err) {
+    console.error('intake not accepted', err);
+    return json({ error: 'Intake is unavailable; try again' }, 503);
+  }
+  const flowId =
+    o.flowId ??
+    flowForOrder(
+      o.model,
+      o.channel,
+      parseOrderRoutes((env as { ORDER_ROUTES?: string }).ORDER_ROUTES),
+    );
+  try {
+    const key = await acceptIntake<Extract<IntakeMessage, { channel: 'shopify' }>>(
+      raw,
+      'shopify',
+      request.headers.get('x-shopify-webhook-id'),
+      () => ({ shop, flowId }),
+    );
+    return json({ accepted: true, externalId: o.externalId, intake: key }, 202);
+  } catch (err) {
+    // Nothing was promised: Shopify retries the webhook.
+    console.error('intake not accepted', err);
+    return json({ error: 'Intake is unavailable; try again' }, 503);
+  }
+}
+
+/**
  * An X12 interchange of 850 purchase orders from a configured trading partner (EDI_PARTNERS maps
  * its ISA sender id to a customer). Each PO starts at most once; the response lists every PO.
  */
@@ -1049,6 +1096,7 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
   const customerId = parseEdiPartners((env as { EDI_PARTNERS?: string }).EDI_PARTNERS)[sender];
   if (!customerId)
     return json({ error: `${sender || 'The sender'} is not a configured trading partner` }, 403);
+  if (intakeQueue()) return acceptEdi850(text, sender, customerId, trail);
   const known = await currencies();
   const one = async (tx: (typeof transactions)[number]) => {
     const mapped = x12850ToInbound(tx, { sender, customerId });
@@ -1079,6 +1127,90 @@ async function handleEdi850(text: string, trail: InboundTrail): Promise<Response
     new Date(),
   );
   return json({ sender, results, functionalAck });
+}
+
+/**
+ * With the intake queue bound, an interchange from a configured partner is made durable and
+ * answered `202`; the engine starts its purchase orders from the queue. The 997 still says what can
+ * be said without the engine: a PO that mapped, validated and is in a currency with a rate is
+ * accepted (`AK5*A`); one that can never start is rejected (`AK5*R`) as the synchronous route did.
+ * What only the order's start finds out (a flow not published, a replay with different contents)
+ * is not in the 997: the engine retries the first and logs the second at error level.
+ */
+async function acceptEdi850(
+  text: string,
+  sender: string,
+  customerId: string,
+  trail: InboundTrail,
+): Promise<Response> {
+  const parsed = parseX12(text);
+  const mapped = mapEdiIntake(text, { sender, customerId });
+  if (!parsed.ok || !mapped.ok) return json({ error: 'Not an X12 interchange' }, 400);
+  let known: string[];
+  try {
+    known = (await currencies()).map((c) => c.currency);
+  } catch (err) {
+    console.error('intake not accepted', err);
+    return json({ error: 'Intake is unavailable; try again' }, 503);
+  }
+  // A currency with no rate can't start an order: refused here, as the synchronous route refuses it.
+  const checked = mapped.orders.map((m) =>
+    m.ok && !known.includes(m.order.currency)
+      ? {
+          ok: false as const,
+          control: m.control,
+          error: `Unsupported currency ${m.order.currency}; there is no exchange rate for it`,
+        }
+      : m,
+  );
+  const accepted = checked.filter((m) => m.ok);
+  const results = checked.map((m) =>
+    m.ok
+      ? { control: m.control, poNumber: m.poNumber, status: 202 }
+      : { control: m.control, status: 400, error: m.error },
+  );
+  const functionalAck = x12FunctionalAck(
+    parsed.interchange,
+    results.map((r) => ({ control: r.control!, accepted: r.status === 202 })),
+    new Date(),
+  );
+  // Nothing in it can start an order: nothing to keep, and the 997 says so.
+  if (!accepted.length) return json({ sender, results, functionalAck });
+  try {
+    await acceptIntake<Extract<IntakeMessage, { channel: 'edi' }>>(
+      text,
+      'edi',
+      // Named by its content, so the partner resending the interchange writes the same object.
+      null,
+      () => ({
+        sender,
+        customerId,
+        flows: Object.fromEntries(
+          accepted.flatMap((m) =>
+            m.ok && m.control
+              ? [
+                  [
+                    m.control,
+                    m.order.flowId ??
+                      flowForOrder(
+                        m.order.model,
+                        m.order.channel,
+                        parseOrderRoutes((env as { ORDER_ROUTES?: string }).ORDER_ROUTES),
+                      ),
+                  ],
+                ]
+              : [],
+          ),
+        ),
+        // The id only: this lands in a dead letter kept for months, and a name or email is personal data.
+        actor: { kind: trail.actor.kind, id: trail.actor.id },
+      }),
+    );
+  } catch (err) {
+    console.error('intake not accepted', err);
+    return json({ error: 'Intake is unavailable; try again' }, 503);
+  }
+  return json({ sender, results, functionalAck }, 202);
 }
 
 /**

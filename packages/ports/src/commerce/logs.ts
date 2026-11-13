@@ -33,6 +33,10 @@ export interface PaymentEventLog {
   link(id: string, orderId: string): Promise<void>;
   /** Frees an event whose handling failed, so a redelivery handles it. */
   release(id: string): Promise<void>;
+  /** Where the provider's reconciliation left off (a Unix second), or undefined before its first run. */
+  cursor(provider: string): Promise<number | undefined>;
+  /** Moves the cursor forward; an older value than the stored one changes nothing. */
+  advance(provider: string, cursor: number, now: number): Promise<void>;
 }
 
 /**

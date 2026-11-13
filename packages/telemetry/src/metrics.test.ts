@@ -14,6 +14,7 @@ describe('opsMetrics', () => {
     m.stepFailed('commerce.reserve');
     m.d1('health', 4);
     m.failover('ai_heuristic');
+    m.reconcileMismatch('stripe');
     expect(points).toEqual([
       { indexes: ['request'], blobs: ['request', 'web', 'api', '5xx'], doubles: [1, 12] },
       {
@@ -23,6 +24,11 @@ describe('opsMetrics', () => {
       },
       { indexes: ['d1'], blobs: ['d1', 'web', 'health', ''], doubles: [1, 4] },
       { indexes: ['failover'], blobs: ['failover', 'web', 'ai_heuristic', ''], doubles: [1, 0] },
+      {
+        indexes: ['reconcile_mismatch'],
+        blobs: ['reconcile_mismatch', 'web', 'stripe', ''],
+        doubles: [1, 0],
+      },
     ]);
   });
 

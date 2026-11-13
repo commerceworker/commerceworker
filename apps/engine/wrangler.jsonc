@@ -180,6 +180,10 @@
   // dead-letter queue, whose messages are kept in the replica under dlq/ and logged at error level.
   // The names get the deployment's suffix; scripts/provision.sh creates both queues and the
   // notification rule, and scripts/fleet.ts strips this with the bucket when `redundancy` is off.
+  // The channel intake queue (src/intake-queue.ts): the web Worker writes an accepted Shopify order
+  // webhook or EDI 850 to DOCS and queues a pointer; this starts its orders. Its dead-letter queue is
+  // kept in the replica (and logged) like the others. scripts/fleet.ts strips both consumers, and the
+  // web Worker's producer, with `redundancy` off or `intake` an exception; provision.sh creates them.
   // The mail queue's producer and consumers (src/email-queue.ts) aren't here: scripts/fleet.ts adds
   // them to a deployment with `redundancy` and an `email` sender.
   "queues": {
@@ -194,6 +198,21 @@
       },
       {
         "queue": "commerceworker-docs-replica-dlq",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_retries": 10,
+        "retry_delay": 60
+      },
+      {
+        "queue": "commerceworker-intake",
+        "max_batch_size": 10,
+        "max_batch_timeout": 2,
+        "max_retries": 6,
+        "retry_delay": 30,
+        "dead_letter_queue": "commerceworker-intake-dlq"
+      },
+      {
+        "queue": "commerceworker-intake-dlq",
         "max_batch_size": 100,
         "max_batch_timeout": 5,
         "max_retries": 10,

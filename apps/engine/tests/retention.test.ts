@@ -10,8 +10,8 @@ import {
   webhookReceipts,
 } from '@commerceworker/db';
 import { inArray } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
-import { expirePluginExports, RETENTION, sweep } from '../src/retention';
+import { describe, expect, it, vi } from 'vitest';
+import { expireIntake, expirePluginExports, RETENTION, sweep } from '../src/retention';
 
 const db = () => createDb(env.DB);
 const DAY = 86_400_000;
@@ -168,5 +168,59 @@ describe('retention sweep', () => {
     // A bucket that throws costs only this step.
     const broken = { ...env, DOCS: { list: () => Promise.reject(new Error('R2 is down')) } };
     expect(await expirePluginExports(broken as unknown as Env)).toBe(0);
+  });
+
+  it('deletes a raw intake body at 7 days, and a failure skips nothing else', async () => {
+    await env.DOCS.put('intake/shopify/2026-01-01/ret-a', '{}');
+    await env.DOCS.put('intake/edi/2026-01-01/ret-b', 'ISA');
+    await env.DOCS.put('orders/ret-intake/keep.html', 'kept');
+    const left = async () => (await env.DOCS.list({ prefix: 'intake/' })).objects.map((o) => o.key);
+    // The boundary: just inside 7 days keeps both, just past it deletes both.
+    expect(await expireIntake(env, Date.now() + 7 * DAY - 60_000)).toBe(0);
+    expect(await left()).toHaveLength(2);
+    expect((await sweep(env, Date.now() + 7 * DAY + 60_000)).intakeBodies).toBe(2);
+    expect(await left()).toEqual([]);
+    // Nothing outside intake/ is touched.
+    expect(await env.DOCS.head('orders/ret-intake/keep.html')).not.toBeNull();
+    // A bucket that throws costs only this step.
+    const broken = { ...env, DOCS: { list: () => Promise.reject(new Error('R2 is down')) } };
+    expect(await expirePluginExports(broken as unknown as Env)).toBe(0);
+  });
+
+  it('deletes a raw intake body at 7 days, and a failure skips nothing else', async () => {
+    await env.DOCS.put('intake/shopify/2026-01-01/ret-a', '{}');
+    await env.DOCS.put('intake/edi/2026-01-01/ret-b', 'ISA');
+    await env.DOCS.put('orders/ret-intake/keep.html', 'kept');
+    const left = async () => (await env.DOCS.list({ prefix: 'intake/' })).objects.map((o) => o.key);
+    // The boundary: just inside 7 days keeps both, just past it deletes both.
+    expect(await expireIntake(env, Date.now() + 7 * DAY - 60_000)).toBe(0);
+    expect(await left()).toHaveLength(2);
+    expect((await sweep(env, Date.now() + 7 * DAY + 60_000)).intakeBodies).toBe(2);
+    expect(await left()).toEqual([]);
+    // Nothing outside intake/ is touched.
+    expect(await env.DOCS.head('orders/ret-intake/keep.html')).not.toBeNull();
+    // A bucket that throws costs only this step: the rest of the sweep still reports.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const broken = { ...env, DOCS: { list: () => Promise.reject(new Error('R2 is down')) } };
+    expect(await expireIntake(broken as unknown as Env)).toBe(0);
+    expect(errors.mock.calls.some(([l]) => String(l).includes('intake_expiry_failed'))).toBe(true);
+    errors.mockRestore();
+    const swept = await sweep(
+      {
+        ...env,
+        DOCS: {
+          ...env.DOCS,
+          list: (o: R2ListOptions) =>
+            o?.prefix === 'intake/' ? Promise.reject(new Error('down')) : env.DOCS.list(o),
+          delete: env.DOCS.delete.bind(env.DOCS),
+          put: env.DOCS.put.bind(env.DOCS),
+          get: env.DOCS.get.bind(env.DOCS),
+          head: env.DOCS.head.bind(env.DOCS),
+        },
+      } as unknown as Env,
+      Date.now(),
+    );
+    expect(swept.intakeBodies).toBe(0);
+    expect(swept.pluginExports).toBeTypeOf('number');
   });
 });

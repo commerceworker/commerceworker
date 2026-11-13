@@ -6,7 +6,11 @@
  * this and the in-memory ledger to the same behaviour.
  */
 import type { Clock } from '@commerceworker/ports';
-import type { NewPayment, PaymentLedger } from '@commerceworker/ports/commerce';
+import {
+  type NewPayment,
+  PaymentClaimedError,
+  type PaymentLedger,
+} from '@commerceworker/ports/commerce';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { createDb } from './index';
 import { customers, payments } from './schema';
@@ -46,7 +50,10 @@ export function d1PaymentLedger(d1: D1Database, clock: Clock): PaymentLedger {
 
     async record(p) {
       await d.insert(payments).values(row(p, now())).onConflictDoNothing();
-      return (await find(p.id))!;
+      const stored = await find(p.id);
+      // Not recorded and not there already: the unique index on a claimed processor id refused it.
+      if (!stored) throw new PaymentClaimedError(p.externalId ?? p.id);
+      return stored;
     },
 
     async forOrder(orderId) {

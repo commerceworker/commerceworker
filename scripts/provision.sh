@@ -342,6 +342,21 @@ if [ -n "${EMAIL_QUEUE:-}" ]; then
 fi
 # email-queue:end
 
+# The channel intake queue (docs/operations.md, "Channel intake"): where a Shopify order webhook or an
+# EDI 850 the web Worker accepted waits until the engine starts its orders, with its dead-letter
+# queue. The web Worker produces to it and the engine consumes it and its dead letters, so a deploy
+# fails if either is missing. Read before create, so a re-run is a no-op. Empty unless intake is queued.
+# intake-queue:begin
+if [ -n "${INTAKE_QUEUE:-}" ]; then
+  for q in "$INTAKE_QUEUE" "$INTAKE_DLQ"; do
+    if wrangler queues info "$q" >/dev/null 2>&1; then echo "Queue $q already exists"
+    else wrangler queues create "$q"; fi
+    # 7 days, the engine's expiry of the raw body (`INTAKE_DAYS`): a message can't outlive its body.
+    wrangler queues update "$q" --message-retention-period-secs 604800 >/dev/null
+  done
+fi
+# intake-queue:end
+
 # Redundancy (docs/operations.md, "Redundancy"): the backups bucket (the commerce D1's daily backups
 # under d1/, the Durable Object copies and restore reports under objects/, the OAuth grant export under
 # kv/), and the standby database

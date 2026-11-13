@@ -57,6 +57,7 @@ stock and prices; an order with none returns `400` `Line items without a SKU: â€
 | Status | Meaning |
 |---|---|
 | `201` | Started: `{ orderId, flowId }` |
+| `202` | Kept, and the order starts a moment later: `{ accepted: true, externalId, intake }`. See [When the answer is 202](#when-the-answer-is-202) |
 | `200` | A replay: `{ orderId, replayed: true }`; or a topic other than `orders/create`: `{ ignored: true, topic }` |
 | `400` | Not JSON, an order that can't be mapped (for example a line item without a SKU), an invalid order, or a currency with no exchange rate |
 | `401` | Missing or wrong HMAC |
@@ -67,6 +68,18 @@ stock and prices; an order with none returns `400` `Line items without a SKU: â€
 
 Shopify retries on any non-`2xx`, which suits `409` (publish the flow and the retry starts the
 order) and not `400`.
+
+### When the answer is 202
+
+A workspace can accept orders before it starts them. The webhook is verified, its body is kept
+(so nothing Shopify sent is lost if CommerceWorker is briefly unavailable), and Shopify gets `202` at
+once; the order starts from a queue, once per Shopify order id, so a webhook Shopify sends twice still
+gives one order. What changes for you: a `201` or `200` carrying `orderId` is not returned, so look the
+order up by its `externalId`; and `409` (flow not published) and `422` are no longer answers to
+Shopify. An order that can't start yet is retried for a while and then held for an administrator, who is
+alerted; a replay with different contents is logged for an administrator instead of retried. A body that can
+never start an order (not JSON, a line item without a SKU, a currency with no exchange rate) is still a `400`, and a failure to keep the body is a `503` that Shopify retries. Your
+administrator knows whether the workspace does this.
 
 ## EDI X12 850
 
@@ -145,6 +158,14 @@ different contents). The whole request fails instead when:
 | `403` | The caller is below `operator`, or the sender isn't in the workspace's EDI partner list |
 
 A transaction that isn't an 850 is reported in `results` with `status: 400`.
+
+When the workspace [accepts orders before it starts them](#when-the-answer-is-202), the whole
+request answers `202` instead of `200`: each PO that mapped has `status: 202` (and no `orderId` yet)
+and starts from the queue, once per sender and PO number, and one that couldn't be taken (including one
+in a currency with no exchange rate) is `400` as above. The `functionalAck` is the same 997 and is still returned in the response: it
+acknowledges that the interchange was read and each PO accepted or rejected, not that the order has
+started. One that can only fail when it starts (its flow isn't published yet, or the same PO arrived
+before with different contents) is accepted in the 997 and handled by an administrator. An interchange with no PO that can be taken is answered `200`, as before, with nothing kept.
 
 ## Not covered
 

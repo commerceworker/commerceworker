@@ -14,6 +14,8 @@ import {
   orderForIntent,
   paidAmount,
   paySupplier,
+  reconcileCapture,
+  reconcileRefund,
   refund,
   refundedAmount,
   voidAuthorizations,
@@ -173,5 +175,171 @@ describe('the processor around a payment', () => {
     await charge(p, order('o26', { total: 30 }), 'charge#1');
     await refund(p, order('o26'), 'refund#1', 12);
     expect(await refundedAmount(p, 'o26')).toBe(12);
+  });
+});
+
+describe('reconciling what the processor did', () => {
+  it('records a dashboard capture, and the capture step then finds it rather than failing', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const a = await authorizePayment(p, order('o_rc1'), 'authorize#1', 'card');
+    fake.intents.get(a.intentId!)!.status = 'succeeded';
+    expect(await reconcileCapture(p, a.intentId!, 10000)).toEqual({
+      status: 'recorded',
+      orderId: 'o_rc1',
+    });
+    expect(await reconcileCapture(p, a.intentId!, 10000)).toMatchObject({ status: 'known' });
+    expect(await paidAmount(p, 'o_rc1')).toBe(100);
+    // The flow's own capture step runs after: the money is taken, so it succeeds, once.
+    expect(await capturePayment(p, order('o_rc1'), 'capture#1')).toMatchObject({
+      status: 'succeeded',
+      amount: 100,
+    });
+    expect(await paidAmount(p, 'o_rc1')).toBe(100);
+    expect(await reconcileCapture(p, 'pi_unknown', 100)).toEqual({ status: 'unknown' });
+  });
+
+  it('records a dashboard refund once, leaves ours alone and reports one it cannot place', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const a = await authorizePayment(p, order('o_rc2'), 'authorize#1', 'card');
+    const re = (id: string, metadata = {}) => ({ id, amount: 2500, status: 'succeeded', metadata });
+    // Nothing is captured yet: the capture's event may still come, so the refund waits for it.
+    expect(await reconcileRefund(p, a.intentId!, re('re_early'))).toMatchObject({
+      status: 'retry',
+    });
+    await capturePayment(p, order('o_rc2'), 'capture#1');
+    expect(await reconcileRefund(p, a.intentId!, re('re_dash'))).toEqual({
+      status: 'recorded',
+      orderId: 'o_rc2',
+    });
+    expect(await reconcileRefund(p, a.intentId!, re('re_dash'))).toMatchObject({ status: 'known' });
+    // One of ours (it names its row) is recorded there once, not under a dashboard id.
+    expect(
+      await reconcileRefund(p, a.intentId!, re('re_ours', { payment_id: 'x', row_id: 'rfd_ours' })),
+    ).toMatchObject({ status: 'recorded' });
+    expect((await p.ledger.find('rfd_ours'))?.externalId).toBe('re_ours');
+    expect(await p.ledger.find('rfd_stripe_re_ours')).toBeUndefined();
+    expect(
+      await reconcileRefund(p, a.intentId!, { ...re('re_wait'), status: 'pending' }),
+    ).toMatchObject({ status: 'known' });
+    expect(await refundedAmount(p, 'o_rc2')).toBe(50);
+  });
+
+  it('declines an intent another order claimed first', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const a = await authorizePayment(p, order('o_rc3'), 'authorize#1', 'card');
+    // An intent made elsewhere names no order of ours.
+    fake.intents.get(a.intentId!)!.metadata = {};
+    // Lose the race adoptProblem can't see: its look finds nothing, then the claim is taken.
+    const looks = p.ledger.forExternalId.bind(p.ledger);
+    let first = true;
+    p.ledger.forExternalId = async (id) => {
+      if (first) {
+        first = false;
+        return [];
+      }
+      return looks(id);
+    };
+    const adopted = order('o_rc4', { payment: { provider: 'stripe', intentId: a.intentId } });
+    expect(await authorizePayment(p, adopted, 'authorize#1', 'card')).toMatchObject({
+      status: 'declined',
+      reason: 'PaymentIntent already pays order o_rc3',
+    });
+  });
+});
+
+describe('a capture step and the captures that are not its own', () => {
+  it('does not report one authorization’s capture as another’s', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    await authorizePayment(p, order('o_two'), 'authorize#1', 'card');
+    const first = await capturePayment(p, order('o_two'), 'capture#1');
+    expect(first.status).toBe('succeeded');
+    // The second run's authorization is declined, so there is nothing for capture#2 to take.
+    const declined = await authorizePayment(
+      p,
+      order('o_two', { meta: { simulate: 'payment_decline' } }),
+      'authorize#2',
+      'card',
+    );
+    expect(declined.status).toBe('declined');
+    expect(await capturePayment(p, order('o_two'), 'capture#2')).toEqual({
+      paymentId: null,
+      amount: 0,
+      status: 'failed',
+    });
+    expect(await paidAmount(p, 'o_two')).toBe(100);
+  });
+
+  it('reports the capture that took its own authorization when a reconciled one won the flip', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const a = await authorizePayment(p, order('o_flip'), 'authorize#1', 'card');
+    fake.intents.get(a.intentId!)!.status = 'succeeded';
+    // The event's capture is recorded between the step's read and its flip.
+    const real = p.ledger.capture.bind(p.ledger);
+    let raced = false;
+    p.ledger.capture = async (id, c) => {
+      if (!raced) {
+        raced = true;
+        await reconcileCapture(p, a.intentId!, 10000);
+      }
+      return real(id, c);
+    };
+    expect(await capturePayment(p, order('o_flip'), 'capture#1')).toMatchObject({
+      paymentId: `cap_stripe_${a.intentId}`,
+      status: 'succeeded',
+    });
+  });
+});
+
+describe('a refund whose answer was lost', () => {
+  it('is recorded from the processor under the step’s own row, and the retried step finds it', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    await authorizePayment(p, order('o_lost'), 'authorize#1', 'card');
+    await capturePayment(p, order('o_lost'), 'capture#1');
+    // The process dies between the processor's refund and the ledger's record.
+    const record = p.ledger.record.bind(p.ledger);
+    let crash = true;
+    p.ledger.record = async (row) => {
+      if (crash && row.kind === 'refund') {
+        crash = false;
+        throw new Error('worker died');
+      }
+      return record(row);
+    };
+    await expect(refund(p, order('o_lost'), 'refund#1', 40)).rejects.toThrow('worker died');
+    expect(await refundedAmount(p, 'o_lost')).toBe(0);
+
+    // Its event arrives meanwhile: the refund names its row, so it is recorded there.
+    const [re] = await fake.listRefunds((await p.ledger.forOrder('o_lost'))[0]!.externalId!);
+    expect(re!.metadata.row_id).toBeTruthy();
+    const pi = (await p.ledger.forOrder('o_lost'))[0]!.externalId!;
+    expect(await reconcileRefund(p, pi, re!)).toMatchObject({ status: 'recorded' });
+    expect(await refundedAmount(p, 'o_lost')).toBe(40);
+
+    // The step retries: Stripe replays the same refund, and the row is already there.
+    expect(await refund(p, order('o_lost'), 'refund#1', 40)).toMatchObject({
+      status: 'succeeded',
+      amount: 40,
+    });
+    expect(await refundedAmount(p, 'o_lost')).toBe(40);
+    expect((await p.ledger.forOrder('o_lost')).filter((r) => r.kind === 'refund')).toHaveLength(1);
+  });
+
+  it('waits for a capture that has not been applied, and treats a lost one as a mismatch', async () => {
+    const fake = new FakePaymentProcessor();
+    const p = ports(fake);
+    const a = await authorizePayment(p, order('o_wait'), 'authorize#1', 'card');
+    const re = { id: 're_w', amount: 1000, status: 'succeeded', metadata: {} };
+    expect(await reconcileRefund(p, a.intentId!, re)).toEqual({
+      status: 'retry',
+      orderId: 'o_wait',
+    });
+    await voidAuthorizations(p, 'o_wait');
+    expect(await reconcileRefund(p, a.intentId!, re)).toMatchObject({ status: 'mismatch' });
   });
 });

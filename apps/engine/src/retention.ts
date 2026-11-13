@@ -12,7 +12,9 @@
  * the hold released otherwise. Expired storefront sign-ins and sessions are deleted
  * (`pruneShopperAuth`), and so are UCP identity links a month after they ended, with their codes and
  * tokens (`pruneUcpLinks`). A sandboxed plugin's uninstall export (`plugin-exports/`) is deleted once it
- * is 30 days old, or the personal data retention if that is shorter (`expirePluginExports`).
+ * is 30 days old, or the personal data retention if that is shorter (`expirePluginExports`), and a
+ * channel intake body (`intake/`, raw Shopify and EDI) once it is 7 days old, or that retention if
+ * shorter (`expireIntake`).
  */
 
 import * as uc from '@commerceworker/application/commerce';
@@ -46,6 +48,7 @@ export async function sweep(env: Env, now = Date.now()) {
     secrets: await resealSecrets(env),
     cardHolds: await settleOrphanedHolds(env, now),
     pluginExports: await expirePluginExports(env, now),
+    intakeBodies: await expireIntake(env, now),
     ...pruned,
   };
 }
@@ -102,6 +105,42 @@ export async function expireMembers(env: Env, now = Date.now()) {
   const days = personalDataRetentionDays(env.PERSONAL_DATA_RETENTION_DAYS);
   if (days === null) return 0;
   return uc.expireMembers({ retention: retentionStore(env) }, now, days);
+}
+
+/**
+ * How long a raw channel intake body stays. The queue's retries end within the hour and its retention
+ * is set to the same 7 days (`provision.sh`), so a message cannot outlive its body.
+ */
+export const INTAKE_DAYS = 7;
+
+/**
+ * Deletes `intake/` objects past `INTAKE_DAYS` (or the personal data retention, if shorter): a raw
+ * Shopify order or X12 interchange holds the buyer's details. The orders they started keep their own
+ * erasure; a body is not filed under a person, so a subject's erasure can't find it and this expiry is
+ * what removes it. Isolated: a failure is logged and tried again tomorrow, and never stops the sweep's
+ * other steps. Returns how many it deleted.
+ */
+export async function expireIntake(env: Env, now = Date.now()) {
+  try {
+    const days = Math.min(
+      INTAKE_DAYS,
+      personalDataRetentionDays(env.PERSONAL_DATA_RETENTION_DAYS) ?? INTAKE_DAYS,
+    );
+    const cutoff = now - days * 86_400_000;
+    let deleted = 0;
+    let cursor: string | undefined;
+    do {
+      const page = await env.DOCS.list({ prefix: 'intake/', cursor });
+      const old = page.objects.filter((o) => o.uploaded.getTime() < cutoff).map((o) => o.key);
+      if (old.length) await env.DOCS.delete(old);
+      deleted += old.length;
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return deleted;
+  } catch (err) {
+    console.error(JSON.stringify({ type: 'intake_expiry_failed', error: String(err) }));
+    return 0;
+  }
 }
 
 /** How long an uninstalled plugin's export stays, for an admin to download or re-import. */

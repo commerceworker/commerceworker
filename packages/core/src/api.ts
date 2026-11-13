@@ -252,6 +252,8 @@ export type PaymentEventResult = {
   /** The order event delivered to a waiting node (`payment.received`, `payment.disputed`). */
   delivered?: string;
   reason?: string;
+  /** What the event says doesn't match the ledger and can't be fixed from the event: see `reason`. */
+  mismatch?: true;
 };
 
 export interface EngineRpc {

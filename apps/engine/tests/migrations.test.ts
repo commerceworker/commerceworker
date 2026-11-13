@@ -691,3 +691,58 @@ describe('0074_quotes', () => {
     await line(1).run();
   });
 });
+
+describe('0080_payment_reconciliation', () => {
+  it('makes a doubled claim on one PaymentIntent safe before the unique index, losing no money row', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0080_');
+    await applyD1Migrations(db, applied);
+    const row = (
+      id: string,
+      kind: string,
+      status: string,
+      ext: string | null,
+      at: number,
+      ref?: string,
+    ) =>
+      db
+        .prepare(
+          `INSERT INTO payments (id, order_id, kind, amount, status, ref, created_at, provider, external_id, currency)
+           VALUES (?, ?, ?, 10, ?, ?, ?, 'stripe', ?, 'USD')`,
+        )
+        .bind(id, `o_${id}`, kind, status, ref ?? null, at, ext);
+    await db.batch([
+      // pi_a: an older voided one and a newer authorized one: the authorized holds the money.
+      row('a_old', 'authorization:card', 'voided', 'pi_a', 1),
+      row('a_new', 'authorization:card', 'authorized', 'pi_a', 2),
+      // pi_b: two captured: the older stays, the newer keeps its status and ref and loses only the id.
+      row('b_old', 'authorization:card', 'captured', 'pi_b', 1, 'cap_1'),
+      row('b_new', 'authorization:card', 'captured', 'pi_b', 2, 'cap_2'),
+      // pi_c: a capture and a decline that name the intent, and one authorization: all stay.
+      row('c_auth', 'authorization:card', 'authorized', 'pi_c', 1),
+      row('c_cap', 'capture', 'succeeded', 'pi_c', 2),
+      row('c_dec', 'authorization:card', 'declined', 'pi_c', 3, 'why'),
+      // re_1 recorded twice: the newer loses the id and keeps its amount.
+      row('r_old', 'refund', 'succeeded', 're_1', 1),
+      row('r_new', 'refund', 'succeeded', 're_1', 2),
+    ]);
+    await applyD1Migrations(db, [next]);
+    const all = await db
+      .prepare('SELECT id, status, ref, external_id FROM payments ORDER BY id')
+      .all();
+    const by = Object.fromEntries(all.results.map((r) => [r.id as string, r]));
+    expect(by.a_old).toMatchObject({ status: 'declined', external_id: 'pi_a' });
+    expect(by.a_new).toMatchObject({ status: 'authorized', external_id: 'pi_a' });
+    expect(by.b_old).toMatchObject({ status: 'captured', ref: 'cap_1', external_id: 'pi_b' });
+    expect(by.b_new).toMatchObject({ status: 'captured', ref: 'cap_2', external_id: null });
+    expect(by.c_auth).toMatchObject({ status: 'authorized' });
+    expect(by.c_cap).toMatchObject({ status: 'succeeded', external_id: 'pi_c' });
+    expect(by.c_dec).toMatchObject({ status: 'declined', ref: 'why' });
+    expect(by.r_old).toMatchObject({ external_id: 're_1' });
+    expect(by.r_new).toMatchObject({ status: 'succeeded', external_id: null });
+    expect(Object.keys(by).filter((k) => /^[abcr]_/.test(k))).toHaveLength(9);
+    // The index is in place: a second claim is refused, a decline is not.
+    await expect(row('x', 'authorization:card', 'authorized', 'pi_a', 9).run()).rejects.toThrow();
+    await row('y', 'authorization:card', 'declined', 'pi_a', 9).run();
+  });
+});

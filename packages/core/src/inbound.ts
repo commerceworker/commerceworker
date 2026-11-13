@@ -117,6 +117,16 @@ export const inboundOrderResultSchema = z.object({
   flowId: z.string().optional().describe('The flow it started on; absent on a replay'),
 });
 
+/**
+ * What a Shopify order answers (`202`) when the deployment makes intake durable: it was verified and
+ * kept, and the order starts from the queue.
+ */
+export const intakeAcceptedSchema = z.object({
+  accepted: z.literal(true),
+  externalId: z.string().describe('The Shopify order id: the order starts once per this id'),
+  intake: z.string().describe('Where the raw webhook was kept'),
+});
+
 /** What a Shopify topic other than `orders/create` is answered with. */
 export const ignoredTopicSchema = z.object({
   ignored: z.literal(true),

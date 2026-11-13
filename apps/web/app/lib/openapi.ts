@@ -29,6 +29,7 @@ import {
   ignoredTopicSchema,
   inboundOrderResultSchema,
   inboundOrderSchema,
+  intakeAcceptedSchema,
   integrationSecretSchema,
   integrationsSchema,
   integrationViewSchema,
@@ -188,6 +189,7 @@ const COMPONENTS = {
   PaymentEventResult: paymentEventResultSchema,
   InboundOrderResult: inboundOrderResultSchema,
   IgnoredTopic: ignoredTopicSchema,
+  IntakeAccepted: intakeAcceptedSchema,
   EdiResult: ediResultSchema,
   EdiInterchangeResult: ediInterchangeResultSchema,
   AuditEvent: auditEventSchema,
@@ -851,7 +853,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'Shopify orders/create webhook (no bearer token)',
           description:
-            'Point a Shopify `orders/create` webhook here. Verified with `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the raw body with SHOPIFY_WEBHOOK_SECRET); other topics are acknowledged and ignored. The order is mapped to an inbound order (channel from `source_name`, model `b2b` when it has a company) and started once per Shopify order id.',
+            'Point a Shopify `orders/create` webhook here. Verified with `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the raw body with SHOPIFY_WEBHOOK_SECRET); other topics are acknowledged and ignored. The order is mapped to an inbound order (channel from `source_name`, model `b2b` when it has a company) and started once per Shopify order id. Where the deployment makes intake durable the verified body is kept and the answer is `202`: the order starts from a queue, and a body that can never start one is still a `400`.',
           security: [],
           parameters: [
             {
@@ -880,6 +882,7 @@ export function openApiDocument(serverUrl: string) {
               },
             },
             '201': ok('Order started', ref('InboundOrderResult')),
+            '202': ok('Kept; the order starts from the queue', ref('IntakeAccepted')),
             '400': ok('Not JSON, or a line item without a SKU', '#/components/schemas/Error'),
             '409': ok('The routed flow is not published', '#/components/schemas/Error'),
             '422': ok(
@@ -894,7 +897,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'EDI X12 850 purchase orders (operator)',
           description:
-            'A raw X12 interchange of one or more 850 transactions from a trading partner listed in EDI_PARTNERS (ISA sender id → customer). Each PO starts at most once (key `order:edi:<sender>:<PO>`); the response lists the outcome per transaction, and `functionalAck` is the 997 to send back to the partner: AK5 `A` for each PO that started (or already had), `R` for one that couldn’t be taken.',
+            'A raw X12 interchange of one or more 850 transactions from a trading partner listed in EDI_PARTNERS (ISA sender id → customer). Each PO starts at most once (key `order:edi:<sender>:<PO>`); the response lists the outcome per transaction, and `functionalAck` is the 997 to send back to the partner: AK5 `A` for each PO that started (or already had), `R` for one that couldn’t be taken. Where the deployment makes intake durable the interchange is kept and the answer is `202`: each accepted PO has `status` `202` and starts from a queue, and the 997 acknowledges the interchange as it was taken, not the orders as they start.',
           requestBody: {
             required: true,
             content: {
@@ -906,6 +909,10 @@ export function openApiDocument(serverUrl: string) {
             ...errors,
             '200': ok(
               'The outcome per transaction, and `functionalAck`, the X12 997 text',
+              ref('EdiInterchangeResult'),
+            ),
+            '202': ok(
+              'Kept; the purchase orders start from the queue. The 997 is in `functionalAck`',
               ref('EdiInterchangeResult'),
             ),
             '400': ok('Not a valid X12 interchange', '#/components/schemas/Error'),

@@ -5,7 +5,7 @@
  * request path, and detection has nothing to read without them (docs/operations.md, "Metrics").
  *
  * One data point per event, in a fixed layout so a query never has to guess:
- *   index1  = event (`request`, `step_failed`, `d1`, `failover`), the sampling key
+ *   index1  = event (`request`, `step_failed`, `d1`, `failover`, `reconcile_mismatch`), the sampling key
  *   blob1   = event
  *   blob2   = app (`web`, `engine`, `storefront`)
  *   blob3   = what: the route group, node type, D1 path or failover kind
@@ -38,6 +38,8 @@ export interface OpsMetrics {
   /** One D1 round trip on a key path, in milliseconds. */
   d1(path: string, ms: number): void;
   failover(kind: Failover): void;
+  /** A reconciliation found a difference it can't fix: what it was about (`stripe`, `intake`). */
+  reconcileMismatch(what: string): void;
 }
 
 /** `2xx`, `5xx`: what an alert on the error rate groups by. */
@@ -78,5 +80,6 @@ export function opsMetrics(sink: MetricsSink | undefined, app: MetricsApp): OpsM
     stepFailed: (nodeType) => write('step_failed', nodeType, '', 0),
     d1: (path, ms) => write('d1', path, '', ms),
     failover: (kind) => write('failover', kind, '', 0),
+    reconcileMismatch: (what) => write('reconcile_mismatch', what, '', 0),
   };
 }

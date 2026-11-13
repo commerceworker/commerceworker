@@ -44,6 +44,17 @@ export function describeLogsContract(
       expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 3)).toBe(true);
     });
 
+    it('keeps a reconciliation cursor per provider that only moves forward', async () => {
+      const { events } = await make();
+      expect(await events.cursor('lg_prov')).toBeUndefined();
+      await events.advance('lg_prov', 100, 1);
+      await events.advance('lg_prov', 50, 2);
+      expect(await events.cursor('lg_prov')).toBe(100);
+      await events.advance('lg_prov', 150, 3);
+      expect(await events.cursor('lg_prov')).toBe(150);
+      expect(await events.cursor('lg_other')).toBeUndefined();
+    });
+
     it('takes a signed webhook once, gives back a failed one, and lets an expired one go', async () => {
       const { receipts } = await make();
       const T = 9_000_000_000_000;

@@ -11,6 +11,8 @@
  * ledger's totals are core rules (`planRefund`, `paidTotal`, `refundedTotal`).
  */
 import {
+  fromMinor,
+  isPaid,
   isRefund,
   money,
   type Order,
@@ -27,6 +29,7 @@ import {
 import {
   IntentStateError,
   type NewPayment,
+  PaymentClaimedError,
   PaymentDeclinedError,
   type PaymentLedger,
   type PaymentMode,
@@ -244,7 +247,27 @@ export async function authorizePayment(
         ...(pi.customer ? { stripeCustomerId: pi.customer } : {}),
       });
   }
-  return record(ports, { ...base, provider: processor.id, status: ok, externalId: pi.id });
+  try {
+    return await record(ports, {
+      ...base,
+      provider: processor.id,
+      status: ok,
+      externalId: pi.id,
+    });
+  } catch (err) {
+    // Another row claimed the intent between `adoptProblem`'s look and this insert: the ledger's
+    // unique index let one win, and this one is declined like any other adoption of a taken intent.
+    if (!(err instanceof PaymentClaimedError)) throw err;
+    const taken = (await ports.ledger.forExternalId(pi.id)).find(
+      (r) => r.id !== id && r.kind.startsWith('authorization:') && r.status !== 'declined',
+    );
+    return decline(
+      taken
+        ? `PaymentIntent already pays order ${taken.orderId}`
+        : 'PaymentIntent is already claimed',
+      pi.id,
+    );
+  }
 }
 
 // ── Void ──────────────────────────────────────────────────────────────────
@@ -295,8 +318,10 @@ export async function capturePayment(ports: PaymentPorts, order: Order, stepKey:
   // A retry after the capture was recorded returns it rather than looking for an open authorization.
   const done = await ports.ledger.find(id);
   if (done) return { paymentId: id, amount: done.amount, status: done.status };
-  const auth = (await ports.ledger.forOrder(order.id)).find((p) => p.status === 'authorized');
-  if (!auth) return failed;
+  const rows = await ports.ledger.forOrder(order.id);
+  const auth = rows.find((p) => p.status === 'authorized');
+  // Captured in the processor's dashboard (reconciliation recorded it): the money is taken.
+  if (!auth) return reconciledCapture(rows) ?? failed;
   // Never more than the order now costs: lines dropped after authorizing (a seller rejecting
   // their part) are released, not charged.
   const amount = money(Math.min(auth.amount, order.total));
@@ -323,7 +348,26 @@ export async function capturePayment(ports: PaymentPorts, order: Order, stepKey:
     externalId: auth.externalId,
     currency,
   });
-  return row ? { paymentId: id, amount: row.amount, status: row.status } : failed;
+  if (row) return { paymentId: id, amount: row.amount, status: row.status };
+  // Lost the flip to a capture recorded from the processor's event: the one that took this very
+  // authorization stands. Never another authorization's capture.
+  const taken = (await ports.ledger.forOrder(order.id)).find(
+    (p) => p.kind === 'capture' && p.status === 'succeeded' && p.ref === auth.id,
+  );
+  return taken ? { paymentId: taken.id, amount: taken.amount, status: taken.status } : failed;
+}
+
+/**
+ * The capture reconciliation recorded for the order's authorization (`cap_stripe_<intent>`), when no
+ * capture step of ours has taken money on it: a dashboard capture that landed before the flow's own.
+ * A capture made by an earlier step is some other authorization's, and is never reported as this one's.
+ * (Two capture steps against one reconciled authorization would both see it.)
+ */
+function reconciledCapture(rows: readonly PaymentRecord[]) {
+  const captures = rows.filter((p) => p.kind === 'capture' && p.status === 'succeeded');
+  if (captures.some((p) => !p.id.startsWith('cap_stripe_'))) return undefined;
+  const row = captures.find((p) => p.id.startsWith('cap_stripe_'));
+  return row ? { paymentId: row.id, amount: row.amount, status: row.status } : undefined;
 }
 
 // ── Charge ────────────────────────────────────────────────────────────────
@@ -506,24 +550,31 @@ async function refundAcross(
         {
           intentId: part.payment.externalId,
           amount: toMinor(part.amount, currency),
-          metadata: { order_id: order.id, payment_id: part.payment.id },
+          // `row_id`: where this part is recorded, so a refund whose answer we lost is recorded
+          // under it by reconciliation and the step's own `record` then finds it.
+          metadata: { order_id: order.id, payment_id: part.payment.id, row_id: partId },
         },
         partId,
       );
       externalId = r.id;
       if (r.status === 'failed' || r.status === 'canceled') status = 'failed';
     }
-    await record(ports, {
-      id: partId,
-      orderId: order.id,
-      kind: 'refund',
-      amount: part.amount,
-      status,
-      currency,
-      provider: part.payment.provider,
-      ref: part.payment.id,
-      externalId,
-    });
+    try {
+      await record(ports, {
+        id: partId,
+        orderId: order.id,
+        kind: 'refund',
+        amount: part.amount,
+        status,
+        currency,
+        provider: part.payment.provider,
+        ref: part.payment.id,
+        externalId,
+      });
+    } catch (err) {
+      // The refund is already a row (recorded from the processor's event under another id).
+      if (!(err instanceof PaymentClaimedError)) throw err;
+    }
   }
   const made = (await ports.ledger.findMany(ids)).filter(isRefund);
   const amount = money(sum(made));
@@ -540,4 +591,107 @@ export async function refundedAmount(ports: Pick<PaymentPorts, 'ledger'>, orderI
 /** Money captured or charged on the order, before refunds. */
 export async function paidAmount(ports: Pick<PaymentPorts, 'ledger'>, orderId: string) {
   return paidTotal(await ports.ledger.forOrder(orderId));
+}
+
+// ── Reconciliation ────────────────────────────────────────────────────────
+
+/**
+ * What the processor's events say that the ledger has to catch up with. `mismatch` is something it
+ * can't fix: the caller logs it at error level and counts it.
+ */
+export type ReconcileOutcome =
+  | { status: 'recorded'; orderId: string }
+  | { status: 'known'; orderId: string }
+  | { status: 'unknown' }
+  /** Not yet: what it depends on hasn't been applied. The event is offered again. */
+  | { status: 'retry'; orderId: string }
+  | { status: 'mismatch'; orderId?: string; reason: string };
+
+/**
+ * The processor took an authorization's money (a capture made in its dashboard, or one of ours whose
+ * answer was lost): the authorization flips to `captured` and a capture row is recorded, once, through
+ * the ledger's own transaction. An intent already captured or charged here is `known`.
+ */
+export async function reconcileCapture(
+  ports: Pick<PaymentPorts, 'ledger'>,
+  intentId: string,
+  receivedMinor: number,
+): Promise<ReconcileOutcome> {
+  const rows = (await ports.ledger.forExternalId(intentId)).filter((r) => r.provider === 'stripe');
+  const first = rows[0];
+  if (!first) return { status: 'unknown' };
+  const auth = rows.find((r) => r.kind.startsWith('authorization:') && r.status === 'authorized');
+  if (!auth) {
+    if (rows.some((r) => r.kind === 'capture' || r.kind === 'charge'))
+      return { status: 'known', orderId: first.orderId };
+    return {
+      status: 'mismatch',
+      orderId: first.orderId,
+      reason: `${intentId} succeeded in the processor but its authorization here is ${first.status}`,
+    };
+  }
+  const currency = auth.currency ?? 'USD';
+  const id = paymentRowId('cap', 'stripe', intentId);
+  const row = await ports.ledger.capture(auth.id, {
+    id,
+    orderId: auth.orderId,
+    kind: 'capture',
+    amount: money(Math.min(fromMinor(receivedMinor, currency), auth.amount)),
+    status: 'succeeded',
+    ref: auth.id,
+    provider: auth.provider,
+    externalId: intentId,
+    currency,
+  });
+  return row
+    ? { status: 'recorded', orderId: auth.orderId }
+    : { status: 'known', orderId: auth.orderId };
+}
+
+/**
+ * A refund the processor made that the ledger doesn't have: a dashboard refund, or one of ours whose
+ * answer was lost before its step recorded it (it names its row in `metadata.row_id`, so the step's
+ * own record then finds it). Only a refund that has succeeded is recorded; a pending one comes again
+ * as `refund.updated`. A refund of an intent still only authorized here is `retry`: its capture's
+ * event hasn't been applied yet, and the claim is released so the event comes again.
+ */
+export async function reconcileRefund(
+  ports: Pick<PaymentPorts, 'ledger'>,
+  intentId: string,
+  refund: { id: string; amount: number; status: string; metadata: Record<string, string> },
+): Promise<ReconcileOutcome> {
+  const rows = (await ports.ledger.forExternalId(intentId)).filter((r) => r.provider === 'stripe');
+  const paid = rows.filter((r) => isPaid(r)).at(-1);
+  const orderId = (paid ?? rows[0])?.orderId;
+  if (!orderId) return { status: 'unknown' };
+  if (refund.status !== 'succeeded') return { status: 'known', orderId };
+  if ((await ports.ledger.forExternalId(refund.id)).some((r) => r.kind === 'refund'))
+    return { status: 'known', orderId };
+  if (!paid) {
+    if (rows.some((r) => r.kind.startsWith('authorization:') && r.status === 'authorized'))
+      return { status: 'retry', orderId };
+    return {
+      status: 'mismatch',
+      orderId,
+      reason: `${refund.id} refunds ${intentId}, which has no captured payment here`,
+    };
+  }
+  const currency = paid.currency ?? 'USD';
+  try {
+    await ports.ledger.record({
+      id: refund.metadata.row_id || paymentRowId('rfd', 'stripe', refund.id),
+      orderId,
+      kind: 'refund',
+      amount: fromMinor(refund.amount, currency),
+      status: 'succeeded',
+      ref: refund.metadata.payment_id || paid.id,
+      provider: 'stripe',
+      externalId: refund.id,
+      currency,
+    });
+  } catch (err) {
+    if (err instanceof PaymentClaimedError) return { status: 'known', orderId };
+    throw err;
+  }
+  return { status: 'recorded', orderId };
 }

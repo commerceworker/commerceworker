@@ -19,8 +19,12 @@ import type { ObjectBucket, ObjectContent, ObjectInfo } from '@commerceworker/po
 /** The metadata key a copy carries: the etag of the object it was copied from. */
 export const SOURCE_ETAG = 'cw-source-etag';
 
-/** Keys the replica never mirrors: the write check's leftovers and the replica's own prefixes. */
-const NOT_REPLICATED = ['health/', 'deleted/', 'replica/', 'dlq/'] as const;
+/**
+ * Keys the replica never mirrors: the write check's leftovers, the replica's own prefixes, and
+ * `intake/`: a raw channel body holds buyer details, expires in days (`expireIntake`), and its queue
+ * message is the durability, so a copy (and its 30-day `deleted/` stay) would only outlive it.
+ */
+const NOT_REPLICATED = ['health/', 'deleted/', 'replica/', 'dlq/', 'intake/'] as const;
 /** Locked in both buckets (`provision.sh`): written once. */
 const LOCKED = ['audit/', 'plugins/'] as const;
 

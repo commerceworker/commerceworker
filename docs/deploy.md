@@ -109,7 +109,9 @@ To test without a mail server, call `receiveEmail` from a test with a fake
   listed is refused with `403`.
 
 The mapping is pure code in `packages/core/src/channels/` (`shopify.ts`, `x12.ts`); the web Worker
-verifies, looks up the customer and starts the order.
+verifies, looks up the customer and starts the order. With the registry's `redundancy` it instead keeps the
+verified body, queues it and answers `202`, and the engine starts the order
+(`intake.ts`, [Channel intake](operations.md#channel-intake)); provision before deploying the flag.
 
 ## Stripe webhook
 
@@ -123,11 +125,16 @@ In the Stripe Dashboard (Developers → Webhooks), add an endpoint at
 - `invoice.paid`: settles the invoice and delivers `payment.received`
 - `payment_intent.canceled`: marks the authorization `voided`
 - `charge.dispute.created`: delivers `payment.disputed` to a waiting node
+- `payment_intent.succeeded`: a capture made in the Dashboard reaches the payments ledger
+- `refund.created`, `refund.updated` and `charge.refunded`: a refund made in the Dashboard reaches the ledger
+
+Without the last two groups the engine's hourly [Stripe reconciliation](operations.md#stripe-reconciliation)
+still applies them, up to an hour late; with them subscribed it only catches what a delivery missed.
 
 Put the endpoint's signing secret in the deployment's GitHub environment as `STRIPE_WEBHOOK_SECRET`;
 the next deploy sets it on the web Worker. Until it is set the route answers `503`, and Stripe
 retries. For local development, run
-`stripe listen --forward-to localhost:5173/api/v1/webhooks/stripe --events invoice.paid,payment_intent.canceled,charge.dispute.created`
+`stripe listen --forward-to localhost:5173/api/v1/webhooks/stripe --events invoice.paid,payment_intent.canceled,charge.dispute.created,payment_intent.succeeded,refund.created,refund.updated,charge.refunded`
 and put the `whsec_…` it prints in `apps/web/.dev.vars`. Rolling the secret in the Dashboard is safe:
 during the overlap Stripe signs with both, and either passes.
 

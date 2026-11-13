@@ -110,6 +110,8 @@ export function installStripeFake() {
   }[] = [];
   /** Confirmation tokens already spent on a PaymentIntent: Stripe lets one confirm once. */
   const spentTokens = new Map<string, string>();
+  /** Events Stripe would have made, oldest first; `GET /v1/events` lists them newest first. */
+  const events: { id: string; object: 'event'; type: string; created: number; data: Json }[] = [];
   const idempotent = new Map<string, { body: string; status: number; json: Json }>();
   const calls: StripeCall[] = [];
   /** Paths whose next request is processed but whose response is lost (a network error). */
@@ -131,6 +133,26 @@ export function installStripeFake() {
       message: `You cannot ${what} this PaymentIntent because it has a status of ${pi.status}.`,
       payment_intent: view(pi),
     });
+
+  function emit(type: string, object: Json, created = Math.floor(Date.now() / 1000)) {
+    const ev = { id: nextId('evt'), object: 'event' as const, type, created, data: { object } };
+    events.push(ev);
+    return ev;
+  }
+
+  function listEvents(p: Form) {
+    const types = p.types ? Object.values(p.types as Form).map(String) : undefined;
+    const created = p.created as Form | undefined;
+    let list = events
+      .filter((e) => !types || types.includes(e.type))
+      .filter((e) => !created?.gte || e.created >= Number(created.gte))
+      .filter((e) => !created?.gt || e.created > Number(created.gt))
+      .filter((e) => !created?.lt || e.created < Number(created.lt))
+      .reverse();
+    if (p.starting_after) list = list.slice(list.findIndex((e) => e.id === p.starting_after) + 1);
+    const limit = Math.min(Number(p.limit ?? 10), 100);
+    return ok({ object: 'list', data: list.slice(0, limit), has_more: list.length > limit });
+  }
 
   function createIntent(p: Form) {
     const pi: FakeIntent = {
@@ -387,6 +409,11 @@ export function installStripeFake() {
         return ok(view(pi));
       }
     }
+    if (method === 'GET' && path === '/v1/events') return listEvents(p);
+    if (method === 'GET' && path === '/v1/refunds') {
+      const data = [...refunds.values()].filter((r) => r.payment_intent === p.payment_intent);
+      return ok({ object: 'list', data, has_more: false });
+    }
     if (method === 'POST' && path === '/v1/refunds') {
       const pi = intents.get(String(p.payment_intent));
       if (!pi)
@@ -494,6 +521,7 @@ export function installStripeFake() {
     refunds,
     customers,
     invoices,
+    events,
     calls,
     /** Only Stripe calls for `path` (exact) or matching the regex. */
     callsTo(method: string, path: string | RegExp) {
@@ -539,6 +567,36 @@ export function installStripeFake() {
       });
       return r.json as unknown as FakeIntent;
     },
+    /**
+     * Money moved in Stripe's dashboard, with the events it makes (not delivered anywhere: a test
+     * delivers the ones it wants, and the rest are the webhooks that were dropped). A capture.
+     */
+    dashboardCapture(id: string) {
+      const r = handle('POST', `/v1/payment_intents/${id}/capture`, {});
+      if (r.status !== 200) throw new Error(JSON.stringify(r.json));
+      return emit('payment_intent.succeeded', r.json);
+    },
+    /** A refund made in the dashboard (no metadata of ours): `refund.created` and `charge.refunded`. */
+    dashboardRefund(id: string, amount?: number) {
+      const r = handle('POST', '/v1/refunds', {
+        payment_intent: id,
+        ...(amount === undefined ? {} : { amount: String(amount) }),
+      });
+      if (r.status !== 200) throw new Error(JSON.stringify(r.json));
+      const pi = intents.get(id)!;
+      return {
+        refund: r.json,
+        created: emit('refund.created', r.json),
+        charged: emit('charge.refunded', {
+          id: `ch_${id}`,
+          object: 'charge',
+          payment_intent: id,
+          amount_refunded: pi.refunded,
+        }),
+      };
+    },
+    /** An event of any type, as Stripe would list it. */
+    emit,
     /**
      * The customer pays an open invoice on its hosted page, by card: one succeeded PaymentIntent
      * per part (one for the whole total unless `parts`, in minor units, say otherwise), each an
