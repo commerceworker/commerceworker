@@ -746,3 +746,33 @@ describe('0080_payment_reconciliation', () => {
     await row('y', 'authorization:card', 'declined', 'pi_a', 9).run();
   });
 });
+
+describe('0081_payment_event_claims', () => {
+  it('counts the events already there as handled, and takes new claims as processing', async () => {
+    const db = testEnv.MIGRATION_DB;
+    const { applied, next } = before('0081_');
+    await applyD1Migrations(db, applied);
+    await db
+      .prepare(
+        "INSERT INTO payment_events (id, provider, type, received_at) VALUES ('evt_old', 'stripe', 'invoice.paid', 5)",
+      )
+      .run();
+    await applyD1Migrations(db, [next]);
+    expect(
+      await db
+        .prepare(
+          "SELECT status, claimed_at, failures, outcome, received_at FROM payment_events WHERE id = 'evt_old'",
+        )
+        .first(),
+    ).toEqual({ status: 'done', claimed_at: 0, failures: 0, outcome: null, received_at: 5 });
+    // The code still deployed during the rollout inserts none of the new columns: its rows are `done`.
+    await db
+      .prepare(
+        "INSERT INTO payment_events (id, provider, type, received_at) VALUES ('evt_rolling', 'stripe', 'invoice.paid', 6)",
+      )
+      .run();
+    expect(
+      await db.prepare("SELECT status FROM payment_events WHERE id = 'evt_rolling'").first(),
+    ).toEqual({ status: 'done' });
+  });
+});

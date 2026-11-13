@@ -1317,7 +1317,11 @@ export const invoices = sqliteTable(
   ],
 );
 
-/** Payment provider events already handled, by event id; kept 30 days (Stripe retries for 3). */
+/**
+ * Payment provider events claimed for handling, by event id; kept 30 days (Stripe retries for 3).
+ * `status`: `processing` (claimed at `claimedAt`; claimable again once stale), `released` (handling
+ * threw or answered `retry`), `done` (with its `outcome`) or `poisoned` (`failures` reached the limit).
+ */
 export const paymentEvents = sqliteTable(
   'payment_events',
   {
@@ -1326,8 +1330,15 @@ export const paymentEvents = sqliteTable(
     type: text('type').notNull(),
     orderId: text('order_id'),
     receivedAt: integer('received_at').notNull(),
+    status: text('status').notNull().default('done'),
+    claimedAt: integer('claimed_at').notNull().default(0),
+    failures: integer('failures').notNull().default(0),
+    outcome: text('outcome'),
   },
-  (t) => [index('payment_events_received').on(t.receivedAt)],
+  (t) => [
+    index('payment_events_received').on(t.receivedAt),
+    index('payment_events_open').on(t.status).where(sql`${t.status} <> 'done'`),
+  ],
 );
 
 /** Where Stripe's hourly event reconciliation left off (`cursor`: the `created` of the oldest event it hasn't finished). */

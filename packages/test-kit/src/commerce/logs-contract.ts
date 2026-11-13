@@ -35,13 +35,81 @@ export function describeLogsContract(
       await intake.record({ ...email, id: 'lg_e2', status: 'duplicate' });
     });
 
-    it('claims a payment event once, and frees one whose handling failed', async () => {
+    const STALE = 600_000;
+
+    it('claims a payment event once, and frees one whose handling failed or answered retry', async () => {
       const { events } = await make();
-      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 1)).toBe(true);
-      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 2)).toBe(false);
+      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 1, STALE)).toBe('claimed');
+      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 2, STALE)).toBe('processing');
       await events.link('lg_evt_1', 'ord_1');
       await events.release('lg_evt_1');
-      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 3)).toBe(true);
+      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 3, STALE)).toBe('claimed');
+      expect(await events.fail('lg_evt_1')).toEqual({ failures: 1, poisoned: false });
+      expect(await events.claim('lg_evt_1', 'stripe', 'invoice.paid', 4, STALE)).toBe('claimed');
+    });
+
+    it('takes a claim over only once it is stale', async () => {
+      const { events } = await make();
+      const T = 1_000_000;
+      expect(await events.claim('lg_evt_stale', 'stripe', 'refund.created', T, STALE)).toBe(
+        'claimed',
+      );
+      // Its taker never finished: fresh until ten minutes have passed, then anyone's.
+      expect(
+        await events.claim('lg_evt_stale', 'stripe', 'refund.created', T + STALE - 1, STALE),
+      ).toBe('processing');
+      expect(await events.claim('lg_evt_stale', 'stripe', 'refund.created', T + STALE, STALE)).toBe(
+        'claimed',
+      );
+      // The new claim is fresh again.
+      expect(
+        await events.claim('lg_evt_stale', 'stripe', 'refund.created', T + STALE + 1, STALE),
+      ).toBe('processing');
+    });
+
+    it('gives exactly one of several concurrent takers a claim, new or stale', async () => {
+      const { events } = await make();
+      const T = 2_000_000;
+      const race = (id: string, now: number) =>
+        Promise.all(
+          Array.from({ length: 6 }, () => events.claim(id, 'stripe', 'refund.created', now, STALE)),
+        );
+      const fresh = await race('lg_evt_race', T);
+      expect(fresh.filter((c) => c === 'claimed')).toHaveLength(1);
+      const stale = await race('lg_evt_race', T + STALE);
+      expect(stale.filter((c) => c === 'claimed')).toHaveLength(1);
+      expect(stale.filter((c) => c === 'processing')).toHaveLength(5);
+    });
+
+    it('keeps a finished event a duplicate, however old', async () => {
+      const { events } = await make();
+      expect(await events.claim('lg_evt_done', 'stripe', 'invoice.paid', 1, STALE)).toBe('claimed');
+      await events.finish('lg_evt_done', 'handled');
+      expect(await events.claim('lg_evt_done', 'stripe', 'invoice.paid', 2, STALE)).toBe('done');
+      expect(await events.claim('lg_evt_done', 'stripe', 'invoice.paid', 1e12, STALE)).toBe('done');
+      // A late release of a finished claim does not reopen it.
+      await events.release('lg_evt_done');
+      expect(await events.claim('lg_evt_done', 'stripe', 'invoice.paid', 1e12, STALE)).toBe('done');
+    });
+
+    it('counts failures, and poisons the event at the limit, once', async () => {
+      const { events } = await make();
+      const id = 'lg_evt_poison';
+      for (let n = 1; n <= 4; n++) {
+        expect(await events.claim(id, 'stripe', 'charge.refunded', n, STALE)).toBe('claimed');
+        expect(await events.fail(id, 5)).toEqual({ failures: n, poisoned: false });
+      }
+      expect(await events.claim(id, 'stripe', 'charge.refunded', 5, STALE)).toBe('claimed');
+      expect(await events.fail(id, 5)).toEqual({ failures: 5, poisoned: true });
+      // Set aside: not claimable, even long after.
+      expect(await events.claim(id, 'stripe', 'charge.refunded', 6, STALE)).toBe('poisoned');
+      expect(await events.claim(id, 'stripe', 'charge.refunded', 1e12, STALE)).toBe('poisoned');
+      // Without a limit, failures are counted and the event is never poisoned.
+      const other = 'lg_evt_nolimit';
+      for (let n = 1; n <= 7; n++) {
+        await events.claim(other, 'stripe', 'charge.refunded', n, STALE);
+        expect(await events.fail(other)).toEqual({ failures: n, poisoned: false });
+      }
     });
 
     it('keeps a reconciliation cursor per provider that only moves forward', async () => {
