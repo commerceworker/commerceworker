@@ -34,9 +34,11 @@ import {
   scrubCredentials,
   secretContext,
 } from '@commerceworker/core';
+import type { ObjectExport } from '@commerceworker/ports/commerce';
 import { readCapped } from './body';
 import { openSecret } from './data-key';
 import { pluginStorage } from './namespaces';
+import { bookmarkForTime, exportTables, pitrObject, restoreInPlace } from './object-pitr';
 import { docsReader, pluginInstalls } from './wire';
 
 export type PluginStub = Fetcher & { [K in keyof PluginRpc]: PluginRpc[K] };
@@ -544,6 +546,21 @@ export class PluginStorage extends DurableObject<Env> {
     const cursor = this.ctx.storage.sql.exec(sql, ...params);
     const rows = cursor.toArray() as Record<string, unknown>[];
     return { rows, changes: cursor.rowsWritten };
+  }
+
+  // ── Restore tooling: reached only through the engine's own stub (object-pitr.ts) ──
+
+  pitrBookmark(at: number): Promise<string> {
+    return bookmarkForTime(pitrObject(this.ctx, this.env), at);
+  }
+
+  /** Restarts restored to `bookmark`, keeping the undo bookmark at `undoKey`; the call fails as the object aborts. */
+  restoreTo(bookmark: string, undoKey: string): Promise<void> {
+    return restoreInPlace(pitrObject(this.ctx, this.env), bookmark, undoKey);
+  }
+
+  exportState(): ObjectExport {
+    return exportTables(this.ctx.storage.sql);
   }
 
   async query(id: string, sha: string, statement: Statement): Promise<Result> {

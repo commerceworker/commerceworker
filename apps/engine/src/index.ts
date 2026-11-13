@@ -41,6 +41,9 @@ export { D1Backup, D1Restore } from './d1-backup';
 export { DocsReplicaReconcile } from './docs-replica';
 // The deploy smoke test's write check object (health.ts).
 export { HealthProbe } from './health';
+// The nightly copy of live order and cart state, the operator's restore to a point in time, and
+// its drill (objects.ts); bound only when the registry's `redundancy` is on.
+export { ObjectsBackup, ObjectsDrill, ObjectsRestore } from './objects';
 // What a plugin can ask of the core, bound into it as COMMERCEWORKER (plugin-api.ts).
 export { PluginHost } from './plugin-api';
 // The sandbox's capabilities, reached as `ctx.exports` by the plugins it loads (plugin-host.ts).

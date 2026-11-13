@@ -12,6 +12,7 @@ import {
   ALERT_POLICIES,
   alertSpec,
   alertsOn,
+  backsUpObjects,
   CONTENT_QUEUES,
   CONTENT_SECRETS,
   contentHosts,
@@ -2420,7 +2421,16 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
   assert.deepEqual(REDUNDANCY_BINDINGS(c), {
     databases: ['DB', 'STANDBY_DB'],
     buckets: ['DOCS', 'BACKUPS', 'DOCS_REPLICA'],
-    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE', 'DOCS_RECONCILE'],
+    workflows: [
+      'ORDER_WORKFLOW',
+      'REPLENISH',
+      'D1_BACKUP',
+      'D1_RESTORE',
+      'OBJECTS_BACKUP',
+      'OBJECTS_RESTORE',
+      'OBJECTS_DRILL',
+      'DOCS_RECONCILE',
+    ],
   });
   // DB keeps its own id: the standby is rendered apart, never mapped onto it.
   assert.deepEqual(
@@ -2443,10 +2453,22 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
   assert.equal(flows.D1_RESTORE.name, 'commerceworker-d1-restore-acme');
   assert.deepEqual(flows.D1_BACKUP.schedules, ['0 4 * * *']);
   assert.deepEqual(flows.D1_RESTORE.schedules, ['0 10 1 * *']);
+  // The object copy two hours after the D1 backup; its drill an hour after the D1 drill's, same days.
+  assert.equal(flows.OBJECTS_BACKUP.name, 'commerceworker-objects-backup-acme');
+  assert.equal(flows.OBJECTS_BACKUP.class_name, 'ObjectsBackup');
+  assert.deepEqual(flows.OBJECTS_BACKUP.schedules, ['0 6 * * *']);
+  assert.equal(flows.OBJECTS_DRILL.name, 'commerceworker-objects-drill-acme');
+  assert.deepEqual(flows.OBJECTS_DRILL.schedules, ['0 11 1 * *']);
+  // The restore is an operator's: no schedule, on the registry or in the base config.
+  assert.equal(flows.OBJECTS_RESTORE.name, 'commerceworker-objects-restore-acme');
+  assert.equal(flows.OBJECTS_RESTORE.class_name, 'ObjectsRestore');
+  assert.equal(flows.OBJECTS_RESTORE.schedules, undefined);
   assert.equal(flows.D1_BACKUP.class_name, 'D1Backup');
   assert.deepEqual(redundancySchedules(protectedAcme().redundancy!), {
     backup: '0 1 * * *',
     restore: '0 7 * * 0',
+    objectsBackup: '0 3 * * *',
+    objectsDrill: '0 8 * * 0',
   });
   assert.equal(
     redundancySchedules(protectedAcme({ backupHourUtc: 20 }).redundancy!).restore,
@@ -2486,21 +2508,44 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
     { ...off, queues: undefined },
   );
   assert.equal(off.queues, undefined);
-  // d1Backup and r2Replica as exceptions turn their bindings off, each apart from the other.
+  // d1Backup, objectBackup and r2Replica as exceptions turn their bindings off, each apart from the others.
   assert.deepEqual(
     REDUNDANCY_BINDINGS(
-      renderEngine(base('engine'), protectedAcme({ except: ['d1Backup', 'r2Replica'] })),
+      renderEngine(
+        base('engine'),
+        protectedAcme({ except: ['d1Backup', 'objectBackup', 'r2Replica'] }),
+      ),
     ),
     REDUNDANCY_BINDINGS(off),
   );
+  // Without the D1 backup the bucket stays, for the object copies in it.
   assert.deepEqual(
     REDUNDANCY_BINDINGS(renderEngine(base('engine'), protectedAcme({ except: ['d1Backup'] }))),
     {
       databases: ['DB'],
-      buckets: ['DOCS', 'DOCS_REPLICA'],
-      workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'DOCS_RECONCILE'],
+      buckets: ['DOCS', 'BACKUPS', 'DOCS_REPLICA'],
+      workflows: [
+        'ORDER_WORKFLOW',
+        'REPLENISH',
+        'OBJECTS_BACKUP',
+        'OBJECTS_RESTORE',
+        'OBJECTS_DRILL',
+        'DOCS_RECONCILE',
+      ],
     },
   );
+  // Without the object copies the standby and the D1 Workflows stay, the Durable Object ones go.
+  assert.deepEqual(
+    REDUNDANCY_BINDINGS(renderEngine(base('engine'), protectedAcme({ except: ['objectBackup'] }))),
+    {
+      databases: ['DB', 'STANDBY_DB'],
+      buckets: ['DOCS', 'BACKUPS', 'DOCS_REPLICA'],
+      workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE', 'DOCS_RECONCILE'],
+    },
+  );
+  assert.equal(backsUpObjects(protectedAcme()), true);
+  assert.equal(backsUpObjects(protectedAcme({ except: ['objectBackup'] })), false);
+  assert.equal(backsUpObjects(acme), false);
   // And a demo or a held-back standby needs no id.
   assert.doesNotThrow(() =>
     renderEngine(base('engine'), toDeployment({ ...acme, id: 'acme-demo', demo: true })),
@@ -2529,16 +2574,33 @@ test('provision.sh is told the backups bucket, the standby and the retention onl
   );
   const off = shellVars(acme);
   assert.deepEqual([off.BACKUPS_R2, off.STANDBY_D1, off.BACKUP_DAYS], ['', '', '']);
-  assert.equal(shellVars(protectedAcme({ except: ['d1Backup'] })).BACKUPS_R2, '');
+  // Which prefixes of the bucket are kept: d1/ and objects/. The bucket follows either.
+  assert.deepEqual([on.BACKUP_D1, on.BACKUP_OBJECTS], ['true', 'true']);
+  assert.deepEqual([off.BACKUP_D1, off.BACKUP_OBJECTS], ['', '']);
+  const noD1 = shellVars(protectedAcme({ except: ['d1Backup'] }));
+  assert.deepEqual(
+    [noD1.BACKUPS_R2, noD1.STANDBY_D1, noD1.BACKUP_D1, noD1.BACKUP_OBJECTS],
+    ['commerceworker-backups-acme', '', '', 'true'],
+  );
+  const noObjects = shellVars(protectedAcme({ except: ['objectBackup'] }));
+  assert.deepEqual(
+    [noObjects.BACKUPS_R2, noObjects.STANDBY_D1, noObjects.BACKUP_D1, noObjects.BACKUP_OBJECTS],
+    ['commerceworker-backups-acme', 'commerceworker-standby-acme', 'true', ''],
+  );
+  const neither = shellVars(protectedAcme({ except: ['d1Backup', 'objectBackup'] }));
+  assert.deepEqual([neither.BACKUPS_R2, neither.BACKUP_DAYS], ['', '']);
   assert.equal(names(acme).backups, 'commerceworker-backups-acme');
 });
 
 test('commerceworker has redundancy on, and the base engine config carries what it binds', () => {
   const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
   assert.deepEqual(d.redundancy, { backupDays: 35, backupHourUtc: 1, drill: 'weekly', except: [] });
-  assert.deepEqual(REDUNDANCY_BINDINGS(base('engine')).workflows.slice(-3), [
+  assert.deepEqual(REDUNDANCY_BINDINGS(base('engine')).workflows.slice(-6), [
     'D1_BACKUP',
     'D1_RESTORE',
+    'OBJECTS_BACKUP',
+    'OBJECTS_RESTORE',
+    'OBJECTS_DRILL',
     'DOCS_RECONCILE',
   ]);
   for (const x of loadDeployments().filter((y) => y.id !== 'commerceworker'))
@@ -2583,7 +2645,15 @@ test('r2Replica as an exception strips the replica and nothing else; the flag of
   assert.deepEqual(REDUNDANCY_BINDINGS(noReplica), {
     databases: ['DB', 'STANDBY_DB'],
     buckets: ['DOCS', 'BACKUPS'],
-    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE'],
+    workflows: [
+      'ORDER_WORKFLOW',
+      'REPLENISH',
+      'D1_BACKUP',
+      'D1_RESTORE',
+      'OBJECTS_BACKUP',
+      'OBJECTS_RESTORE',
+      'OBJECTS_DRILL',
+    ],
   });
   assert.equal(noReplica.queues, undefined);
   assert.equal(renderEngine(base('engine'), acme).queues, undefined);

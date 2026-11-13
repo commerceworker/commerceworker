@@ -44,6 +44,7 @@
     "./logs": "./src/logs.ts",
     "./product-index-store": "./src/product-index-store.ts",
     "./audit-log": "./src/audit-log.ts",
+    "./active-objects": "./src/active-objects.ts",
     "./database-copy": "./src/database-copy.ts",
     "./auth-store": "./src/auth-store.ts",
     "./passkey-store": "./src/passkey-store.ts",

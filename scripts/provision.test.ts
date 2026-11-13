@@ -207,6 +207,8 @@ uuid=aaaaaaaa-0000-0000-0000-000000000000
       BACKUPS_R2: 'commerceworker-backups-acme',
       STANDBY_D1: 'commerceworker-standby-acme',
       BACKUP_DAYS: '35',
+      BACKUP_D1: 'true',
+      BACKUP_OBJECTS: 'true',
       ...opts.vars,
     },
     encoding: 'utf8',
@@ -249,16 +251,46 @@ test('the backups bucket and the standby database are created when they do not e
       ),
     ),
   );
-  assert.deepEqual(r.lock, {
-    rules: [
-      {
-        id: 'd1-backups',
-        enabled: true,
-        prefix: 'd1/',
-        condition: { type: 'Age', maxAgeSeconds: 35 * 86400 },
-      },
-    ],
+  // The Durable Object copies and restore reports under objects/ follow the same retention.
+  assert.ok(
+    r.calls.some((c) =>
+      c.startsWith(
+        'wrangler r2 bucket lifecycle add commerceworker-backups-acme object-backups objects/ --expire-days 35',
+      ),
+    ),
+  );
+  const rule = (id: string, prefix: string, days: number) => ({
+    id,
+    enabled: true,
+    prefix,
+    condition: { type: 'Age', maxAgeSeconds: days * 86400 },
   });
+  assert.deepEqual(r.lock, {
+    rules: [rule('d1-backups', 'd1/', 35), rule('object-backups', 'objects/', 35)],
+  });
+});
+
+test('with the D1 backup an exception the bucket keeps only objects/, and no standby is made', () => {
+  const r = runRedundancy({ vars: { BACKUP_D1: '', STANDBY_D1: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.calls.includes('wrangler r2 bucket create commerceworker-backups-acme'));
+  assert.ok(!r.calls.some((c) => c.includes(' d1-backups ')), r.calls.join('\n'));
+  assert.ok(!r.calls.some((c) => c.startsWith('wrangler d1 ') || c.startsWith('node ')));
+  assert.deepEqual(
+    r.lock.rules.map((x: { id: string; prefix: string }) => [x.id, x.prefix]),
+    [['object-backups', 'objects/']],
+  );
+});
+
+test('with the object backup an exception the bucket keeps only d1/, and the standby stays', () => {
+  const r = runRedundancy({ vars: { BACKUP_OBJECTS: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.calls.some((c) => c.includes('object-backups')), r.calls.join('\n'));
+  assert.ok(r.calls.includes('wrangler d1 create commerceworker-standby-acme'));
+  assert.deepEqual(
+    r.lock.rules.map((x: { prefix: string }) => x.prefix),
+    ['d1/'],
+  );
 });
 
 test('an existing bucket and standby database are kept, and only the retention is set again', () => {
@@ -309,7 +341,15 @@ test('a standby that is the live database stops before it is recorded', () => {
 });
 
 test('a deployment without redundancy creates nothing', () => {
-  const r = runRedundancy({ vars: { BACKUPS_R2: '', STANDBY_D1: '', BACKUP_DAYS: '' } });
+  const r = runRedundancy({
+    vars: {
+      BACKUPS_R2: '',
+      STANDBY_D1: '',
+      BACKUP_DAYS: '',
+      BACKUP_D1: '',
+      BACKUP_OBJECTS: '',
+    },
+  });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls, []);
 });

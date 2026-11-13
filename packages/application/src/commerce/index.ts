@@ -11,6 +11,7 @@ export * from './fx-rates';
 export * from './integrations';
 export * from './invoices';
 export * from './object-replica';
+export * from './objects-restore';
 export * from './order-confirmation';
 export * from './payments';
 export * from './price-books';

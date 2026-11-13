@@ -78,7 +78,7 @@ const gunzip = async (bytes: Uint8Array) =>
  * Writes `key` unless it exists (the lock refuses an overwrite), and returns what is stored there
  * either way: a put that loses a race to another attempt is taken as the object that won.
  */
-async function putOnce(
+export async function putOnce(
   store: BackupStore,
   key: string,
   body: string | Uint8Array,
