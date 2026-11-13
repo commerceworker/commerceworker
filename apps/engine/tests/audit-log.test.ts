@@ -103,6 +103,8 @@ describe('the audit log', () => {
     const docs = testEnv.DOCS;
     const locked = Object.assign(Object.create(docs), {
       head: docs.head.bind(docs),
+      // The sweep lists the daily copies before it archives.
+      list: docs.list.bind(docs),
       put: async (k: string, ...rest: unknown[]) => {
         if (await docs.head(k)) throw new Error('The object is locked by the bucket policy.');
         return (docs.put as (...a: unknown[]) => unknown)(k, ...rest);

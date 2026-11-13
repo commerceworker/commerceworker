@@ -1,10 +1,16 @@
-import { auditArchiveKey, RETENTION } from '@commerceworker/core';
+import { auditArchiveKey, auditRow, RETENTION, sealAuditRow } from '@commerceworker/core';
 import type { AuditRow, CartRuntime } from '@commerceworker/ports/commerce';
-import { InMemoryRetentionStore } from '@commerceworker/test-kit/commerce';
+import {
+  InMemoryAuditArchive,
+  InMemoryAuditLog,
+  InMemoryRetentionStore,
+} from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
 import {
   ARCHIVE_BATCH,
   archiveAudit,
+  auditCopiedThrough,
+  copyAudit,
   expireAddresses,
   expireMembers,
   expirePersonalData,
@@ -21,6 +27,7 @@ function archive() {
   return {
     objects,
     has: async (key: string) => objects.has(key),
+    copies: async () => [],
     put: async (key: string, rows: readonly AuditRow[]) => {
       if (objects.has(key)) throw new Error('locked');
       objects.set(key, [...rows]);
@@ -156,5 +163,62 @@ describe('the retention sweep', () => {
     });
     expect(await expireMembers({ retention }, now, 30)).toBe(1);
     expect(await expireMembers({ retention }, now, 30)).toBe(0);
+  });
+});
+
+describe('the daily audit copy', () => {
+  async function chain(ids: string[], log = new InMemoryAuditLog()) {
+    for (const id of ids)
+      await log.append((h) => sealAuditRow(auditRow(id, 'flow.saved', { target: id }, now), h));
+    return log;
+  }
+
+  it('copies what no copy holds, once, and leaves the events where they are', async () => {
+    const audit = await chain(['a1', 'a2', 'a3']);
+    const archive = new InMemoryAuditArchive();
+    expect(await copyAudit({ audit, archive })).toBe(3);
+    expect(archive.objects.size).toBe(1);
+    expect(await copyAudit({ audit, archive })).toBe(0);
+    await chain(['a4', 'a5'], audit);
+    expect(await copyAudit({ audit, archive })).toBe(2);
+    expect((await archive.copies()).map((c) => [c.from, c.to])).toEqual([
+      [1, 3],
+      [4, 5],
+    ]);
+    expect(audit.events).toHaveLength(5);
+  });
+
+  it('copies the events written after a restore, which reuse the lost events’ seqs', async () => {
+    const audit = await chain(['a1', 'a2', 'a3']);
+    const archive = new InMemoryAuditArchive();
+    await copyAudit({ audit, archive });
+    // A restore to just after event 1: 2 and 3 are gone, and new events take their seqs.
+    audit.events.splice(1);
+    await chain(['b2', 'b3'], audit);
+    expect(await auditCopiedThrough({ audit, archive })).toBe(0);
+    expect(await copyAudit({ audit, archive })).toBe(3);
+    // The lost events stay in R2 under their own key, beside the new ones.
+    const keys = [...archive.objects.values()].map((rows) => rows.map((r) => r.id).join());
+    expect(keys).toEqual(expect.arrayContaining(['a1,a2,a3', 'a1,b2,b3']));
+  });
+
+  it('lets the retention step delete copied events without writing them again', async () => {
+    const audit = await chain(['a1', 'a2']);
+    const archive = new InMemoryAuditArchive();
+    await copyAudit({ audit, archive });
+    const retention = new InMemoryRetentionStore({
+      audit: [
+        { id: 'a1', at: 1, seq: 1 },
+        { id: 'a2', at: 2, seq: 2 },
+        { id: 'a3', at: 3, seq: 3 },
+      ],
+    });
+    const before = archive.objects.size;
+    // Through seq 2 is copied; seq 3 isn't, so its batch is still written first.
+    expect(await archiveAudit({ retention, archive }, now, 400, 2)).toBe(3);
+    expect(archive.objects.size).toBe(before + 1);
+    const copied = new InMemoryRetentionStore({ audit: [{ id: 'a1', at: 1, seq: 1 }] });
+    expect(await archiveAudit({ retention: copied, archive }, now, 400, 1)).toBe(1);
+    expect(archive.objects.size).toBe(before + 1);
   });
 });

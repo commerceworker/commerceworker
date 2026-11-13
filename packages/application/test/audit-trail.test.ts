@@ -1,7 +1,7 @@
 import { auditRow, sealAuditRow } from '@commerceworker/core';
-import { InMemoryAuditLog } from '@commerceworker/test-kit/commerce';
+import { InMemoryAuditAnchors, InMemoryAuditLog } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { listAuditEvents, VERIFY_BATCH, verifyAuditTrail } from '../src/commerce';
+import { anchorAudit, listAuditEvents, VERIFY_BATCH, verifyAuditTrail } from '../src/commerce';
 
 async function trail(
   count: number,
@@ -94,5 +94,88 @@ describe('verifyAuditTrail', () => {
     const rest = await verifyAuditTrail({ audit }, first.next);
     expect(rest).toMatchObject({ ok: true, checked: 3 });
     expect(rest.next).toBeUndefined();
+  });
+});
+
+describe('audit anchors', () => {
+  const HOUR = 3_600_000;
+  const T = Date.UTC(2026, 10, 13, 9, 30);
+
+  it('writes the head once an hour, and nothing before the first event', async () => {
+    const anchors = new InMemoryAuditAnchors();
+    expect(await anchorAudit({ audit: new InMemoryAuditLog(), anchors }, T)).toBeNull();
+    const audit = await trail(3);
+    const head = audit.events.at(-1)!;
+    expect(await anchorAudit({ audit, anchors }, T)).toEqual({
+      seq: 3,
+      hash: head.hash,
+      eventId: 'aud_3',
+      eventAt: head.at,
+      anchoredAt: T,
+    });
+    // Write-once: the same hour's second run, even over a newer head, changes nothing.
+    await audit.append((h) => sealAuditRow(auditRow('aud_4', 'flow.saved', {}, 2000), h));
+    expect(await anchorAudit({ audit, anchors }, T + 5 * 60_000)).toBeNull();
+    expect((await anchors.latest(T))?.seq).toBe(3);
+    expect(await anchorAudit({ audit, anchors }, T + HOUR)).toMatchObject({ seq: 4 });
+  });
+
+  it('accepts a chain that grew since the anchor, and one the anchor was pruned from', async () => {
+    const audit = await trail(3);
+    const anchors = new InMemoryAuditAnchors();
+    await anchorAudit({ audit, anchors }, T);
+    await audit.append((h) => sealAuditRow(auditRow('aud_4', 'flow.saved', {}, 2000), h));
+    expect(await verifyAuditTrail({ audit, anchors }, undefined, T + HOUR)).toMatchObject({
+      ok: true,
+      checked: 4,
+    });
+    // Retention pruned the anchored event, with the chain past it: nothing to disagree about.
+    audit.events.splice(0, 3);
+    expect(await verifyAuditTrail({ audit, anchors }, undefined, T + HOUR)).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('finds a chain rewritten and re-hashed from an event before the anchor', async () => {
+    const audit = await trail(4);
+    const anchors = new InMemoryAuditAnchors();
+    await anchorAudit({ audit, anchors }, T);
+    // An admin edits event 2 and recomputes every hash after it: the chain alone is consistent.
+    const rewritten = new InMemoryAuditLog();
+    for (const e of audit.events) {
+      const row = auditRow(
+        e.id,
+        e.action,
+        { target: e.id === 'aud_2' ? 'forged' : e.target },
+        e.at,
+      );
+      await rewritten.append((h) => sealAuditRow(row, h));
+    }
+    expect(await verifyAuditTrail({ audit: rewritten }, undefined, T)).toMatchObject({ ok: true });
+    expect(
+      await verifyAuditTrail({ audit: rewritten, anchors }, undefined, T + HOUR),
+    ).toMatchObject({ ok: false, brokenAt: 4, reason: expect.stringContaining('rewritten') });
+  });
+
+  it('finds events a restore dropped', async () => {
+    const audit = await trail(4);
+    const anchors = new InMemoryAuditAnchors();
+    await anchorAudit({ audit, anchors }, T);
+    audit.events.splice(2);
+    expect(await verifyAuditTrail({ audit, anchors }, undefined, T + HOUR)).toMatchObject({
+      ok: false,
+      brokenAt: 4,
+      reason: expect.stringContaining('events were lost'),
+    });
+  });
+
+  it('ignores an anchor older than a week', async () => {
+    const audit = await trail(2);
+    const anchors = new InMemoryAuditAnchors();
+    await anchorAudit({ audit, anchors }, T);
+    audit.events.splice(1);
+    expect(await verifyAuditTrail({ audit, anchors }, undefined, T + 8 * 24 * HOUR)).toMatchObject({
+      ok: true,
+    });
   });
 });

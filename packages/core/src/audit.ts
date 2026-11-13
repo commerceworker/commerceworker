@@ -212,6 +212,19 @@ export type AuditHead = { seq: number; hash: string };
 /** What the first event in a chain follows. */
 export const AUDIT_GENESIS = 'genesis';
 
+/**
+ * The chain's head as written outside the database, hourly: where the chain stood and when. A
+ * restore that drops events, or a rewritten chain, no longer agrees with it.
+ */
+export type AuditAnchor = {
+  seq: number;
+  hash: string;
+  /** The head event's id and time, to find it in an export. */
+  eventId: string;
+  eventAt: number;
+  anchoredAt: number;
+};
+
 export type SealedAuditRow = AuditRow & { seq: number; prevHash: string; hash: string };
 
 /** The hash an event is sealed with: SHA-256 of its fields, its place and the hash before it. */

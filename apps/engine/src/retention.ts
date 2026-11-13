@@ -2,7 +2,9 @@
  * Retention: a daily sweep (the Worker's cron trigger) that deletes rows nothing reads once they
  * are old. Orders and everything that is part of an order's record (payments, shipments, the stock
  * and balance ledgers, flow versions) are kept. Audit events past the deployment's retention
- * (`AUDIT_RETENTION_DAYS`, 400 days unless set) are archived to R2 first, then deleted. Where a
+ * (`AUDIT_RETENTION_DAYS`, 400 days unless set) are archived to R2 first, then deleted; every
+ * event is also copied to R2 the day it is sealed (`copyAuditEvents`), and the chain's head is
+ * anchored there every hour (`anchorAuditChain`), so a restore can't lose events unseen. Where a
  * deployment sets `PERSONAL_DATA_RETENTION_DAYS`, orders finished longer ago than that lose their
  * buyer's personal data, as an erasure request would remove it (`eraseOrders`); the commercial
  * record stays, and the customer addresses last shipped to before then are deleted. Orders started before customer
@@ -26,7 +28,15 @@ import { backfillAddresses } from './customer-addresses';
 import { resealSecrets } from './data-key';
 import { eraseIfErased, eraseOrders } from './subjects';
 import { pruneUsage } from './usage';
-import { auditArchive, cartRuntime, retentionStore, shopperAuth, ucpLinks } from './wire';
+import {
+  auditAnchors,
+  auditArchive,
+  auditLog,
+  cartRuntime,
+  retentionStore,
+  shopperAuth,
+  ucpLinks,
+} from './wire';
 
 // The policy and the archive's keys are core rules, kept importable from here.
 export { auditArchiveKey, RETENTION } from '@commerceworker/core';
@@ -54,6 +64,7 @@ export async function sweep(env: Env, now = Date.now()) {
     uc.pruneExpired({ retention: retentionStore(env) }, now, RETENTION),
   );
   const result = {
+    auditCopied: await step('auditCopied', () => copyAuditEvents(env)),
     auditArchived: await step('auditArchived', () => archiveAudit(env, now)),
     cartsPurged: await step('cartsPurged', () => purgeEndedCarts(env, now)),
     cartBuyersIndexed: await step('cartBuyersIndexed', () => indexCartBuyers(env)),
@@ -88,13 +99,34 @@ export const indexCartBuyers = (env: Env) =>
     eraseIfErased(env, id, buyer),
   );
 
-/** Moves audit events past `AUDIT_RETENTION_DAYS` to R2, then deletes them. Returns how many. */
-export const archiveAudit = (env: Env, now = Date.now()) =>
-  uc.archiveAudit(
-    { retention: retentionStore(env), archive: auditArchive(env) },
+/**
+ * Copies audit events no copy holds yet to R2 (`audit/chain/`), leaving them in the database, so a
+ * restore of the database can't lose them. Returns how many it copied.
+ */
+export const copyAuditEvents = (env: Env) =>
+  uc.copyAudit({ audit: auditLog(env), archive: auditArchive(env) });
+
+/**
+ * Writes the audit chain's head hash, and the latest event's id and time, to the locked `audit/`
+ * prefix (`audit/anchors/<date>/<hour>.json`, once an hour: the hourly cron). Returns the anchor
+ * written, or null when there is no event yet or this hour's is already there.
+ */
+export const anchorAuditChain = (env: Env, now = Date.now()) =>
+  uc.anchorAudit({ audit: auditLog(env), anchors: auditAnchors(env) }, now);
+
+/**
+ * Moves audit events past `AUDIT_RETENTION_DAYS` to R2, then deletes them; events the daily copy
+ * already holds are only deleted. Returns how many.
+ */
+export async function archiveAudit(env: Env, now = Date.now()) {
+  const ports = { audit: auditLog(env), archive: auditArchive(env) };
+  return uc.archiveAudit(
+    { retention: retentionStore(env), archive: ports.archive },
     now,
     auditRetentionDays(env.AUDIT_RETENTION_DAYS),
+    await uc.auditCopiedThrough(ports),
   );
+}
 
 /** Erases the buyer from orders finished before the deployment's retention. Returns how many. */
 export async function expirePersonalData(env: Env, now = Date.now()) {

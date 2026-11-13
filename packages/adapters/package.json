@@ -6,6 +6,7 @@
   "description": "Cloudflare implementations of the ports: Workers AI, Vectorize, R2, KV cache and asset gate, the catalog's read edge, Queues, the native rate limiter, Images, Stream, Email, Worker Loader plugins, HTTP effects (webhooks/functions), structured import parsers, the space export reader. One subpath per adapter so each Worker bundles only what it binds.",
   "exports": {
     "./ai-workers": "./src/ai-workers/index.ts",
+    "./audit-anchors-r2": "./src/audit-anchors-r2/index.ts",
     "./asset-gate-kv": "./src/asset-gate-kv/index.ts",
     "./blob-r2": "./src/blob-r2/index.ts",
     "./cache-kv": "./src/cache-kv/index.ts",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@commerceworker/core": "workspace:*",
     "@commerceworker/test-kit": "workspace:*",
     "@commerceworker/typescript-config": "workspace:*",
     "@types/node": "catalog:",

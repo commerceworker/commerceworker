@@ -4,6 +4,7 @@
  * else asks for a port, never a table.
  */
 
+import { createR2AuditAnchors } from '@commerceworker/adapters/audit-anchors-r2';
 import { createCatalogEdgeReader } from '@commerceworker/adapters/catalog-edge';
 import { createCfEmailSender, withFallbackSender } from '@commerceworker/adapters/email-cf';
 import {
@@ -11,6 +12,11 @@ import {
   createReplicaFallbackBucket,
 } from '@commerceworker/adapters/object-replica-r2';
 import type { ApprovalPorts, DrillProbe } from '@commerceworker/application/commerce';
+import {
+  AUDIT_ANCHOR_LOOKBACK_DAYS,
+  auditAnchorKey,
+  parseAuditCopyKey,
+} from '@commerceworker/core';
 import type { ProductCatalogRpc } from '@commerceworker/core/product';
 import { createDb, probeDb } from '@commerceworker/db';
 import { d1ActiveObjects } from '@commerceworker/db/active-objects';
@@ -56,6 +62,7 @@ import type { Clock, EmailQueue, EmailSender } from '@commerceworker/ports';
 import type {
   ActiveObjects,
   AddressBook,
+  AuditAnchors,
   AuditArchive,
   AuditLog,
   BalanceStore,
@@ -439,6 +446,16 @@ export function drillObject(env: Env): DrillProbe & {
 export function auditArchive(env: Pick<Env, 'DOCS'>): AuditArchive {
   return {
     has: async (key) => !!(await env.DOCS.head(key)),
+    async copies() {
+      const copies: ReturnType<typeof parseAuditCopyKey>[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await env.DOCS.list({ prefix: 'audit/chain/', cursor });
+        for (const o of page.objects) copies.push(parseAuditCopyKey(o.key));
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+      return copies.filter((c) => c !== null);
+    },
     async put(key, rows) {
       await env.DOCS.put(key, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`, {
         httpMetadata: { contentType: 'application/x-ndjson' },
@@ -447,6 +464,13 @@ export function auditArchive(env: Pick<Env, 'DOCS'>): AuditArchive {
     },
   };
 }
+
+/** The chain's head, written hourly to `audit/anchors/` (`DOCS`, locked). */
+export const auditAnchors = (env: Pick<Env, 'DOCS'>): AuditAnchors =>
+  createR2AuditAnchors(env.DOCS, {
+    keyOf: auditAnchorKey,
+    lookbackDays: AUDIT_ANCHOR_LOOKBACK_DAYS,
+  });
 
 /** The cart agents the retention sweep wakes. */
 export function cartRuntime(env: Env): CartRuntime {

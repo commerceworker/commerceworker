@@ -5,6 +5,8 @@
  * Tests swap a port for its in-memory twin in @commerceworker/test-kit/commerce.
  */
 import { env } from 'cloudflare:workers';
+import { createR2AuditAnchors } from '@commerceworker/adapters/audit-anchors-r2';
+import { AUDIT_ANCHOR_LOOKBACK_DAYS, auditAnchorKey } from '@commerceworker/core';
 import { createDb, probeDb } from '@commerceworker/db';
 import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
@@ -32,6 +34,7 @@ import { d1WorkspaceStore } from '@commerceworker/db/workspace-store';
 import type { Clock } from '@commerceworker/ports';
 import type {
   AddressBook,
+  AuditAnchors,
   AuditLog,
   AuthStore,
   BackOffice,
@@ -123,6 +126,13 @@ export const orderRecords = (): OrderRecords => d1OrderRecords(env.DB, systemClo
 
 /** The audit trail's hash chain. */
 export const auditLog = (): AuditLog => d1AuditLog(env.DB);
+
+/** The hourly anchors of the chain's head, read to check the chain against (`DOCS`, locked). */
+export const auditAnchors = (): AuditAnchors =>
+  createR2AuditAnchors(env.DOCS, {
+    keyOf: auditAnchorKey,
+    lookbackDays: AUDIT_ANCHOR_LOOKBACK_DAYS,
+  });
 
 /** The signed health check's write to D1 and back (`probeDb`). */
 export const d1Writable = (id: string) => probeDb(createDb(env.DB), id);

@@ -41,7 +41,7 @@ import { handleMcp, MCP_PATH } from './mcp';
 import { failUnstartedOrders } from './orders';
 import { reconcileStripe } from './payment-reconcile';
 import { reindexProducts } from './product-index';
-import { sweep } from './retention';
+import { anchorAuditChain, sweep } from './retention';
 import { handleUcp } from './ucp/rest';
 import { commercePorts } from './wire';
 
@@ -130,6 +130,7 @@ export default {
         'unstarted orders': () => failUnstartedOrders(env),
         'workflow instances': () => sweepOrderInstances(env),
         'stripe reconciliation': () => reconcileStripe(env),
+        'audit anchor': () => anchorAuditChain(env),
       })) {
         try {
           await run();

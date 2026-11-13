@@ -145,6 +145,7 @@ const stores = {
   workspace: new kit.InMemoryWorkspaceStore(),
   flows: new kit.InMemoryFlowStore(),
   audit: new kit.InMemoryAuditLog(),
+  anchors: new kit.InMemoryAuditAnchors(),
   board: new kit.InMemoryOrderBoard(),
   carts: new kit.InMemoryCartRecords(),
   receipts: new kit.InMemoryWebhookReceipts(),
@@ -167,6 +168,7 @@ vi.mock('~/lib/wire.server', () => ({
   workspaceStore: () => stores.workspace,
   flowStore: () => stores.flows,
   auditLog: () => stores.audit,
+  auditAnchors: () => stores.anchors,
   orderBoard: () => stores.board,
   cartRecords: () => stores.carts,
   webhookReceipts: () => stores.receipts,
@@ -232,6 +234,7 @@ beforeEach(() => {
   stores.integrations = new kit.InMemoryIntegrationStore();
   stores.ucp = new kit.InMemoryUcpStore();
   stores.audit = new kit.InMemoryAuditLog();
+  stores.anchors = new kit.InMemoryAuditAnchors();
 });
 
 // ── Orders ───────────────────────────────────────────────────────────────

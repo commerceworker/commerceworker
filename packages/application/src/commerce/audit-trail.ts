@@ -3,11 +3,12 @@
  * MCP tools both call these, so the two transports show the same thing.
  */
 import {
+  type AuditAnchor,
   type AuditChainCheck,
   type BusinessAuditAction,
   verifyAuditChain,
 } from '@commerceworker/core';
-import type { AuditEvent, AuditLog } from '@commerceworker/ports/commerce';
+import type { AuditAnchors, AuditEvent, AuditLog } from '@commerceworker/ports/commerce';
 
 /**
  * An audit event a use-case asks its caller to record once the change is made: the channel adds
@@ -46,17 +47,67 @@ export async function listAuditEvents(
 /**
  * Checks the hash chain from just after `after` (a `seq`), or from the oldest event still kept
  * (pruned ones are in the R2 archive, which carries their hashes). `next` is set when there is
- * more to check.
+ * more to check. With `anchors`, the chain is also held to the newest hourly anchor: the event
+ * the anchor names must still be there with the hash it recorded, which a rewritten chain or a
+ * restore that dropped events cannot satisfy.
  */
 export async function verifyAuditTrail(
-  ports: { audit: AuditLog },
+  ports: { audit: AuditLog; anchors?: AuditAnchors },
   after?: number,
+  now = Date.now(),
 ): Promise<AuditChainCheck & { next?: number }> {
   const anchor = after === undefined ? undefined : await ports.audit.link(after);
   if (after !== undefined && !anchor)
     return { ok: false, checked: 0, brokenAt: after, reason: `no event ${after}` };
   const rows = await ports.audit.sealedAfter(after, VERIFY_BATCH);
   const check = await verifyAuditChain(rows, anchor);
-  const next = check.ok && rows.length === VERIFY_BATCH ? check.last?.seq : undefined;
+  if (!check.ok) return check;
+  const disagreement = ports.anchors && (await checkAnchor(ports.audit, ports.anchors, now));
+  if (disagreement) return { ok: false, checked: check.checked, ...disagreement };
+  const next = rows.length === VERIFY_BATCH ? check.last?.seq : undefined;
   return { ...check, ...(next ? { next } : {}) };
+}
+
+/** Why the chain disagrees with the newest anchor, or undefined when it agrees (or has none). */
+async function checkAnchor(audit: AuditLog, anchors: AuditAnchors, now: number) {
+  const anchor = await anchors.latest(now);
+  if (!anchor) return undefined;
+  const when = new Date(anchor.anchoredAt).toISOString();
+  const link = await audit.link(anchor.seq);
+  if (link) {
+    if (link.hash === anchor.hash) return undefined;
+    return {
+      brokenAt: anchor.seq,
+      reason: `event ${anchor.seq} does not match the anchor written ${when}: the chain was rewritten`,
+    };
+  }
+  // Not there: pruned by retention if the chain has moved past it, dropped if it hasn't.
+  const head = await audit.head();
+  if (!head || head.seq < anchor.seq)
+    return {
+      brokenAt: anchor.seq,
+      reason: `the anchor written ${when} names event ${anchor.seq}, but the chain ends at ${head?.seq ?? 0}: events were lost`,
+    };
+  return undefined;
+}
+
+/**
+ * Writes the chain's head to the anchors (hourly): its seq and hash, and the head event's id and
+ * time. Nothing before the first event. Returns the anchor, or null when there is none to write
+ * or this hour's is already there.
+ */
+export async function anchorAudit(
+  ports: { audit: AuditLog; anchors: AuditAnchors },
+  now: number,
+): Promise<AuditAnchor | null> {
+  const head = await ports.audit.head();
+  if (!head) return null;
+  const anchor = {
+    seq: head.seq,
+    hash: head.hash,
+    eventId: head.id,
+    eventAt: head.at,
+    anchoredAt: now,
+  };
+  return (await ports.anchors.write(anchor)) ? anchor : null;
 }

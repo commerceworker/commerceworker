@@ -63,6 +63,8 @@ export interface AuditArchive {
   has(key: string): Promise<boolean>;
   /** Writes `rows` as NDJSON, one event a line. */
   put(key: string, rows: readonly AuditRow[]): Promise<void>;
+  /** The daily copies (`auditCopyKey`), in chain order. */
+  copies(): Promise<{ key: string; from: number; to: number; hash: string }[]>;
 }
 
 /** The cart agents the sweep wakes. */
