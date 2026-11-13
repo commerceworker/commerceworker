@@ -2363,6 +2363,7 @@ test('redundancy is off unless the registry sets it, and true takes the defaults
   assert.equal(acme.redundancy, undefined);
   assert.equal(toDeployment({ ...acme, redundancy: false }).redundancy, undefined);
   assert.deepEqual(protectedAcme().redundancy, {
+    ai: { dailyBudgetUsd: 50, perMinute: 100 },
     backupDays: 35,
     backupHourUtc: 1,
     drill: 'weekly',
@@ -2375,8 +2376,10 @@ test('redundancy is off unless the registry sets it, and true takes the defaults
     except: ['canary', 'canary', 'readReplicas'],
     alerts: { webhook: 'https://hooks.example.com/x', pagerduty: 'rk' },
     offsite: { provider: 'gcs', bucket: 'acme-offsite', region: 'europe-west1' },
+    ai: { dailyBudgetUsd: 12.5, perMinute: 30 },
   }).redundancy;
   assert.deepEqual(tuned, {
+    ai: { dailyBudgetUsd: 12.5, perMinute: 30 },
     backupDays: 60,
     backupHourUtc: 4,
     drill: 'monthly',
@@ -2390,6 +2393,15 @@ test('redundancy is off unless the registry sets it, and true takes the defaults
 test('bad redundancy entries are refused', () => {
   const refuse = (redundancy: unknown, why: RegExp, more: Record<string, unknown> = {}) =>
     assert.throws(() => toDeployment({ ...acme, redundancy, ...more }), why);
+  refuse({ ai: 5 }, /redundancy\.ai must be/);
+  refuse({ ai: { tokens: 5 } }, /redundancy\.ai has no tokens/);
+  refuse({ ai: { dailyBudgetUsd: 0 } }, /dailyBudgetUsd must be a number of dollars above 0/);
+  refuse({ ai: { dailyBudgetUsd: -1 } }, /dailyBudgetUsd/);
+  refuse({ ai: { dailyBudgetUsd: '50' } }, /dailyBudgetUsd/);
+  refuse({ ai: { dailyBudgetUsd: 50_000 } }, /at most 10000/);
+  refuse({ ai: { perMinute: 0 } }, /perMinute must be a whole number of calls from 1/);
+  refuse({ ai: { perMinute: 2.5 } }, /perMinute/);
+  refuse({ ai: { perMinute: 20_000 } }, /from 1 to 10000/);
   refuse('yes', /redundancy must be true or/);
   refuse([], /redundancy must be true or/);
   refuse({ backups: 3 }, /redundancy has no backups/);
@@ -2698,7 +2710,13 @@ test('the engine binds the backups bucket only for its own parts, the web app fo
 
 test('commerceworker has redundancy on, and the base engine config carries what it binds', () => {
   const d = loadDeployments().find((x) => x.id === 'commerceworker')!;
-  assert.deepEqual(d.redundancy, { backupDays: 35, backupHourUtc: 1, drill: 'weekly', except: [] });
+  assert.deepEqual(d.redundancy, {
+    ai: { dailyBudgetUsd: 50, perMinute: 100 },
+    backupDays: 35,
+    backupHourUtc: 1,
+    drill: 'weekly',
+    except: [],
+  });
   assert.deepEqual(REDUNDANCY_BINDINGS(base('engine')).workflows.slice(-6), [
     'D1_BACKUP',
     'D1_RESTORE',
@@ -3360,6 +3378,19 @@ test('each route is held field by field: first model, second model, limits, outp
     });
     assert.deepEqual(element(r, 'end'), { id: 'end', type: 'end', outputs: {} });
   }
+});
+
+test("a deployment's redundancy.ai sets each route's budget and rate limit", () => {
+  const d = protectedAcme({ ai: { dailyBudgetUsd: 7.5, perMinute: 12 } });
+  for (const name of ['cw-text', 'cw-assistant']) {
+    const r = routeNamed(d, name);
+    assert.equal(element(r, 'budget').properties!.limit, 7.5);
+    assert.equal(element(r, 'rate').properties!.limit, 12);
+  }
+  // Only one given: the other keeps its default.
+  const half = protectedAcme({ ai: { perMinute: 40 } });
+  assert.equal(element(routeNamed(half, 'cw-text'), 'budget').properties!.limit, 50);
+  assert.equal(element(routeNamed(half, 'cw-text'), 'rate').properties!.limit, 40);
 });
 
 test('every element is reachable and every output names an element that exists', () => {
