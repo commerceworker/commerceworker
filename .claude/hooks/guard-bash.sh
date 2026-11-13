@@ -1,6 +1,7 @@
 #!/bin/bash
 # PreToolUse (Bash): production changes only come from CI, so a command that would deploy, roll
-# back, migrate a remote D1 or delete a Cloudflare resource by hand is denied. Commands that are
+# back, migrate a remote D1, delete a Cloudflare resource or its stored objects, purge a queue or
+# end a Workflow instance by hand is denied. Commands that are
 # sometimes right but hard to undo (pushing to main, force pushes, merging a PR, remote D1 queries,
 # Worker secrets, provisioning a deployment) ask first. Everything else is allowed.
 #
@@ -29,6 +30,18 @@ while IFS= read -r seg; do
     deny PreToolUse "Blocked \`$seg\`: a Time Travel restore replaces the whole production database and loses every write since the bookmark. It's an incident decision for the user (docs/deploy.md, \"Restoring D1\"); give them the command instead."
   m "(^|$S|/)wrangler$S+(d1|kv$S+namespace|r2$S+bucket|queues)$S+delete($S|$)" &&
     deny PreToolUse "Blocked \`$seg\`: deleting a deployment's Cloudflare resource strands its data. Removing a customer is a reviewed procedure (docs/operations.md, \"Removing a customer\"); ask the user to run it."
+  # Deleting what is stored, purging a queue and ending a Workflow instance reach production unless
+  # the command says `--local` (wrangler's local simulator); with no flag they hit the account.
+  if ! m "$S--local($S|=|$)"; then
+    m "(^|$S|/)wrangler$S+r2$S+object$S+delete($S|$)" &&
+      deny PreToolUse "Blocked \`$seg\`: deleting an R2 object against the account. The audit archive, backups and plugin bundles are bucket-locked for a reason, and anything else is a customer's document. Add --local to act on the local simulator, or ask the user to run it."
+    m "(^|$S|/)wrangler$S+kv(:|$S+)(key|bulk)$S+delete($S|$)" &&
+      deny PreToolUse "Blocked \`$seg\`: deleting KV keys against the account (catalog cards, OAuth grants, edge reads). Add --local to act on the local simulator, or ask the user to run it."
+    m "(^|$S|/)wrangler$S+queues$S+purge($S|$)" &&
+      deny PreToolUse "Blocked \`$seg\`: purging a queue drops every message in it, orders' mail, catalog changes and purges included. Ask the user to run it."
+    m "(^|$S|/)wrangler$S+workflows$S+(instances$S+(terminate|terminate-all|delete)|delete)($S|$)" &&
+      deny PreToolUse "Blocked \`$seg\`: ending a Workflow instance (or deleting a Workflow) against the account stops an order mid-flight, and its compensations don't run. Cancel through the order (the API or the order agent), or ask the user to run it."
+  fi
   if m "^(pnpm|npm|yarn|bun|turbo|npx$S+turbo)($S|$)"; then
     m "($S)(run$S+)?(docs:)?deploy($S|$)" && deny PreToolUse "Blocked \`$seg\`. $ci"
     m "($S)(run$S+)?db:migrate:remote($S|$)" &&
