@@ -10,9 +10,10 @@ import { authorizeContent, maskDeniedFields, SCOPES } from '@commerceworker/doma
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { blockPatchShape } from '../../api/docs/schemas/blocks';
-import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, READ_ONLY, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerBlockTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, principal, guard } = t;
   // --- key-addressed edits to an entry's blocks fields ------------------------------
   server.registerTool(

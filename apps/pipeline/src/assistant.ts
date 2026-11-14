@@ -30,6 +30,7 @@ export class AssistantAgent extends AssistantAgentBase {
     const env = this.env;
     return {
       deps: {
+        defaultScope: wired.config.seed,
         ctx: wired.ctx,
         ai: wired.ai,
         rag: wired.rag,

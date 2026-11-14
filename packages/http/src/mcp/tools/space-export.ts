@@ -8,9 +8,10 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { spaceExportImportBody } from '../../api/validation';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerSpaceExportTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, guard, principal } = t;
   // --- importing a whole space from the JSON space export format --------------
   const spaceExportArgs = {

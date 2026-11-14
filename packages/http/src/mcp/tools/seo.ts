@@ -15,9 +15,10 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { entrySeoShape } from '../../api/validation';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerSeoTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, principal, guard } = t;
   // --- SEO metadata and the sitemap --------------------------------------
   server.registerTool(

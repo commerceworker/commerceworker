@@ -2,9 +2,10 @@ import { analyzeImport, executeImport } from '@commerceworker/application';
 import { SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { importArgs, ok, scopeOf, type ToolContext, toolSchema } from './shared';
+import { importArgs, ok, type ToolContext, toolSchema } from './shared';
 
 export function registerImportTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, guard, principal } = t;
   // --- importing content from elsewhere -------------------------------------
   const toImport = (args: Record<string, unknown>) => ({

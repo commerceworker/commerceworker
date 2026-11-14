@@ -13,7 +13,7 @@ import {
 } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext, toolSchema } from './shared';
+import { ok, type ToolContext, toolSchema } from './shared';
 
 export function registerPromotionTools(server: McpServer, t: ToolContext): void {
   const { ctx, principal, guard } = t;
@@ -39,7 +39,7 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
       ),
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
+      const spaceId = args.space ?? t.defaultScope.spaceId;
       guard(SCOPES.contentManage, { spaceId, environmentId: args.target });
       guard(SCOPES.contentPublish, { spaceId, environmentId: args.target });
       return ok(
@@ -66,8 +66,8 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: t.defaultScope.environmentId });
       return ok(await listPromotions(ctx, spaceId, args.status ? { status: args.status } : {}));
     },
   );
@@ -82,8 +82,8 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: t.defaultScope.environmentId });
       return ok(await getPromotion(ctx, spaceId, args.id));
     },
   );
@@ -98,8 +98,8 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
       ),
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: t.defaultScope.environmentId });
       return ok(await approvePromotion(ctx, principal, spaceId, args.id));
     },
   );
@@ -113,8 +113,8 @@ export function registerPromotionTools(server: McpServer, t: ToolContext): void 
       ),
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.contentPublish, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.contentPublish, { spaceId, environmentId: t.defaultScope.environmentId });
       return ok(await rejectPromotion(ctx, principal, spaceId, args.id));
     },
   );

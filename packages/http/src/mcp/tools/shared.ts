@@ -22,17 +22,10 @@ import type { McpDeps } from '../deps';
  * guards bound to them.
  */
 
-export const DEFAULT_SPACE = process.env.SEED_SPACE_ID ?? 'space-1';
-export const DEFAULT_ENV = process.env.SEED_ENV_ID ?? 'main';
-
 export const scopeArgs = {
   space: z.string().optional().describe('Space id (defaults to the server default).'),
-  environment: z.string().optional().describe('Environment id (defaults to "main").'),
+  environment: z.string().optional().describe('Environment id (defaults to the server default).'),
 };
-export const scopeOf = (a: { space?: string; environment?: string }): Scope => ({
-  spaceId: a.space ?? DEFAULT_SPACE,
-  environmentId: a.environment ?? DEFAULT_ENV,
-});
 
 export const ok = (data: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
@@ -240,6 +233,8 @@ export async function rightsRefusal(run: () => Promise<ReturnType<typeof ok>>) {
 
 /** What `buildServer` binds per request and every area's tools close over. */
 export interface ToolContext {
+  readonly defaultScope: Scope;
+  readonly scopeOf: (args: { space?: string; environment?: string }) => Scope;
   readonly deps: McpDeps;
   readonly ctx: McpDeps['ctx'];
   readonly ai: McpDeps['ai'];

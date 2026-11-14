@@ -8,6 +8,7 @@ import {
   createHasher,
   type RagDeps,
 } from '@commerceworker/application';
+import type { Scope } from '@commerceworker/domain';
 import { type ApiKeyKind, scopesForKind } from '@commerceworker/domain';
 import type {
   AIProvider,
@@ -40,6 +41,7 @@ const ids: IdGenerator = { newId: () => uuidv7() };
 
 /** The import and fetch adapters `wireEdge` binds, for tests and callers that wire by hand. */
 export interface EdgeAdapters {
+  readonly defaultScope: Scope;
   readonly importSources: Readonly<Record<string, ImportSource>>;
   readonly spaceExportReader: SpaceExportReader;
   readonly remoteFetcher: RemoteFetcher;
@@ -49,8 +51,11 @@ export interface EdgeAdapters {
   readonly inProcessAgents: (deps: { ctx: AppContext; ai: AIProvider }) => AgentRunner;
 }
 
-export function inMemoryEdge(): EdgeAdapters {
+export function inMemoryEdge(
+  defaultScope: Scope = { spaceId: 'space-1', environmentId: 'main' },
+): EdgeAdapters {
   return {
+    defaultScope: { ...defaultScope },
     importSources: structuredImportSources(),
     spaceExportReader: createSpaceExportReader(),
     remoteFetcher: createRemoteFetcher(),
@@ -133,6 +138,6 @@ export function wire(config: ApiConfig): InMemoryWired {
     blob: new FakeBlobStore(),
     ai: new StubAIProvider(devGenerate),
     bus: new InMemoryEventBus(),
-    ...inMemoryEdge(),
+    ...inMemoryEdge(config.seed),
   };
 }

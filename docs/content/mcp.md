@@ -174,3 +174,5 @@ referential integrity, RBAC, and event emission for free.
 
 The admin's assistant calls a subset of these tools in-process as the signed-in person; see
 [Coworker](./ai-agents-and-search.md#coworker-the-admins-assistant).
+
+The API and assistant composition roots supply the default space and environment through `McpDeps.defaultScope`, using the deployment seed configuration. Each server instance keeps its own defaults; tool execution, alias lookup and audit records share them. The HTTP library reads no environment variables for scope defaults.

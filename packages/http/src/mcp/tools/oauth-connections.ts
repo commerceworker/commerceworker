@@ -2,9 +2,10 @@ import { listConnectedApps, revokeConnectedApp } from '@commerceworker/applicati
 import { SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerOAuthConnectionTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, guard } = t;
   // --- connected OAuth applications --------------------------------------
   // Minting a personal access token is deliberately absent here: a delegated

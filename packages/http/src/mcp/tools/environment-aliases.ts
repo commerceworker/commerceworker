@@ -7,7 +7,7 @@ import {
 import { SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext, toolSchema } from './shared';
+import { ok, type ToolContext, toolSchema } from './shared';
 
 export function registerEnvironmentAliasTools(server: McpServer, t: ToolContext): void {
   const { ctx, principal, guard } = t;
@@ -22,8 +22,8 @@ export function registerEnvironmentAliasTools(server: McpServer, t: ToolContext)
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.previewRead, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.previewRead, { spaceId, environmentId: t.defaultScope.environmentId });
       return ok(await listEnvironmentAliases(ctx, spaceId));
     },
   );
@@ -41,8 +41,8 @@ export function registerEnvironmentAliasTools(server: McpServer, t: ToolContext)
       ),
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.spaceAdmin, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.spaceAdmin, { spaceId, environmentId: t.defaultScope.environmentId });
       return ok(await setEnvironmentAlias(ctx, spaceId, args.alias, args.targetEnvironmentId));
     },
   );
@@ -56,8 +56,8 @@ export function registerEnvironmentAliasTools(server: McpServer, t: ToolContext)
       ),
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.spaceAdmin, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.spaceAdmin, { spaceId, environmentId: t.defaultScope.environmentId });
       await deleteEnvironmentAlias(ctx, spaceId, args.alias);
       return ok({ deleted: args.alias });
     },
@@ -79,7 +79,7 @@ export function registerEnvironmentAliasTools(server: McpServer, t: ToolContext)
       ),
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
+      const spaceId = args.space ?? t.defaultScope.spaceId;
       guard(SCOPES.spaceAdmin, { spaceId, environmentId: args.environment });
       return ok(
         await deleteEnvironment(ctx, spaceId, args.environment, {

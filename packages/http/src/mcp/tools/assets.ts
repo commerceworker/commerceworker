@@ -29,17 +29,10 @@ import {
 } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import {
-  ok,
-  rightsRefusal,
-  scopeArgs,
-  scopeOf,
-  signedAssets,
-  type ToolContext,
-  toolSchema,
-} from './shared';
+import { ok, rightsRefusal, scopeArgs, signedAssets, type ToolContext, toolSchema } from './shared';
 
 export function registerAssetTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, rag, principal, guard } = t;
   // --- assets / media intelligence ---------------------------------------
   const emptyFacets = { kind: {}, tag: {}, folder: {} };

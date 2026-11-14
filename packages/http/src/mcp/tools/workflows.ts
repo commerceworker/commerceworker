@@ -31,9 +31,10 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { requireWorkflowEngine } from '../../api/routes/workflows';
-import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, READ_ONLY, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerWorkflowTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, ai, principal, guard } = t;
   // --- editorial workflows (graphs, versions, runs, tasks) -----------------
   // Same use-cases and scope checks as the HTTP routes in api/routes/workflows.ts.

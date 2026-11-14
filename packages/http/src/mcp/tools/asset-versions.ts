@@ -21,17 +21,10 @@ import { MAX_ASSET_RIGHTS_TEXT, NotConfiguredError, SCOPES } from '@commercework
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { assetVersionResponse } from '../../api/asset-response';
-import {
-  ok,
-  rightsRefusal,
-  scopeArgs,
-  scopeOf,
-  signedAssets,
-  type ToolContext,
-  toolSchema,
-} from './shared';
+import { ok, rightsRefusal, scopeArgs, signedAssets, type ToolContext, toolSchema } from './shared';
 
 export function registerAssetVersionTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, ai, principal, guard } = t;
   const { signedOne } = signedAssets(deps);
   // --- asset versions, rights and bulk jobs ------------------------------------------------

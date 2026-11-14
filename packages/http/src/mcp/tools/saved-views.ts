@@ -17,7 +17,7 @@ import {
 } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, READ_ONLY, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 /**
  * Saved views, on the use-cases the REST routes call, with the same rules: `preview:read` to
@@ -26,6 +26,7 @@ import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from 
  * found".
  */
 export function registerSavedViewTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, guard, principal, auditTarget } = t;
   const query = z
     .object({

@@ -8,9 +8,10 @@ import { authorize, SCOPES, SPACE_ID_PATTERN } from '@commerceworker/domain';
 import { availableStarters, createSpaceWithStarter, STARTERS } from '@commerceworker/seed';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerSpaceTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, principal, guard } = t;
   const allowEnterprise = deps.demoStarters === true;
   // --- spaces (deployment) -------------------------------------------------

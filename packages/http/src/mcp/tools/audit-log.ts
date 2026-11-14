@@ -2,17 +2,10 @@ import { listAuditLog, listEntryActivity } from '@commerceworker/application';
 import { SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import {
-  DEFAULT_ENV,
-  DEFAULT_SPACE,
-  ok,
-  scopeArgs,
-  scopeOf,
-  type ToolContext,
-  toolSchema,
-} from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerAuditLogTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, guard } = t;
   // --- audit log (governance) --------------------------------------------
   server.registerTool(
@@ -52,8 +45,8 @@ export function registerAuditLogTools(server: McpServer, t: ToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const spaceId = args.space ?? DEFAULT_SPACE;
-      guard(SCOPES.spaceAdmin, { spaceId, environmentId: DEFAULT_ENV });
+      const spaceId = args.space ?? t.defaultScope.spaceId;
+      guard(SCOPES.spaceAdmin, { spaceId, environmentId: t.defaultScope.environmentId });
       const { space: _space, environment, ...query } = args;
       return ok(await listAuditLog(ctx, spaceId, { ...query, environmentId: environment }));
     },
