@@ -10,7 +10,13 @@
 import type { NodeRun, OrderState } from './api';
 import type { EdgeState, PlanNode } from './graph';
 import { orderReason } from './reasons';
-import { type Order, type OrderStatus, TERMINAL_ORDER_STATUSES, type TimelineEntry } from './types';
+import {
+  ORDER_LIFECYCLE,
+  type Order,
+  type OrderStatus,
+  TERMINAL_ORDER_STATUSES,
+  type TimelineEntry,
+} from './types';
 
 /** What the Workflow reports to the order's agent. */
 export type OrderReport = {
@@ -72,7 +78,14 @@ export function foldReport<S extends ReportedState>(
     if (r.order) next.order = r.order;
     if (r.vars) next.vars = r.vars;
   }
-  if (r.status && (fresh || !sequenced) && !TERMINAL_ORDER_STATUSES.includes(s.status)) {
+  // A status moves only along the order's lifecycle, and no report moves an ended run (settling a
+  // failed run's rollback is the agent's, from the instance's own status).
+  if (
+    r.status &&
+    (fresh || !sequenced) &&
+    !TERMINAL_ORDER_STATUSES.includes(s.status) &&
+    (r.status === s.status || ORDER_LIFECYCLE.can(s.status, r.status))
+  ) {
     next.status = r.status;
     // Capped here too, whoever reported it: the order page, list and webhooks show it whole.
     if (r.reason !== undefined) next.reason = orderReason(r.reason);

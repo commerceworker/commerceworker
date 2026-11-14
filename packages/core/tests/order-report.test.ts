@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_ORDER_STATE, foldReport, type ReportedState } from '../src';
+import {
+  EMPTY_ORDER_STATE,
+  foldReport,
+  ORDER_LIFECYCLE,
+  type ReportedState,
+  TERMINAL_ORDER_STATUSES,
+} from '../src';
 
 const state = (over: Partial<ReportedState> = {}): ReportedState => ({
   ...EMPTY_ORDER_STATE,
@@ -53,6 +59,29 @@ describe('folding a Workflow report into the order', () => {
     expect(long.state.reason!.length).toBeLessThan(400);
     // A stale snapshot's status is dropped with the rest of it.
     expect(foldReport(state(), { seq: 1, status: 'waiting' }, 10).state.status).toBe('running');
+  });
+
+  it('moves the status only along the order lifecycle', () => {
+    // Running and waiting trade places; either may end, and a queued order may end first.
+    expect(foldReport(state(), { status: 'waiting' }, 10).state.status).toBe('waiting');
+    expect(foldReport(state({ status: 'waiting' }), { status: 'running' }, 10).state.status).toBe(
+      'running',
+    );
+    expect(foldReport(state({ status: 'queued' }), { status: 'completed' }, 10).state.status).toBe(
+      'completed',
+    );
+    // A live order never goes back to queued.
+    const back = foldReport(state(), { status: 'queued' }, 10);
+    expect(back).toMatchObject({ statusChanged: false, log: [] });
+    expect(back.state.status).toBe('running');
+    // Settling a failed run's rollback is the agent's move, never a report's.
+    expect(ORDER_LIFECYCLE.can('failed', 'rolled_back')).toBe(true);
+    expect(
+      foldReport(state({ status: 'failed' }), { status: 'rolled_back' }, 10).state.status,
+    ).toBe('failed');
+    // Every status the order has ended in is one TERMINAL_ORDER_STATUSES names.
+    for (const s of ORDER_LIFECYCLE.states)
+      if (ORDER_LIFECYCLE.terminal(s)) expect(TERMINAL_ORDER_STATUSES).toContain(s);
   });
 
   it("counts a step's run once: the first end of a running step, whatever replays", () => {

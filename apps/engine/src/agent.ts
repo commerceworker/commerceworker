@@ -682,7 +682,9 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   async checkInstance(payload: { attempt: number }) {
-    if (!this.state.instanceId) return;
+    // Only a failed run settles its rollback (ORDER_LIFECYCLE: failed → rolled_back); a poll left
+    // over once it has settled changes nothing.
+    if (!this.state.instanceId || this.state.status !== 'failed' || this.state.rollback) return;
     // `rollback` is newer than the installed workers-types.
     const st = (await (
       await this.env.ORDER_WORKFLOW.get(this.state.instanceId)

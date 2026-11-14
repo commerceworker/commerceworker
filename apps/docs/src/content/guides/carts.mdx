@@ -116,7 +116,9 @@ within about 30 seconds.
 ## Locking, submitting and cancelling
 
 **Lock** stops anyone changing lines while you check the cart; **Unlock** lets them
-again. A locked cart can still be submitted.
+again. A locked cart can still be submitted. A cart is also locked while its order starts or it goes
+back to the buyer's system, and opens again if that fails (one you locked stays locked). See
+[Cart](/reference/lifecycles/#cart) in the status lifecycles for every move.
 
 **Submit as order** starts an order on the cart's flow with the cart's lines, customer, ship-to
 address and the shipping option its price charged, and the cart then links to it. The order is priced again by its flow and goes through

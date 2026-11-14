@@ -30,7 +30,9 @@ fulfillment, an optional inbound document, free-form `meta`) plus the totals the
 `declined` means a policy check or an approval said no. `cancelled` means a person or an API call
 cancelled it, or it reached an End node with that outcome. `failed` means a node threw or the order
 reached an End node with outcome `failed`; once the order's compensations have run the
-status becomes `rolled_back`, and it stays `failed` if the rollback itself fails.
+status becomes `rolled_back`, and it stays `failed` if the rollback itself fails. The moves between
+statuses are listed under [Order](/reference/lifecycles/#order) in the status lifecycles; nothing
+else moves an order, and nothing moves one that has ended.
 
 Each order has:
 

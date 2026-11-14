@@ -28,6 +28,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EngineApi } from '../../src/api';
+import type { CartAgent } from '../../src/cart/agent';
 import { ensureTemplates } from '../../src/flows';
 import worker from '../../src/index';
 import { PluginHost } from '../../src/plugin-api';
@@ -1096,6 +1097,41 @@ describe('a punchout buyer’s data subject request', () => {
     // Indexed, with no buyer: neither found by a request nor backfilled again.
     expect(row?.buyerId).toBe('');
     expect((await exportDataSubject(env, email)).carts).toEqual([]);
+  });
+});
+
+describe('an external cart erased while it goes back', () => {
+  it('stays closed and erased: the return keeps nothing and ends nothing', async () => {
+    const email = `race-${crypto.randomUUID().slice(0, 6)}@northwind.example`;
+    const c = await open({
+      buyer: { id: email, name: 'Rae Racer' },
+      title: 'Punchout for Rae Racer',
+      lines: [{ sku: 'WID-100', qty: 2 }],
+    });
+    const buyer = { kind: 'guest' as const, id: email, name: 'Rae Racer' };
+    const result = await runInDurableObject(cartAgent(c.cartId), async (agent: CartAgent) => {
+      // The return locks the cart and waits on the plugin; the erasure lands in that wait.
+      const returning = agent.transferAs(buyer);
+      await agent.eraseSubject([email]);
+      return returning;
+    });
+    expect(result).toEqual({ ok: false, error: 'The cart has closed.' });
+    const s = (await api().cartSnapshot(c.cartId))!;
+    expect(s.cart).toMatchObject({
+      status: 'canceled',
+      shipTo: null,
+      external: { buyer: { id: '[erased]', name: '[erased]' } },
+    });
+    expect(JSON.stringify(s.cart)).not.toContain('Rae Racer');
+    // Nothing of the return is kept for the buyer's page to post.
+    const kept = await runInDurableObject(
+      cartAgent(c.cartId),
+      (_: CartAgent, state: DurableObjectState) =>
+        state.storage.sql.exec<{ n: number }>('SELECT count(*) AS n FROM cart_return').one().n,
+    );
+    expect(kept).toBe(0);
+    const row = await db().select().from(carts).where(eq(carts.id, c.cartId)).get();
+    expect(row).toMatchObject({ status: 'canceled', buyerId: '' });
   });
 });
 

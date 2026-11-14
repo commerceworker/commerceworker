@@ -12,9 +12,11 @@ import {
 } from './b2b/companies';
 import { PO_LIFECYCLE, PO_STATUS_LABELS } from './b2b/purchase-orders';
 import { QUOTE_LIFECYCLE, QUOTE_STATUS_LABELS } from './b2b/quotes';
+import { CART_LIFECYCLE, CART_STATUS_LABELS } from './cart';
 import { CREDIT_HOLD } from './credit';
 import type { Lifecycle } from './lifecycle';
 import { PRICE_BOOK_LIFECYCLE } from './price-books';
+import { ORDER_LIFECYCLE } from './types';
 
 export interface LifecycleDoc {
   readonly id: string;
@@ -29,6 +31,23 @@ export interface LifecycleDoc {
 }
 
 export const LIFECYCLES: readonly LifecycleDoc[] = [
+  {
+    id: 'order',
+    title: 'Order',
+    about:
+      'An order’s run through its flow. It runs and waits until it ends; a failed order is rolled back once every step it finished has been undone.',
+    start: 'queued',
+    lifecycle: ORDER_LIFECYCLE,
+  },
+  {
+    id: 'cart',
+    title: 'Cart',
+    about:
+      'A staff or buyer cart. It is locked while its order starts or it goes back to the buyer’s system, and opens again if that fails.',
+    start: 'open',
+    lifecycle: CART_LIFECYCLE,
+    labels: CART_STATUS_LABELS,
+  },
   {
     id: 'company',
     title: 'Company',
