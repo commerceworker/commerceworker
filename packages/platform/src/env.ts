@@ -22,6 +22,8 @@ export interface CfRateLimiter {
  * the fail-closed adapter guard refuses on a persistent deployment.
  */
 export interface EdgeEnv {
+  /** Binding-only identity directory for content hosted in the commerce admin. */
+  readonly CONTENT_IDENTITY?: import('@commerceworker/ports').PeopleDirectory;
   /**
    * Worker Loader binding. Present only where sandboxed plugins are enabled;
    * absent means installed plugins are never executed, which is the safe

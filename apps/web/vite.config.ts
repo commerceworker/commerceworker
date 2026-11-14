@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cloudflare } from '@cloudflare/vite-plugin';
+import { DEV_ASSISTANT_PRINCIPAL_KEY } from '@commerceworker/security/assistant-key';
 import { reactRouter } from '@react-router/dev/vite';
 import tailwindcss from '@tailwindcss/vite';
 import agents from 'agents/vite';
@@ -51,6 +52,26 @@ const withPlugins = (services: { binding: string; service: string }[] = []) => [
  * `pnpm web:dev` uses.
  */
 const e2e = process.env.COMMERCEWORKER_E2E === '1';
+const content = process.env.COMMERCEWORKER_CONTENT === '1';
+
+const contentServices = [{ binding: 'CONTENT_API', service: 'commerceworker-api' }];
+const contentVars = {
+  REQUIRE_SECURE_SECRETS: 'false',
+  AI_MODE: 'mock',
+  ADMIN_TOKEN: 'dev-admin-token',
+  CMA_KEY: 'dev-cma-key',
+  CDA_KEY: 'dev-cda-key',
+  CPA_KEY: 'dev-cpa-key',
+  MCP_TOKEN: 'dev-mcp-token',
+  TOKEN_PEPPER: 'dev-pepper',
+  MEDIA_SIGNING_SECRET: 'dev-media-signing-secret',
+  PRINCIPAL_KEY: DEV_PRINCIPAL_KEY,
+  ASSISTANT_PRINCIPAL_KEY: DEV_ASSISTANT_PRINCIPAL_KEY,
+  EMBEDDINGS_PROVIDER: 'local',
+  VECTOR_STORE: 'kv',
+  ALLOW_FAKE_ADAPTERS: 'all',
+  SEED_DEV: e2e ? 'false' : 'true',
+};
 
 /**
  * In a build, Streamdown's `rehype-raw` import resolves to a no-op (`app/lib/rehype-raw-off.ts`),
@@ -94,11 +115,31 @@ export default defineConfig(async () => {
         viteEnvironment: { name: 'ssr' },
         // A fleet deploy builds against its rendered config (`scripts/fleet.ts render <id>`).
         configPath: process.env.COMMERCEWORKER_WRANGLER_CONFIG,
-        ...(e2e ? { remoteBindings: false, persistState: { path: '.wrangler/e2e' } } : {}),
+        ...(e2e
+          ? {
+              remoteBindings: false,
+              persistState: { path: process.env.COMMERCEWORKER_STATE ?? '.wrangler/e2e' },
+            }
+          : {}),
         // The storefront runs beside it (`pnpm storefront:dev`) on its own port.
         config: (c) => ({
           vars: { STOREFRONT_ORIGIN: 'http://localhost:5174' },
-          ...(devPlugins.length ? { services: withPlugins(c.services) } : {}),
+          ...(devPlugins.length || content
+            ? { services: [...withPlugins(c.services), ...(content ? contentServices : [])] }
+            : {}),
+          ...(content
+            ? {
+                d1_databases: [
+                  ...(c.d1_databases ?? []),
+                  {
+                    binding: 'CONTENT_DB',
+                    database_name: 'commerceworker-content',
+                    database_id: '00000000-0000-0000-0000-000000000001',
+                    migrations_dir: '../../packages/store/migrations',
+                  },
+                ],
+              }
+            : {}),
         }),
         // In dev, run the engine Worker in the same session so the ENGINE service binding, its
         // OrderAgent Durable Objects and Workflows all work locally. It deploys on its own. Dev
@@ -129,6 +170,39 @@ export default defineConfig(async () => {
           // The product catalog, so the Catalog page, /api/v1/catalog and the engine's CATALOG
           // binding work locally. It deploys on its own.
           { configPath: '../catalog/wrangler.jsonc', devOnly: true },
+          ...(content
+            ? ['api', 'pipeline', 'media', 'delivery'].map((app) => ({
+                configPath: `../${app}/wrangler.jsonc`,
+                config: (c: {
+                  services?: { binding: string; service: string; entrypoint?: string }[];
+                  d1_databases?: {
+                    binding: string;
+                    database_name: string;
+                    database_id?: string;
+                    migrations_dir?: string;
+                  }[];
+                }) => {
+                  // Config arrays are merged with defaults: mutate the local binding rather than append a duplicate DB.
+                  const db = c.d1_databases?.find((db) => db.binding === 'DB');
+                  if (db) db.database_id = '00000000-0000-0000-0000-000000000001';
+                  return {
+                    vars: contentVars,
+                    ...(app === 'pipeline'
+                      ? {
+                          services: [
+                            ...(c.services ?? []),
+                            {
+                              binding: 'CONTENT_IDENTITY',
+                              service: 'commerceworker-web',
+                            },
+                          ],
+                        }
+                      : {}),
+                  };
+                },
+                devOnly: true,
+              }))
+            : []),
           ...devPlugins.map((p) => ({
             configPath: `../../plugins/${p}/wrangler.jsonc`,
             // Its own key, as scripts/fleet.ts derives it: never the principal key.
@@ -148,6 +222,29 @@ export default defineConfig(async () => {
     ],
     resolve: {
       tsconfigPaths: true,
+    },
+    // Discover the shared content screens' heavy browser dependencies before the first navigation.
+    optimizeDeps: {
+      include: [
+        '@ai-sdk/react',
+        '@cloudflare/ai-chat/react',
+        '@xyflow/react',
+        'agents/react',
+        'ai',
+        'recharts',
+        'streamdown',
+        'shiki',
+        'zod',
+        'class-variance-authority',
+        ...[
+          '@tanstack/react-query',
+          '@tiptap/core',
+          '@tiptap/react',
+          '@tiptap/starter-kit',
+          'use-stick-to-bottom',
+          'radix-ui',
+        ].map((dependency) => `@commerceworker/content-admin > ${dependency}`),
+      ],
     },
   };
 });

@@ -7,7 +7,15 @@ gateway), edge image transforms, video streaming, edge email and plugin isolates
 The guiding constraint is the **dependency rule**: dependencies point inward, toward the domain,
 and infrastructure is bound only at the edges.
 
+Fleet deployments render content screens inside `apps/web`, at `/content`. The shared screens are
+`packages/content-admin`; browser calls reach `apps/api` over `CONTENT_API`, under `/content-api`.
+`CONTENT_DB` holds only the legacy identity directory used by explicit account linking. The
+pipeline's `CONTENT_IDENTITY` binding reads the live commerce identity through Web RPC; neither
+the API nor the pipeline binds commerce D1. Studio keeps old machine addresses and redirects human
+pages to the unified admin. Its native session path below is the standalone local reference.
+
 ```
+   apps/web ─────(CONTENT_API binding, signed x-cw-principal)────▶ apps/api
    apps/studio ─────(API service binding, signed x-cw-principal)────▶ apps/api
    apps/delivery (public CDA, cached)                             apps/pipeline (queues, cron, stateful objects, workflows)
    apps/media (published asset files and share links, cached; key-value gate written by the engine)
@@ -45,7 +53,7 @@ media at `media.<domain>`.
 | `apps/pipeline`   | none             | Placement near the database, `cpu_ms` 30000; owns stateful-object migrations                                                          |
 | `apps/docs`     | docs host        | Deployed only by the deployment with `docs: true`                                                                                     |
 
-### apps/studio: the admin and the gateway
+### apps/studio: legacy gateway and standalone local admin
 
 `apps/studio/workers/app.ts` answers `/health` and `/health/deep` (its database plus the api's
 `/health` over the binding), forwards the api's surfaces, serves SCIM, refuses cross-origin

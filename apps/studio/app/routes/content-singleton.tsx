@@ -1,4 +1,4 @@
-import { SingletonEntry } from '~/cms/routes/SingletonEntry';
+import { SingletonEntry } from '@commerceworker/content-admin/routes/SingletonEntry';
 
 export default function SingletonRoute() {
   return <SingletonEntry />;

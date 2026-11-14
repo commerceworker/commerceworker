@@ -2,7 +2,7 @@
 
 CommerceWorker has two kinds of caller and one authorization model:
 
-- **People** sign in to the admin web app (`apps/studio`) with a password, a passkey, TOTP two-factor
+- **People** sign in to the unified admin (`apps/web`) with a password, a passkey, TOTP two-factor
   or OIDC single sign-on. The web worker forwards their API calls to the api with a signed
   principal header.
 - **Programs** (API clients, SDKs, MCP agents) present a bearer token: an API key, a personal
@@ -12,7 +12,30 @@ Both resolve to a `Principal`, and authorization is enforced in the domain
 (`packages/domain/src/auth`) by the same `authorize` function, called by the REST API, MCP and
 delivery alike before any use-case runs.
 
-## People: sign-in on the web worker
+## Unified commerce identity
+
+Fleet deployments authenticate people in `apps/web`. Only a commerce Admin receives content's
+deployment-admin principal; every other commerce role becomes a content Member, whose authority
+comes from the space's own roles and grants. Existing content users are adopted only through an
+explicit `users.commerce_subject` link (migration 0036), created once by an admin after step-up.
+That link is independent of OIDC's `external_sub` and cannot be replaced or assigned twice.
+Disabled linked content users remain refused. Email matches do not confer ownership of an old
+subject or conversation.
+
+The content pipeline binds `CONTENT_IDENTITY` to Web's default entrypoint. Before each assistant
+operation, it checks the current commerce session, expiry, idleness, account status and setup
+requirements, plus the linked content account. It never receives a cookie or a session secret.
+A revocation or sign-out stops content operations without a second content session. Disabling,
+resetting or demoting a person also revokes their content delegated credentials through the
+content API, for both the namespaced and explicitly linked subjects; a failed revocation is
+reported and can be retried idempotently.
+
+The Studio reference below applies only to standalone local development. On fleet deployments,
+`COMMERCE_ORIGIN` disables native Studio-session signing; SCIM and bearer credentials keep their
+existing machine endpoints. New account provisioning belongs on the commerce Team page and its
+SCIM endpoint.
+
+## People: standalone Studio sign-in
 
 The web app keeps its own accounts in the database (`users`, `sessions`, `passkeys`,
 `recovery_codes`, `scim_groups`, `admin_audit`; migration `0002_auth.sql`; `password_resets`,

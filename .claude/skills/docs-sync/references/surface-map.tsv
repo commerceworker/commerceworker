@@ -140,9 +140,9 @@
 ^packages/application/src/(delivery|preview|preview-tokens)\.ts$	content/guides/reading-content docs/content/api-reference.md	prose
 ^packages/domain/src/query/	content/guides/reading-content docs/content/api-reference.md	prose
 ^packages/application/src/(branching|snapshots|snapshot-jobs|spaces|environment-purge)\.ts$	content/guides/environments docs/content/environments-and-snapshots.md docs/content/domain-model.md	prose
-^apps/studio/app/cms/components/(BranchMerge|layout/EnvironmentSwitcher)\.tsx$	content/guides/environments	prose
+^packages/content-admin/src/components/(BranchMerge|layout/EnvironmentSwitcher)\.tsx$	content/guides/environments	prose
 ^packages/(application/src/(assets|image|video-assets|media-ai)\.ts$|domain/src/asset/|adapters/src/(blob-r2|images-cf|video-stream)/)	content/guides/media	prose
-^apps/studio/app/cms/components/(MediaLibrary|AssetDetailSheet)\.tsx$	content/guides/media	prose
+^packages/content-admin/src/components/(MediaLibrary|AssetDetailSheet)\.tsx$	content/guides/media	prose
 ^packages/domain/src/workflow/(planner|policy|logic|validate|assess)\.ts$	content/guides/workflows content/guides/approvals docs/content/domain-model.md	prose
 ^packages/application/src/(workflows|workflow-runs|workflow-copilot)\.ts$	content/guides/workflows content/guides/approvals docs/content/domain-model.md	prose
 ^packages/application/src/(generation|content-ai|media-ai|ai-actions|ai-budget|rag|semantics|search-index)\.ts$	content/guides/ai docs/content/ai-agents-and-search.md	prose
@@ -154,7 +154,7 @@
 ^packages/domain/src/(webhook/|events\.ts$)	content/guides/webhooks docs/content/events-and-webhooks.md	prose
 ^packages/application/src/events/	docs/content/events-and-webhooks.md docs/content/consistency.md	prose
 ^packages/(application/src/plugin[a-z-]*\.ts$|domain/src/plugin/|adapters/src/plugins-cf-loader/)	content/guides/extending docs/content/plugins.md	prose
-^(packages/application/src/(functions|app-extensions)\.ts$|packages/http/src/(api/routes/management|mcp/tools)/(functions|app-extensions|plugins)\.ts$|packages/adapters/src/http-effects/function-invoker\.ts$|apps/studio/app/cms/components/(Functions|AppExtensions|ExtensionFrame|Plugins|PluginSettingsSheet)\.tsx$)	content/guides/extending	prose
+^(packages/application/src/(functions|app-extensions)\.ts$|packages/http/src/(api/routes/management|mcp/tools)/(functions|app-extensions|plugins)\.ts$|packages/adapters/src/http-effects/function-invoker\.ts$|packages/content-admin/src/components/(Functions|AppExtensions|ExtensionFrame|Plugins|PluginSettingsSheet)\.tsx$)	content/guides/extending	prose
 ^packages/http/src/api/(auth\.ts$|oauth/|oidc/)	content/guides/api-keys content/guides/team-and-roles docs/content/auth-and-rbac.md	prose
 ^packages/application/src/(auth|roles|team|oauth)\.ts$	content/guides/api-keys content/guides/team-and-roles docs/content/auth-and-rbac.md	prose
 ^packages/security/src/	docs/content/auth-and-rbac.md docs/content/architecture.md	prose
@@ -177,7 +177,7 @@
 ^skills/	content/guides/agent-skills docs/content/developer-tooling.md	prose
 ^apps/studio/app/routes\.ts$	docs/content/admin-ui.md	prose
 ^packages/seed/src/	content/start/getting-started docs/content/development.md	prose
-^(packages/(domain|http)/src/assistant/|apps/pipeline/src/assistant\.ts$|apps/studio/app/cms/(components/assistant/|lib/assistant))	content/guides/coworker docs/content/architecture.md	prose
+^(packages/(domain|http)/src/assistant/|apps/pipeline/src/assistant\.ts$|packages/content-admin/src/(components/assistant/|lib/assistant))	content/guides/coworker docs/content/architecture.md	prose
 ^apps/media/src/	content/guides/delivering-assets docs/content/architecture.md docs/content/configuration.md docs/content/events-and-webhooks.md	prose
 ^packages/(domain/src/asset/delivered|application/src/(asset-delivery|asset-renditions|asset-gate))\.ts$	content/guides/delivering-assets content/guides/reading-content docs/content/domain-model.md docs/content/api-reference.md	prose
 ^packages/(domain/src/asset/collection|application/src/(asset-collections|asset-shares|asset-uploads|asset-zip|zip))\.ts$	content/guides/media content/guides/share-links content/guides/delivering-assets docs/content/architecture.md docs/content/domain-model.md docs/content/api-reference.md	prose
@@ -185,7 +185,7 @@
 ^packages/(domain/src/redirect/|application/src/redirects\.ts$|sdk/core/src/redirects\.ts$|db/migrations/0017_redirects\.sql$)	content/guides/redirects docs/content/domain-model.md docs/content/api-reference.md	prose
 ^packages/(domain/src/seo/|application/src/seo\.ts$|http/src/api/sitemap-xml\.ts$|http/src/(api/routes/management|mcp/tools)/seo\.ts$)	content/guides/seo docs/content/domain-model.md docs/content/api-reference.md	prose
 ^packages/(domain/src/menu/|application/src/menus\.ts$|http/src/mcp/tools/menus\.ts$|http/src/api/routes/management/menus\.ts$|db/migrations/0020_menus\.sql$)	content/guides/menus docs/content/domain-model.md docs/content/api-reference.md docs/content/mcp.md	prose
-^(packages/(domain/src/saved-view/|application/src/saved-views\.ts$|http/src/mcp/tools/saved-views\.ts$|http/src/api/routes/management/saved-views\.ts$|db/migrations/0029_saved_views\.sql$)|apps/studio/app/cms/(components/entries/(SavedViewsMenu|ColumnPicker)\.tsx|lib/entry-url\.ts)$)	content/guides/saved-views docs/content/domain-model.md docs/content/api-reference.md docs/content/mcp.md docs/content/admin-ui.md	prose
+^(packages/(domain/src/saved-view/|application/src/saved-views\.ts$|http/src/mcp/tools/saved-views\.ts$|http/src/api/routes/management/saved-views\.ts$|db/migrations/0029_saved_views\.sql$)|packages/content-admin/src/(components/entries/(SavedViewsMenu|ColumnPicker)\.tsx|lib/entry-url\.ts)$)	content/guides/saved-views docs/content/domain-model.md docs/content/api-reference.md docs/content/mcp.md docs/content/admin-ui.md	prose
 ^packages/sdk/(core/src/webhooks\.ts|rich-text/src/)	content/guides/your-own-frontend content/guides/webhooks content/guides/sdks docs/content/sdks.md	prose
 ^(scripts/sdk-packages\.ts|\.github/workflows/sdk-(packages|release)\.yml)$	docs/content/deployment.md docs/content/development.md	prose
 ^packages/design/src/tokens\.ts$	apps/docs/src/styles/content.css apps/studio/DESIGN.md	prose
@@ -206,3 +206,6 @@
 ^(packages/(ports|store|test-kit)/src/admin-password-resets(-contract)?\.ts|apps/studio/app/lib/password-reset\.server\.ts)$	docs/content/architecture.md docs/content/auth-and-rbac.md	prose
 ^packages/(ports|store|test-kit)/src/admin-scim-directory(-contract)?\.ts$	docs/content/architecture.md docs/content/auth-and-rbac.md	prose
 ^(packages/(ports|store|test-kit)/src/admin-audit-log(-contract)?\.ts|apps/studio/app/lib/(audit|env)\.server\.ts)$	docs/content/architecture.md docs/content/auth-and-rbac.md	prose
+
+^apps/web/(app/(routes/content[^/]*\.tsx|routes/content/|lib/content[^/]*\.ts)|workers/content-identity\.ts$)	docs/content/admin-ui.md docs/content/architecture.md docs/content/auth-and-rbac.md content/guides/team-and-roles	prose
+^packages/content-admin/src/	docs/content/admin-ui.md	prose

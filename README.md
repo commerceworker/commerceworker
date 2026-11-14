@@ -6,6 +6,11 @@ Every order is an **Order Flow**: a durable workflow, drawn as a flow graph in R
 
 CommerceWorker began as a renamed order engine codebase, and is converging on a hexagonal architecture: a pure domain, ports, application use-cases, and Cloudflare adapters bound only at composition roots. Commerce Worker v1 contributes what it has that runs without Postgres. Positioning and messaging are in [`docs/brand/`](docs/brand/); what came from where is in [`docs/port-map.md`](docs/port-map.md).
 
+When content is enabled, the commerce and content screens share the admin at `<domain>`.
+Content opens at `/content`, using the same sign-in, navigation, account and sign-out. The content
+API, database and pipeline remain separate. The old Studio host redirects human pages and retains
+its existing machine API and OAuth addresses.
+
 ## How it works
 
 ```

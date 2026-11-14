@@ -1,5 +1,5 @@
-import { CmsPage } from '~/cms/providers';
-import { Approvals } from '~/cms/routes/Approvals';
+import { CmsPage } from '@commerceworker/content-admin/providers';
+import { Approvals } from '@commerceworker/content-admin/routes/Approvals';
 
 export default function ApprovalsRoute() {
   return (

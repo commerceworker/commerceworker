@@ -290,8 +290,8 @@ jobs:
   # layout, safe areas, touch targets and the on-screen keyboard (apps/web/e2e, apps/storefront/e2e).
   # The dev servers run offline (mock AI, no remote bindings, their own databases), so no Cloudflare
   # account is needed. The admin's suite is split four ways with Playwright's --shard, and the
-  # storefront's runs beside it: each job has its own dev server, still running one test at a time
-  # (playwright.config.ts), so splitting changes nothing a test sees.
+  # storefront and unified content suites run beside it. Each job has its own dev server and
+  # runs one test at a time, so splitting changes nothing a test sees.
   # The jobs run in Playwright's own image for Ubuntu 26.04 (the release ubuntu-latest runs), which
   # carries the browsers and their system libraries. Installing those from the runner's apt mirror
   # took 28-78 seconds a job and, when the mirror was slow, whole runs. The tag must be the
@@ -312,11 +312,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: web 1/4, app: web, shard: 1/4, id: web-1 }
-          - { name: web 2/4, app: web, shard: 2/4, id: web-2 }
-          - { name: web 3/4, app: web, shard: 3/4, id: web-3 }
-          - { name: web 4/4, app: web, shard: 4/4, id: web-4 }
-          - { name: storefront, app: storefront, shard: '', id: storefront }
+          - { name: web 1/4, app: web, shard: 1/4, id: web-1, config: playwright.config.ts }
+          - { name: web 2/4, app: web, shard: 2/4, id: web-2, config: playwright.config.ts }
+          - { name: web 3/4, app: web, shard: 3/4, id: web-3, config: playwright.config.ts }
+          - { name: web 4/4, app: web, shard: 4/4, id: web-4, config: playwright.config.ts }
+          - { name: storefront, app: storefront, shard: '', id: storefront, config: playwright.config.ts }
+          - { name: web content, app: web, shard: '', id: web-content, config: playwright.content.config.ts }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -327,7 +328,8 @@ jobs:
         env:
           APP: ${{ matrix.app }}
           SHARD: ${{ matrix.shard }}
-        run: pnpm --filter "@commerceworker/$APP" exec playwright test ${SHARD:+"--shard=$SHARD"}
+          PLAYWRIGHT_CONFIG: ${{ matrix.config }}
+        run: pnpm --filter "@commerceworker/$APP" exec playwright test --config "$PLAYWRIGHT_CONFIG" ${SHARD:+"--shard=$SHARD"}
       # A failure's traces (DOM, network, console at each step): open with `playwright show-trace`.
       - name: Keep the failures' traces
         if: ${{ failure() }}

@@ -145,10 +145,11 @@ describe('turbo cache inputs', () => {
   });
 
   it('the root scripts are type-checked again when a script or what it imports changes', () => {
-    // The scripts import the plugin SDK, core and security by path, so the root task names them.
+    // Path imports include the web route registry and the plugin SDK, core and security.
     for (const file of [
       'scripts/fleet.ts',
       'scripts/tsconfig.json',
+      'apps/web/app/routes.ts',
       'packages/plugin-sdk/src/testing.ts',
       'packages/core/src/lifecycle.ts',
       'packages/security/src/index.ts',
@@ -191,6 +192,17 @@ describe('turbo cache inputs', () => {
     // web and the engine reach domain and redaction only through other packages.
     assertMoves('packages/domain/src/index.ts', ['web#test', 'engine#test', 'studio#test']);
     assertMoves('packages/redaction/src/index.ts', ['web#test', 'engine#test']);
+  });
+
+  it('shared content screens invalidate both admin hosts', () => {
+    assertMoves('packages/content-admin/src/router.tsx', [
+      'web#test',
+      'web#build',
+      'web#check-types',
+      'studio#test',
+      'studio#build',
+      'studio#check-types',
+    ]);
   });
 
   it('a migration moves every suite that applies it', () => {

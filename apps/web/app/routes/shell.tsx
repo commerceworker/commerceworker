@@ -56,7 +56,7 @@ import {
   UsersRound,
   Workflow,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -70,6 +70,8 @@ import {
 import { Mark } from '~/components/mark';
 import { AssistantProvider, useAssistant } from '~/lib/assistant';
 import { authEnabled, requireUser } from '~/lib/auth.server';
+import { contentEnabled } from '~/lib/content.server';
+import { ContentAssistantVisibility } from '~/lib/content-assistant';
 import { useMedia, useShortcutLabel } from '~/lib/device';
 import { pendingApprovalCounts } from '~/lib/orders.server';
 import { PluginsProvider } from '~/lib/plugins';
@@ -83,9 +85,10 @@ import type { Route } from './+types/shell';
 export async function loader({ request }: Route.LoaderArgs) {
   const me = await requireUser(request);
   const sidebarOpen = sidebarOpenFrom(request);
+  const content = contentEnabled();
   // Until their two-factor sign-in is set up, a person sees only their Account page.
   if (me.twoFactorDue || me.passwordChangeDue)
-    return { pending: 0, auth: true, me, nav: false, plugins: [], sidebarOpen };
+    return { pending: 0, auth: true, me, nav: false, plugins: [], sidebarOpen, content };
   const [pending, admins, auth, plugins] = await Promise.all([
     // Only what a decision here can resume: approvals on recorded orders aren't owed by anyone.
     pendingApprovalCounts(),
@@ -95,7 +98,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     // Installed plugins: their nodes in the editor, their pages in the nav.
     pluginManifests(),
   ]);
-  return { pending: pending.live, auth, me, nav: true, admins, plugins, sidebarOpen };
+  return { pending: pending.live, auth, me, nav: true, admins, plugins, sidebarOpen, content };
 }
 
 /**
@@ -160,7 +163,7 @@ type NavItem = {
   badge?: boolean;
   document?: boolean;
   /** The sidebar group it heads or belongs to; the day's work has none. */
-  section?: 'Build' | 'Reference';
+  section?: 'Build' | 'Reference' | 'Content';
   /** A plugin's page, under its own heading. */
   plugin?: boolean;
 };
@@ -186,6 +189,23 @@ const NAV: NavItem[] = [
  * Phones are for keeping up and deciding: the day's work as tabs, in NAV's order. Flows (which a
  * phone only reviews) and the rest are under More.
  */
+const CONTENT_NAV: NavItem[] = [
+  {
+    to: '/content',
+    label: 'Content overview',
+    icon: LayoutDashboard,
+    section: 'Content',
+    end: true,
+  },
+  { to: '/content/entries', label: 'Entries', icon: FileText, section: 'Content' },
+  { to: '/content/approvals', label: 'Content approvals', icon: Stamp, section: 'Content' },
+  { to: '/content/releases', label: 'Releases', icon: Blocks, section: 'Content' },
+  { to: '/content/workflows', label: 'Content workflows', icon: Workflow, section: 'Content' },
+  { to: '/content/assets', label: 'Assets', icon: Package, section: 'Content' },
+  { to: '/content/taxonomy', label: 'Taxonomy', icon: Blocks, section: 'Content' },
+  { to: '/content/settings', label: 'Content settings', icon: Store, section: 'Content' },
+];
+
 const TABS = NAV.filter((n) => !n.section);
 
 const THEMES: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
@@ -358,12 +378,15 @@ const isAt = (path: string, { to, end }: { to: string; end?: boolean }) =>
 
 export default function Shell() {
   const { plugins } = useLoaderData<typeof loader>();
+  const [contentOpen, setContentOpen] = useState(false);
   return (
     <PluginsProvider plugins={plugins}>
       <AssistantProvider>
-        <TooltipProvider>
-          <ShellFrame />
-        </TooltipProvider>
+        <ContentAssistantVisibility.Provider value={{ open: contentOpen, setOpen: setContentOpen }}>
+          <TooltipProvider>
+            <ShellFrame />
+          </TooltipProvider>
+        </ContentAssistantVisibility.Provider>
       </AssistantProvider>
     </PluginsProvider>
   );
@@ -618,12 +641,20 @@ const QUIET_NEW_ORDER = [{ to: '/approvals' }, { to: '/flows' }];
 
 function ShellFrame() {
   const slow = useSlowNavigation();
-  const { pending, me, nav: showNav, plugins, sidebarOpen } = useLoaderData<typeof loader>();
+  const {
+    pending,
+    me,
+    nav: showNav,
+    plugins,
+    sidebarOpen,
+    content,
+  } = useLoaderData<typeof loader>();
   const operator = showNav && atLeast(me.role, 'operator');
   // A plugin's pages are served by its own Worker, so its links load a whole document.
   const nav: NavItem[] = showNav
     ? [
         ...NAV,
+        ...(content ? CONTENT_NAV : []),
         ...plugins
           .filter((p) => atLeast(me.role, p.pageRole))
           .flatMap((p) =>
@@ -637,11 +668,20 @@ function ShellFrame() {
           ),
       ]
     : [];
-  const workspace = showNav && atLeast(me.role, 'admin') ? WORKSPACE : [];
+  const workspace =
+    showNav && atLeast(me.role, 'admin')
+      ? [
+          ...WORKSPACE,
+          ...(content
+            ? [{ to: '/content/accounts', label: 'Content accounts', icon: UsersRound }]
+            : []),
+        ]
+      : [];
   const groups = [
     { items: nav.filter((n) => !n.section && !n.plugin) },
     { title: 'Build', items: nav.filter((n) => n.section === 'Build') },
     { title: 'Reference', items: nav.filter((n) => n.section === 'Reference') },
+    { title: 'Content', items: nav.filter((n) => n.section === 'Content') },
     { title: 'From plugins', items: nav.filter((n) => n.plugin) },
     { title: 'Workspace', items: workspace },
   ].filter((g) => g.items.length);
@@ -649,9 +689,16 @@ function ShellFrame() {
   const [shortcuts, setShortcuts] = useState(false);
   const openShortcuts = useCallback(() => setShortcuts(true), []);
   useGoKeys(openShortcuts);
+  useEffect(() => {
+    window.addEventListener('commerceworker:shortcuts-open', openShortcuts);
+    return () => window.removeEventListener('commerceworker:shortcuts-open', openShortcuts);
+  }, [openShortcuts]);
   const phoneNewOrder = operator && NEW_ORDER_FROM.has(path);
   // The assistant's sheet covers the page, and this button would sit on its send button.
-  const assistantOpen = useAssistant().open;
+  const inContent = path === '/content' || path.startsWith('/content/');
+  const contentAssistant = useContext(ContentAssistantVisibility);
+  const commerceAssistant = useAssistant();
+  const assistantOpen = inContent ? contentAssistant.open : commerceAssistant.open;
   const quietNewOrder = QUIET_NEW_ORDER.some((p) => isAt(path, p));
   // The sidebar opens over the page, as a rail beside it, below lg, on a canvas, and beside the
   // assistant's column below xl. Asked as "narrow" so the server (which sees neither) assumes wide.
@@ -695,7 +742,7 @@ function ShellFrame() {
               <span className="hidden text-brand sm:inline">CommerceWorker</span>
             </Link>
             <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
-              {showNav ? <AssistantToggle /> : null}
+              {showNav && !inContent ? <AssistantToggle /> : null}
               {operator ? (
                 <Link
                   to="/orders/new"
@@ -731,7 +778,11 @@ function ShellFrame() {
           >
             <Outlet />
           </main>
-          {showNav ? <LazyAssistantPanel /> : null}
+          {showNav ? (
+            <div className={inContent ? 'hidden' : 'contents'}>
+              <LazyAssistantPanel />
+            </div>
+          ) : null}
         </div>
       </SidebarInset>
       {phoneNewOrder && !assistantOpen ? (

@@ -1,5 +1,5 @@
+import { EntryEditor } from '@commerceworker/content-admin/routes/EntryEditor';
 import { useParams } from 'react-router';
-import { EntryEditor } from '~/cms/routes/EntryEditor';
 
 /** The entry editor, for a new entry (`/content/:typeId/new`) or an existing one. */
 export default function EntryRoute() {

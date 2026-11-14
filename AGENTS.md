@@ -8,11 +8,11 @@ One platform, one product (CommerceWorker). Commerce and content run side by sid
 
 | App | Role |
 |---|---|
-| `apps/web` | Commerce admin and REST API (React Router on Workers): flows, orders, approvals, catalog, team, staff carts, `/mcp`, `/a2a` and OAuth |
+| `apps/web` | Unified commerce and optional content admin, and commerce REST API (React Router on Workers): flows, orders, approvals, catalog, team, staff carts, `/mcp`, `/a2a` and OAuth |
 | `apps/storefront` | What buyers reach, uncached, at its own host (`shop.<domain>`, the registry's `storefrontDomain`): a punchout buyer's cart pages, files, product search and socket, and UCP. React Router on Workers, with no admin bundle |
 | `apps/engine` | Order Flows: the `OrderWorkflow` Workflow, OrderAgent, CartAgent, AssistantAgent, UCP, A2A, MCP, plugins |
 | `apps/catalog` | Sharded product catalog |
-| `apps/studio` | Content admin (React Router 8 SSR) and human auth; fronts `apps/api` with a signed principal |
+| `apps/studio` | Legacy content host: redirects human pages to Web; retains content API/OAuth/SCIM compatibility and standalone local development |
 | `apps/api` | Content Management and Preview REST, MCP, OAuth, live (Hono, from `packages/http`) |
 | `apps/delivery` | Public delivery: content (uncached gateway in front of a cached `Delivery` entrypoint) and the catalog's read-only edge (`CatalogDelivery`, at `catalog.<host>`), each off unless its bindings are bound |
 | `apps/media` | The optional assets service at `media.<host>` |
@@ -29,6 +29,7 @@ One platform, one product (CommerceWorker). Commerce and content run side by sid
 | `packages/adapters`, `platform` | Cloudflare adapters (one subpath each) and the composition root (`wire.ts`) |
 | `packages/http` | The Hono surface as a library: REST routes, OpenAPI, MCP tools and skills |
 | `packages/design`, `ui` | Ledger tokens (held to both admins' and the storefront's `app.css`) and the shared components |
+| `packages/content-admin` | Content screens, API client, providers and content assistant, shared by Web and standalone Studio |
 | `packages/cart` | The live cart view and the cart's files and product search, shared by the admin's staff carts and the storefront's buyer carts |
 | `packages/sdk/*`, `cli` | The public SDK and the `commerceworker` command |
 | `packages/i18n`, `guardrails`, `media-upload-limits` | Locale resolution and i18next setup; AI input and output guardrails (PII, prompt injection, regex); upload limits |
@@ -46,6 +47,7 @@ pnpm test:fleet              # deployments/ registry and the configs scripts/fle
 pnpm test:toolkit            # .claude/ toolkit: skill/agent lint and hook tests (see .claude/README.md)
 pnpm commitlint --from origin/main  # commit messages since main: Conventional Commits, `type(scope): subject`
 pnpm --filter @commerceworker/<pkg> test     # one package's tests
+pnpm --filter @commerceworker/web e2e:content # unified content screens and assistant on iPhone, iPad and desktop
 pnpm --filter @commerceworker/web e2e        # device tests: WebKit as iPhone, iPad and desktop (offline dev server; E2E_PORT=… beside another worktree)
 pnpm turbo run lint check-types test --filter='...[origin/main]'  # what changed since main, plus dependents
 pnpm --filter @commerceworker/engine types   # after changing apps/engine/wrangler.jsonc

@@ -20,23 +20,24 @@ export default defineConfig({
           name: 'web',
           environment: 'node',
           include: ['tests/**/*.test.ts'],
+          exclude: ['tests/integration/**'],
           fsModuleCache: false,
           // It imports `cloudflare:workers`; inlined, the tests' vi.mock of that module applies to it.
           // Streamdown is inlined so the alias above reaches its `rehype-raw` import.
           server: { deps: { inline: ['@cloudflare/workers-oauth-provider', 'streamdown'] } },
         },
       },
-      // The nightly OAuth grant export (workers/kv-backup.ts) as a real Workflow, with local KV and R2.
+      // Integration coverage for Cloudflare primitives: Workflows, KV, R2 and HTMLRewriter.
       {
         plugins: [
           cloudflareTest({
-            wrangler: { configPath: './workerd/wrangler.jsonc' },
+            wrangler: { configPath: './tests/integration/wrangler.jsonc' },
             remoteBindings: false,
           }),
         ],
         test: {
-          name: 'kv-backup',
-          include: ['workerd/**/*.test.ts'],
+          name: 'integration',
+          include: ['tests/integration/**/*.test.ts'],
           fsModuleCache: false,
           testTimeout: 60_000,
         },

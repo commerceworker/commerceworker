@@ -12,7 +12,9 @@ import { StatusBadge, ToneBadge } from '~/cms/components/status';
 import { ago, countLabel, statusLabel, statusTone } from '~/cms/lib/format';
 
 // The stylesheet as text (Vite's ?raw comes back empty under vitest's CSS handling).
-const css = readFileSync(join(process.cwd(), 'app/app.css'), 'utf8');
+const css =
+  readFileSync(join(process.cwd(), 'app/app.css'), 'utf8') +
+  readFileSync(join(process.cwd(), '../../packages/content-admin/src/styles.css'), 'utf8');
 
 // The UI primitives' source, to check what their transitions animate.
 const primitives = import.meta.glob('../../../packages/ui/src/*.tsx', {
@@ -64,11 +66,14 @@ describe('Tabs', () => {
 });
 
 // The admin's screens' source, for rules that hold across files.
-const screens = import.meta.glob(['../app/**/*.tsx', '!../app/**/*.test.tsx'], {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
+const screens = import.meta.glob(
+  ['../app/**/*.tsx', '../../../packages/content-admin/src/**/*.tsx', '!../app/**/*.test.tsx'],
+  {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  },
+) as Record<string, string>;
 
 describe('The current item', () => {
   it('is marked by its fill, never by a brand stripe or tick at its edge', () => {

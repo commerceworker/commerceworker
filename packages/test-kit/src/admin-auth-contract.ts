@@ -22,6 +22,24 @@ export function describeAdminAuthContract(
   make: (f: AuthFixture) => Promise<AdminAuth>,
 ) {
   describe(`${name}: Studio sign-in storage`, () => {
+    it('links an immutable commerce identity only once without replacing OIDC or another link', async () => {
+      const other = {
+        ...person,
+        id: 'aac_other',
+        email: 'other@example.com',
+        externalSub: 'oidc:other',
+      };
+      const s = await make({ users: [person, other] });
+      expect(await s.userByCommerceSubject('commerce:new')).toBeUndefined();
+      expect(await s.linkCommerceSubject(other.id, 'commerce:new')).toBe(true);
+      expect((await s.userByCommerceSubject('commerce:new'))?.id).toBe(other.id);
+      expect(await s.commerceSubjectForUser(other.id)).toBe('commerce:new');
+      expect(await s.commerceSubjectForUser(person.id)).toBeUndefined();
+      expect((await s.userBySub('oidc:other'))?.id).toBe(other.id);
+      expect(await s.linkCommerceSubject(person.id, 'commerce:new')).toBe(false);
+      expect(await s.linkCommerceSubject(other.id, 'commerce:replacement')).toBe(false);
+      expect(await s.linkCommerceSubject('missing', 'commerce:missing')).toBe(false);
+    });
     it('finds people and conditionally rehashes only the known password', async () => {
       const s = await make({ users: [person] });
       expect(await s.userCount()).toBe(1);

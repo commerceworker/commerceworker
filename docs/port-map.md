@@ -37,6 +37,8 @@ CommerceWorker carries the order engine's `main` up to **b8e9f93**, its final st
 | Design | Merged into `packages/design`: one Ledger token set held to both admins' `app.css`, with WCAG contrast tests; the evolved `packages/ui` components |
 | Agent rules and skills | `.claude/rules/` (path-scoped), `skills/` (developer skills), `docs/content/AGENTS.md` |
 
+The content screens now live in `packages/content-admin` and run in `apps/web` at `/content`, sharing commerce sign-in and navigation. `apps/studio` remains the legacy API/OAuth gateway and redirects deployed human pages.
+
 Renamed on the way in: no app or package takes a product-area prefix. Where a name was taken, the incoming one took its role (`studio`, `pipeline`, `store`). Two golden vectors changed with the rename, both for keys no deployment had derived: the assistant principal key and the dev assistant key in `packages/security`.
 
 ## Done: the v1 intake

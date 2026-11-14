@@ -1,3 +1,31 @@
+import { Breadcrumbs } from '@commerceworker/content-admin/components/layout/Breadcrumbs';
+import {
+  CommandPalette,
+  openCommandPalette,
+} from '@commerceworker/content-admin/components/layout/CommandPalette';
+import { OPEN_SHORTCUTS_EVENT } from '@commerceworker/content-admin/components/layout/KeyboardShortcuts';
+import { NewEntry } from '@commerceworker/content-admin/components/layout/NewEntry';
+import {
+  DEFAULT_SETTINGS_SECTION,
+  isAt as isUnder,
+  type NAV as PAGES,
+  SETTINGS_GROUPS,
+  visibleNav,
+} from '@commerceworker/content-admin/components/layout/nav';
+import { SpaceSwitcher } from '@commerceworker/content-admin/components/layout/SpaceSwitcher';
+import {
+  approvalsCountLabel,
+  usePendingApprovalsCount,
+} from '@commerceworker/content-admin/lib/approvals';
+import { AssistantProvider, useAssistant } from '@commerceworker/content-admin/lib/assistant';
+import { useOptionalClient } from '@commerceworker/content-admin/lib/client-context';
+import { useFeatures } from '@commerceworker/content-admin/lib/features';
+import {
+  useModKeyLabel,
+  usePageShortcutGroups,
+  useShortcutLabel,
+} from '@commerceworker/content-admin/lib/shortcuts';
+import { CmsProviders } from '@commerceworker/content-admin/providers';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,24 +81,6 @@ import {
   useNavigate,
   useNavigation,
 } from 'react-router';
-import { Breadcrumbs } from '~/cms/components/layout/Breadcrumbs';
-import { CommandPalette, openCommandPalette } from '~/cms/components/layout/CommandPalette';
-import { OPEN_SHORTCUTS_EVENT } from '~/cms/components/layout/KeyboardShortcuts';
-import { NewEntry } from '~/cms/components/layout/NewEntry';
-import {
-  DEFAULT_SETTINGS_SECTION,
-  isAt as isUnder,
-  type NAV as PAGES,
-  SETTINGS_GROUPS,
-  visibleNav,
-} from '~/cms/components/layout/nav';
-import { SpaceSwitcher } from '~/cms/components/layout/SpaceSwitcher';
-import { approvalsCountLabel, usePendingApprovalsCount } from '~/cms/lib/approvals';
-import { AssistantProvider, useAssistant } from '~/cms/lib/assistant';
-import { useOptionalClient } from '~/cms/lib/client-context';
-import { useFeatures } from '~/cms/lib/features';
-import { useModKeyLabel, usePageShortcutGroups, useShortcutLabel } from '~/cms/lib/shortcuts';
-import { CmsProviders } from '~/cms/providers';
 import { Mark } from '~/components/mark';
 import { authEnabled, requireUser } from '~/lib/auth.server';
 import { useMedia } from '~/lib/device';
@@ -385,7 +395,7 @@ export default function Shell() {
  * The assistant (with its markdown renderer) is a large chunk most page views never use: it loads
  * on first open, and is fetched ahead while the browser is idle so opening it stays instant.
  */
-const loadPanel = () => import('~/cms/components/assistant/panel');
+const loadPanel = () => import('@commerceworker/content-admin/components/assistant/panel');
 const AssistantPanel = lazy(() => loadPanel().then((m) => ({ default: m.AssistantPanel })));
 
 /** Mounts the assistant panel once it has been opened, and preloads it when the page is idle. */

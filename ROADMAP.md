@@ -19,6 +19,16 @@ CommerceWorker began as a renamed order engine codebase (P0, done). The phases b
 | **P8 Toolchain alignment** (done, 2026-11-12; the owner pins the escrow key and sets the `npm` tag rule; S1 done: `scripts/toolchain.test.ts` holds `engines.node` (`>=24`, on every published package), `@types/node`, tsconfig inheritance, bundler targets, Biome's `$schema`, the vitest pin, `fsModuleCache` and the generated worker types in line; S3 done: `scripts/provision.sh` locks each deploy environment to `main` (reading first, keeping reviewers, timers and self-review, adding the `main` policy only when missing), held by `scripts/provision.test.ts`; the owner re-runs provisioning before the first deploy, and sets the `npm` environment's `sdk-v*` tag rule by hand; S2 done: the root `scripts/*.ts` are type-checked (`scripts/tsconfig.json`, the root turbo task `//#check-types:scripts` in `pnpm check-types`); S4 done: `.github/workflows/escrow-secrets.yml` escrows production secrets to the owner's age key (`scripts/escrow-secrets.test.ts`); it refuses to run until the owner pins the public key) | `catalogMode: strict` with the catalog test; secrets escrow; TypeScript and Node versions aligned across every package | Platform `pnpm-workspace.yaml`, `scripts/catalog.test.ts`, `scripts/toolchain.test.ts`, `escrow-secrets` | `catalog.test.ts` and `toolchain.test.ts` green |
 | **P9 Brand surfaces** (done, 2026-11-12, except the marketing pricing page, which waits on packaging, and privacy and terms, which wait on counsel; S1 done: the turquoise accent, `brand` at hue 195 (replacing the first cut's cobalt) with the link at 235 and `brand-subtle`, its contrast held in both themes by `packages/design/tests/accent.test.ts`; S2 done: subscription renewals wait on calendar periods, a `control.wait` with `every` and `nextPeriodBoundary` (`advancePeriod` counted from the anchor) in place of the fixed 30-day wait) | Ledger CommerceWorker accent (Arizona turquoise, about hue 195, distinct from the link token); the mark; docs site and admin copy in the new voice; marketing pricing page once packaging is decided; privacy and terms once counsel supplies text (`docs/brand/legal-outline.md`); subscription renewals on calendar periods (`advancePeriod`) instead of a fixed 30-day wait | `docs/brand/`, Platform `DESIGN.md` | Contrast-verified tokens in both themes; no retired brand name left in user-facing copy |
 
+## Unified admin
+
+Commerce and content share `apps/web` at one host: content pages under `/content`, one sign-in,
+account, team and navigation. `packages/content-admin` contains the existing content screens;
+`apps/api`, `pipeline`, `media` and the content database remain independent. Content requests use
+`CONTENT_API`; the content assistant rechecks the commerce session through the web Worker's
+binding-only identity methods. Studio redirects human pages while retaining machine APIs, OAuth
+issuer and SCIM compatibility. Existing content identities transfer only through the admin's
+step-up-protected **Content accounts** page; matching emails never link accounts automatically.
+
 ## Carried over from the order engine
 
 Open items in the order engine, unchanged from its original roadmap:
