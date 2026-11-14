@@ -40,6 +40,8 @@ engine and local database of its own under `apps/storefront/.wrangler/state` (ap
 the web app, but a cart opened in `pnpm web:dev`'s engine is not in that one, so a start link from there
 won't redeem here: to see a buyer's page end to end, open the cart in the storefront's engine. Its device
 tests (`pnpm --filter @commerceworker/storefront e2e`) run an engine of their own the same way.
+Its root, `/`, has no shop to browse: it names the store and links to a shopper's account, and the
+buyer pages open from the links a buyer is sent.
 
 The first request that needs a flow seeds the [built-in flows](https://docs.commerceworker.com/guides/templates/) and publishes
 each as a new version when its content hasn't been published before (version 1 on a fresh database).
