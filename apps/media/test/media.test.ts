@@ -31,6 +31,7 @@ import {
   assetMediaPath,
   type Principal,
 } from '@commerceworker/domain';
+import { publishedMediaAdapters } from '@commerceworker/platform/media';
 import type { PurgeMessage } from '@commerceworker/platform/messages';
 import type { AssetGate, ContentStore } from '@commerceworker/ports';
 import { createD1Store } from '@commerceworker/store';
@@ -364,7 +365,7 @@ describe('the media Worker', () => {
     await publishAsset(u.ctx, u.scope, u.asset.id);
     await syncAssetGate(u.ctx, gate, u.scope, u.asset.id);
     const deps = {
-      bucket: env.MEDIA_BUCKET,
+      ...publishedMediaAdapters({ bucket: env.MEDIA_BUCKET }),
       paths,
       gate,
       store: createD1Store(env.DB),
@@ -411,7 +412,12 @@ describe('the path token', () => {
     } as unknown as Pick<ContentStore, 'assets' | 'assetRenditions'>;
     return {
       reads,
-      deps: { bucket: env.MEDIA_BUCKET, paths, gate: countingGate, store: countingStore },
+      deps: {
+        ...publishedMediaAdapters({ bucket: env.MEDIA_BUCKET }),
+        paths,
+        gate: countingGate,
+        store: countingStore,
+      },
     };
   }
 
@@ -578,7 +584,12 @@ describe('byte ranges', () => {
     await purgeMedia([`cwa:${u.scope.spaceId}:main:${u.asset.id}`]);
     expect((await get(u, { range: 'bytes=0-3' })).status).toBe(404);
     // The range read checks the gate itself, whoever calls it.
-    const deps = { bucket: env.MEDIA_BUCKET, paths, gate, store: createD1Store(env.DB) };
+    const deps = {
+      ...publishedMediaAdapters({ bucket: env.MEDIA_BUCKET }),
+      paths,
+      gate,
+      store: createD1Store(env.DB),
+    };
     const direct = await serveMediaRange(
       new Request(urlOf(u, { kind: 'original' })),
       deps,
@@ -590,7 +601,12 @@ describe('byte ranges', () => {
 
   it('never answers the cached entrypoint with a partial: the cache slices the whole file', async () => {
     const u = await published();
-    const deps = { bucket: env.MEDIA_BUCKET, paths, gate, store: createD1Store(env.DB) };
+    const deps = {
+      ...publishedMediaAdapters({ bucket: env.MEDIA_BUCKET }),
+      paths,
+      gate,
+      store: createD1Store(env.DB),
+    };
     const res = await serveMedia(
       new Request(urlOf(u, { kind: 'original' }), { headers: { range: 'bytes=0-3' } }),
       deps,

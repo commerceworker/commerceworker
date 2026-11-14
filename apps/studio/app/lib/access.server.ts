@@ -12,11 +12,10 @@
  */
 
 import { principalTarget } from '@commerceworker/security/principal';
-import { sessions } from '@commerceworker/store/auth';
-import { and, eq, ne } from 'drizzle-orm';
-import { api, db } from './env.server';
+import { api } from './env.server';
 import { clearPasskeys } from './passkeys.server';
 import { setPrincipalHeader } from './principal.server';
+import { adminAuth } from './wire.server';
 
 export type Person = { id: string; email: string };
 
@@ -36,13 +35,7 @@ export async function endAccess(_request: Request, person: Person, what: EndWhat
   const ended: Ended = { sessions: 0, passkeys: 0, tokens: 0 };
   if (what.sessions) {
     const except = what.sessions === true ? undefined : what.sessions.except;
-    const rows = await db()
-      .delete(sessions)
-      .where(
-        and(eq(sessions.userId, person.id), except ? ne(sessions.tokenHash, except) : undefined),
-      )
-      .returning({ id: sessions.tokenHash });
-    ended.sessions = rows.length;
+    ended.sessions = await adminAuth().endSessions(person.id, except);
   }
   if (what.passkeys) ended.passkeys = await clearPasskeys(person.id);
   if (what.tokens) ended.tokens = await revokeApiCredentials(person.id);

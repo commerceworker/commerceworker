@@ -1,6 +1,6 @@
 /**
  * The admin audit log's rows and hash chain. Pure: the web
- * app inserts sealed rows into D1 `admin_audit` through `appendAudit` (`@commerceworker/store/auth`).
+ * app appends sealed rows through `AdminAuditLog`, bound in its composition root.
  */
 
 import type { Principal } from './roles';

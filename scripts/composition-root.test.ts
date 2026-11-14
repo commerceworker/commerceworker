@@ -71,7 +71,7 @@ test('the engine binds the catalog edge through the fetch-only entrypoint and ne
     /"binding": "CATALOG_EDGE",\s*"service": "[^"]+",\s*"entrypoint": "CatalogRead"/,
   );
   const reaching = files(ROOT).filter((f) =>
-    /\/_idx\/|CATALOG_EDGE[^;]{0,80}\.purge/.test(readFileSync(f, 'utf8')),
+    /\/_idx\/|\bCATALOG_EDGE\b[^;]{0,80}\.purge\b/.test(readFileSync(f, 'utf8')),
   );
   assert.deepEqual(
     reaching.map((f) => relative('.', f)),
@@ -224,5 +224,70 @@ test('the pipeline reaches stores only through wireEdge', () => {
     reaching,
     [],
     `Take the store or port from wireEdge (packages/platform/src/wire.ts):\n${reaching.join('\n')}`,
+  );
+});
+
+const CATALOG = 'apps/catalog/src';
+const CATALOG_ROOT = join(CATALOG, 'wire.ts');
+test('the catalog reaches D1 only through its composition root', () => {
+  const reaching = files(CATALOG)
+    .filter((f) => f !== CATALOG_ROOT)
+    .filter((f) => {
+      const src = readFileSync(f, 'utf8');
+      return D1_ADAPTERS.test(src) || D1_BINDING.test(src);
+    });
+  assert.deepEqual(reaching, []);
+  assert.match(readFileSync(CATALOG_ROOT, 'utf8'), D1_ADAPTERS);
+});
+
+// The media app composes its Cloudflare adapters in platform/media and platform/wire.
+// Only the gateway and cached Worker entrypoint bind them; request handlers take deps.
+const MEDIA = 'apps/media/src';
+const MEDIA_ENTRIES = ['index.ts', 'media.ts'].map((f) => join(MEDIA, f));
+test('the media app imports no stores or Cloudflare adapters', () => {
+  const reaching = files(MEDIA).filter((f) =>
+    /from '@commerceworker\/(?:adapters|store)(?:\/[\w-]+)?'/.test(readFileSync(f, 'utf8')),
+  );
+  assert.deepEqual(reaching, []);
+});
+
+test('only media entrypoints compose storage and image dependencies', () => {
+  const reaching = files(MEDIA)
+    .filter((f) => !MEDIA_ENTRIES.includes(f))
+    .filter((f) => {
+      const src = readFileSync(f, 'utf8');
+      return (
+        /\b(?:wireMedia|mediaAdapters|publishedMediaAdapters)\(/.test(src) ||
+        /\b(?:env|this\.env)\.(?:DB|MEDIA_BUCKET|IMAGES|KV_CACHE)\b/.test(src)
+      );
+    });
+  assert.deepEqual(reaching, []);
+});
+
+// Studio follows the same boundary as commerce: every auth table, D1 probe and Cloudflare
+// adapter is bound in wire.server.ts. Handlers and the Worker entry take ports or probe functions.
+const STUDIO_ROOT = 'apps/studio/app/lib/wire.server.ts';
+const STUDIO_SOURCES = ['apps/studio/app', 'apps/studio/workers'].flatMap(files);
+const STUDIO_STORAGE =
+  /from '@commerceworker\/(?:store|db|adapters)(?:\/[\w-]+)?'|from 'drizzle-orm(?:\/[\w-]+)?'|\b(?:env|bindings|this\.env)\.DB\b|\b(?:db|createDb)\(/;
+
+test('Studio reaches storage and adapters only through its composition root', () => {
+  const reaching = STUDIO_SOURCES.filter((f) => f !== STUDIO_ROOT).filter((f) =>
+    STUDIO_STORAGE.test(readFileSync(f, 'utf8')),
+  );
+  assert.deepEqual(reaching, [], `Take a port from ${STUDIO_ROOT}:\n${reaching.join('\n')}`);
+  const root = readFileSync(STUDIO_ROOT, 'utf8');
+  assert.match(root, /from '@commerceworker\/store\/admin-audit-log'/);
+  assert.match(root, /from '@commerceworker\/adapters\/email-cf'/);
+  assert.match(root, /\benv\.DB\b/);
+});
+
+test('Studio keeps ORM dependencies in tests and has no legacy database helper', () => {
+  const pkg = JSON.parse(readFileSync('apps/studio/package.json', 'utf8'));
+  assert.equal(pkg.dependencies['drizzle-orm'], undefined);
+  assert.equal(pkg.devDependencies['drizzle-orm'], 'catalog:');
+  assert.doesNotMatch(
+    readFileSync('apps/studio/app/lib/env.server.ts', 'utf8'),
+    /\b(?:db|createDb)\(/,
   );
 });

@@ -10,16 +10,15 @@ import {
   normalizeEmail,
   passwordProblem,
 } from '@commerceworker/security/credentials';
-import { sessions, startsWith, users } from '@commerceworker/store/auth';
-import { and, count, eq, gt, isNull, ne } from 'drizzle-orm';
 import { endAccess, endedDetail } from './access.server';
 import { audit } from './audit.server';
 import { forgetUserCount, reauthenticate } from './auth.server';
-import { db, passwordPepper } from './env.server';
+import { passwordPepper } from './env.server';
 import { newId } from './ids';
 import { inviteRole } from './invites.server';
 import { isRole, type Principal, type Role, sessionIdleMs } from './roles';
 import { describeAgent, sessionRef } from './sessions';
+import { adminAuth, adminTeam } from './wire.server';
 
 export class TeamError extends Error {}
 
@@ -27,20 +26,7 @@ export class TeamError extends Error {}
 export const TEMPORARY_PASSWORD_MS = 7 * 86_400_000;
 
 export async function listTeam() {
-  const people = await db()
-    .select({
-      id: users.id,
-      email: users.email,
-      name: users.name,
-      role: users.role,
-      createdAt: users.createdAt,
-      lastLoginAt: users.lastLoginAt,
-      disabledAt: users.disabledAt,
-      twoFactorAt: users.totpEnabledAt,
-      passwordChangeDue: users.passwordChangeDue,
-    })
-    .from(users)
-    .orderBy(users.email);
+  const people = await adminTeam().people();
   return { people };
 }
 
@@ -49,17 +35,12 @@ function role(v: unknown): Role {
   return v;
 }
 
-/** The last active admin is the only way in to manage the team, so they can't be demoted or disabled. */
+const noAdmin = () =>
+  new TeamError('That would leave no admin to manage the team. Make someone else an admin first.');
+
+/** The guarded write checks this again so concurrent changes cannot remove every admin. */
 async function keepAnAdmin(exceptId: string) {
-  const other = await db()
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.role, 'admin'), isNull(users.disabledAt), ne(users.id, exceptId)))
-    .get();
-  if (!other)
-    throw new TeamError(
-      'That would leave no admin to manage the team. Make someone else an admin first.',
-    );
+  if (!(await adminTeam().hasOtherAdmin(exceptId))) throw noAdmin();
 }
 
 export type NewAdmin = { email: string; name: string; password: string };
@@ -70,7 +51,7 @@ export type NewAdmin = { email: string; name: string; password: string };
  * first admin from its setup code instead (`setup.server.ts`).
  */
 export async function createFirstAdmin(request: Request, input: NewAdmin) {
-  const any = await db().select({ id: users.id }).from(users).get();
+  const any = await adminAuth().userCount();
   if (any) throw new TeamError('The team already has people; sign in instead.');
   return insertAdmin(request, input, 'team.first_admin');
 }
@@ -85,21 +66,21 @@ export async function insertAdmin(
   if (!isEmail(email)) throw new TeamError('Enter a valid email address.');
   const problem = passwordProblem(input.password, email);
   if (problem) throw new TeamError(problem);
-  const taken = await db().select({ id: users.id }).from(users).where(eq(users.email, email)).get();
+  const taken = await adminAuth().userByEmail(email);
   if (taken)
     throw new TeamError(`${email} is already on the team; sign in, or use another address.`);
   const id = newId('usr');
   const name = input.name.trim() || email.split('@')[0]!;
-  await db()
-    .insert(users)
-    .values({
-      id,
-      email,
-      name,
-      role: 'admin',
-      passwordHash: await hashPassword(input.password, passwordPepper()),
-      createdAt: Date.now(),
-    });
+  await adminAuth().addUser({
+    id,
+    email,
+    name,
+    role: 'admin',
+    passwordHash: await hashPassword(input.password, passwordPepper()),
+    passwordChangeDue: false,
+    passwordExpiresAt: null,
+    createdAt: Date.now(),
+  });
   forgetUserCount();
   await audit(request, action, {
     actor: { kind: 'user', id, email, name, role: 'admin' },
@@ -116,26 +97,20 @@ export async function addUser(
 ) {
   const email = normalizeEmail(input.email);
   if (!isEmail(email)) throw new TeamError('Enter a valid email address.');
-  const exists = await db()
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, email))
-    .get();
+  const exists = await adminAuth().userByEmail(email);
   if (exists) throw new TeamError(`${email} is already on the team.`);
   const password = generatePassword();
   const r = role(input.role);
-  await db()
-    .insert(users)
-    .values({
-      id: newId('usr'),
-      email,
-      name: input.name.trim() || email.split('@')[0]!,
-      role: r,
-      passwordHash: await hashPassword(password, passwordPepper()),
-      passwordChangeDue: true,
-      passwordExpiresAt: Date.now() + TEMPORARY_PASSWORD_MS,
-      createdAt: Date.now(),
-    });
+  await adminAuth().addUser({
+    id: newId('usr'),
+    email,
+    name: input.name.trim() || email.split('@')[0]!,
+    role: r,
+    passwordHash: await hashPassword(password, passwordPepper()),
+    passwordChangeDue: true,
+    passwordExpiresAt: Date.now() + TEMPORARY_PASSWORD_MS,
+    createdAt: Date.now(),
+  });
   forgetUserCount();
   await audit(request, 'team.user_added', { actor: by, target: email, detail: { role: r } });
   return { email, password };
@@ -149,7 +124,7 @@ export async function setRole(request: Request, by: Principal, id: string, next:
   const user = await target(id);
   if (user.role === r) return;
   // The next forwarded request carries the new role: the principal is signed per request.
-  await db().update(users).set({ role: r }).where(eq(users.id, id));
+  if (!(await adminTeam().setRole(id, r))) throw noAdmin();
   await audit(request, 'team.role_changed', {
     actor: by,
     target: user.email,
@@ -159,16 +134,12 @@ export async function setRole(request: Request, by: Principal, id: string, next:
 
 /** A person's role now, or null when they aren't on the team. */
 async function roleOf(id: string): Promise<Role | null> {
-  const row = await db().select({ role: users.role }).from(users).where(eq(users.id, id)).get();
+  const row = await adminAuth().user(id);
   return row && isRole(row.role) ? row.role : null;
 }
 
 async function target(id: string) {
-  const user = await db()
-    .select({ email: users.email, role: users.role })
-    .from(users)
-    .where(eq(users.id, id))
-    .get();
+  const user = await adminAuth().user(id);
   if (!user) throw new TeamError('That person is no longer on the team.');
   return user;
 }
@@ -180,14 +151,10 @@ async function target(id: string) {
 export async function resetPassword(request: Request, by: Principal, id: string) {
   const user = await target(id);
   const password = generatePassword();
-  await db()
-    .update(users)
-    .set({
-      passwordHash: await hashPassword(password, passwordPepper()),
-      passwordChangeDue: true,
-      passwordExpiresAt: Date.now() + TEMPORARY_PASSWORD_MS,
-    })
-    .where(eq(users.id, id));
+  await adminAuth().setPassword(id, await hashPassword(password, passwordPepper()), {
+    changeDue: true,
+    expiresAt: Date.now() + TEMPORARY_PASSWORD_MS,
+  });
   const ended = await endAccess(
     request,
     { id, email: user.email },
@@ -205,10 +172,7 @@ export async function setDisabled(request: Request, by: Principal, id: string, d
   if (id === by.id) throw new TeamError('You can’t disable yourself.');
   if (disabled) await keepAnAdmin(id);
   const user = await target(id);
-  await db()
-    .update(users)
-    .set({ disabledAt: disabled ? Date.now() : null })
-    .where(eq(users.id, id));
+  if (!(await adminTeam().setDisabled(id, disabled ? Date.now() : null))) throw noAdmin();
   // Enabling again brings back none of it: they sign in afresh.
   const ended = disabled
     ? await endAccess(request, { id, email: user.email }, { sessions: true, tokens: true })
@@ -229,19 +193,15 @@ export async function changeOwnPassword(
 ) {
   if (by.kind !== 'user')
     throw new TeamError('Only people with their own sign-in have a password.');
-  const user = await db().select().from(users).where(eq(users.id, by.id)).get();
+  const user = await adminAuth().user(by.id);
   if (!user?.passwordHash || !(await reauthenticate(user.id, current, user.passwordHash)))
     throw new TeamError('Your current password is not right.');
   const problem = passwordProblem(next, user.email);
   if (problem) throw new TeamError(problem);
-  await db()
-    .update(users)
-    .set({
-      passwordHash: await hashPassword(next, passwordPepper()),
-      passwordChangeDue: false,
-      passwordExpiresAt: null,
-    })
-    .where(eq(users.id, by.id));
+  await adminAuth().setPassword(by.id, await hashPassword(next, passwordPepper()), {
+    changeDue: false,
+    expiresAt: null,
+  });
   await audit(request, 'auth.password_changed', { actor: by, target: user.email });
   return 0;
 }
@@ -250,11 +210,7 @@ export async function changeOwnPassword(
 export async function ownSessions(by: Principal, currentHash: string | undefined) {
   if (by.kind !== 'user') return [];
   const now = Date.now();
-  const rows = await db()
-    .select()
-    .from(sessions)
-    .where(and(eq(sessions.userId, by.id), gt(sessions.expiresAt, now)))
-    .all();
+  const rows = await adminAuth().sessionsOf(by.id, now);
   return rows
     .map((r) => ({
       ref: sessionRef(r.tokenHash),
@@ -279,13 +235,9 @@ export async function endOwnSession(
     throw new TeamError('That session is no longer active.');
   if (currentHash && sessionRef(currentHash) === ref)
     throw new TeamError('Use Sign out to end this session.');
-  const row = await db()
-    .select()
-    .from(sessions)
-    .where(and(eq(sessions.userId, by.id), startsWith(sessions.tokenHash, ref)))
-    .get();
+  const row = await adminAuth().sessionByRef(by.id, ref);
   if (!row) throw new TeamError('That session is no longer active.');
-  await db().delete(sessions).where(eq(sessions.tokenHash, row.tokenHash));
+  await adminAuth().endSession(row.tokenHash);
   await audit(request, 'auth.session_ended', {
     actor: by,
     target: by.email,
@@ -300,12 +252,7 @@ export async function endOtherSessions(
   currentHash: string | undefined,
 ) {
   if (by.kind !== 'user') return 0;
-  const others = and(
-    eq(sessions.userId, by.id),
-    currentHash ? ne(sessions.tokenHash, currentHash) : undefined,
-  );
-  const n = (await db().select({ n: count() }).from(sessions).where(others).get())?.n ?? 0;
-  await db().delete(sessions).where(others);
+  const n = await adminAuth().endSessions(by.id, currentHash);
   if (n)
     await audit(request, 'auth.other_sessions_ended', {
       actor: by,

@@ -9,14 +9,12 @@
 
 import { env } from 'cloudflare:workers';
 import { normalizeEmail, secretEqual, sha256Hex } from '@commerceworker/security/credentials';
-import { workspaceSettings } from '@commerceworker/store/auth';
-import { eq, ne } from 'drizzle-orm';
 import { audit, clientIp } from './audit.server';
 import { authEnabled, recordFailure, Throttled, waitFor } from './auth.server';
-import { db } from './env.server';
 import { setSsoSettings, ssoSettings } from './settings.server';
 import { insertAdmin, type NewAdmin, TeamError } from './team.server';
 import { throttleKey } from './throttle';
+import { adminSettings } from './wire.server';
 
 /** The workspace setting holding the SHA-256 of the last setup code used. */
 const USED_KEY = 'setup_code_used';
@@ -30,12 +28,7 @@ export async function setupOpen(): Promise<boolean> {
 }
 
 async function used(code: string) {
-  const row = await db()
-    .select({ value: workspaceSettings.value })
-    .from(workspaceSettings)
-    .where(eq(workspaceSettings.key, USED_KEY))
-    .get();
-  return row?.value === (await sha256Hex(code));
+  return (await adminSettings().get(USED_KEY)) === (await sha256Hex(code));
 }
 
 /**
@@ -56,22 +49,15 @@ export async function redeemSetupCode(request: Request, given: string, input: Ne
   const first = !(await authEnabled());
   // Claim the code before creating anyone, so two submissions at once can't both use it.
   const hash = await sha256Hex(code);
-  const before = await db()
-    .select({ value: workspaceSettings.value })
-    .from(workspaceSettings)
-    .where(eq(workspaceSettings.key, USED_KEY))
-    .get();
-  const now = Date.now();
-  const claimed = await db()
-    .insert(workspaceSettings)
-    .values({ key: USED_KEY, value: hash, updatedAt: now, updatedBy: input.email })
-    .onConflictDoUpdate({
-      target: workspaceSettings.key,
-      set: { value: hash, updatedAt: now, updatedBy: input.email },
-      setWhere: ne(workspaceSettings.value, hash),
-    })
-    .returning();
-  if (!claimed.length)
+  const settings = adminSettings();
+  const before = await settings.get(USED_KEY);
+  const claimed = await settings.claim({
+    key: USED_KEY,
+    value: hash,
+    updatedAt: Date.now(),
+    updatedBy: input.email,
+  });
+  if (!claimed)
     throw new TeamError(
       'That setup code has been used. Ask whoever runs the deployment for a new one.',
     );
@@ -80,12 +66,7 @@ export async function redeemSetupCode(request: Request, given: string, input: Ne
     id = await insertAdmin(request, input, first ? 'team.first_admin' : 'team.recovery_admin');
   } catch (err) {
     // Nobody was created (a bad address or password): the code still works.
-    if (before)
-      await db()
-        .update(workspaceSettings)
-        .set({ value: before.value })
-        .where(eq(workspaceSettings.key, USED_KEY));
-    else await db().delete(workspaceSettings).where(eq(workspaceSettings.key, USED_KEY));
+    await settings.release(USED_KEY, hash, before);
     throw err;
   }
   // Recovering access is for when sign-in is broken, an identity provider included: the new

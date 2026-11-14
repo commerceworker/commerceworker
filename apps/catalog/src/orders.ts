@@ -17,21 +17,14 @@ import {
   type ProductType,
   pickLocale,
 } from '@commerceworker/core/product';
+import type { CatalogOrders, CatalogOrderLine as OrderLine } from '@commerceworker/ports/commerce';
 import type { ListingChange } from './listings';
 
 /**
  * One variant as an order line sees it, with its per-unit shipping weight (kg) and size (cm): null
  * when the variant has none, so removing them in the catalog clears them here too.
  */
-export type OrderLine = {
-  sku: string;
-  name: string;
-  price: number;
-  weightKg: number | null;
-  lengthCm: number | null;
-  widthCm: number | null;
-  heightCm: number | null;
-};
+export type { CatalogOrderLine as OrderLine } from '@commerceworker/ports/commerce';
 
 /** The variants of `product` an order can name, priced in BASE_CURRENCY for `channel`. */
 export function orderLines(product: Product, type: ProductType, channel: Channel): OrderLine[] {
@@ -72,16 +65,8 @@ export function orderLines(product: Product, type: ProductType, channel: Channel
   return out;
 }
 
-const UPSERT = `INSERT INTO products
-    (sku, name, price, cost, catalog_at, weight_kg, length_cm, width_cm, height_cm)
-  VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)
-  ON CONFLICT (sku) DO UPDATE SET name = excluded.name, price = excluded.price,
-    catalog_at = excluded.catalog_at, weight_kg = excluded.weight_kg,
-    length_cm = excluded.length_cm, width_cm = excluded.width_cm, height_cm = excluded.height_cm
-  WHERE products.catalog_at IS NULL OR products.catalog_at < excluded.catalog_at`;
-
 /** Writes the order lines a batch of changes carries, newest change per SKU winning. */
-export async function applyOrders(env: Env, changes: ListingChange[]): Promise<void> {
+export async function applyOrders(store: CatalogOrders, changes: ListingChange[]): Promise<void> {
   const latest = new Map<string, { line: OrderLine; at: number }>();
   for (const c of changes)
     for (const line of c.order ?? []) {
@@ -89,20 +74,5 @@ export async function applyOrders(env: Env, changes: ListingChange[]): Promise<v
       if (!seen || seen.at < c.at) latest.set(line.sku, { line, at: c.at });
     }
   if (!latest.size) return;
-  // A line from a catalog that predates explicit nulls omits the fields only when the variant has
-  // none (since dimensions shipped), so absent clears too; one older still is older than every row
-  // that has them, and `catalog_at` drops it.
-  const statements = [...latest.values()].map(({ line, at }) =>
-    env.DB.prepare(UPSERT).bind(
-      line.sku,
-      line.name,
-      line.price,
-      at,
-      line.weightKg ?? null,
-      line.lengthCm ?? null,
-      line.widthCm ?? null,
-      line.heightCm ?? null,
-    ),
-  );
-  for (let i = 0; i < statements.length; i += 100) await env.DB.batch(statements.slice(i, i + 100));
+  await store.apply([...latest.values()]);
 }

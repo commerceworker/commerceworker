@@ -7,7 +7,6 @@
  */
 
 import { randomToken, sha256Hex } from '@commerceworker/security/credentials';
-import { passkeyChallenges, passkeys, users } from '@commerceworker/store/auth';
 import {
   type AuthenticationResponseJSON,
   generateAuthenticationOptions,
@@ -17,15 +16,14 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
-import { and, desc, eq, lt } from 'drizzle-orm';
 import { audit, clientIp } from './audit.server';
 import { recordFailure, startSession, Throttled, waitFor } from './auth.server';
-import { db } from './env.server';
 import type { Principal } from './roles';
 import { ssoOnlyInEffect } from './settings.server';
 import { TeamError } from './team.server';
 import { throttleKey } from './throttle';
 import { confirmPassword } from './two-factor.server';
+import { adminPasskeys } from './wire.server';
 
 const RP_NAME = 'CommerceWorker';
 const CHALLENGE_MS = 5 * 60_000;
@@ -40,46 +38,30 @@ const party = (request: Request) => {
 
 /** The person's passkeys, newest first, without their keys. */
 export async function listPasskeys(userId: string) {
-  return db()
-    .select({
-      id: passkeys.id,
-      name: passkeys.name,
-      backedUp: passkeys.backedUp,
-      createdAt: passkeys.createdAt,
-      lastUsedAt: passkeys.lastUsedAt,
-    })
-    .from(passkeys)
-    .where(eq(passkeys.userId, userId))
-    .orderBy(desc(passkeys.createdAt));
+  const keys = await adminPasskeys().forUser(userId);
+  return keys.map(({ id, name, backedUp, createdAt, lastUsedAt }) => ({
+    id,
+    name,
+    backedUp,
+    createdAt,
+    lastUsedAt,
+  }));
 }
 
 async function putChallenge(id: string, challenge: string, userId: string | null) {
-  const expiresAt = Date.now() + CHALLENGE_MS;
-  await db()
-    .insert(passkeyChallenges)
-    .values({ id, challenge, userId, expiresAt })
-    .onConflictDoUpdate({ target: passkeyChallenges.id, set: { challenge, userId, expiresAt } });
-  // Challenges are short-lived: a cheap moment to drop the stale ones.
-  await db().delete(passkeyChallenges).where(lt(passkeyChallenges.expiresAt, Date.now()));
+  const now = Date.now();
+  await adminPasskeys().putChallenge({ id, challenge, userId, expiresAt: now + CHALLENGE_MS }, now);
 }
 
-/** The challenge, removed so it can't be answered twice; null when missing or expired. */
 async function takeChallenge(id: string) {
-  const [row] = await db()
-    .delete(passkeyChallenges)
-    .where(eq(passkeyChallenges.id, id))
-    .returning();
-  return row && row.expiresAt > Date.now() ? row : null;
+  return adminPasskeys().takeChallenge(id, Date.now());
 }
 
 /** What the browser needs to create a passkey, after the person's password checks out. */
 export async function registrationOptions(request: Request, by: Principal, password: string) {
   const user = await confirmPassword(by, password);
   const { rpID } = party(request);
-  const existing = await db()
-    .select({ id: passkeys.id, transports: passkeys.transports })
-    .from(passkeys)
-    .where(eq(passkeys.userId, user.id));
+  const existing = await adminPasskeys().forUser(user.id);
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
     rpID,
@@ -90,7 +72,7 @@ export async function registrationOptions(request: Request, by: Principal, passw
     // One passkey per authenticator: the browser skips any it already holds.
     excludeCredentials: existing.map((p) => ({
       id: p.id,
-      transports: JSON.parse(p.transports) as string[],
+      transports: p.transports,
     })),
     authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
   });
@@ -125,36 +107,30 @@ export async function addPasskey(
   if (!verified.verified) throw new TeamError('That passkey could not be checked. Try again.');
   const { credential, credentialBackedUp } = verified.registrationInfo;
   const label = name.trim().slice(0, 60) || 'Passkey';
-  await db()
-    .insert(passkeys)
-    .values({
-      id: credential.id,
-      userId: by.id,
-      publicKey: isoBase64URL.fromBuffer(credential.publicKey),
-      counter: credential.counter,
-      transports: JSON.stringify(credential.transports ?? []),
-      name: label,
-      backedUp: credentialBackedUp,
-      createdAt: Date.now(),
-    })
-    .onConflictDoNothing();
+  await adminPasskeys().add({
+    id: credential.id,
+    userId: by.id,
+    publicKey: isoBase64URL.fromBuffer(credential.publicKey),
+    counter: credential.counter,
+    transports: credential.transports ?? [],
+    name: label,
+    backedUp: credentialBackedUp,
+    createdAt: Date.now(),
+    lastUsedAt: null,
+  });
   await audit(request, 'auth.passkey_added', { actor: by, detail: { name: label } });
 }
 
 export async function removePasskey(request: Request, by: Principal, id: string, password: string) {
   await confirmPassword(by, password);
-  const [gone] = await db()
-    .delete(passkeys)
-    .where(and(eq(passkeys.id, id), eq(passkeys.userId, by.id)))
-    .returning({ name: passkeys.name });
-  if (!gone) throw new TeamError('That passkey is already gone.');
-  await audit(request, 'auth.passkey_removed', { actor: by, detail: { name: gone.name } });
+  const name = await adminPasskeys().remove(id, by.id);
+  if (name === undefined) throw new TeamError('That passkey is already gone.');
+  await audit(request, 'auth.passkey_removed', { actor: by, detail: { name } });
 }
 
 /** Removes every passkey a person has, as an admin's two-factor reset does: how many there were. */
 export async function clearPasskeys(userId: string): Promise<number> {
-  const gone = await db().delete(passkeys).where(eq(passkeys.userId, userId)).returning();
-  return gone.length;
+  return adminPasskeys().clear(userId);
 }
 
 /** What the sign-in page asks the browser for, and the cookie that ties the answer to it. */
@@ -191,21 +167,7 @@ export async function signInWithPasskey(
   if (await ssoOnlyInEffect()) return refuse('SSO only');
   const c = token ? await takeChallenge(await sha256Hex(token)) : null;
   if (!c) return refuse('passkey challenge expired');
-  const row = await db()
-    .select({
-      passkey: passkeys,
-      user: {
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        role: users.role,
-        disabledAt: users.disabledAt,
-      },
-    })
-    .from(passkeys)
-    .innerJoin(users, eq(users.id, passkeys.userId))
-    .where(eq(passkeys.id, response.id))
-    .get();
+  const row = await adminPasskeys().withUser(response.id);
   if (!row) return refuse('unknown passkey');
   if (row.user.disabledAt) return refuse('disabled');
   const { rpID, origin } = party(request);
@@ -221,7 +183,7 @@ export async function signInWithPasskey(
         id: row.passkey.id,
         publicKey: isoBase64URL.toBuffer(row.passkey.publicKey),
         counter: row.passkey.counter,
-        transports: JSON.parse(row.passkey.transports) as string[],
+        transports: row.passkey.transports,
       },
     });
   } catch {
@@ -230,10 +192,7 @@ export async function signInWithPasskey(
   }
   if (!verified.verified) return refuse('passkey did not verify');
   const now = Date.now();
-  await db()
-    .update(passkeys)
-    .set({ counter: verified.authenticationInfo.newCounter, lastUsedAt: now })
-    .where(eq(passkeys.id, row.passkey.id));
+  await adminPasskeys().used(row.passkey.id, verified.authenticationInfo.newCounter, now);
   const { disabledAt: _off, ...person } = row.user;
   const principal: Principal = { kind: 'user', ...person, role: person.role as Principal['role'] };
   await audit(request, 'auth.sign_in', { actor: principal, detail: { method: 'passkey' } });

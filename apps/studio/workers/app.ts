@@ -10,20 +10,14 @@ import { setPrincipalHeader } from '../app/lib/principal.server';
 import { SCIM_PATH } from '../app/lib/scim';
 import { scimFetch } from '../app/lib/scim.server';
 import { answersBeforeSetup } from '../app/lib/setup-gate';
+import { studioHealthChecks } from '../app/lib/wire.server';
 
 /**
  * The deploy smoke test's check: this Worker's D1, and the api's health (over the service binding,
  * so a broken api deploy fails it too). 503 when anything is down.
  */
 async function deepHealth(env: Env): Promise<Response> {
-  const report = await runHealthChecks('commerceworker-studio', {
-    db: () => env.DB.prepare('select 1').first(),
-    api: async () => {
-      const r = await env.API.fetch('https://api/health');
-      await r.body?.cancel();
-      if (!r.ok) throw new Error('api unhealthy');
-    },
-  });
+  const report = await runHealthChecks('commerceworker-studio', studioHealthChecks(env));
   return Response.json(report, {
     status: report.ok ? 200 : 503,
     headers: { 'cache-control': 'no-store' },

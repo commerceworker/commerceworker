@@ -2,12 +2,7 @@
  * What the media Worker does with a request, over ports and structural bindings so the tests can
  * run it against Miniflare's KV, R2 and D1 with a fake Images binding.
  */
-import { type R2BucketLike, safeHeaders } from '@commerceworker/adapters/blob-r2';
-import {
-  type ImagesBindingLike,
-  transformImage,
-  transformParams,
-} from '@commerceworker/adapters/images-cf';
+
 import { assetGateEntry, mediaServability, variantTransform } from '@commerceworker/application';
 import {
   type AssetMediaAddress,
@@ -15,6 +10,7 @@ import {
   isTransformableImage,
   parseAssetMediaPath,
 } from '@commerceworker/domain';
+import type { PublishedMediaAdapters } from '@commerceworker/platform/media';
 import {
   mediaAssetTag,
   mediaEnvironmentTag,
@@ -159,11 +155,9 @@ export function contentDisposition(kind: 'inline' | 'attachment', fileName: stri
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
-export interface MediaDeps {
-  readonly bucket: R2BucketLike;
+export interface MediaDeps extends PublishedMediaAdapters {
   /** Checks the token in the path, before any lookup. */
   readonly paths: MediaPathSigner;
-  readonly images?: ImagesBindingLike;
   /** The engine's gate (KV). */
   readonly gate?: AssetGate;
   /** Read-only, through a replica: the gate's fallback and the rendition presets. */
@@ -203,7 +197,7 @@ function variantSpec(
   rendition: AssetRendition | null,
 ): ImageTransformSpec | null {
   const spec = variantTransform(a.variant, rendition ? [rendition] : []);
-  if (!spec || spec.format !== 'auto' || f !== 'src') return spec;
+  if (spec?.format !== 'auto' || f !== 'src') return spec;
   const { format: _auto, ...rest } = spec;
   return rest;
 }
@@ -253,7 +247,7 @@ export async function serveMedia(request: Request, deps: MediaDeps): Promise<Res
   let spec: ImageTransformSpec | null = null;
   if (a.variant.kind !== 'original') {
     // Variants exist only for images the service can resize, and only when it is bound.
-    if (!deps.images || !isTransformableImage(gate.contentType)) return plain(404, 'not found');
+    if (!deps.transform || !isTransformableImage(gate.contentType)) return plain(404, 'not found');
     let rendition: AssetRendition | null = null;
     if (a.variant.kind === 'rendition') {
       rendition = (await deps.store?.assetRenditions.get(a.scope, a.variant.name)) ?? null;
@@ -268,24 +262,24 @@ export async function serveMedia(request: Request, deps: MediaDeps): Promise<Res
   if (!object) return plain(404, 'not found');
 
   let response: Response;
-  if (spec && deps.images) {
+  if (spec && deps.transform) {
     // The negotiated class stands in for the reader's Accept, which never reaches this entrypoint.
     const accept = f === 'avif' ? 'image/avif' : f === 'webp' ? 'image/webp' : null;
-    const transformed = await transformImage(
-      deps.images,
+    const transformed = await deps.transform(
       object.body,
       gate.contentType,
-      transformParams(spec, gate.focal),
+      spec,
+      gate.focal,
       accept,
     );
     if (!transformed) {
       await object.body.cancel();
       return plain(404, 'not found');
     }
-    const headers = safeHeaders(transformed.headers.get('content-type') ?? gate.contentType);
+    const headers = deps.headers(transformed.headers.get('content-type') ?? gate.contentType);
     response = new Response(transformed.body, { status: 200, headers });
   } else {
-    const headers = safeHeaders(gate.contentType);
+    const headers = deps.headers(gate.contentType);
     headers.set('content-length', String(object.size));
     headers.set('etag', object.httpEtag);
     headers.set('accept-ranges', 'bytes');
@@ -328,7 +322,7 @@ export async function serveMediaRange(
   }
   const object = await deps.bucket.get(gate.r2Key, { range: want });
   if (!object) return plain(404, 'not found');
-  const headers = safeHeaders(gate.contentType);
+  const headers = deps.headers(gate.contentType);
   headers.set('content-length', String(want.length));
   headers.set(
     'content-range',

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOrders, type OrderLine } from '../src/orders';
+import { catalogOrders } from '../src/wire';
 import { api, by, product, settle, setup } from './helpers';
 
 beforeAll(setup);
@@ -106,13 +107,13 @@ describe("CommerceWorker's products", () => {
       search: null,
       order: [line],
     });
-    await applyOrders(env, [change(100, sizedCrate)]);
+    await applyOrders(catalogOrders(env), [change(100, sizedCrate)]);
     expect(await sized(sku)).toMatchObject({ weight_kg: 4, length_cm: 50, height_cm: 30 });
     // That code left the fields out only for a variant that had none.
-    await applyOrders(env, [change(200, crate as OrderLine)]);
+    await applyOrders(catalogOrders(env), [change(200, crate as OrderLine)]);
     expect(await sized(sku)).toEqual({ name: 'Crate', ...none });
     // And an older change can't bring them back.
-    await applyOrders(env, [change(150, sizedCrate)]);
+    await applyOrders(catalogOrders(env), [change(150, sizedCrate)]);
     expect(await sized(sku)).toEqual({ name: 'Crate', ...none });
   });
 
@@ -130,11 +131,11 @@ describe("CommerceWorker's products", () => {
       search: null,
       order: line(name),
     });
-    await applyOrders(env, [change(200, 'newer')]);
-    await applyOrders(env, [change(100, 'older')]);
+    await applyOrders(catalogOrders(env), [change(200, 'newer')]);
+    await applyOrders(catalogOrders(env), [change(100, 'older')]);
     expect((await row(sku))?.name).toBe('newer');
     // Within one batch, the newest per SKU wins too.
-    await applyOrders(env, [change(400, 'newest'), change(300, 'between')]);
+    await applyOrders(catalogOrders(env), [change(400, 'newest'), change(300, 'between')]);
     expect(await row(sku)).toMatchObject({ name: 'newest', catalog_at: 400 });
   });
 });

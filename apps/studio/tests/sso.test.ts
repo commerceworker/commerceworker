@@ -1,5 +1,6 @@
+import { InMemoryAdminAuth } from '@commerceworker/test-kit';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SSO,
   decideSso,
@@ -16,36 +17,13 @@ const env: Record<string, string> = {
   PRINCIPAL_KEY: 'test-principal-key-0123456789abcdef',
 };
 
-/** What the next `select … get()` reads, in order, and what `update` wrote. */
-const rows: unknown[] = [];
-const writes: Record<string, unknown>[] = [];
-let failNextWrite = false;
-const fakeDb = {
-  select: () => {
-    const q = { from: () => q, where: () => q, get: async () => rows.shift() };
-    return q;
-  },
-  update: () => ({
-    set: (v: Record<string, unknown>) => ({
-      where: () => {
-        writes.push(v);
-        const fail = failNextWrite;
-        failNextWrite = false;
-        return Object.assign(Promise.resolve(), {
-          returning: async () => {
-            if (fail) throw new Error('UNIQUE constraint failed: users.external_sub');
-            return [{ id: 'usr_1' }];
-          },
-        });
-      },
-    }),
-  }),
-};
-
+let store = new InMemoryAdminAuth();
+const audit = vi.fn();
+let settings = DEFAULT_SSO;
 vi.mock('cloudflare:workers', () => ({ env }));
-vi.mock('~/lib/env.server', () => ({ db: () => fakeDb }));
-vi.mock('~/lib/audit.server', () => ({ audit: vi.fn() }));
-vi.mock('~/lib/settings.server', () => ({ ssoSettings: async () => DEFAULT_SSO }));
+vi.mock('~/lib/wire.server', () => ({ adminAuth: () => store }));
+vi.mock('~/lib/audit.server', () => ({ audit }));
+vi.mock('~/lib/settings.server', () => ({ ssoSettings: async () => settings }));
 vi.mock('~/lib/auth.server', () => ({
   cookie: (request: Request, name: string) =>
     request.headers
@@ -156,54 +134,78 @@ describe('linking an identity to someone with a password', () => {
   const request = (cookie?: string) =>
     new Request('https://app.test/login/sso/link', cookie ? { headers: { cookie } } : {});
 
-  afterEach(() => {
-    rows.length = 0;
-    writes.length = 0;
+  beforeEach(() => {
+    store = new InMemoryAdminAuth({ users: [ann] });
+    settings = DEFAULT_SSO;
+    audit.mockReset();
   });
 
   it('links someone without a password at once', async () => {
-    rows.push(undefined, { ...ann, passwordHash: null });
     expect(await signInWithSso(request(), identity)).toEqual({ session: '__Host-cw_session=new' });
-    expect(writes).toEqual([{ externalSub: 'idp|ann' }]);
+    expect((await store.user(ann.id))?.externalSub).toBe(identity.sub);
   });
 
-  it('waits for the password of someone who has one, and links only them', async () => {
-    rows.push(undefined, { ...ann, passwordHash: 'pbkdf2$…' });
+  it('fails closed when the passwordless link loses a race', async () => {
+    vi.spyOn(store, 'linkSub').mockResolvedValueOnce(false);
+    await expect(signInWithSso(request(), identity)).rejects.toThrow(/no longer available/);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('waits for the password and links only the matching person once', async () => {
+    const user = { ...store.users.get(ann.id)!, passwordHash: 'pbkdf2$…' };
+    store.users.set(ann.id, user);
     const outcome = await signInWithSso(request(), identity);
-    expect(writes).toEqual([]);
+    expect((await store.user(ann.id))?.externalSub).toBeNull();
     if (!('confirmLink' in outcome)) throw new Error('expected a pending link');
     expect(outcome.confirmLink).toMatch(
       /^__Host-cw_sso_link=sl1\..*; HttpOnly; Secure; SameSite=Lax; Max-Age=600$/,
     );
     const cookie = outcome.confirmLink.split(';')[0]!;
-
-    const user = { ...ann, passwordHash: 'pbkdf2$…', totpEnabledAt: null };
-    rows.push(user);
-    expect(await pendingSsoLink(request(cookie))).toMatchObject({ sub: 'idp|ann', user });
-    // Gone once the person was linked another way, or lost their password.
-    rows.push({ ...user, externalSub: 'idp|other' });
-    expect(await pendingSsoLink(request(cookie))).toBeNull();
-    rows.push({ ...user, passwordHash: null });
-    expect(await pendingSsoLink(request(cookie))).toBeNull();
-    rows.push({ ...user, disabledAt: 5 });
-    expect(await pendingSsoLink(request(cookie))).toBeNull();
+    const pending = await pendingSsoLink(request(cookie));
+    expect(pending).toMatchObject({
+      sub: identity.sub,
+      user: { id: user.id, passwordHash: user.passwordHash },
+    });
+    expect(pending?.user).not.toHaveProperty('totpSecret');
+    for (const change of [{ externalSub: 'other' }, { passwordHash: null }, { disabledAt: 5 }]) {
+      store.users.set(ann.id, { ...user, ...change });
+      expect(await pendingSsoLink(request(cookie))).toBeNull();
+    }
+    store.users.set(ann.id, user);
     expect(await pendingSsoLink(request('__Host-cw_sso_link=sl1.forged.sig'))).toBeNull();
-
-    // Signed in as someone else: nothing is linked.
-    rows.push(user);
     const bob = { kind: 'user' as const, id: 'usr_2', name: 'Bob', role: 'admin' as const };
     expect(await finishSsoLink(request(cookie), bob)).toBe(false);
-    // Signed in as Ann, with her password: linked, unless the identity went to someone else.
-    rows.push(user, { id: 'usr_3' });
-    const caller = { kind: 'user' as const, id: 'usr_1', name: 'Ann', role: 'admin' as const };
+    const caller = { ...bob, id: ann.id, name: ann.name };
+    await store.addSsoUser({
+      id: 'usr_3',
+      email: 'other@example.com',
+      name: 'Other',
+      role: 'member',
+      externalSub: identity.sub,
+      createdAt: 1,
+    });
     expect(await finishSsoLink(request(cookie), caller)).toBe(false);
-    // Taken between the check and the write: the unique index refuses it, and so does the link.
-    rows.push(user, undefined);
-    failNextWrite = true;
+    store.users.delete('usr_3');
+    vi.spyOn(store, 'linkSub').mockResolvedValueOnce(false);
     expect(await finishSsoLink(request(cookie), caller)).toBe(false);
-    rows.push(user, undefined);
     expect(await finishSsoLink(request(cookie), caller)).toBe(true);
-    expect(writes).toEqual([{ externalSub: 'idp|ann' }, { externalSub: 'idp|ann' }]);
+    expect(await finishSsoLink(request(cookie), caller)).toBe(false);
+    expect(audit).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates only member accounts when JIT sign-in permits the verified domain', async () => {
+    settings = { jitRole: 'member', domains: ['acme.com'], ssoOnly: false };
+    const result = await signInWithSso(request(), {
+      sub: 'new-sub',
+      email: 'new@acme.com',
+      name: 'New',
+    });
+    expect(result).toEqual({ session: '__Host-cw_session=new' });
+    expect(await store.userBySub('new-sub')).toMatchObject({
+      email: 'new@acme.com',
+      role: 'member',
+      passwordHash: null,
+    });
   });
 });
 

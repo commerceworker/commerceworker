@@ -1,25 +1,8 @@
+import { InMemoryPasskeyStore } from '@commerceworker/test-kit/commerce';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
-// Conditions become plain values the fake database can match on.
-vi.mock('drizzle-orm', async (actual) => ({
-  ...(await actual<typeof import('drizzle-orm')>()),
-  eq: (_col: unknown, value: string) => ({ eq: value }),
-  and: (...c: { eq?: string }[]) => ({ and: c.map((x) => x.eq) }),
-  lt: () => ({ lt: true }),
-}));
-
-type Challenge = { id: string; challenge: string; userId: string | null; expiresAt: number };
-type Key = {
-  id: string;
-  userId: string;
-  publicKey: string;
-  counter: number;
-  transports: string;
-  name: string;
-};
-const challenges = new Map<string, Challenge>();
-const keys = new Map<string, Key>();
+let store: InMemoryPasskeyStore;
 const people: Record<
   string,
   { id: string; email: string; name: string; role: string; disabledAt: number | null }
@@ -32,59 +15,7 @@ const people: Record<
     disabledAt: null,
   },
 };
-let table = '';
-const db = {
-  insert: (t: { _: { name: string } } | object) => ({
-    values: (v: Challenge & Key) => {
-      const name = String((t as Record<symbol, string>)[Symbol.for('drizzle:Name')]);
-      const put = () =>
-        name === 'passkey_challenges' ? challenges.set(v.id, v) : keys.set(v.id, v);
-      return { onConflictDoUpdate: async () => put(), onConflictDoNothing: async () => put() };
-    },
-  }),
-  delete: (t: object) => {
-    table = String((t as Record<symbol, string>)[Symbol.for('drizzle:Name')]);
-    const name = table;
-    return {
-      where: (c: { eq?: string; and?: string[]; lt?: boolean }) => {
-        const gone = () => {
-          if (c.lt) return [];
-          if (name === 'passkey_challenges') {
-            const row = challenges.get(c.eq!);
-            challenges.delete(c.eq!);
-            return row ? [row] : [];
-          }
-          const [id, userId] = c.and ?? [c.eq];
-          const row = keys.get(id!);
-          if (!row || (userId && row.userId !== userId)) return [];
-          keys.delete(id!);
-          return [row];
-        };
-        const p = Promise.resolve().then(gone);
-        return Object.assign(p, { returning: () => p });
-      },
-    };
-  },
-  select: () => ({
-    from: () => ({
-      innerJoin: () => ({
-        where: (c: { eq: string }) => ({
-          get: async () => {
-            const k = keys.get(c.eq);
-            return k ? { passkey: k, user: people[k.userId] } : undefined;
-          },
-        }),
-      }),
-      where: () => Object.assign(Promise.resolve([]), { get: async () => undefined }),
-    }),
-  }),
-  update: () => ({
-    set: (v: Partial<Key>) => ({
-      where: async (c: { eq: string }) => Object.assign(keys.get(c.eq)!, v),
-    }),
-  }),
-};
-vi.mock('~/lib/env.server', () => ({ db: () => db }));
+vi.mock('~/lib/wire.server', () => ({ adminPasskeys: () => store }));
 const audit = vi.fn();
 vi.mock('~/lib/audit.server', () => ({ audit, clientIp: () => '203.0.113.7' }));
 const recordFailure = vi.fn();
@@ -110,8 +41,14 @@ vi.mock('@simplewebauthn/server', async (actual) => ({
   verifyRegistrationResponse,
 }));
 
-const { addPasskey, removePasskey, signInOptions, signInWithPasskey, registrationOptions } =
-  await import('~/lib/passkeys.server');
+const {
+  addPasskey,
+  removePasskey,
+  signInOptions,
+  signInWithPasskey,
+  registrationOptions,
+  listPasskeys,
+} = await import('~/lib/passkeys.server');
 const req = () => new Request('https://acme.commerceworker.com/login/passkey', { method: 'POST' });
 const ada = {
   kind: 'user' as const,
@@ -124,15 +61,17 @@ const answer = { id: 'cred_1' } as Parameters<typeof signInWithPasskey>[2];
 const tokenOf = (cookie: string) => /__Host-cw_pk=([^;]+)/.exec(cookie)![1];
 
 describe('passkeys', () => {
-  beforeEach(() => {
-    challenges.clear();
-    keys.clear();
-    keys.set('cred_1', {
+  beforeEach(async () => {
+    store = new InMemoryPasskeyStore({ users: Object.values(people) });
+    await store.add({
       id: 'cred_1',
       userId: 'usr_ada',
       publicKey: 'AQID',
       counter: 1,
-      transports: '[]',
+      transports: [],
+      backedUp: false,
+      createdAt: 1,
+      lastUsedAt: null,
       name: 'Laptop',
     });
     people.usr_ada!.disabledAt = null;
@@ -159,7 +98,7 @@ describe('passkeys', () => {
         requireUserVerification: true,
       }),
     );
-    expect(keys.get('cred_1')!.counter).toBe(2);
+    expect((await store.withUser('cred_1'))?.passkey.counter).toBe(2);
     expect(audit).toHaveBeenCalledWith(expect.any(Request), 'auth.sign_in', {
       actor: expect.objectContaining({ id: 'usr_ada' }),
       detail: { method: 'passkey' },
@@ -198,7 +137,7 @@ describe('passkeys', () => {
       },
     });
     await addPasskey(req(), ada, {} as never, '  Phone  ');
-    expect(keys.get('cred_2')).toMatchObject({
+    expect((await store.withUser('cred_2'))?.passkey).toMatchObject({
       userId: 'usr_ada',
       name: 'Phone',
       publicKey: 'AQID',
@@ -209,12 +148,32 @@ describe('passkeys', () => {
     });
   });
 
+  it('lists only display fields and excludes existing credentials when registering', async () => {
+    expect(await listPasskeys(ada.id)).toEqual([
+      {
+        id: 'cred_1',
+        name: 'Laptop',
+        backedUp: false,
+        createdAt: 1,
+        lastUsedAt: null,
+      },
+    ]);
+    const options = await registrationOptions(req(), ada, 'right');
+    expect(options.excludeCredentials).toEqual([
+      { id: 'cred_1', transports: [], type: 'public-key' },
+    ]);
+    expect(options.authenticatorSelection).toMatchObject({
+      residentKey: 'required',
+      userVerification: 'required',
+    });
+  });
+
   it('removes only your own passkey, after the password', async () => {
     await expect(removePasskey(req(), ada, 'cred_1', 'wrong')).rejects.toThrow(/password/);
     await expect(
       removePasskey(req(), { ...ada, id: 'usr_bob' }, 'cred_1', 'right'),
     ).rejects.toThrow();
     await removePasskey(req(), ada, 'cred_1', 'right');
-    expect(keys.has('cred_1')).toBe(false);
+    expect(await store.withUser('cred_1')).toBeUndefined();
   });
 });

@@ -12,21 +12,19 @@
  * - **Groups → roles:** admins map groups to roles (`scim_roles`). Whenever a person's groups or
  *   the map change, their role becomes the highest mapped role of their groups, or member.
  *
- * The protocol runs against `ScimStore`, so tests can drive it in memory; `d1Store` is the real one.
+ * The protocol runs against `ScimStore`; `scimStore` composes its storage ports and access
+ * revocation, and the same protocol runs against the test kit’s in-memory directory.
  */
 
+import type { AdminScimDirectory } from '@commerceworker/ports';
 import { randomToken, secretEqual, sha256Hex } from '@commerceworker/security/credentials';
-import { scimGroupMembers, scimGroups, users, workspaceSettings } from '@commerceworker/store/auth';
-import { and, count, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { endAccess } from './access.server';
 import { audit, clientIp } from './audit.server';
 import type { AuditActor } from './audit-chain';
-import { db } from './env.server';
 import { newId } from './ids';
 import { overBudget } from './rate-limit';
 import { atLeast, type Principal, type Role } from './roles';
 import {
-  type Filter,
   type GroupChanges,
   groupFromBody,
   groupPatch,
@@ -50,6 +48,7 @@ import {
   type ScimPerson,
   userResource,
 } from './scim';
+import { adminScimDirectory, adminSettings } from './wire.server';
 
 export const SCIM_TOKEN_PREFIX = 'cw_scim_';
 const TOKEN_KEY = 'scim_token';
@@ -59,48 +58,8 @@ const ROLES_KEY = 'scim_roles';
 export const SCIM_ACTOR: AuditActor = { kind: 'scim', id: 'scim', name: 'SCIM', role: 'admin' };
 
 /** What the protocol reads and writes. */
-export interface ScimStore {
-  people(
-    f: Filter | null,
-    offset: number,
-    limit: number,
-  ): Promise<{ total: number; rows: ScimPerson[] }>;
-  person(id: string): Promise<ScimPerson | undefined>;
-  personByEmail(email: string): Promise<ScimPerson | undefined>;
-  addPerson(p: ScimPerson): Promise<void>;
-  updatePerson(
-    id: string,
-    set: { email?: string; name?: string; scimExternalId?: string | null },
-  ): Promise<void>;
-  /** Whether the person has a password, and whether single sign-on is linked to them. */
-  signsInWith(id: string): Promise<{ password: boolean; linked: boolean }>;
-  role(id: string): Promise<Role>;
-  setRole(id: string, role: Role): Promise<void>;
-  /** Active admins other than `exceptId`. */
-  otherAdmins(exceptId: string): Promise<number>;
-  setDisabled(id: string, at: number | null): Promise<void>;
-  /** Ends a person's admin sessions. */
+export interface ScimStore extends AdminScimDirectory {
   revokeAccess(p: { id: string; email: string }): Promise<{ sessions: number }>;
-  groups(
-    f: Filter | null,
-    offset: number,
-    limit: number,
-  ): Promise<{ total: number; rows: ScimGroupRow[] }>;
-  group(id: string): Promise<ScimGroupRow | undefined>;
-  addGroup(g: ScimGroupRow): Promise<void>;
-  updateGroup(
-    id: string,
-    set: { displayName?: string; externalId?: string | null; updatedAt: number },
-  ): Promise<void>;
-  deleteGroup(id: string): Promise<void>;
-  members(groupId: string): Promise<string[]>;
-  /** Of these ids, the ones that are people. */
-  existing(ids: string[]): Promise<string[]>;
-  addMembers(groupId: string, ids: string[]): Promise<void>;
-  removeMembers(groupId: string, ids: string[]): Promise<void>;
-  /** Removes a person from every group. */
-  leaveGroups(userId: string): Promise<void>;
-  groupsOf(userId: string): Promise<string[]>;
   roleMap(): Promise<Record<string, Role>>;
 }
 
@@ -305,7 +264,10 @@ class People {
     if (c.active === false && p.disabledAt === null) {
       await this.keepAnAdmin(p.id, 'deactivate');
       disabledAt = this.now;
-      await this.store.setDisabled(p.id, disabledAt);
+      if (!(await this.store.setDisabled(p.id, disabledAt)))
+        throw new Conflict(
+          "Can't deactivate the last active admin: make someone else an admin in CommerceWorker first",
+        );
       const ended = await this.store.revokeAccess(before);
       await this.record('team.user_disabled', {
         actor: this.actor,
@@ -314,7 +276,7 @@ class People {
       });
     } else if (c.active === true && p.disabledAt !== null) {
       disabledAt = null;
-      await this.store.setDisabled(p.id, null);
+      if (!(await this.store.setDisabled(p.id, null))) throw new NotFound();
       await this.record('team.user_enabled', {
         actor: this.actor,
         target: set.email ?? p.email,
@@ -360,7 +322,14 @@ class People {
       });
       return;
     }
-    await this.store.setRole(userId, to);
+    if (!(await this.store.setRole(userId, to))) {
+      await this.record('team.role_changed', {
+        actor: this.actor,
+        target: p.email,
+        detail: { from, to: from, via: 'scim', kept: 'the last active admin' },
+      });
+      return;
+    }
     // The next forwarded request carries the new role: the principal is signed per request.
     await this.record('team.role_changed', {
       actor: this.actor,
@@ -487,11 +456,7 @@ function resourceTypes(base: string) {
 export async function scimAuthorized(request: Request, now = Date.now()): Promise<boolean> {
   const bearer = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!bearer?.startsWith(SCIM_TOKEN_PREFIX)) return false;
-  const row = await db()
-    .select({ value: workspaceSettings.value, updatedAt: workspaceSettings.updatedAt })
-    .from(workspaceSettings)
-    .where(eq(workspaceSettings.key, TOKEN_KEY))
-    .get();
+  const row = await adminSettings().record(TOKEN_KEY);
   return (
     !!row &&
     now - row.updatedAt < SCIM_TOKEN_MS &&
@@ -500,13 +465,8 @@ export async function scimAuthorized(request: Request, now = Date.now()): Promis
 }
 
 export async function scimTokenSet(): Promise<{ updatedAt: number; updatedBy: string } | null> {
-  return (
-    (await db()
-      .select({ updatedAt: workspaceSettings.updatedAt, updatedBy: workspaceSettings.updatedBy })
-      .from(workspaceSettings)
-      .where(eq(workspaceSettings.key, TOKEN_KEY))
-      .get()) ?? null
-  );
+  const row = await adminSettings().record(TOKEN_KEY);
+  return row ? { updatedAt: row.updatedAt, updatedBy: row.updatedBy } : null;
 }
 
 /** Makes a new SCIM token (replacing any other) and returns it, to show once. */
@@ -516,244 +476,50 @@ export async function createScimToken(request: Request, by: Principal): Promise<
   const updatedBy = by.email ?? by.name;
   const now = Date.now();
   const replaced = !!(await scimTokenSet());
-  await db()
-    .insert(workspaceSettings)
-    .values({ key: TOKEN_KEY, value, updatedAt: now, updatedBy })
-    .onConflictDoUpdate({
-      target: workspaceSettings.key,
-      set: { value, updatedAt: now, updatedBy },
-    });
+  await adminSettings().set({ key: TOKEN_KEY, value, updatedAt: now, updatedBy });
   await audit(request, 'scim.token_created', { actor: by, detail: { replaced } });
   return token;
 }
 
 export async function revokeScimToken(request: Request, by: Principal) {
-  await db().delete(workspaceSettings).where(eq(workspaceSettings.key, TOKEN_KEY));
+  await adminSettings().remove(TOKEN_KEY);
   await audit(request, 'scim.token_revoked', { actor: by });
 }
 
 // ── Groups → roles, from the Team page ──
 
 export async function scimGroupsWithRoles() {
-  const [rows, map] = await Promise.all([
-    db()
-      .select({
-        id: scimGroups.id,
-        displayName: scimGroups.displayName,
-        members: count(scimGroupMembers.userId),
-      })
-      .from(scimGroups)
-      .leftJoin(scimGroupMembers, eq(scimGroupMembers.groupId, scimGroups.id))
-      .groupBy(scimGroups.id)
-      .orderBy(scimGroups.displayName)
-      .all(),
-    d1RoleMap(),
-  ]);
+  const [rows, map] = await Promise.all([adminScimDirectory().groupSizes(), storedRoleMap()]);
   return rows.map((g) => ({ ...g, role: map[g.id] ?? null }));
 }
 
 /** Saves the group → role map and moves the roles of the changed groups' members. */
 export async function setScimRoles(request: Request, by: Principal, next: Record<string, Role>) {
-  const from = await d1RoleMap();
+  const from = await storedRoleMap();
   const changed = [...new Set([...Object.keys(from), ...Object.keys(next)])].filter(
     (g) => from[g] !== next[g],
   );
   if (!changed.length) return;
   const value = JSON.stringify(next);
   const updatedBy = by.email ?? by.name;
-  await db()
-    .insert(workspaceSettings)
-    .values({ key: ROLES_KEY, value, updatedAt: Date.now(), updatedBy })
-    .onConflictDoUpdate({
-      target: workspaceSettings.key,
-      set: { value, updatedAt: Date.now(), updatedBy },
-    });
+  await adminSettings().set({ key: ROLES_KEY, value, updatedAt: Date.now(), updatedBy });
   await audit(request, 'team.scim_roles', { actor: by, detail: { from, to: next } });
-  await syncGroupRoles(d1Store(request), (a, e) => audit(request, a, e), changed, next, by);
+  await syncGroupRoles(scimStore(request), (a, e) => audit(request, a, e), changed, next, by);
 }
 
-async function d1RoleMap() {
-  const row = await db()
-    .select({ value: workspaceSettings.value })
-    .from(workspaceSettings)
-    .where(eq(workspaceSettings.key, ROLES_KEY))
-    .get();
-  return readRoleMap(row?.value);
+async function storedRoleMap() {
+  return readRoleMap(await adminSettings().get(ROLES_KEY));
 }
 
-// ── D1 ──
-
-const personCols = {
-  id: users.id,
-  email: users.email,
-  name: users.name,
-  disabledAt: users.disabledAt,
-  scimExternalId: users.scimExternalId,
-  createdAt: users.createdAt,
-};
-
-const personWhere = (f: Filter | null) =>
-  !f
-    ? undefined
-    : f.attr === 'userName'
-      ? eq(users.email, f.value.toLowerCase())
-      : f.attr === 'externalId'
-        ? eq(users.scimExternalId, f.value)
-        : f.attr === 'id'
-          ? eq(users.id, f.value)
-          : eq(users.name, f.value);
-
-const groupWhere = (f: Filter | null) =>
-  !f
-    ? undefined
-    : f.attr === 'externalId'
-      ? eq(scimGroups.externalId, f.value)
-      : f.attr === 'id'
-        ? eq(scimGroups.id, f.value)
-        : eq(scimGroups.displayName, f.value);
-
-/** The store over D1. `request` is for revoking OAuth grants, which live with the provider. */
-export function d1Store(request: Request): ScimStore {
-  return {
-    async people(f, offset, limit) {
-      const where = personWhere(f);
-      const [total, rows] = await Promise.all([
-        db().select({ n: count() }).from(users).where(where).get(),
-        limit
-          ? db()
-              .select(personCols)
-              .from(users)
-              .where(where)
-              .orderBy(users.createdAt)
-              .limit(limit)
-              .offset(offset)
-              .all()
-          : [],
-      ]);
-      return { total: total?.n ?? 0, rows };
-    },
-    person: (id) => db().select(personCols).from(users).where(eq(users.id, id)).get(),
-    personByEmail: (email) =>
-      db().select(personCols).from(users).where(eq(users.email, email)).get(),
-    async addPerson(p) {
-      await db()
-        .insert(users)
-        .values({ ...p, role: 'member' });
-    },
-    async updatePerson(id, set) {
-      await db().update(users).set(set).where(eq(users.id, id));
-    },
-    async signsInWith(id) {
-      const r = await db()
-        .select({ hash: users.passwordHash, sub: users.externalSub })
-        .from(users)
-        .where(eq(users.id, id))
-        .get();
-      return { password: !!r?.hash, linked: !!r?.sub };
-    },
-    async role(id) {
-      const r = await db().select({ role: users.role }).from(users).where(eq(users.id, id)).get();
-      return (r?.role ?? 'member') as Role;
-    },
-    async setRole(id, role) {
-      await db().update(users).set({ role }).where(eq(users.id, id));
-    },
-    async otherAdmins(exceptId) {
-      const r = await db()
-        .select({ n: count() })
-        .from(users)
-        .where(and(eq(users.role, 'admin'), isNull(users.disabledAt), ne(users.id, exceptId)))
-        .get();
-      return r?.n ?? 0;
-    },
-    async setDisabled(id, at) {
-      await db().update(users).set({ disabledAt: at }).where(eq(users.id, id));
-    },
-    async revokeAccess(p) {
+/** Ports plus this request's access revocation; storage is bound in wire.server.ts. */
+export function scimStore(request: Request): ScimStore {
+  return Object.assign(adminScimDirectory(), {
+    async revokeAccess(p: { id: string; email: string }) {
       const { sessions } = await endAccess(request, p, { sessions: true, tokens: true });
       return { sessions };
     },
-    async groups(f, offset, limit) {
-      const where = groupWhere(f);
-      const [total, rows] = await Promise.all([
-        db().select({ n: count() }).from(scimGroups).where(where).get(),
-        limit
-          ? db()
-              .select()
-              .from(scimGroups)
-              .where(where)
-              .orderBy(scimGroups.createdAt)
-              .limit(limit)
-              .offset(offset)
-              .all()
-          : [],
-      ]);
-      return { total: total?.n ?? 0, rows };
-    },
-    group: (id) => db().select().from(scimGroups).where(eq(scimGroups.id, id)).get(),
-    async addGroup(g) {
-      await db().insert(scimGroups).values(g);
-    },
-    async updateGroup(id, set) {
-      await db().update(scimGroups).set(set).where(eq(scimGroups.id, id));
-    },
-    async deleteGroup(id) {
-      await db().delete(scimGroupMembers).where(eq(scimGroupMembers.groupId, id));
-      await db().delete(scimGroups).where(eq(scimGroups.id, id));
-    },
-    async members(groupId) {
-      const rows = await db()
-        .select({ id: scimGroupMembers.userId })
-        .from(scimGroupMembers)
-        .where(eq(scimGroupMembers.groupId, groupId))
-        .all();
-      return rows.map((r) => r.id);
-    },
-    async existing(ids) {
-      if (!ids.length) return [];
-      const found = new Set<string>();
-      // D1 binds at most 100 parameters a statement.
-      for (let i = 0; i < ids.length; i += 90) {
-        const rows = await db()
-          .select({ id: users.id })
-          .from(users)
-          .where(inArray(users.id, ids.slice(i, i + 90)))
-          .all();
-        for (const r of rows) found.add(r.id);
-      }
-      return ids.filter((id) => found.has(id));
-    },
-    async addMembers(groupId, ids) {
-      for (let i = 0; i < ids.length; i += 40)
-        await db()
-          .insert(scimGroupMembers)
-          .values(ids.slice(i, i + 40).map((userId) => ({ groupId, userId })))
-          .onConflictDoNothing();
-    },
-    async removeMembers(groupId, ids) {
-      for (let i = 0; i < ids.length; i += 90)
-        await db()
-          .delete(scimGroupMembers)
-          .where(
-            and(
-              eq(scimGroupMembers.groupId, groupId),
-              inArray(scimGroupMembers.userId, ids.slice(i, i + 90)),
-            ),
-          );
-    },
-    async leaveGroups(userId) {
-      await db().delete(scimGroupMembers).where(eq(scimGroupMembers.userId, userId));
-    },
-    async groupsOf(userId) {
-      const rows = await db()
-        .select({ id: scimGroupMembers.groupId })
-        .from(scimGroupMembers)
-        .where(eq(scimGroupMembers.userId, userId))
-        .all();
-      return rows.map((r) => r.id);
-    },
-    roleMap: d1RoleMap,
-  };
+    roleMap: storedRoleMap,
+  });
 }
 
 /** `/scim/v2/*` on the web Worker: the token, a budget, then the protocol. */
@@ -766,5 +532,5 @@ export async function scimFetch(request: Request): Promise<Response> {
   const limited = await overBudget('API_LIMIT', 'scim');
   if (limited) return limited;
   const path = new URL(request.url).pathname.slice(SCIM_PATH.length) || '/';
-  return handleScim(request, path, d1Store(request), (a, e) => audit(request, a, e));
+  return handleScim(request, path, scimStore(request), (a, e) => audit(request, a, e));
 }

@@ -20,11 +20,11 @@
  *
  * Its queue consumer drains `commerceworker-media-purge`, rationed like delivery's.
  */
-import { handleMediaRequest } from '@commerceworker/adapters/blob-r2';
-import { type ImagesBindingLike, transformImage } from '@commerceworker/adapters/images-cf';
+
 import { parseShareLinkPath } from '@commerceworker/domain';
 import { recordDeadLetters } from '@commerceworker/platform/dead-letters';
 import { type EdgeEnv, queueName } from '@commerceworker/platform/env';
+import { mediaAdapters } from '@commerceworker/platform/media';
 import type { PurgeMessage } from '@commerceworker/platform/messages';
 import { drain } from '@commerceworker/platform/purge';
 import { wireMedia } from '@commerceworker/platform/wire';
@@ -102,25 +102,14 @@ export default {
     const wired = wireMedia(env);
     if (url.pathname.startsWith('/media/')) {
       if (!env.MEDIA_BUCKET) return withPublic(new Response('not found', { status: 404 }));
-      const images = env.IMAGES;
-      const res = await handleMediaRequest(request, {
+      const transfer = mediaAdapters({
         bucket: env.MEDIA_BUCKET,
         signer: wired.mediaSigner,
         requireExpiry: true,
         readOnly: true,
-        ...(images
-          ? {
-              transform: (object, params, req) =>
-                transformImage(
-                  images as ImagesBindingLike,
-                  object.body,
-                  object.httpMetadata?.contentType ?? '',
-                  params,
-                  req.headers.get('accept'),
-                ),
-            }
-          : {}),
-      });
+        ...(env.IMAGES ? { images: env.IMAGES } : {}),
+      }).transfer;
+      const res = (await transfer?.(request)) ?? new Response('not found', { status: 404 });
       return withPublic(res);
     }
 

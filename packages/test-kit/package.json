@@ -15,7 +15,13 @@
     "./d1": {
       "types": "./src/d1-query-counter.ts",
       "default": "./src/d1-query-counter.ts"
-    }
+    },
+    "./admin-settings-contract": "./src/admin-settings-contract.ts",
+    "./admin-auth-contract": "./src/admin-auth-contract.ts",
+    "./admin-team-contract": "./src/admin-team-contract.ts",
+    "./admin-password-resets-contract": "./src/admin-password-resets-contract.ts",
+    "./admin-scim-directory-contract": "./src/admin-scim-directory-contract.ts",
+    "./admin-audit-log-contract": "./src/admin-audit-log-contract.ts"
   },
   "scripts": {
     "test": "vitest run --passWithNoTests",

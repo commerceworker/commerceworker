@@ -45,12 +45,12 @@ const blank = (u: NonNullable<AuthFixture['users']>[number]): AuthUser => ({
 });
 
 export class InMemoryAuthStore implements AuthStore {
-  readonly users = new Map<string, AuthUser & { lastLoginAt?: number }>();
+  readonly users = new Map<string, AuthUser & { lastLoginAt?: number; createdAt?: number }>();
   readonly sessions = new Map<string, Session>();
   readonly tokens: NonNullable<AuthFixture['tokens']>;
   private readonly codes: NonNullable<AuthFixture['recoveryCodes']>;
-  private readonly windows = new Map<string, FailureWindow>();
-  private readonly challenges = new Map<string, { userId: string; expiresAt: number }>();
+  protected readonly windows = new Map<string, FailureWindow>();
+  protected readonly challenges = new Map<string, { userId: string; expiresAt: number }>();
 
   constructor(fixture: AuthFixture = {}) {
     const f = structuredClone(fixture);
@@ -70,7 +70,7 @@ export class InMemoryAuthStore implements AuthStore {
   private plain(id: string) {
     const u = this.users.get(id);
     if (!u) return undefined;
-    const { lastLoginAt: _l, ...rest } = u;
+    const { lastLoginAt: _l, createdAt: _c, ...rest } = u;
     return rest;
   }
 
@@ -100,8 +100,7 @@ export class InMemoryAuthStore implements AuthStore {
       (x) => x.id === u.id || x.email === u.email || x.externalSub === u.externalSub,
     );
     if (clash) throw new Error('UNIQUE constraint failed: users');
-    const { createdAt: _at, ...person } = u;
-    this.users.set(u.id, blank(person));
+    this.users.set(u.id, blank(u));
   }
   async linkSub(userId: string, sub: string) {
     const u = this.users.get(userId);
@@ -118,6 +117,7 @@ export class InMemoryAuthStore implements AuthStore {
     passwordHash: string;
     passwordChangeDue: boolean;
     passwordExpiresAt: number | null;
+    createdAt?: number;
   }) {
     if ([...this.users.values()].some((x) => x.id === u.id || x.email === u.email))
       throw new Error('UNIQUE constraint failed: users.email');

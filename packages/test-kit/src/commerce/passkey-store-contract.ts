@@ -68,6 +68,34 @@ export function describePasskeyStoreContract(
       expect(await s.forUser('pk_ada')).toEqual([]);
     });
 
+    it('allows only one simultaneous answer to a challenge', async () => {
+      const s = await make(PASSKEY_FIXTURE);
+      await s.putChallenge({ id: 'pk_race', challenge: 'answer', userId: null, expiresAt: 100 }, 0);
+      const taken = await Promise.all([
+        s.takeChallenge('pk_race', 50),
+        s.takeChallenge('pk_race', 50),
+      ]);
+      expect(taken.filter(Boolean)).toEqual([{ challenge: 'answer', userId: null }]);
+    });
+
+    it('replaces a pending challenge and prunes expired ones without touching other live challenges', async () => {
+      const s = await make(PASSKEY_FIXTURE);
+      await s.putChallenge(
+        { id: 'pk_replace', challenge: 'old', userId: 'pk_ada', expiresAt: 100 },
+        0,
+      );
+      await s.putChallenge({ id: 'pk_stale', challenge: 'stale', userId: null, expiresAt: 10 }, 0);
+      await s.putChallenge({ id: 'pk_live', challenge: 'live', userId: null, expiresAt: 100 }, 0);
+      await s.putChallenge(
+        { id: 'pk_replace', challenge: 'new', userId: null, expiresAt: 200 },
+        50,
+      );
+      expect(await s.takeChallenge('pk_replace', 100)).toEqual({ challenge: 'new', userId: null });
+      // Read with an earlier time to distinguish pruning from an expiry check.
+      expect(await s.takeChallenge('pk_stale', 5)).toBeUndefined();
+      expect(await s.takeChallenge('pk_live', 50)).toEqual({ challenge: 'live', userId: null });
+    });
+
     it('answers a challenge once, and not after it expires', async () => {
       const s = await make(PASSKEY_FIXTURE);
       await s.putChallenge({ id: 'pk_c1', challenge: 'ch1', userId: 'pk_ada', expiresAt: 100 }, 0);
