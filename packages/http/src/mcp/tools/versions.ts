@@ -15,11 +15,12 @@ import {
 } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 const versionRef = z.union([z.number().int().positive(), z.enum(['draft', 'published'])]);
 
 export function registerVersionTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, principal, guard, authorizeEntryRead } = t;
   // --- entry version history ---------------------------------------------
   server.registerTool(

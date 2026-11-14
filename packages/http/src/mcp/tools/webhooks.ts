@@ -12,9 +12,10 @@ import { SCOPES, type Webhook } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { updateWebhookBody, webhookBody } from '../../api/validation';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerWebhookTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, guard, requestedEnvironment } = t;
   // --- webhooks (admin) ----------------------------------------------------
   // The REST routes' twins: the same use-cases, the same space-admin check, the same body schemas,

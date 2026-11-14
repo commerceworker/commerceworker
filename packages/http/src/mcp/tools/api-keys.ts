@@ -10,9 +10,10 @@ import { z } from 'zod';
 import { apiKeySummary } from '../../api/routes/management/shared';
 import { keyRoleBody } from '../../api/routes/team';
 import { createApiKeyBody } from '../../api/validation';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerApiKeyTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, guard, principal, auditTarget } = t;
   const policy = deps.accessPolicy ?? { sso: false };
   // --- API keys (admin) ----------------------------------------------------

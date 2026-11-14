@@ -123,6 +123,46 @@ describe('MCP tool audit', () => {
     });
   });
 
+  it('keeps deployment defaults local to each server and uses them for writes and audit', async () => {
+    const custom = { ...deps, defaultScope: { spaceId: SPACE, environmentId: 'staging' } };
+    const staged = await connect(custom, ada);
+    try {
+      expect((await staged.listTools()).tools).toEqual((await client.listTools()).tools);
+      for (const [connection, title] of [
+        [staged, 'Staged'],
+        [client, 'Main'],
+      ] as const) {
+        const result = await connection.callTool({
+          name: 'entries_create',
+          arguments: { contentType: 'article', fields: { title: { 'en-US': title } } },
+        });
+        expect(result.isError).toBeFalsy();
+      }
+      const rows = (await trail()).filter((row) => row.action === 'MCP entries_create');
+      expect(rows.map((row) => row.environmentId).sort()).toEqual(['main', 'staging']);
+      for (const row of rows) {
+        const result = await client.callTool({
+          name: 'entries_get',
+          arguments: { id: row.targetId, environment: row.environmentId },
+        });
+        expect(result.isError).toBeFalsy();
+      }
+      const forbidden = await connect(
+        { ...deps, defaultScope: { spaceId: 'other', environmentId: 'main' } },
+        ada,
+      );
+      try {
+        expect(
+          (await forbidden.callTool({ name: 'model_list_content_types', arguments: {} })).isError,
+        ).toBe(true);
+      } finally {
+        await forbidden.close();
+      }
+    } finally {
+      await staged.close();
+    }
+  });
+
   it('names the kind of target, in REST’s words', async () => {
     const created = payload(
       await call('entries_create', {

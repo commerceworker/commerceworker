@@ -54,7 +54,7 @@ import { registerRoleTools } from './tools/roles';
 import { registerSavedViewTools } from './tools/saved-views';
 import { registerSchedulerTools } from './tools/scheduler';
 import { registerSeoTools } from './tools/seo';
-import { DEFAULT_ENV, DEFAULT_SPACE, ok, type ToolContext } from './tools/shared';
+import { ok, type ToolContext } from './tools/shared';
 import { registerSnapshotTools } from './tools/snapshots';
 import { registerSpaceExportTools } from './tools/space-export';
 import { registerSpaceTools } from './tools/spaces';
@@ -193,7 +193,7 @@ export function buildServer(
   principal: Principal,
   skills?: SkillsExtension,
 ): McpServer {
-  const { ai, rag, agents } = deps;
+  const { ai, rag, agents, defaultScope } = deps;
   // Every tool writes as this session's principal: entries it creates or changes record it as
   // their author, exactly as the HTTP API's routes do.
   // The server lives for one request (the transport is stateless), and the audit row below reads
@@ -237,7 +237,7 @@ export function buildServer(
         try {
           const a = args as { space?: unknown; environment?: unknown } | undefined;
           if (!LITERAL_ENVIRONMENT.has(name) && a && typeof a.environment === 'string') {
-            const spaceId = typeof a.space === 'string' ? a.space : DEFAULT_SPACE;
+            const spaceId = typeof a.space === 'string' ? a.space : defaultScope.spaceId;
             // Checked only for a caller who may act in the space, so nobody else learns which
             // environments exist there: the tool's own guard refuses them first.
             const environment = inScope(principal, spaceId)
@@ -257,8 +257,8 @@ export function buildServer(
                 declared,
                 readOnly,
                 principal,
-                defaultSpace: DEFAULT_SPACE,
-                defaultEnvironment: DEFAULT_ENV,
+                defaultSpace: defaultScope.spaceId,
+                defaultEnvironment: defaultScope.environmentId,
                 targetId: args && typeof args === 'object' ? auditTarget.get(args) : undefined,
                 detail: changes.detail(),
               });
@@ -302,6 +302,11 @@ export function buildServer(
   };
 
   const t: ToolContext = {
+    defaultScope,
+    scopeOf: (args) => ({
+      spaceId: args.space ?? defaultScope.spaceId,
+      environmentId: args.environment ?? defaultScope.environmentId,
+    }),
     deps,
     ctx,
     ai,

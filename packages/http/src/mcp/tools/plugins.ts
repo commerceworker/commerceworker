@@ -8,9 +8,10 @@ import {
 import { SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerPluginTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, principal, guard } = t;
   // --- plugins -------------------------------------------------------------
   // Read and lifecycle only. Installing is deliberately absent: uploading code

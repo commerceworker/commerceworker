@@ -2,9 +2,10 @@ import { createAIAction, listAIActions, runAIAction } from '@commerceworker/appl
 import { SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerAiActionTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, ai, guard } = t;
   // --- AI Actions (templated, governed operations) -----------------------
   server.registerTool(

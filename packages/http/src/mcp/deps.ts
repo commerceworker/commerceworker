@@ -6,7 +6,7 @@ import type {
   RagDeps,
   WorkflowNodeDeps,
 } from '@commerceworker/application';
-import type { AgentReview } from '@commerceworker/domain';
+import type { AgentReview, Scope } from '@commerceworker/domain';
 import type {
   AIProvider,
   AssetIngestQueue,
@@ -24,6 +24,8 @@ import type {
  * just another caller of the application use-cases.
  */
 export interface McpDeps {
+  /** Default target supplied by the composition root, never read from the process environment here. */
+  readonly defaultScope: Scope;
   readonly ctx: AppContext;
   readonly ai: AIProvider;
   readonly rag: RagDeps;

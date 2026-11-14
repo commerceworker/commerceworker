@@ -10,9 +10,10 @@ import {
 import { ROLE_PRESETS, SCOPES, ValidationError } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { grantShape, ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { grantShape, ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerRoleTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, guard } = t;
   // --- roles (granular RBAC, admin) ----------------------------------------
 

@@ -30,17 +30,10 @@ import {
 } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import {
-  entryFields,
-  fieldSchema,
-  ok,
-  scopeArgs,
-  scopeOf,
-  type ToolContext,
-  toolSchema,
-} from './shared';
+import { entryFields, fieldSchema, ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerWriteTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, agents, principal, guard, guardEntry } = t;
   // --- write -------------------------------------------------------------
   server.registerTool(

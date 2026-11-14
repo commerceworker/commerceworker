@@ -10,9 +10,10 @@ import { authorizeEveryContentType, SCOPES } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { snapshotBody } from '../../api/validation';
-import { ok, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerSnapshotTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, guard, principal } = t;
   // --- environment snapshots ----------------------------------------------
   server.registerTool(

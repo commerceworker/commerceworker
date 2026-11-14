@@ -185,30 +185,15 @@ test('packages/http binds no adapters', () => {
 
 // Nor does it read a binding or the process environment: the composition roots (`wireEdge`, the
 // app entries, the Durable Object classes) read `env` and hand over what was read. `NODE_ENV` is
-// not a binding but a build constant the bundler inlines, so reading it is allowed. The one
-// exception is listed with its reason; keep this list empty if you can.
+// not a binding but a build constant the bundler inlines, so reading it is allowed.
 const ENV_READS = /\benv\.(?!NODE_ENV\b)[A-Z][A-Z0-9_]+\b|\bprocess\.env\b(?!\.NODE_ENV\b)/;
-const ENV_EXCEPTIONS: Record<string, string> = {
-  // The MCP tools default a call's space and environment to the seed's ids (SEED_SPACE_ID,
-  // SEED_ENV_ID), as module constants that ~20 call sites share; threading them through
-  // `McpDeps` is its own change.
-  'packages/http/src/mcp/tools/shared.ts': 'SEED_SPACE_ID and SEED_ENV_ID defaults',
-};
-
 test('packages/http reads no binding and no process.env', () => {
-  const reading = files(HTTP)
-    .filter((f) => !(f in ENV_EXCEPTIONS))
-    .filter((f) => ENV_READS.test(readFileSync(f, 'utf8')));
+  const reading = files(HTTP).filter((f) => ENV_READS.test(readFileSync(f, 'utf8')));
   assert.deepEqual(
     reading,
     [],
     `Take the value as an argument, read at the composition root (wireEdge or the app entry):\n${reading.join('\n')}`,
   );
-});
-
-test('every listed http env-read exception still reads one', () => {
-  const stale = Object.keys(ENV_EXCEPTIONS).filter((f) => !ENV_READS.test(readFileSync(f, 'utf8')));
-  assert.deepEqual(stale, [], `Remove from ENV_EXCEPTIONS:\n${stale.join('\n')}`);
 });
 
 // The pipeline Worker's files reach D1 and the in-memory fakes only through `wireEdge`: no D1

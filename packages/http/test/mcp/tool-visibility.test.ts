@@ -18,6 +18,7 @@ const TOOLS_DIR = join(import.meta.dirname, '../../src/mcp/tools');
 
 const deps = (): McpDeps =>
   ({
+    defaultScope: { spaceId: 'space-1', environmentId: 'main' },
     ctx: {
       store: new InMemoryContentStore(),
       clock: new FixedClock(new Date('2026-01-01T00:00:00Z')),

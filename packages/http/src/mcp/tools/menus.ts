@@ -19,9 +19,10 @@ import {
 } from '@commerceworker/domain';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ok, READ_ONLY, scopeArgs, scopeOf, type ToolContext, toolSchema } from './shared';
+import { ok, READ_ONLY, scopeArgs, type ToolContext, toolSchema } from './shared';
 
 export function registerMenuTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { ctx, guard } = t;
   // The caller's grants apply as on the routes: types they can't read stay hidden.
   const access = { principal: t.principal };

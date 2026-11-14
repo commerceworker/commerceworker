@@ -44,9 +44,10 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { assetMetadataPatchShape, createAssetBody } from '../../api/validation';
-import { ok, scopeArgs, scopeOf, signedAssets, type ToolContext, toolSchema } from './shared';
+import { ok, scopeArgs, signedAssets, type ToolContext, toolSchema } from './shared';
 
 export function registerAssetCollectionTools(server: McpServer, t: ToolContext): void {
+  const { scopeOf } = t;
   const { deps, ctx, principal, guard } = t;
   const { signedOne, signedPage } = signedAssets(deps);
   // --- collections, share links, multipart uploads, zip downloads ---------------------------

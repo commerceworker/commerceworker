@@ -91,6 +91,7 @@ function buildApp(wired: EdgeWired, env: EdgeEnv): Hono {
   const mcpToken = env.MCP_TOKEN ?? (wired.persistent ? undefined : 'dev-mcp-token');
   if (mountManagement && mcpToken) {
     const mcpDeps: McpDeps = {
+      defaultScope: wired.config.seed,
       ctx: wired.ctx,
       ai: wired.ai,
       rag: wired.rag,
