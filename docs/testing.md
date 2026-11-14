@@ -705,7 +705,9 @@ suite runs one test at a time with two retries, split four ways with Playwright'
 the jobs `devices (web 1/4)` to `devices (web 4/4)`, each with its own dev server (so no test shares
 a server it didn't before), beside `devices (storefront)` and `devices (web content)`. The content job uses
 `playwright.content.config.ts` to check the unified admin on iPhone, iPad and desktop, with
-separate local commerce and content databases. Run it locally with
+separate local commerce and content databases. Its warm-up seeds the content space before
+visiting populated screens, the entry list, search palette and assistant so lazy dependency
+optimization finishes before assertions run. Run it locally with
 `pnpm --filter @commerceworker/web e2e:content`. Each job runs in Playwright's own
 container image for Ubuntu 26.04 (`mcr.microsoft.com/playwright:v<version>-resolute`, pinned by
 digest), which carries WebKit and its system libraries, so nothing is installed from apt; the tag

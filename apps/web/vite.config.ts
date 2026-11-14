@@ -235,8 +235,8 @@ export default defineConfig(async () => {
         'streamdown',
         'shiki',
         'zod',
-        'class-variance-authority',
         ...[
+          'class-variance-authority',
           '@tanstack/react-query',
           '@tiptap/core',
           '@tiptap/react',

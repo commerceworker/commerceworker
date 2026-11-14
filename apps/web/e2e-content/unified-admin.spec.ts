@@ -7,31 +7,6 @@ async function open(page: Page, path: string) {
   );
 }
 
-test.beforeAll(async ({ request }) => {
-  const space = await request.post('/content-api/spaces', {
-    data: { spaceId: 'unified', name: 'Unified admin', defaultLocale: 'en-US' },
-  });
-  expect([200, 201, 409], await space.text()).toContain(space.status());
-  const type = await request.post('/content-api/spaces/unified/environments/main/content-types', {
-    data: {
-      apiId: 'article',
-      name: 'Article',
-      displayField: 'title',
-      fields: [
-        {
-          apiId: 'title',
-          name: 'Title',
-          type: 'Symbol',
-          localized: true,
-          required: true,
-          position: 0,
-        },
-      ],
-    },
-  });
-  expect([200, 201, 409], await type.text()).toContain(type.status());
-});
-
 test('content screens share the commerce shell and keep navigation in their namespace', async ({
   page,
 }) => {
