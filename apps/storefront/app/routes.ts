@@ -1,6 +1,8 @@
-import { type RouteConfig, route } from '@react-router/dev/routes';
+import { index, type RouteConfig, route } from '@react-router/dev/routes';
 
 export default [
+  // The bare host: no shop to browse, so the store's name and the way to a shopper's account.
+  index('routes/home.tsx'),
   // RFC 9116: where to report a vulnerability (@commerceworker/security/security-txt).
   route('.well-known/security.txt', 'routes/security-txt.ts'),
   // An external cart's buyer (a punchout session): a one-time start link, then the cart itself,
