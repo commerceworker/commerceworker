@@ -1,8 +1,34 @@
 # Admin UI
 
-The admin is `apps/studio`: a React Router 8 app rendered on the web worker (SSR), which also owns
-human sign-in and fronts the api over the `API` service binding. Its design context is
-`PRODUCT.md` and `DESIGN.md` at the repo root ("Ledger", from `@commerceworker/design` and
+The deployed admin is `apps/web`, with content under `/content`: overview, entries, approvals,
+releases, workflows, assets, taxonomy and settings. Commerce owns sign-in, accounts, team, sign-out
+and the Ledger shell. `packages/content-admin` holds the content screens and client providers;
+Studio consumes the same package for standalone local development.
+
+Web forwards browser API calls under `/content-api` to `apps/api` through `CONTENT_API`, stripping
+cookies, bearer credentials and caller-supplied principal headers before signing the live caller.
+Media URLs retain `/media/*` so existing signatures remain valid. Content sockets recheck the
+commerce session through Web's default service binding (`ContentIdentity` methods).
+
+`CONTENT_DB` is bound only for explicit legacy identity links, through Web's composition root.
+The **Content accounts** page (`/content/accounts`) requires an admin and step-up; its one-time
+link preserves the old content subject and history without changing the commerce role. A matching
+email alone never adopts an old account. New identities use `commerce:<id>`; space invitations
+link on first use only if they do not already belong to a subject.
+
+`pnpm --filter @commerceworker/web e2e:content` runs the unified iPhone, iPad and desktop checks.
+For a local unified stack, migrate commerce normally, apply the content migrations with
+`pnpm --filter @commerceworker/web exec wrangler d1 migrations apply DB --local --config dev/content-database.jsonc`,
+then run `COMMERCEWORKER_CONTENT=1 pnpm web:dev`. Both local databases remain separate.
+
+## Standalone Studio reference
+
+The rest of this page describes Studio without `COMMERCE_ORIGIN`, as used in standalone local
+development. Fleet renders set that origin: human GETs redirect to Web, old form POSTs answer 410,
+and native Studio sessions no longer sign API calls. Machine bearer APIs and SCIM remain at the
+old host. OAuth authorization/device pages enter `/content-api/oauth/*`; Web rewrites their form
+actions while the issuer and token endpoints stay unchanged. Its design context is
+`PRODUCT.md` and `apps/studio/DESIGN.md` ("Ledger", from `@commerceworker/design` and
 `@commerceworker/ui`); read both before designing a screen, and compose the existing tokens and
 components rather than stock defaults.
 
@@ -45,7 +71,7 @@ sealed with `DATA_KEY`. Sign-in paths that need no session, and SCIM, are rate-l
 ## How screens reach the API
 
 The CMS screens (`app/cms`) call the Management API in the browser with TanStack Query
-(`app/cms/lib/management.ts`) on the same origin: `/spaces/...`, `/preview/...`, `/delivery/...`,
+(`packages/content-admin/src/lib/management.ts`) on the same origin: `/spaces/...`, `/preview/...`, `/delivery/...`,
 `/mcp`, `/media/...`. The web worker's gateway forwards those to the api with a signed
 `x-cw-principal` (60 s, bound to the path) in place of the session cookie, and passes the
 `x-cw-bookmark` read-your-writes header both ways. The admin keeps the newest bookmark it has seen
@@ -64,7 +90,7 @@ From `md` a sidebar lists the day's work (Overview, Content, Approvals, Releases
 (Workflows), Library (Assets, Taxonomy) and Settings, with the account and theme at its foot; it
 collapses to an icon rail. A sticky header holds the breadcrumbs, the space / environment / locale
 scope, search and New entry. Below `md` a bottom tab bar holds the day's work and More.
-`app/cms/components/layout/nav.ts` is the one source of the pages and their `g`-letter shortcuts
+`packages/content-admin/src/components/layout/nav.ts` is the one source of the pages and their `g`-letter shortcuts
 (`?` lists them).
 
 `/team`, `/audit` and `/account` are not in `NAV` (`nav.ts`). The shell adds them: admins get a
@@ -143,13 +169,13 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
 - **Settings**: API keys, roles, OAuth connected apps, webhooks, functions, AI actions, app
   extensions (iframe panels, `ExtensionFrame`), plugins, environments and aliases, branch
   compare/merge, redirects, menus, the space audit log.
-- **Audit log** (`/settings/audit-log`, `app/cms/components/AuditLog.tsx`): the space's trail, with
+- **Audit log** (`/settings/audit-log`, `packages/content-admin/src/components/AuditLog.tsx`): the space's trail, with
   fields for actor, action, target type, target id and a range of days on the reader's clock.
   Filters match exactly, so pressing a row's actor, action or target fills its field. Pages of 50
   read in through Load more; a new filter starts from the first page. The Changed column shows a
   row's `detail`: its paths without the `fields.` prefix on one truncated line (whole in the `title`,
   wrapped on a phone) and its locales, or how many entries when the row changed several.
-- **Redirects** (`/settings/redirects`, `app/cms/components/Redirects.tsx`): the environment's
+- **Redirects** (`/settings/redirects`, `packages/content-admin/src/components/Redirects.tsx`): the environment's
   redirect set ([Domain model](./domain-model.md#redirects)) as a list with search over source,
   destination and note, an enable switch per row, and an add/edit dialog (source, destination,
   status, locale, note, enabled). Import takes CSV or JSON: _Check_ runs a dry run and reports
@@ -158,7 +184,7 @@ menu at the sidebar's foot (the More sheet on a phone). Settings sections are ad
   `content:manage`. The content type dialog has a **URL pattern** field (`/blog/{slug}`), the
   input to slug-change redirects and the sitemap; it offers the `Seo` field type until one row
   already is one (a type has at most one).
-- **Menus** (`/settings/menus`, `app/cms/components/Menus.tsx`): the environment's navigation
+- **Menus** (`/settings/menus`, `packages/content-admin/src/components/Menus.tsx`): the environment's navigation
   menus ([Domain model](./domain-model.md#menus)) as a list (name, handle, item count; New menu,
   Edit, Delete), and an editor for one menu's item tree. Add or edit an item in a dialog: a URL
   (with a label), an entry (the entry search picker; the label defaults to its title) or a tag or

@@ -12,7 +12,7 @@ import { CmsPage } from '~/cms/providers';
 import type { Role } from '~/lib/roles';
 
 const me = vi.hoisted(() => ({ role: 'admin' as Role }));
-vi.mock('~/lib/use-me', () => ({
+vi.mock('@commerceworker/content-admin/shared/use-me', () => ({
   useMe: () => ({ kind: 'user', id: 'usr_1', name: 'Pat', role: me.role }),
   useCan: (min: Role) => min === 'member' || me.role === 'admin',
 }));

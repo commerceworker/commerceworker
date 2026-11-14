@@ -265,6 +265,9 @@ Starlight otherwise only puts the description in `<meta>`.
 
 ### Sidebar
 
+The unified admin groups optional content screens under Content in the shared navigation. It uses
+the same Ledger sidebar rows and mobile More sheet as commerce; content adds no parallel app shell.
+
 Group labels 14px 600 ink; links 14px muted, ink on hover. The current page is a tonal step (muted
 fill, ink, 600), not Starlight's inverted pill.
 

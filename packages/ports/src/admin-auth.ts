@@ -39,6 +39,11 @@ export interface AdminAuth
     | 'challenge'
     | 'endChallenge'
   > {
+  /** The legacy content identity explicitly linked to one immutable commerce subject. */
+  userByCommerceSubject(subject: string): ReturnType<AuthStore['user']>;
+  commerceSubjectForUser(userId: string): Promise<string | undefined>;
+  /** Link once, without replacing an existing link or another user's subject. */
+  linkCommerceSubject(userId: string, subject: string): Promise<boolean>;
   /** Counts every attempt and returns the counts from the guarded writes, never a later read. */
   countAttempts(keys: readonly string[], now: number, windowMs: number): Promise<FailureWindow[]>;
 }

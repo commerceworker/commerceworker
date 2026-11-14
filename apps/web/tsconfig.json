@@ -3,7 +3,9 @@
   "compilerOptions": {
     "types": ["vite/client"],
     "rootDirs": [".", "./.react-router/types"],
-    "paths": { "~/*": ["./app/*"] },
+    "paths": {
+      "~/*": ["./app/*"]
+    },
     "verbatimModuleSyntax": true
   },
   "include": [
@@ -16,6 +18,8 @@
     "playwright.config.ts",
     "worker-configuration.d.ts",
     "vite.config.ts",
-    "react-router.config.ts"
+    "react-router.config.ts",
+    "e2e-content/**/*",
+    "playwright.content.config.ts"
   ]
 }

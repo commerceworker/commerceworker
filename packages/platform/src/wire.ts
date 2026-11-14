@@ -384,8 +384,10 @@ export function wireEdge(rawEnv: EdgeEnv, options: EdgeWireOptions = {}): EdgeWi
  * The admin's people and sessions in the shared D1, for a Worker that checks who is behind a
  * socket on each message (the assistant) and needs none of the rest of {@link wireEdge}.
  */
-export function wirePeople(env: Pick<EdgeEnv, 'DB'>): PeopleDirectory | undefined {
-  return env.DB ? createPeopleDirectory(env.DB) : undefined;
+export function wirePeople(
+  env: Pick<EdgeEnv, 'DB' | 'CONTENT_IDENTITY'>,
+): PeopleDirectory | undefined {
+  return env.CONTENT_IDENTITY ?? (env.DB ? createPeopleDirectory(env.DB) : undefined);
 }
 
 /** Share-link passwords: PBKDF2-SHA256, the admin's own scheme (no pepper: the api has none). */

@@ -17,6 +17,7 @@ import { createRequestHandler, RouterContextProvider } from 'react-router';
 import { handleShopifyOrder, handleSignedEvent, handleSignedOrder } from '../app/lib/api.server';
 import { apiRoute } from '../app/lib/api-route.server';
 import { awaitingSetup, principal, sessionId, setupDue } from '../app/lib/auth.server';
+import { forwardContent } from '../app/lib/content.server';
 import { demoRefusal } from '../app/lib/demo.server';
 import { docs, engine } from '../app/lib/env.server';
 import { writeHealth } from '../app/lib/health.server';
@@ -175,10 +176,12 @@ const ROUTE_GROUPS = [
 ] as const;
 
 // The nightly OAuth grant export (a Workflow, bound only when the registry's redundancy is on).
+import { ContentIdentity } from './content-identity';
+
 export { KvBackup } from './kv-backup';
 
-export default {
-  async fetch(request, env, ctx) {
+export const webHandler = {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     const ops = opsMetrics(env.METRICS, 'web');
     const group = isOAuthPath(url.pathname) ? 'oauth' : routeGroup(url.pathname, ROUTE_GROUPS);
@@ -194,6 +197,13 @@ export default {
     return withSecurityHeaders(response, url);
   },
 } satisfies ExportedHandler<Env>;
+
+/** The default binding also serves the content pipeline's read-only identity RPC. */
+export default class Web extends ContentIdentity {
+  override fetch(request: Request) {
+    return webHandler.fetch(request, this.env, this.ctx);
+  }
+}
 
 async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
@@ -278,6 +288,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' },
     });
   }
+
+  if (url.pathname.startsWith('/content-api/') || url.pathname.startsWith('/media/'))
+    return forwardContent(request);
 
   if (url.pathname.startsWith('/api/v1/')) return apiRoute(request, env, ctx);
 

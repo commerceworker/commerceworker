@@ -14,6 +14,7 @@ import { describeSso } from './sso';
 import { isTwoFactorRequirement, TWO_FACTOR_REQUIREMENTS } from './two-factor';
 
 export const AUDIT_ACTIONS = {
+  'auth.content_account_linked': 'Existing content identity linked to a commerce account',
   'auth.sign_in': 'Signed in',
   'auth.sign_in_failed': 'Sign-in failed',
   'auth.sign_in_throttled': 'Sign-in refused: too many failures',

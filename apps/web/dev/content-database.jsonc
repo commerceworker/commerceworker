@@ -1,0 +1,13 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "commerceworker-content-local",
+  // Migration-only config for the optional unified local stack. Vite binds this same id.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commerceworker-content",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "../../../packages/store/migrations"
+    }
+  ]
+}

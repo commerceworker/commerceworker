@@ -10,6 +10,7 @@ import { setPrincipalHeader } from '../app/lib/principal.server';
 import { SCIM_PATH } from '../app/lib/scim';
 import { scimFetch } from '../app/lib/scim.server';
 import { answersBeforeSetup } from '../app/lib/setup-gate';
+import { unifiedRedirect } from '../app/lib/unified-admin';
 import { studioHealthChecks } from '../app/lib/wire.server';
 
 /**
@@ -44,17 +45,29 @@ async function route(request: Request, env: Env, _ctx: ExecutionContext): Promis
   // public, so ahead of the setup gate.
   if (url.pathname === SECURITY_TXT_PATH) return securityTxtResponse(request);
 
+  const commerceOrigin = (env as { COMMERCE_ORIGIN?: string }).COMMERCE_ORIGIN;
+  // Human pages share Web's sign-in. The old host retains machine APIs and OAuth tokens.
+  if (
+    commerceOrigin &&
+    url.pathname !== SCIM_PATH &&
+    !url.pathname.startsWith(`${SCIM_PATH}/`) &&
+    (!isApiPath(url.pathname) || /^\/oauth\/(authorize|device)$/.test(url.pathname))
+  )
+    return unifiedRedirect(request, commerceOrigin);
+
   // The api's own surfaces (REST, GraphQL, delivery, preview, MCP, OAuth, media, docs), forwarded
   // with a signed principal or the caller's bearer token (app/lib/gateway.server.ts). A bearer
   // call works whether or not the admin is set up: the api checks its key.
   if (isApiPath(url.pathname)) {
-    if (!hasBearer(request) && (await awaitingSetup(url)))
+    if (!commerceOrigin && !hasBearer(request) && (await awaitingSetup(url)))
       return Response.json({ error: 'This deployment is not set up yet.' }, { status: 503 });
     const deliveryWorker = delivery();
     return forwardToApi(request, {
       api: api(),
       ...(deliveryWorker ? { delivery: deliveryWorker } : {}),
       principal: async (r) => {
+        // Native Studio sessions cannot bypass commerce account revocation.
+        if (commerceOrigin) return null;
         const p = await principal(r);
         if (!p) return null;
         // The session it came on, so what outlives this request (the assistant's socket) can

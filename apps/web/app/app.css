@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@commerceworker/content-admin/styles.css";
 /* React Flow's own stylesheet comes with the flow canvas (components/flow-canvas.tsx), on the
    pages that draw one; the rules below that restyle it outrank it whichever loads last. */
 
@@ -8,6 +9,7 @@
 @source "../../../packages/ui/src";
 /* The live cart view is shared with the storefront, and lives in its own package. */
 @source "../../../packages/cart/src";
+@source "../../../packages/content-admin/src";
 /* Streamdown renders the assistant's markdown with Tailwind classes of its own. */
 @source "../node_modules/streamdown/dist/*.js";
 

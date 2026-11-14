@@ -471,6 +471,9 @@ const PLUGIN_CAPABILITIES = ['carts:external', 'orders:start', 'orders:cancel'];
  * the web Worker alone: the storefront's paths (`/cart`, `/ucp`) are on another host.
  */
 export const RESERVED_PATH_SEGMENTS = new Set([
+  'content',
+  'content-api',
+  'media',
   'account',
   'agents',
   'api',
@@ -2332,6 +2335,15 @@ export function renderWeb(base: Config, d: Deployment): Config {
       OIDC_CLIENT_ID: d.sso.clientId,
       OIDC_TRUST_EMAIL: d.sso.trustEmail ? 'true' : '',
     };
+  if (d.content) {
+    config.services.push({ binding: 'CONTENT_API', service: n.api });
+    config.d1_databases.push({
+      binding: 'CONTENT_DB',
+      database_name: n.contentD1,
+      database_id: d.contentD1Id,
+      migrations_dir: '../../packages/store/migrations',
+    });
+  }
   return config;
 }
 
@@ -2459,7 +2471,9 @@ function contentCommon(base: Config, d: Deployment, app: ContentApp): Config {
 
 /** The content engine: queue consumers, cron, and the owner of every content Durable Object and Workflow. No route. */
 export function renderPipeline(base: Config, d: Deployment): Config {
-  return contentCommon(base, d, 'pipeline');
+  const c = contentCommon(base, d, 'pipeline');
+  c.services = [...(c.services ?? []), { binding: 'CONTENT_IDENTITY', service: names(d).web }];
+  return c;
 }
 
 export function renderApi(base: Config, d: Deployment): Config {
@@ -2487,6 +2501,7 @@ export function renderMedia(base: Config, d: Deployment): Config {
 /** The content admin and human sign-in; it fronts the api with a signed principal. */
 export function renderStudio(base: Config, d: Deployment): Config {
   const c = contentCommon(base, d, 'studio');
+  c.vars = { ...c.vars, COMMERCE_ORIGIN: `https://${d.domain}` };
   c.routes = [{ pattern: contentHosts(d).studio, custom_domain: true }];
   // The same identity provider as the admin's, a second redirect URI (https://<studio>/login/sso/callback).
   if (d.sso)

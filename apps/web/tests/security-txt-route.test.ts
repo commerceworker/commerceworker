@@ -30,7 +30,7 @@ vi.mock('~/lib/env.server', () => ({
   afterResponse: () => {},
 }));
 
-const { default: worker } = await import('../workers/app');
+const { webHandler: worker } = await import('../workers/app');
 const { forgetUserCount } = await import('../app/lib/auth.server');
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as never;

@@ -3,7 +3,10 @@
   "compilerOptions": {
     "types": ["vite/client"],
     "rootDirs": [".", "./.react-router/types"],
-    "paths": { "~/*": ["./app/*"] },
+    "paths": {
+      "~/*": ["./app/*"],
+      "~/cms/*": ["../../packages/content-admin/src/*"]
+    },
     "verbatimModuleSyntax": true
   },
   "include": [

@@ -9,13 +9,13 @@
  * Signed in (the shell's loader), drawn bare (`handle.bare`): no sidebar or header yet.
  */
 
+import { CoworkerConversation } from '@commerceworker/content-admin/components/assistant/panel';
+import { CreateSpaceDialog } from '@commerceworker/content-admin/components/layout/CreateSpaceDialog';
+import { useAssistant } from '@commerceworker/content-admin/lib/assistant';
+import { useClient, useScopeState } from '@commerceworker/content-admin/lib/client-context';
 import { Button } from '@commerceworker/ui/button';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { CoworkerConversation } from '~/cms/components/assistant/panel';
-import { CreateSpaceDialog } from '~/cms/components/layout/CreateSpaceDialog';
-import { useAssistant } from '~/cms/lib/assistant';
-import { useClient, useScopeState } from '~/cms/lib/client-context';
 import { Mark } from '~/components/mark';
 import { useCan, useMe } from '~/lib/use-me';
 
