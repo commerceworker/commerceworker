@@ -387,6 +387,12 @@ importers:
       '@commerceworker/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@commerceworker/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@commerceworker/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 'catalog:'
@@ -830,6 +836,9 @@ importers:
       '@commerceworker/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@commerceworker/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
       '@commerceworker/security':
         specifier: workspace:*
         version: link:../../packages/security
@@ -884,9 +893,6 @@ importers:
       clsx:
         specifier: 'catalog:'
         version: 2.1.1
-      drizzle-orm:
-        specifier: 'catalog:'
-        version: 0.45.4(@cloudflare/workers-types@5.20261013.1)(@opentelemetry/api@1.10.0)
       isbot:
         specifier: 'catalog:'
         version: 5.2.2
@@ -930,6 +936,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261013.1
+      '@commerceworker/test-kit':
+        specifier: workspace:*
+        version: link:../../packages/test-kit
       '@commerceworker/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
@@ -957,6 +966,9 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.3.0(@types/react@19.3.0)
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.4(@cloudflare/workers-types@5.20261013.1)(@opentelemetry/api@1.10.0)
       jsdom:
         specifier: 'catalog:'
         version: 30.1.3

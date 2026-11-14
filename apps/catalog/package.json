@@ -13,7 +13,9 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@commerceworker/core": "workspace:*"
+    "@commerceworker/core": "workspace:*",
+    "@commerceworker/db": "workspace:*",
+    "@commerceworker/ports": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",

@@ -3,22 +3,17 @@ import { SESSION_TOUCH_MS } from '~/lib/roles';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
 
-/** Just enough of drizzle for `principal()`: the user count, and the session joined to its user. */
+/** Instrument the port to check request caching and deferred session touches. */
 let sessionLookups = 0;
 let failNext = false;
 let seen = Date.now();
 const touches: unknown[] = [];
-const select = () => {
-  let joined = false;
-  const q = {
-    from: () => q,
-    innerJoin: () => {
-      joined = true;
-      return q;
-    },
-    where: () => q,
-    get: async () => {
-      if (!joined) return { n: 1 };
+const afterResponse = vi.fn((work: unknown) => touches.push(work));
+vi.mock('~/lib/env.server', () => ({ afterResponse }));
+vi.mock('~/lib/wire.server', () => ({
+  adminAuth: () => ({
+    userCount: async () => 1,
+    liveSession: async () => {
       sessionLookups++;
       if (failNext) {
         failNext = false;
@@ -35,12 +30,9 @@ const select = () => {
         seen,
       };
     },
-  };
-  return q;
-};
-const update = () => ({ set: () => ({ where: () => 'touch' }) });
-const afterResponse = vi.fn((work: unknown) => touches.push(work));
-vi.mock('~/lib/env.server', () => ({ db: () => ({ select, update }), afterResponse }));
+    touchSession: () => 'touch',
+  }),
+}));
 vi.mock('~/lib/audit.server', () => ({ audit: vi.fn(), clientIp: () => '203.0.113.7' }));
 vi.mock('~/lib/settings.server', () => ({
   ssoOnlyInEffect: async () => false,

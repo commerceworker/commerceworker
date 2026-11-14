@@ -8,6 +8,7 @@ import { applyPart, type FeedPart, failPart } from './feed-import';
 import { applyChanges, changesIn } from './listings';
 import { applyOrders } from './orders';
 import { applySearch } from './search';
+import { catalogOrders } from './wire';
 
 export { CatalogApi } from './api';
 export { CatalogBackup } from './backup';
@@ -52,7 +53,7 @@ export default {
         await Promise.all([
           applyChanges(env, changes),
           applySearch(env, changes),
-          applyOrders(env, changes),
+          applyOrders(catalogOrders(env), changes),
         ]);
       } catch (err) {
         console.error('listing changes failed, retrying the batch:', err);

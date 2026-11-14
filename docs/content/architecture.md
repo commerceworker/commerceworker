@@ -652,6 +652,46 @@ binding selects a dev fallback (in-memory store, fake blob, stub AI, in-memory v
 `assertNoFakeAdapters` refuses those on a persistent deployment (one with `DB`) unless
 `ALLOW_FAKE_ADAPTERS` names them.
 
+Studio's workspace settings and setup-code claims use the `AdminSettings` port, bound to D1 in
+`apps/studio/app/lib/wire.server.ts`. D1 and in-memory implementations share a contract: a setup
+code is claimed by one guarded write, and a failed account creation returns the claim only while
+its hash still owns it. The composition-root test holds these handlers to importing no tables or ORM.
+Studio's sign-in module uses `AdminAuth` from that same root for people, sessions, failure windows,
+challenges, and one-use TOTP and recovery-code guards. Two-factor management uses the same port;
+replacing recovery codes and disabling TOTP each commit as a single D1 batch. It shares the neutral credential record shapes
+with commerce but binds only the content database. The D1 and in-memory implementations share a
+contract covering expiry, disabled accounts, guarded rehashes and concurrent code consumption.
+Passkeys use the shared `PasskeyStore` interface with Studio's own `admin-passkeys` D1 adapter,
+bound in the same root. The shared contract runs against the in-memory fake and both databases'
+adapters, including concurrent one-use challenges, credential ownership and challenge replacement.
+The Team page, Account session management and access revocation now use `AdminTeam` and `AdminAuth`,
+and the shell's admin contacts come from `AdminTeam`. Role and disable writes guard the presence of
+another active admin in the statement itself, including mixed concurrent changes. Ending sessions
+returns the actual deleted count in one statement, retaining only the requested current session.
+SSO identity lookups, account creation and linking, and invitation account creation and promotion,
+use these same ports. Both passwordless and password-confirmed SSO links use a single guarded write:
+the account must still be unlinked and the subject must be unclaimed. The shared contract tests
+both kinds of concurrent claim, and the D1 suite verifies that non-constraint storage errors propagate.
+Self-service password resets use `AdminPasswordResets` from the same root: atomic code replacement,
+scoped live-code reads, one-use claims, and a single batch that changes the password and removes the
+person's reset codes, pending second-factor challenges and sessions. D1 and in-memory implementations
+share a contract; D1 failure tests cover replacement and password/revocation rollback.
+SCIM provisioning uses `AdminScimDirectory`; token metadata, rotation and revocation, and the
+group-to-role map use `AdminSettings`. SCIM retains the member/admin deployment roles, passwordless
+creation and the protocol's email-lock rules. Directory pages read their count and rows in one
+D1 batch, group deletion batches the group and its memberships, and membership lists are chunked
+below the 100-parameter limit. Role and deactivation writes preserve an active admin even under
+concurrent requests. Studio's audit chain uses `AdminAuditLog` for concurrent append, timestamp/id pagination and sequence
+reads for verification, with the chain rules still in the pure audit-chain module. Email Sending and
+the database health probe are also bound in `apps/studio/app/lib/wire.server.ts`. The composition-root
+test scans every Studio app and Worker source: no other file imports a store, adapter or ORM, reads
+D1 or calls a database factory. The legacy `db()` helper is gone, and Studio uses Drizzle only in
+its integration tests.
+
+The media gateway and cached entrypoint compose their R2 reads, safe response headers and Images
+transforms through `@commerceworker/platform/media`. The serving functions take these dependencies;
+they import no store or Cloudflare adapter. `scripts/composition-root.test.ts` enforces that boundary.
+
 ### Other packages
 
 - `@commerceworker/http`: the Hono surface as a library (REST routes, auth middleware, OpenAPI

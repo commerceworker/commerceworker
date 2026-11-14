@@ -41,11 +41,9 @@ import {
   randomToken,
   sha256Hex,
 } from '@commerceworker/security/credentials';
-import { passwordResets, sessions, signInChallenges, users } from '@commerceworker/store/auth';
-import { and, desc, eq, gt, isNotNull, isNull, lte, or } from 'drizzle-orm';
 import { audit, clientIp } from './audit.server';
 import { countAttempt, Throttled } from './auth.server';
-import { afterResponse, db, emailSender, passwordPepper, sendsEmail } from './env.server';
+import { afterResponse, emailSender, passwordPepper, sendsEmail } from './env.server';
 import { newId } from './ids';
 import { isLocalHost } from './origin';
 import {
@@ -65,6 +63,7 @@ import {
 import type { Principal, Role } from './roles';
 import { ssoOnlyInEffect } from './settings.server';
 import { overFor, throttleKey } from './throttle';
+import { adminAuth, adminPasswordResets } from './wire.server';
 
 /** A refusal the page shows as it is. */
 export class ResetError extends Error {}
@@ -153,16 +152,7 @@ export async function requestReset(
 
 /** After the response: a code for the account, if it may have one, and the audit entry. */
 async function issue(request: Request, email: string, addressSpent: boolean, nonce: string) {
-  const user = await db()
-    .select({
-      id: users.id,
-      email: users.email,
-      passwordHash: users.passwordHash,
-      disabledAt: users.disabledAt,
-    })
-    .from(users)
-    .where(eq(users.email, email))
-    .get();
+  const user = await adminAuth().userByEmail(email);
   let outcome = !user
     ? 'no account'
     : user.disabledAt
@@ -178,22 +168,14 @@ async function issue(request: Request, email: string, addressSpent: boolean, non
     const id = newId('pwr');
     const code = newResetCode();
     const now = Date.now();
-    // One batch: the new code, and the person's older ones (and anyone's expired ones) gone.
-    await db().batch([
-      db()
-        .delete(passwordResets)
-        .where(or(eq(passwordResets.userId, user.id), lte(passwordResets.expiresAt, now))),
-      db()
-        .insert(passwordResets)
-        .values({
-          id,
-          userId: user.id,
-          codeHash: await codeHash(id, code),
-          browserHash: await sha256Hex(nonce),
-          createdAt: now,
-          expiresAt: now + RESET_MS,
-        }),
-    ]);
+    await adminPasswordResets().issue({
+      id,
+      userId: user.id,
+      codeHash: await codeHash(id, code),
+      browserHash: await sha256Hex(nonce),
+      createdAt: now,
+      expiresAt: now + RESET_MS,
+    });
     const url = new URL(request.url);
     const failed = await deliver(
       request,
@@ -235,30 +217,15 @@ async function checkCode(
   const now = Date.now();
   const wait = overFor([place!], now);
   if (wait) throw new Throttled(wait);
-  const row = await db()
-    .select({
-      id: passwordResets.id,
-      userId: passwordResets.userId,
-      codeHash: passwordResets.codeHash,
-    })
-    .from(passwordResets)
-    .innerJoin(users, eq(users.id, passwordResets.userId))
-    .where(
-      and(
-        link
-          ? eq(passwordResets.id, link.id)
-          : and(
-              eq(users.email, 'email' in proof ? normalizeEmail(proof.email) : ''),
-              eq(passwordResets.browserHash, browser ?? ''),
-            ),
-        isNull(passwordResets.usedAt),
-        gt(passwordResets.expiresAt, now),
-        isNull(users.disabledAt),
-        isNotNull(users.passwordHash),
-      ),
-    )
-    .orderBy(desc(passwordResets.createdAt))
-    .get();
+  const row = await adminPasswordResets().live(
+    link
+      ? { id: link.id }
+      : {
+          email: 'email' in proof ? normalizeEmail(proof.email) : '',
+          browserHash: browser ?? '',
+        },
+    now,
+  );
   const ssoOnly = await ssoOnlyInEffect();
   const right = constantTimeEqual(
     await codeHash(row?.id ?? 'pwr_none', code ?? ''),
@@ -286,11 +253,7 @@ export async function openResetLink(request: Request, token: string): Promise<st
     });
     return null;
   }
-  const user = await db()
-    .select({ email: users.email })
-    .from(users)
-    .where(eq(users.id, found.userId))
-    .get();
+  const user = await adminAuth().user(found.userId);
   return user ? maskEmail(user.email) : null;
 }
 
@@ -334,11 +297,7 @@ export async function resetPassword(
   if ('reason' in found) return refuse(found.reason);
 
   // Known only now that the code is right: who it is for.
-  const user = (await db()
-    .select({ email: users.email, name: users.name, role: users.role })
-    .from(users)
-    .where(eq(users.id, found.userId))
-    .get())!;
+  const user = (await adminAuth().user(found.userId))!;
 
   // Through a link, the address is known only now; the code stays good for its remaining tries.
   if (viaLink) {
@@ -347,27 +306,10 @@ export async function resetPassword(
   }
 
   // Used once: of two requests with the right code, one wins here.
-  const used = await db()
-    .update(passwordResets)
-    .set({ usedAt: Date.now() })
-    .where(and(eq(passwordResets.id, found.id), isNull(passwordResets.usedAt)))
-    .returning({ id: passwordResets.id });
-  if (!used.length) return refuse('code already used');
-
+  if (!(await adminPasswordResets().claim(found.id, Date.now())))
+    return refuse('code already used');
   const passwordHash = await hashPassword(password, passwordPepper());
-  // One batch: the new password, and everything the old one reached gone with it.
-  const [, , , ended] = await db().batch([
-    db()
-      .update(users)
-      .set({ passwordHash, passwordChangeDue: false, passwordExpiresAt: null })
-      .where(eq(users.id, found.userId)),
-    db().delete(passwordResets).where(eq(passwordResets.userId, found.userId)),
-    db().delete(signInChallenges).where(eq(signInChallenges.userId, found.userId)),
-    db()
-      .delete(sessions)
-      .where(eq(sessions.userId, found.userId))
-      .returning({ id: sessions.tokenHash }),
-  ]);
+  const ended = await adminPasswordResets().complete(found.userId, passwordHash);
   const person: Principal = {
     kind: 'user',
     id: found.userId,
@@ -378,7 +320,7 @@ export async function resetPassword(
   await audit(request, 'auth.password_reset', {
     actor: person,
     target: user.email,
-    detail: { sessions: ended.length, ...(viaLink ? { via: 'link' } : {}) },
+    detail: { sessions: ended, ...(viaLink ? { via: 'link' } : {}) },
   });
   const url = new URL(request.url);
   afterResponse(

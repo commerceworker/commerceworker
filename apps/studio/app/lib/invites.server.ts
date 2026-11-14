@@ -23,11 +23,9 @@ import {
   passwordProblem,
 } from '@commerceworker/security/credentials';
 import { principalTarget } from '@commerceworker/security/principal';
-import { users } from '@commerceworker/store/auth';
-import { eq } from 'drizzle-orm';
 import { audit, clientIp } from './audit.server';
 import { type Caller, forgetUserCount, recordFailure, Throttled, waitFor } from './auth.server';
-import { api, db, passwordPepper } from './env.server';
+import { api, passwordPepper } from './env.server';
 import { newId } from './ids';
 import { INVITE_INVALID, INVITE_NOT_ACCEPTED, type Invite } from './invites';
 import { type SignedPrincipal, setPrincipalHeader } from './principal.server';
@@ -35,6 +33,7 @@ import type { Principal, Role } from './roles';
 import { ssoOnlyInEffect } from './settings.server';
 import type { SsoIdentity } from './sso';
 import { throttleKey } from './throttle';
+import { adminAuth, adminTeam } from './wire.server';
 
 /** A refusal the page shows as it is (the api's words for management; generic for joining). */
 export class InviteError extends Error {
@@ -204,11 +203,7 @@ export async function checkThrottle(request: Request) {
  */
 async function inviter(by: { kind: string; id: string }): Promise<string | null> {
   if (by.kind === 'admin') return 'An administrator';
-  const row = await db()
-    .select({ name: users.name, role: users.role, disabledAt: users.disabledAt })
-    .from(users)
-    .where(eq(users.id, by.id))
-    .get();
+  const row = await adminAuth().user(by.id);
   return row && row.role === 'admin' && !row.disabledAt ? row.name : null;
 }
 
@@ -251,8 +246,7 @@ async function redeem(token: string, person: { subject: string; email: string })
   throw new Error(`Accepting the invitation failed (${r.status})`);
 }
 
-const emailTaken = async (email: string) =>
-  !!(await db().select({ id: users.id }).from(users).where(eq(users.email, email)).get());
+const emailTaken = async (email: string) => !!(await adminAuth().userByEmail(email));
 
 /**
  * A new person from a link: redeemed first under the id they are about to have, then created with
@@ -263,7 +257,10 @@ async function join(
   request: Request,
   token: string,
   preview: Preview,
-  who: { name: string; passwordHash?: string; externalSub?: string },
+  who: { name: string } & (
+    | { passwordHash: string; externalSub?: never }
+    | { externalSub: string; passwordHash?: never }
+  ),
 ): Promise<string> {
   const email = preview.invite.email;
   if (await emailTaken(email)) {
@@ -278,16 +275,15 @@ async function join(
   }
   const name = who.name.trim().slice(0, 200) || email.split('@')[0]!;
   try {
-    await db()
-      .insert(users)
-      .values({
-        id,
-        email,
-        name,
-        role: accepted.role,
-        passwordHash: who.passwordHash ?? null,
-        externalSub: who.externalSub ?? null,
-        createdAt: Date.now(),
+    const user = { id, email, name, role: accepted.role, createdAt: Date.now() };
+    if (who.externalSub !== undefined)
+      await adminAuth().addSsoUser({ ...user, externalSub: who.externalSub });
+    else
+      await adminAuth().addUser({
+        ...user,
+        passwordHash: who.passwordHash,
+        passwordChangeDue: false,
+        passwordExpiresAt: null,
       });
   } catch (err) {
     // The link is spent and nobody was made (an account for the address appeared meanwhile). The
@@ -349,11 +345,7 @@ export async function joinWithSso(
   identity: SsoIdentity,
   token: string,
 ): Promise<string | null> {
-  const known = await db()
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.externalSub, identity.sub))
-    .get();
+  const known = await adminAuth().userBySub(identity.sub);
   if (known || (identity.email && (await emailTaken(identity.email)))) return null;
   await checkThrottle(request);
   const preview = await readInvite(request, token);
@@ -383,7 +375,7 @@ export async function acceptSignedIn(request: Request, me: Caller, token: string
     throw new InviteError(INVITE_INVALID);
   }
   if (accepted.role === 'admin' && me.role !== 'admin') {
-    await db().update(users).set({ role: 'admin' }).where(eq(users.id, me.id));
+    if (!(await adminTeam().setRole(me.id, 'admin'))) throw new InviteError(INVITE_INVALID);
     await audit(request, 'team.role_changed', {
       actor: me,
       target: me.email ?? me.id,

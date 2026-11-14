@@ -8,9 +8,16 @@ import {
   keyFromMediaPath,
   type MediaUrlSigner,
   type R2BucketLike,
+  safeHeaders,
 } from '@commerceworker/adapters/blob-r2';
-import { type ImagesBindingLike, transformImage } from '@commerceworker/adapters/images-cf';
+import {
+  type ImagesBindingLike,
+  transformImage,
+  transformParams,
+} from '@commerceworker/adapters/images-cf';
 import { verifyStreamWebhook } from '@commerceworker/adapters/video-stream';
+import type { FocalPoint } from '@commerceworker/domain';
+import type { ImageTransformSpec } from '@commerceworker/ports';
 
 export interface MediaAdapters {
   /** A signed `/media/*` transfer: PUT stores the upload, GET or HEAD streams it back. */
@@ -29,6 +36,8 @@ export function mediaAdapters(o: {
   signer?: MediaUrlSigner;
   images?: ImagesBindingLike;
   streamWebhookSecret?: string;
+  readOnly?: boolean;
+  requireExpiry?: boolean;
   /** Injected for tests; seconds since the epoch. */
   now?: () => number;
 }): MediaAdapters {
@@ -41,6 +50,8 @@ export function mediaAdapters(o: {
             handleMediaRequest(request, {
               bucket,
               signer,
+              ...(o.readOnly !== undefined ? { readOnly: o.readOnly } : {}),
+              ...(o.requireExpiry !== undefined ? { requireExpiry: o.requireExpiry } : {}),
               ...(now ? { now } : {}),
               ...(images
                 ? {
@@ -61,6 +72,41 @@ export function mediaAdapters(o: {
       ? {
           verifyStreamNotice: (signature: string | null, raw: string) =>
             verifyStreamWebhook(secret, signature, raw, now ? { nowSeconds: now() } : {}),
+        }
+      : {}),
+  };
+}
+
+/** Read and transform adapters used by the published-media miss path. */
+export interface PublishedMediaAdapters {
+  readonly bucket: Pick<R2BucketLike, 'get' | 'head'>;
+  readonly headers: (contentType: string) => Headers;
+  readonly transform?: (
+    body: ReadableStream<Uint8Array>,
+    contentType: string,
+    spec: ImageTransformSpec,
+    focal: FocalPoint | undefined,
+    accept: string | null,
+  ) => Promise<Response | null>;
+}
+
+export function publishedMediaAdapters(o: {
+  bucket: R2BucketLike;
+  images?: ImagesBindingLike;
+}): PublishedMediaAdapters {
+  const { bucket, images } = o;
+  return {
+    bucket,
+    headers: safeHeaders,
+    ...(images
+      ? {
+          transform: (
+            body: ReadableStream<Uint8Array>,
+            contentType: string,
+            spec: ImageTransformSpec,
+            focal: FocalPoint | undefined,
+            accept: string | null,
+          ) => transformImage(images, body, contentType, transformParams(spec, focal), accept),
         }
       : {}),
   };

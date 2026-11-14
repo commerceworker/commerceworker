@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { parseShareLinkPath } from '@commerceworker/domain';
 import type { EdgeEnv } from '@commerceworker/platform/env';
+import { publishedMediaAdapters } from '@commerceworker/platform/media';
 import { wireMedia } from '@commerceworker/platform/wire';
 import { type MediaDeps, serveMedia, serveMediaRange } from './serve';
 import { type ShareDeps, serveSharePage } from './share';
@@ -21,9 +22,11 @@ export class Media extends WorkerEntrypoint<EdgeEnv> {
     // Any replica: a gate miss tolerates replica lag, which the engine's second purge covers.
     const wired = wireMedia(this.env, { bookmark: 'first-unconstrained' });
     return {
-      bucket: this.env.MEDIA_BUCKET,
+      ...publishedMediaAdapters({
+        bucket: this.env.MEDIA_BUCKET,
+        ...(this.env.IMAGES ? { images: this.env.IMAGES } : {}),
+      }),
       paths: wired.mediaPaths,
-      ...(this.env.IMAGES ? { images: this.env.IMAGES } : {}),
       ...(wired.assetGate ? { gate: wired.assetGate } : {}),
       ...(wired.store ? { store: wired.store } : {}),
     };

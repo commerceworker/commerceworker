@@ -26,19 +26,11 @@ import {
   sha256Hex,
   verifyPassword,
 } from '@commerceworker/security/credentials';
-import {
-  authFailures,
-  recoveryCodes,
-  sessions,
-  signInChallenges,
-  users,
-} from '@commerceworker/store/auth';
-import { and, count, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { data, redirect } from 'react-router';
 import { audit, clientIp } from './audit.server';
 import { openSecret } from './data-key.server';
 import { secretContext } from './encryption';
-import { afterResponse, db, passwordPepper } from './env.server';
+import { afterResponse, passwordPepper } from './env.server';
 import { withNext } from './next-path';
 import { isLocalHost } from './origin';
 import {
@@ -62,6 +54,7 @@ import {
 } from './throttle';
 import { hashRecoveryCode, looksLikeTotp, verifyTotp } from './totp';
 import { mustUseTwoFactor } from './two-factor';
+import { adminAuth } from './wire.server';
 
 const SESSION = '__Host-cw_session';
 /** Between a correct password and a correct code, for someone with two-factor sign-in on. */
@@ -82,8 +75,7 @@ export function cookie(request: Request, name: string): string | undefined {
 let haveUsers: { value: boolean; at: number } | null = null;
 async function anyUsers() {
   if (haveUsers && (haveUsers.value || Date.now() - haveUsers.at < 30_000)) return haveUsers.value;
-  const row = await db().select({ n: count() }).from(users).get();
-  haveUsers = { value: (row?.n ?? 0) > 0, at: Date.now() };
+  haveUsers = { value: (await adminAuth().userCount()) > 0, at: Date.now() };
   return haveUsers.value;
 }
 export const forgetUserCount = () => {
@@ -156,39 +148,13 @@ async function lookUpPrincipal(request: Request): Promise<Caller | null> {
   if (token) {
     const now = Date.now();
     const hash = await sha256Hex(token);
-    const row = await db()
-      .select({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        role: users.role,
-        totpEnabledAt: users.totpEnabledAt,
-        passwordChangeDue: users.passwordChangeDue,
-        passwordHash: users.passwordHash,
-        seen: sql<number>`coalesce(${sessions.lastSeenAt}, ${sessions.createdAt})`,
-      })
-      .from(sessions)
-      .innerJoin(users, eq(users.id, sessions.userId))
-      .where(
-        and(
-          eq(sessions.tokenHash, hash),
-          gt(sessions.expiresAt, now),
-          // Idle too long: the session has ended even though its cookie hasn't.
-          gt(sql`coalesce(${sessions.lastSeenAt}, ${sessions.createdAt})`, now - SESSION_IDLE_MS),
-          isNull(users.disabledAt),
-        ),
-      )
-      .get();
+    const row = await adminAuth().liveSession(hash, now, SESSION_IDLE_MS);
     // An admin's session goes idle sooner than the query's limit for everyone.
     if (row && now - row.seen <= sessionIdleMs(row.role as Role)) {
-      const { seen, totpEnabledAt, passwordChangeDue, passwordHash, ...person } = row;
+      const { seen, totpEnabledAt, passwordChangeDue, passwordHash } = row;
+      const person = { id: row.id, email: row.email, name: row.name, role: row.role };
       if (now - seen > SESSION_TOUCH_MS)
-        afterResponse(
-          db()
-            .update(sessions)
-            .set({ lastSeenAt: now, ip: clientIp(request) })
-            .where(eq(sessions.tokenHash, hash)),
-        );
+        afterResponse(adminAuth().touchSession(hash, now, clientIp(request)));
       const role = person.role as Role;
       const due =
         !totpEnabledAt &&
@@ -219,7 +185,7 @@ export class Throttled extends Error {
 }
 
 export async function waitFor(keys: string[]) {
-  const rows = await db().select().from(authFailures).where(inArray(authFailures.key, keys));
+  const rows = await adminAuth().failures(keys);
   return blockedFor(rows, Date.now());
 }
 
@@ -231,9 +197,7 @@ export async function waitFor(keys: string[]) {
  */
 async function signInWait(email: string, ip: string): Promise<number> {
   const keys = signInKeys(email, ip);
-  const rows = (
-    await db().select().from(authFailures).where(inArray(authFailures.key, keys))
-  ).filter((r) => keys.includes(r.key));
+  const rows = (await adminAuth().failures(keys)).filter((r) => keys.includes(r.key));
   const now = Date.now();
   const wait = blockedFor(rows, now);
   if (!wait) return 0;
@@ -243,36 +207,15 @@ async function signInWait(email: string, ip: string): Promise<number> {
     now,
   );
   if (here) return here;
-  const known = await db()
-    .select({ id: sessions.tokenHash })
-    .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
-    .where(
-      and(eq(users.email, normalizeEmail(email)), eq(sessions.ip, ip), gt(sessions.expiresAt, now)),
-    )
-    .get();
+  const known = await adminAuth().knownPlace(normalizeEmail(email), ip, now);
   return known ? 0 : wait;
 }
 
 /** Counts a failure against each key, starting a fresh window where the old one has ended. */
 export async function recordFailure(keys: string[]) {
   const now = Date.now();
-  const expired = sql`${now} - ${authFailures.windowStart} >= ${WINDOW_MS}`;
-  for (const key of keys)
-    await db()
-      .insert(authFailures)
-      .values({ key, count: 1, windowStart: now })
-      .onConflictDoUpdate({
-        target: authFailures.key,
-        set: {
-          count: sql`case when ${expired} then 1 else ${authFailures.count} + 1 end`,
-          windowStart: sql`case when ${expired} then ${now} else ${authFailures.windowStart} end`,
-        },
-      });
-  // Failures are rare, so this is a cheap place to drop windows that ended a day ago.
-  await db()
-    .delete(authFailures)
-    .where(lt(authFailures.windowStart, now - 86_400_000));
+  await adminAuth().recordFailures(keys, now, WINDOW_MS);
+  await adminAuth().pruneFailures(now - 86_400_000);
 }
 
 /**
@@ -283,25 +226,8 @@ export async function recordFailure(keys: string[]) {
  */
 export async function countAttempt(keys: string[]): Promise<FailureRow[]> {
   const now = Date.now();
-  const expired = sql`${now} - ${authFailures.windowStart} >= ${WINDOW_MS}`;
-  const counted: FailureRow[] = [];
-  for (const key of keys) {
-    const [row] = await db()
-      .insert(authFailures)
-      .values({ key, count: 1, windowStart: now })
-      .onConflictDoUpdate({
-        target: authFailures.key,
-        set: {
-          count: sql`case when ${expired} then 1 else ${authFailures.count} + 1 end`,
-          windowStart: sql`case when ${expired} then ${now} else ${authFailures.windowStart} end`,
-        },
-      })
-      .returning();
-    counted.push(row!);
-  }
-  await db()
-    .delete(authFailures)
-    .where(lt(authFailures.windowStart, now - 86_400_000));
+  const counted = await adminAuth().countAttempts(keys, now, WINDOW_MS);
+  await adminAuth().pruneFailures(now - 86_400_000);
   return counted;
 }
 
@@ -416,7 +342,7 @@ export async function signIn(
     return null;
   }
   // Success clears this person-and-place count; the wider counts age out with their window.
-  await db().delete(authFailures).where(eq(authFailures.key, keys[0]!));
+  await adminAuth().clearFailures(keys[0]!);
   if (r.twoFactor) return { cookie: await startChallenge(r.principal.id), twoFactor: true };
   await audit(request, 'auth.sign_in', { actor: r.principal });
   return { cookie: await startSession(request, r.principal.id), twoFactor: false };
@@ -467,16 +393,15 @@ export async function signInToLink(
     });
     return null;
   }
-  await db().delete(authFailures).where(eq(authFailures.key, keys[0]!));
+  await adminAuth().clearFailures(keys[0]!);
   if (user.totpEnabledAt) return { cookie: await startChallenge(user.id), twoFactor: true };
   return {
     twoFactor: false,
     signIn: async () => {
-      const row = await db()
-        .select({ email: users.email, name: users.name, role: users.role })
-        .from(users)
-        .where(eq(users.id, user.id))
-        .get();
+      const userRow = await adminAuth().user(user.id);
+      const row = userRow
+        ? { email: userRow.email, name: userRow.name, role: userRow.role }
+        : undefined;
       if (row)
         await audit(request, 'auth.sign_in', {
           actor: { kind: 'user', id: user.id, ...row, role: row.role as Role },
@@ -521,11 +446,7 @@ async function checkCredentials(
   given: string,
 ): Promise<{ principal: Principal; twoFactor: boolean } | { reason: string }> {
   if (!email.trim()) return { reason: 'no email' };
-  const user = await db()
-    .select()
-    .from(users)
-    .where(eq(users.email, normalizeEmail(email)))
-    .get();
+  const user = await adminAuth().userByEmail(normalizeEmail(email));
   // The decoy is hashed like a real one (peppered when there is a pepper), so timing says nothing.
   decoy ??= hashPassword(randomToken(), passwordPepper());
   const ok = await checkPassword(given, user?.passwordHash ?? (await decoy));
@@ -543,10 +464,11 @@ async function checkCredentials(
   // A hash from before the pepper is stored again with it, now that the password is known.
   if (needsRehash(user.passwordHash, passwordPepper()))
     afterResponse(
-      db()
-        .update(users)
-        .set({ passwordHash: await hashPassword(given, passwordPepper()) })
-        .where(and(eq(users.id, user.id), eq(users.passwordHash, user.passwordHash))),
+      adminAuth().rehashPassword(
+        user.id,
+        user.passwordHash,
+        await hashPassword(given, passwordPepper()),
+      ),
     );
   return {
     twoFactor: !!user.totpEnabledAt,
@@ -564,18 +486,14 @@ async function checkCredentials(
 export async function startSession(request: Request, userId: string): Promise<string> {
   const token = randomToken();
   const now = Date.now();
-  await db()
-    .insert(sessions)
-    .values({
-      tokenHash: await sha256Hex(token),
-      userId,
-      createdAt: now,
-      expiresAt: now + SESSION_MAX_MS,
-      lastSeenAt: now,
-      ip: clientIp(request),
-      userAgent: request.headers.get('user-agent')?.slice(0, 300) ?? null,
-    });
-  await db().update(users).set({ lastLoginAt: now }).where(eq(users.id, userId));
+  await adminAuth().startSession({
+    tokenHash: await sha256Hex(token),
+    userId,
+    createdAt: now,
+    expiresAt: now + SESSION_MAX_MS,
+    ip: clientIp(request),
+    userAgent: request.headers.get('user-agent')?.slice(0, 300) ?? null,
+  });
   return sessionCookie(token);
 }
 
@@ -584,16 +502,12 @@ export async function startSession(request: Request, userId: string): Promise<st
 async function startChallenge(userId: string): Promise<string> {
   const token = randomToken();
   const now = Date.now();
-  // Sign-ins are rare enough to drop finished challenges here.
-  await db().delete(signInChallenges).where(lte(signInChallenges.expiresAt, now));
-  await db()
-    .insert(signInChallenges)
-    .values({
-      tokenHash: await sha256Hex(token),
-      userId,
-      createdAt: now,
-      expiresAt: now + CHALLENGE_MS,
-    });
+  await adminAuth().startChallenge({
+    tokenHash: await sha256Hex(token),
+    userId,
+    createdAt: now,
+    expiresAt: now + CHALLENGE_MS,
+  });
   return `${CHALLENGE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${CHALLENGE_MS / 1000}`;
 }
 
@@ -604,27 +518,10 @@ export async function pendingChallenge(request: Request) {
   const token = cookie(request, CHALLENGE);
   if (!token) return null;
   const hash = await sha256Hex(token);
-  const row = await db()
-    .select({
-      id: users.id,
-      email: users.email,
-      name: users.name,
-      role: users.role,
-      totpSecret: users.totpSecret,
-      totpLastStep: users.totpLastStep,
-    })
-    .from(signInChallenges)
-    .innerJoin(users, eq(users.id, signInChallenges.userId))
-    .where(
-      and(
-        eq(signInChallenges.tokenHash, hash),
-        gt(signInChallenges.expiresAt, Date.now()),
-        isNull(users.disabledAt),
-        isNotNull(users.totpEnabledAt),
-      ),
-    )
-    .get();
-  return row ? { ...row, challenge: hash } : null;
+  const row = await adminAuth().challenge(hash, Date.now());
+  if (!row) return null;
+  const { id, email, name, role, totpSecret, totpLastStep } = row;
+  return { id, email, name, role, totpSecret, totpLastStep, challenge: hash };
 }
 
 /**
@@ -659,18 +556,11 @@ export async function verifySecondFactor(request: Request, code: string): Promis
     });
     return null;
   }
-  await db().delete(signInChallenges).where(eq(signInChallenges.tokenHash, pending.challenge));
-  await db().delete(authFailures).where(eq(authFailures.key, key[0]!));
+  await adminAuth().endChallenge(pending.challenge);
+  await adminAuth().clearFailures(key[0]!);
   await audit(request, 'auth.sign_in', { actor: person, detail: { twoFactor: method } });
   if (method === 'recovery code') {
-    const left =
-      (
-        await db()
-          .select({ n: count() })
-          .from(recoveryCodes)
-          .where(eq(recoveryCodes.userId, pending.id))
-          .get()
-      )?.n ?? 0;
+    const left = await adminAuth().recoveryCodesLeft(pending.id);
     await audit(request, 'auth.recovery_code_used', {
       actor: person,
       target: pending.email,
@@ -691,7 +581,7 @@ export type StepUpMethod = 'code' | 'password' | 'sso';
 
 async function stepUpUser(by: Principal) {
   if (by.kind !== 'user') return null;
-  const user = await db().select().from(users).where(eq(users.id, by.id)).get();
+  const user = await adminAuth().user(by.id);
   if (!user) return null;
   const method: StepUpMethod =
     user.totpEnabledAt && user.totpSecret
@@ -746,9 +636,7 @@ export async function stepUp(
     return 'Your password is not right.';
   }
   const sid = await sessionId(request);
-  const session = sid
-    ? await db().select().from(sessions).where(eq(sessions.tokenHash, sid)).get()
-    : undefined;
+  const session = sid ? await adminAuth().session(sid) : undefined;
   if (session?.reauthAt && Date.now() - session.reauthAt < SSO_STEP_UP_MS) return null;
   return 'Confirm with single sign-on, then try within ten minutes.';
 }
@@ -766,16 +654,9 @@ export async function recordReauth(
   if (by.kind !== 'user') return false;
   const sid = await sessionId(request);
   if (!sid) return false;
-  const user = await db()
-    .select({ externalSub: users.externalSub })
-    .from(users)
-    .where(eq(users.id, by.id))
-    .get();
+  const user = await adminAuth().user(by.id);
   if (!user?.externalSub || user.externalSub !== sub) return false;
-  await db()
-    .update(sessions)
-    .set({ reauthAt: at })
-    .where(and(eq(sessions.tokenHash, sid), eq(sessions.userId, by.id)));
+  await adminAuth().setReauth(sid, by.id, at);
   return true;
 }
 
@@ -788,26 +669,11 @@ async function useTotp(
   const secret = await openSecret(user.totpSecret, secretContext.totp(user.id));
   const step = await verifyTotp(secret, code, Date.now(), user.totpLastStep);
   if (step === null) return false;
-  // Conditional, so two requests racing with the same code can't both win.
-  const r = await db()
-    .update(users)
-    .set({ totpLastStep: step })
-    .where(and(eq(users.id, user.id), or(isNull(users.totpLastStep), lt(users.totpLastStep, step))))
-    .run();
-  return r.meta.changes > 0;
+  return adminAuth().useTotpStep(user.id, step);
 }
 
 async function useRecoveryCode(userId: string, code: string) {
-  const r = await db()
-    .delete(recoveryCodes)
-    .where(
-      and(
-        eq(recoveryCodes.codeHash, await hashRecoveryCode(code)),
-        eq(recoveryCodes.userId, userId),
-      ),
-    )
-    .run();
-  return r.meta.changes > 0;
+  return adminAuth().useRecoveryCode(userId, await hashRecoveryCode(code));
 }
 
 /** Ends the session server-side and returns the cookies that clear it. */
@@ -815,10 +681,7 @@ export async function signOut(request: Request): Promise<string[]> {
   const who = await principal(request);
   if (who && who.kind !== 'open') await audit(request, 'auth.sign_out', { actor: who });
   const token = cookie(request, SESSION);
-  if (token)
-    await db()
-      .delete(sessions)
-      .where(eq(sessions.tokenHash, await sha256Hex(token)));
+  if (token) await adminAuth().endSession(await sha256Hex(token));
   return [`${SESSION}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`, clearChallengeCookie];
 }
 

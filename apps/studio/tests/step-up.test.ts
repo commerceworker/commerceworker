@@ -1,5 +1,4 @@
 import { hashPassword, verifyPassword } from '@commerceworker/security/credentials';
-import { authFailures, sessions, users } from '@commerceworker/store/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '~/lib/roles';
 import { fromBase32, newTotpSecret, totpCode, totpStep } from '../app/lib/totp';
@@ -19,63 +18,46 @@ let session: { createdAt: number; reauthAt: number | null } | undefined;
 let ssoOnly = false;
 const failures = new Map<string, { key: string; count: number; windowStart: number }>();
 
-/**
- * Just enough of drizzle for `stepUp`: the person, their session, the failure counts, and the
- * conditional write that spends a two-factor code (only a later step than the last one wins).
- */
-const select = () => {
-  let table: unknown;
-  const q = {
-    from: (t: unknown) => {
-      table = t;
-      return q;
-    },
-    innerJoin: () => q,
-    where: () => q,
-    get: async () => (table === users ? user : table === sessions ? session : undefined),
-    // biome-ignore lint/suspicious/noThenProperty: drizzle's queries are awaited directly
-    then: (ok: (rows: unknown[]) => unknown) =>
-      ok(table === authFailures ? [...failures.values()] : []),
-  };
-  return q;
-};
-const insert = () => ({
-  values: (v: { key: string; windowStart: number }) => ({
-    onConflictDoUpdate: async () => {
-      const was = failures.get(v.key);
-      failures.set(v.key, { ...v, count: (was?.count ?? 0) + 1 });
-    },
-  }),
-});
-/** The deployment's pepper, and the hashes sign-in stored again. */
+/** The port is instrumented here for the sign-in and step-up rules. */
 let pepper: string | undefined;
 const rehashed: string[] = [];
-const update = () => ({
-  set: (v: { totpLastStep: number; reauthAt?: number; passwordHash?: string }) => {
-    if (v.passwordHash) rehashed.push(v.passwordHash);
-    return setResult(v);
-  },
-});
-const setResult = (v: { totpLastStep: number; reauthAt?: number }) => ({
-  where: () => ({
-    // recordReauth: the session's step-up time.
-    // biome-ignore lint/suspicious/noThenProperty: drizzle's queries are awaited directly
-    then: (ok: (r: unknown) => unknown) => {
-      if (session && v.reauthAt) session.reauthAt = v.reauthAt;
-      return ok(undefined);
+vi.mock('~/lib/env.server', () => ({ passwordPepper: () => pepper, afterResponse: () => {} }));
+vi.mock('~/lib/wire.server', () => ({
+  adminAuth: () => ({
+    user: async () => user,
+    userByEmail: async () => user,
+    session: async () => session,
+    failures: async (keys: string[]) => [...failures.values()].filter((r) => keys.includes(r.key)),
+    recordFailures: async (keys: string[], now: number, windowMs: number) => {
+      for (const key of keys) {
+        const old = failures.get(key);
+        failures.set(
+          key,
+          !old || now - old.windowStart >= windowMs
+            ? { key, count: 1, windowStart: now }
+            : { ...old, count: old.count + 1 },
+        );
+      }
     },
-    run: async () => {
-      const won = user.totpLastStep === null || v.totpLastStep > user.totpLastStep;
-      if (won) user.totpLastStep = v.totpLastStep;
-      return { meta: { changes: won ? 1 : 0 } };
+    pruneFailures: async () => {},
+    clearFailures: async (key: string) => {
+      failures.delete(key);
     },
+    knownPlace: async () => !!session,
+    setReauth: async (_hash: string, _id: string, at: number) => {
+      if (session) session.reauthAt = at;
+    },
+    useTotpStep: async (_id: string, step: number) => {
+      if (user.totpLastStep !== null && step <= user.totpLastStep) return false;
+      user.totpLastStep = step;
+      return true;
+    },
+    rehashPassword: async (_id: string, _was: string, hash: string) => {
+      rehashed.push(hash);
+    },
+    startSession: async () => {},
+    startChallenge: async () => {},
   }),
-});
-const del = () => ({ where: async () => {} });
-vi.mock('~/lib/env.server', () => ({
-  passwordPepper: () => pepper,
-  db: () => ({ select, insert, update, delete: del }),
-  afterResponse: () => {},
 }));
 vi.mock('~/lib/data-key.server', () => ({ openSecret: async (v: string) => v }));
 vi.mock('~/lib/audit.server', () => ({ audit: vi.fn(), clientIp: () => '203.0.113.7' }));

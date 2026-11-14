@@ -1,4 +1,3 @@
-import { users } from '@commerceworker/store/auth';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +30,6 @@ import {
   useSidebar,
 } from '@commerceworker/ui/sidebar';
 import { TooltipProvider } from '@commerceworker/ui/tooltip';
-import { and, eq, isNull } from 'drizzle-orm';
 import {
   ChevronsUpDown,
   Ellipsis,
@@ -76,11 +74,11 @@ import { CmsProviders } from '~/cms/providers';
 import { Mark } from '~/components/mark';
 import { authEnabled, requireUser } from '~/lib/auth.server';
 import { useMedia } from '~/lib/device';
-import { db } from '~/lib/env.server';
 import { revalidateUnlessSearchOnly } from '~/lib/revalidate';
 import { atLeast, type Principal, ROLE_LABELS } from '~/lib/roles';
 import { pageShortcut } from '~/lib/shortcuts';
 import { type ThemeChoice, useTheme } from '~/lib/theme';
+import { adminTeam } from '~/lib/wire.server';
 import type { Route } from './+types/shell';
 
 /** The sidebar as it was left (the `cw_sidebar_state` cookie), so the server draws its width. */
@@ -97,14 +95,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     return { auth: true, me, nav: false, admins: [], sidebarOpen };
   const [admins, auth] = await Promise.all([
     // Who to ask when a page needs a higher role: up to three active admins.
-    atLeast(me.role, 'admin')
-      ? []
-      : db()
-          .select({ name: users.name, email: users.email })
-          .from(users)
-          .where(and(eq(users.role, 'admin'), isNull(users.disabledAt)))
-          .orderBy(users.name)
-          .limit(3),
+    atLeast(me.role, 'admin') ? [] : adminTeam().admins(3),
     authEnabled(),
   ]);
   return { auth, me, nav: true, admins, sidebarOpen };

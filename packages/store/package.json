@@ -7,7 +7,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
-    "./auth": "./src/auth.ts"
+    "./auth": "./src/auth.ts",
+    "./admin-settings": "./src/admin-settings.ts",
+    "./admin-auth": "./src/admin-auth.ts",
+    "./admin-passkeys": "./src/admin-passkeys.ts",
+    "./admin-team": "./src/admin-team.ts",
+    "./admin-password-resets": "./src/admin-password-resets.ts",
+    "./admin-scim-directory": "./src/admin-scim-directory.ts",
+    "./admin-audit-log": "./src/admin-audit-log.ts"
   },
   "scripts": {
     "lint": "biome check .",

@@ -1,9 +1,13 @@
+import { adminAuditQueries } from '@commerceworker/store/admin-audit-log';
+import type { AuthDb } from '@commerceworker/store/auth';
 import { adminAudit } from '@commerceworker/store/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authTestDb } from './auth-db';
 
 const state = vi.hoisted(() => ({ db: undefined as unknown }));
-vi.mock('~/lib/env.server', () => ({ db: () => state.db }));
+vi.mock('~/lib/wire.server', () => ({
+  adminAuditLog: () => adminAuditQueries(state.db as AuthDb),
+}));
 
 const { listAudit } = await import('~/lib/audit.server');
 

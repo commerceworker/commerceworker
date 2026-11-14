@@ -48,7 +48,10 @@ export async function auditHead(db: AuthDb): Promise<AuditHead | null> {
 }
 
 /** Inserts the event `seal` makes for the current head (`sealAuditRow` in the web app). */
-export async function appendAudit(db: AuthDb, seal: (head: AuditHead | null) => Promise<Sealed>) {
+export async function appendAudit<Row extends Sealed>(
+  db: AuthDb,
+  seal: (head: AuditHead | null) => Promise<Row>,
+): Promise<Row> {
   for (let attempt = 1; ; attempt++) {
     const row = await seal(await auditHead(db));
     try {

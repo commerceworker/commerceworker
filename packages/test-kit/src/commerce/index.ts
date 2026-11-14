@@ -12,6 +12,8 @@ export * from './budget-store';
 export * from './budget-store-contract';
 export * from './cart-records';
 export * from './cart-records-contract';
+export * from './catalog-orders';
+export * from './catalog-orders-contract';
 export * from './catalog-reader';
 export * from './checkout-sessions';
 export * from './checkout-sessions-contract';

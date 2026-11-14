@@ -1,15 +1,13 @@
+import { InMemoryAdminScimDirectory } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Role } from '~/lib/roles';
 import {
-  type Filter,
   groupPatch,
   parseFilter,
   personFromBody,
   personPatch,
   roleFromGroups,
   ScimBadRequest,
-  type ScimGroupRow,
-  type ScimPerson,
 } from '~/lib/scim';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
@@ -103,85 +101,29 @@ describe('SCIM parsing', () => {
   });
 });
 
-/** The store in memory: people with roles, groups with members, and what was revoked. */
+/** The same fake used by the storage contract, with protocol effects recorded separately. */
 function memoryStore() {
-  const people = new Map<string, ScimPerson & { role: Role }>();
-  const groups = new Map<string, ScimGroupRow>();
-  const members = new Map<string, Set<string>>();
+  const directory = new InMemoryAdminScimDirectory();
   const map: Record<string, Role> = {};
   const revoked: string[] = [];
-  /** The address each revoke matched tokens by: the one they were made under. */
   const revokedAs: string[] = [];
-  /** People with a password, and people single sign-on is linked to. */
-  const passwords = new Set<string>();
-  const linked = new Set<string>();
-  const match = (f: Filter | null, p: ScimPerson) =>
-    !f ||
-    (f.attr === 'userName' && p.email === f.value.toLowerCase()) ||
-    (f.attr === 'externalId' && p.scimExternalId === f.value) ||
-    (f.attr === 'id' && p.id === f.value);
-  const store: Store = {
-    async people(f, offset, limit) {
-      const all = [...people.values()].filter((p) => match(f, p));
-      return { total: all.length, rows: all.slice(offset, offset + limit) };
-    },
-    person: async (id) => people.get(id),
-    personByEmail: async (email) => [...people.values()].find((p) => p.email === email),
-    async addPerson(p) {
-      people.set(p.id, { ...p, role: 'member' });
-    },
-    async updatePerson(id, set) {
-      Object.assign(people.get(id)!, set);
-    },
-    signsInWith: async (id) => ({ password: passwords.has(id), linked: linked.has(id) }),
-    role: async (id) => people.get(id)?.role ?? 'member',
-    async setRole(id, role) {
-      people.get(id)!.role = role;
-    },
-    otherAdmins: async (except) =>
-      [...people.values()].filter((p) => p.role === 'admin' && !p.disabledAt && p.id !== except)
-        .length,
-    async setDisabled(id, at) {
-      people.get(id)!.disabledAt = at;
-    },
-    async revokeAccess(p) {
+  const store: Store = Object.assign(directory, {
+    roleMap: async () => map,
+    async revokeAccess(p: { id: string; email: string }) {
       revoked.push(p.id);
       revokedAs.push(p.email);
       return { sessions: 1 };
     },
-    async groups(f, offset, limit) {
-      const all = [...groups.values()].filter(
-        (g) => !f || (f.attr === 'displayName' && g.displayName === f.value),
-      );
-      return { total: all.length, rows: all.slice(offset, offset + limit) };
-    },
-    group: async (id) => groups.get(id),
-    async addGroup(g) {
-      groups.set(g.id, { ...g });
-      members.set(g.id, new Set());
-    },
-    async updateGroup(id, set) {
-      Object.assign(groups.get(id)!, set);
-    },
-    async deleteGroup(id) {
-      groups.delete(id);
-      members.delete(id);
-    },
-    members: async (g) => [...(members.get(g) ?? [])],
-    existing: async (ids) => ids.filter((id) => people.has(id)),
-    async addMembers(g, ids) {
-      for (const id of ids) members.get(g)!.add(id);
-    },
-    async removeMembers(g, ids) {
-      for (const id of ids) members.get(g)!.delete(id);
-    },
-    async leaveGroups(userId) {
-      for (const m of members.values()) m.delete(userId);
-    },
-    groupsOf: async (userId) => [...members].filter(([, m]) => m.has(userId)).map(([g]) => g),
-    roleMap: async () => map,
+  });
+  return {
+    store,
+    people: directory.persons,
+    map,
+    revoked,
+    revokedAs,
+    passwords: directory.passwords,
+    linked: directory.linked,
   };
-  return { store, people, map, revoked, revokedAs, passwords, linked };
 }
 
 describe('the SCIM protocol', () => {
@@ -340,6 +282,25 @@ describe('the SCIM protocol', () => {
     });
     expect(res.status).toBe(409);
     expect(mem.people.get('usr_admin')?.disabledAt).toBeNull();
+  });
+
+  it('keeps an active admin when deactivation requests race', async () => {
+    mem.people.set('usr_second', {
+      ...mem.people.get('usr_admin')!,
+      id: 'usr_second',
+      email: 'second@example.com',
+    });
+    const results = await Promise.all([
+      call('PATCH', '/Users/usr_admin', {
+        Operations: [{ op: 'replace', path: 'active', value: false }],
+      }),
+      call('PATCH', '/Users/usr_second', {
+        Operations: [{ op: 'replace', path: 'active', value: false }],
+      }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(await mem.store.otherAdmins('none')).toBe(1);
+    expect(mem.revoked).toHaveLength(1);
   });
 
   it('roles follow mapped groups: highest wins, leaving drops to member, the last admin stays', async () => {

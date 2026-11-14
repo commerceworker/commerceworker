@@ -783,3 +783,63 @@ is set, but only in in-memory demo mode; a persistent deployment requires an exp
 before `/mcp` mounts. What `pnpm dev` sets is in [Development](./development.md#running-locally).
 Replace all of these in any real deployment (`REQUIRE_SECURE_SECRETS=true` refuses to serve with the
 dev-default admin token and keys).
+
+Studio reads and writes its workspace settings and setup-code claims through `AdminSettings`, bound
+in `apps/studio/app/lib/wire.server.ts`. A failed admin creation releases a setup claim only if its
+hash still owns the setting, so a newer code's claim survives an older attempt's failure. The D1
+adapter and in-memory fake share the same contract tests.
+
+Studio's sign-in module reads credentials and sessions and writes its throttle windows and one-use
+codes through `AdminAuth`, bound in the same composition root. The adapter returns attempt counts
+from each guarded write, so simultaneous reset requests cannot all observe the count before their
+attempts. D1 and in-memory contracts also cover session expiry and idle time, disabled accounts,
+conditional password rehashes, session-owned reauthentication and single-use TOTP and recovery codes.
+
+Two-factor management also uses `AdminAuth`. Replacing recovery codes deletes the old set and
+inserts the new hashes in one D1 batch. Disabling two-factor sign-in clears the secret, enabled
+and last-used-step fields and deletes its recovery codes in one batch. Either batch rolls back
+entirely on a failed write; D1 tests inject failures to verify both guarantees.
+
+Passkey storage uses `PasskeyStore` through Studio's composition root, with its own content-database
+adapter. A challenge is consumed by one `DELETE … RETURNING` before WebAuthn verification, so two
+answers cannot both use it. The adapter preserves credential ownership, returns transport arrays,
+and stores the verified signature counter and last-use time. The Account page receives only display
+fields; public keys and owner ids are not included in its passkey list.
+
+Studio's team operations use `AdminTeam` and `AdminAuth`, with their D1 adapters bound only in
+`apps/studio/app/lib/wire.server.ts`. Demoting or disabling a person checks for another active admin
+inside the write, so simultaneous actions cannot remove all active admins. Account session lists
+and references are scoped to their owner; ending other sessions preserves the current hash and
+returns the number actually deleted for audit, without a separate count read. The shell's admin
+contacts also come from `AdminTeam` and include only active admins.
+
+SSO and invitation account storage also use `AdminAuth` and `AdminTeam`. SSO links a subject only
+while the account has no subject and no other account holds that subject, in one guarded write
+under the subject's unique index. Losing either race refuses the link without auditing a success;
+other database failures propagate. This applies to passwordless linking as well as the link that
+waits for password confirmation. Invitation acceptance still redeems at the API before creating
+an account; a failed local account write leaves the invitation spent and returns the same generic
+refusal, without logging the token or password hash.
+
+Self-service password-reset storage uses `AdminPasswordResets`, bound in Studio's composition root.
+A live-code lookup joins its owner and excludes expired, spent, disabled and passwordless accounts;
+typed lookups also bind the address and asking browser's hash. A guarded claim spends the code
+before hashing the new password. The completion batch changes the password, clears its temporary
+flags and removes that person's reset codes, pending two-factor challenges and sessions. Passkeys,
+TOTP settings and recovery codes stay as they were. Failure rolls back the completion batch; the
+separate claim remains spent, matching the existing reset behavior.
+
+SCIM directory reads and writes use `AdminScimDirectory`, bound in Studio's composition root. Its
+role and deactivation writes guard the last active admin inside the statement; a lost deactivation
+race answers 409 and revokes no access, while a lost role-sync race records that the last admin
+kept their role. A group and its memberships are deleted in one batch. Membership operations split
+large lists into statements below D1's bind limit. The SCIM token remains a SHA-256 hash in
+`AdminSettings`; the Team page receives only its update metadata, and rotation and revocation take
+effect through the next token check. The group-role map is also read and written through that port.
+
+Audit persistence uses `AdminAuditLog`: concurrent appends retry on a sequence collision, time/id
+cursors keep events that share a millisecond, and sequence reads retain malformed rows for the
+verifier to report. The pure audit-chain module still seals and verifies the hashes, and the audit
+service logs a storage failure without failing the action it records. All Studio auth stores,
+Email Sending and the D1 health probe are now bound only in `app/lib/wire.server.ts`, enforced by
+the composition-root test. `env.server.ts` exposes no database helper.

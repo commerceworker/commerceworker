@@ -47,6 +47,9 @@ clients, Workflow clients), `@commerceworker/http` (the Hono surface: routes, au
 - **The dependency rule.** `domain` depends on nothing; `ports` holds interfaces; `application`
   orchestrates domain + ports; only `@commerceworker/platform`'s `wire.ts` and the app entries bind
   adapters to ports. No SQL, ORM or driver type crosses a port.
+- **Studio's composition root** is `apps/studio/app/lib/wire.server.ts`: only it imports stores,
+  Cloudflare adapters or ORM code and reaches D1 (including the health probe). Auth handlers take
+  ports; `env.server.ts` has no database helper. `scripts/composition-root.test.ts` holds the boundary.
 - **`withTransaction` is a unit of work, not an interactive transaction** (D1 commits a batch).
   Read everything first, then write; a read inside the unit does not see its own writes. A
   compare-and-set inside a unit reports its outcome only at commit, as `TransactionConflictError`;

@@ -2,6 +2,7 @@
 // the fake below (Miniflare's needs a network-backed image service). The gateway reaches it the
 // same way it does in production, through ctx.exports.Media.
 import type { ImagesBindingLike } from '@commerceworker/adapters/images-cf';
+import { publishedMediaAdapters } from '@commerceworker/platform/media';
 import worker, { Media as DeployedMedia } from '../../src/index';
 import type { MediaDeps } from '../../src/serve';
 
@@ -34,7 +35,11 @@ export const fakeImages: ImagesBindingLike = {
 
 export class Media extends DeployedMedia {
   protected override deps(): MediaDeps {
-    return { ...super.deps(), images: fakeImages };
+    if (!this.env.MEDIA_BUCKET) throw new Error('MEDIA_BUCKET is not bound');
+    return {
+      ...super.deps(),
+      ...publishedMediaAdapters({ bucket: this.env.MEDIA_BUCKET, images: fakeImages }),
+    };
   }
 }
 

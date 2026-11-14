@@ -4,10 +4,7 @@
  */
 
 import { env } from 'cloudflare:workers';
-import { workspaceSettings } from '@commerceworker/store/auth';
-import { eq } from 'drizzle-orm';
 import { audit } from './audit.server';
-import { db } from './env.server';
 import type { Principal } from './roles';
 import { readSsoSettings, type SsoSettings } from './sso';
 import {
@@ -15,6 +12,7 @@ import {
   isTwoFactorRequirement,
   type TwoFactorRequirement,
 } from './two-factor';
+import { adminSettings } from './wire.server';
 
 const KEY = 'two_factor_required';
 const CACHE_MS = 30_000;
@@ -27,12 +25,8 @@ let cached: { value: TwoFactorRequirement; at: number } | null = null;
  */
 export async function twoFactorRequirement(): Promise<TwoFactorRequirement> {
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
-  const row = await db()
-    .select({ value: workspaceSettings.value })
-    .from(workspaceSettings)
-    .where(eq(workspaceSettings.key, KEY))
-    .get();
-  const value = isTwoFactorRequirement(row?.value) ? row.value : DEFAULT_TWO_FACTOR;
+  const stored = await adminSettings().get(KEY);
+  const value = isTwoFactorRequirement(stored) ? stored : DEFAULT_TWO_FACTOR;
   cached = { value, at: Date.now() };
   return value;
 }
@@ -45,13 +39,7 @@ export async function setTwoFactorRequirement(
   const from = await twoFactorRequirement();
   if (from === next) return;
   const updatedBy = by.email ?? by.name;
-  await db()
-    .insert(workspaceSettings)
-    .values({ key: KEY, value: next, updatedAt: Date.now(), updatedBy })
-    .onConflictDoUpdate({
-      target: workspaceSettings.key,
-      set: { value: next, updatedAt: Date.now(), updatedBy },
-    });
+  await adminSettings().set({ key: KEY, value: next, updatedAt: Date.now(), updatedBy });
   cached = { value: next, at: Date.now() };
   await audit(request, 'team.two_factor_requirement', { actor: by, detail: { from, to: next } });
 }
@@ -62,12 +50,8 @@ let sso: { value: SsoSettings; at: number } | null = null;
 /** How single sign-on adds people and whether it is the only way in (`sso.ts`). */
 export async function ssoSettings(): Promise<SsoSettings> {
   if (sso && Date.now() - sso.at < CACHE_MS) return sso.value;
-  const row = await db()
-    .select({ value: workspaceSettings.value })
-    .from(workspaceSettings)
-    .where(eq(workspaceSettings.key, SSO_KEY))
-    .get();
-  sso = { value: readSsoSettings(row?.value), at: Date.now() };
+  const stored = await adminSettings().get(SSO_KEY);
+  sso = { value: readSsoSettings(stored), at: Date.now() };
   return sso.value;
 }
 
@@ -85,13 +69,7 @@ export async function setSsoSettings(
   if (JSON.stringify(from) === JSON.stringify(next)) return;
   const value = JSON.stringify(next);
   const updatedBy = by.email ?? by.name;
-  await db()
-    .insert(workspaceSettings)
-    .values({ key: SSO_KEY, value, updatedAt: Date.now(), updatedBy })
-    .onConflictDoUpdate({
-      target: workspaceSettings.key,
-      set: { value, updatedAt: Date.now(), updatedBy },
-    });
+  await adminSettings().set({ key: SSO_KEY, value, updatedAt: Date.now(), updatedBy });
   sso = { value: next, at: Date.now() };
   await audit(request, 'team.sso_settings', {
     actor: by,

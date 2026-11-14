@@ -19,19 +19,17 @@
 
 import { env } from 'cloudflare:workers';
 import { normalizeEmail, randomToken } from '@commerceworker/security/credentials';
-import { users } from '@commerceworker/store/auth';
-import { and, eq, isNull } from 'drizzle-orm';
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { audit } from './audit.server';
 import { type Caller, cookie, forgetUserCount, startSession } from './auth.server';
 import { EgressRefused, readCappedJson, readCappedText, safeFetch } from './egress';
-import { db } from './env.server';
 import { newId } from './ids';
 import { principalKey } from './principal.server';
 import type { Principal, Role } from './roles';
 import { SSO_LINK_TTL_MS, signSsoFlow, signSsoLink, verifySsoFlow, verifySsoLink } from './seal';
 import { ssoOnlyInEffect, ssoSettings } from './settings.server';
 import { decideSso, type SsoIdentity } from './sso';
+import { adminAuth } from './wire.server';
 
 const COOKIE = '__Host-cw_sso';
 const FLOW_MS = 10 * 60_000;
@@ -319,24 +317,9 @@ export async function signInWithSso(
   request: Request,
   identity: SsoIdentity,
 ): Promise<{ session: string } | { confirmLink: string }> {
-  const select = {
-    id: users.id,
-    email: users.email,
-    name: users.name,
-    role: users.role,
-    externalSub: users.externalSub,
-    disabledAt: users.disabledAt,
-    passwordHash: users.passwordHash,
-  };
-  const bySub = await db()
-    .select(select)
-    .from(users)
-    .where(eq(users.externalSub, identity.sub))
-    .get();
-  const byEmail =
-    !bySub && identity.email
-      ? await db().select(select).from(users).where(eq(users.email, identity.email)).get()
-      : undefined;
+  const store = adminAuth();
+  const bySub = await store.userBySub(identity.sub);
+  const byEmail = !bySub && identity.email ? await store.userByEmail(identity.email) : undefined;
   const decision = decideSso(identity, bySub, byEmail, await ssoSettings());
   const target = identity.email ?? identity.sub;
   if (decision.kind === 'refuse')
@@ -347,7 +330,7 @@ export async function signInWithSso(
     const id = newId('usr');
     const role: Role = decision.role;
     const name = identity.name || decision.email.split('@')[0]!;
-    await db().insert(users).values({
+    await store.addSsoUser({
       id,
       email: decision.email,
       name,
@@ -367,7 +350,8 @@ export async function signInWithSso(
     if (decision.kind === 'link' && row.passwordHash)
       return { confirmLink: await linkCookie({ userId: row.id, sub: identity.sub }) };
     if (decision.kind === 'link') {
-      await db().update(users).set({ externalSub: identity.sub }).where(eq(users.id, row.id));
+      if (!(await store.linkSub(row.id, identity.sub)))
+        throw new SsoError('identity link is no longer available', 'refused');
       await audit(request, 'auth.sso_linked', {
         actor: {
           kind: 'user',
@@ -405,24 +389,35 @@ export async function pendingSsoLink(request: Request) {
     cookie(request, LINK_COOKIE),
   );
   if (!link) return null;
-  const user = await db()
-    .select({
-      id: users.id,
-      email: users.email,
-      name: users.name,
-      role: users.role,
-      passwordHash: users.passwordHash,
-      totpEnabledAt: users.totpEnabledAt,
-      passwordChangeDue: users.passwordChangeDue,
-      passwordExpiresAt: users.passwordExpiresAt,
-      externalSub: users.externalSub,
-      disabledAt: users.disabledAt,
-    })
-    .from(users)
-    .where(eq(users.id, link.userId))
-    .get();
+  const user = await adminAuth().user(link.userId);
   if (!user?.passwordHash || user.disabledAt || user.externalSub) return null;
-  return { sub: link.sub, user: { ...user, passwordHash: user.passwordHash } };
+  const {
+    id,
+    email,
+    name,
+    role,
+    passwordHash,
+    totpEnabledAt,
+    passwordChangeDue,
+    passwordExpiresAt,
+    externalSub,
+    disabledAt,
+  } = user;
+  return {
+    sub: link.sub,
+    user: {
+      id,
+      email,
+      name,
+      role,
+      passwordHash,
+      totpEnabledAt,
+      passwordChangeDue,
+      passwordExpiresAt,
+      externalSub,
+      disabledAt,
+    },
+  };
 }
 
 /**
@@ -435,24 +430,7 @@ export async function finishSsoLink(
 ): Promise<boolean> {
   const pending = await pendingSsoLink(request);
   if (!pending || pending.user.id !== caller.id) return false;
-  const taken = await db()
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.externalSub, pending.sub))
-    .get();
-  if (taken) return false;
-  let linked: { id: string }[];
-  try {
-    linked = await db()
-      .update(users)
-      .set({ externalSub: pending.sub })
-      .where(and(eq(users.id, caller.id), isNull(users.externalSub)))
-      .returning({ id: users.id });
-  } catch {
-    // Someone else took the subject between the check and the write (its unique index).
-    return false;
-  }
-  if (!linked.length) return false;
+  if (!(await adminAuth().linkSub(caller.id, pending.sub))) return false;
   await audit(request, 'auth.sso_linked', {
     actor: caller,
     target: pending.user.email,
@@ -463,12 +441,7 @@ export async function finishSsoLink(
 
 /** Whether this person has signed in with single sign-on at least once (and so is linked). */
 export async function linkedToSso(userId: string): Promise<boolean> {
-  const row = await db()
-    .select({ sub: users.externalSub })
-    .from(users)
-    .where(eq(users.id, userId))
-    .get();
-  return !!row?.sub;
+  return !!(await adminAuth().user(userId))?.externalSub;
 }
 
 /**
@@ -478,10 +451,5 @@ export async function linkedToSso(userId: string): Promise<boolean> {
  */
 export async function usesPassword(userId: string): Promise<boolean> {
   if (await ssoOnlyInEffect()) return false;
-  const row = await db()
-    .select({ hash: users.passwordHash })
-    .from(users)
-    .where(eq(users.id, userId))
-    .get();
-  return !!row?.hash;
+  return !!(await adminAuth().user(userId))?.passwordHash;
 }

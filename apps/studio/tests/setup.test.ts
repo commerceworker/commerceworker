@@ -1,28 +1,11 @@
+import { InMemoryAdminSettings } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const env: Record<string, unknown> = {};
 vi.mock('cloudflare:workers', () => ({ env }));
 
-/** The one workspace_settings row setup uses, and just enough of drizzle to read and claim it. */
-let row: { value: string } | undefined;
-const fakeDb = {
-  select: () => ({ from: () => ({ where: () => ({ get: async () => row }) }) }),
-  insert: () => ({
-    values: (v: { value: string }) => ({
-      onConflictDoUpdate: () => ({
-        // The claim's WHERE: only a different (unused) code replaces the row.
-        returning: async () => {
-          if (row && row.value === v.value) return [];
-          row = { value: v.value };
-          return [row];
-        },
-      }),
-    }),
-  }),
-  update: () => ({ set: (v: { value: string }) => ({ where: async () => (row = v) }) }),
-  delete: () => ({ where: async () => (row = undefined) }),
-};
-vi.mock('~/lib/env.server', () => ({ db: () => fakeDb }));
+let settings = new InMemoryAdminSettings();
+vi.mock('~/lib/wire.server', () => ({ adminSettings: () => settings }));
 const audit = vi.fn();
 vi.mock('~/lib/audit.server', () => ({ audit, clientIp: () => '203.0.113.7' }));
 const recordFailure = vi.fn();
@@ -43,7 +26,7 @@ const req = () => new Request('https://acme.commerceworker.com/setup', { method:
 
 describe('setup code', () => {
   beforeEach(() => {
-    row = undefined;
+    settings = new InMemoryAdminSettings();
     people = false;
     env.SETUP_TOKEN = 'code-1';
     audit.mockReset();
@@ -58,6 +41,15 @@ describe('setup code', () => {
     expect(insertAdmin).toHaveBeenCalledWith(expect.any(Request), admin, 'team.first_admin');
     expect(await setupOpen()).toBe(false);
     await expect(redeemSetupCode(req(), 'code-1', admin)).rejects.toThrow(/has been used/);
+    expect(insertAdmin).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates only one admin when the same code is submitted concurrently', async () => {
+    const results = await Promise.allSettled([
+      redeemSetupCode(req(), 'code-1', admin),
+      redeemSetupCode(req(), 'code-1', admin),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(insertAdmin).toHaveBeenCalledTimes(1);
   });
 

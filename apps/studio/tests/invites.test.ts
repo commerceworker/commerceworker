@@ -1,67 +1,11 @@
+import { InMemoryAdminTeam } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
 
-// ── People: just enough of drizzle to look them up by one column, add one, and change a role ──
-type Person = {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-  externalSub?: string | null;
-  passwordHash?: string | null;
-  disabledAt?: number | null;
-};
-let people: Person[] = [];
+let store = new InMemoryAdminTeam();
 let insertFails = false;
-const COLUMN: Record<string, keyof Person> = {
-  id: 'id',
-  email: 'email',
-  external_sub: 'externalSub',
-};
-
-/** The column and value an `eq(column, value)` condition names. */
-function condition(cond: unknown): { key: keyof Person; value: unknown } {
-  const chunks = (cond as { queryChunks: unknown[] }).queryChunks;
-  let key: keyof Person = 'id';
-  let value: unknown;
-  for (const c of chunks) {
-    const o = c as { name?: string; value?: unknown; constructor: { name: string } };
-    if (o && typeof o === 'object' && 'columnType' in o && o.name) key = COLUMN[o.name] ?? key;
-    if (o && typeof o === 'object' && o.constructor.name === 'Param') value = o.value;
-  }
-  return { key, value };
-}
-const fakeDb = {
-  select: () => ({
-    from: () => ({
-      where: (cond: unknown) => ({
-        get: async () => {
-          const { key, value } = condition(cond);
-          return people.find((p) => p[key] === value);
-        },
-      }),
-    }),
-  }),
-  insert: () => ({
-    values: async (row: Person) => {
-      // As drizzle's: the failed statement's parameters, password hash included, in the message.
-      if (insertFails || people.some((p) => p.email === row.email))
-        throw new Error(
-          `Failed query: insert into "users" params: ${row.id},${row.email},${row.passwordHash} | UNIQUE constraint failed: users.email`,
-        );
-      people.push(row);
-    },
-  }),
-  update: () => ({
-    set: (v: Partial<Person>) => ({
-      where: async (cond: unknown) => {
-        const { key, value } = condition(cond);
-        for (const p of people) if (p[key] === value) Object.assign(p, v);
-      },
-    }),
-  }),
-};
+vi.mock('~/lib/wire.server', () => ({ adminAuth: () => store, adminTeam: () => store }));
 
 // ── The api, over the binding: who each call was signed for, and what it answers ──
 type Call = { path: string; by: { id: string; role: string }; body: Record<string, unknown> };
@@ -79,7 +23,6 @@ const apiFetcher = {
   },
 };
 vi.mock('~/lib/env.server', () => ({
-  db: () => fakeDb,
   api: () => apiFetcher,
   passwordPepper: () => undefined,
 }));
@@ -136,7 +79,17 @@ function expectTokenNowhere() {
 
 describe('accepting an invitation', () => {
   beforeEach(() => {
-    people = [{ id: 'usr_ada', email: 'ada@example.com', name: 'Ada', role: 'admin' }];
+    store = new InMemoryAdminTeam({
+      users: [{ id: 'usr_ada', email: 'ada@example.com', name: 'Ada', role: 'admin' }],
+    });
+    const add = store.addUser.bind(store);
+    vi.spyOn(store, 'addUser').mockImplementation(async (user) => {
+      if (insertFails)
+        throw new Error(
+          `Failed query params: ${user.passwordHash} | UNIQUE constraint failed: users.email`,
+        );
+      return add(user);
+    });
     insertFails = false;
     calls = [];
     wait = 0;
@@ -170,10 +123,10 @@ describe('accepting an invitation', () => {
   });
 
   it('stops honouring an inviter who is no longer an admin', async () => {
-    people[0]!.role = 'member';
+    const ada = store.users.get('usr_ada')!;
+    store.users.set(ada.id, { ...ada, role: 'member' });
     expect(await readInvite(req(), TOKEN)).toBeNull();
-    people[0]!.role = 'admin';
-    people[0]!.disabledAt = 1;
+    store.users.set(ada.id, { ...ada, disabledAt: 1 });
     expect(await readInvite(req(), TOKEN)).toBeNull();
   });
 
@@ -185,7 +138,7 @@ describe('accepting an invitation', () => {
     const accept = calls.find((c) => c.path === '/deployment/invites/accept');
     expect(accept?.by.id).toBe('system:web');
     expect(accept?.body.person).toEqual({ subject: id, email: 'grace@example.com' });
-    const grace = people.find((p) => p.id === id);
+    const grace = await store.user(id);
     expect(grace).toMatchObject({ email: 'grace@example.com', role: 'member', name: 'Grace' });
     expect(grace?.passwordHash).toMatch(/^pbkdf2/);
     expect(audit).toHaveBeenCalledWith(
@@ -204,13 +157,21 @@ describe('accepting an invitation', () => {
   });
 
   it('says the same thing whether the address has an account or the link lost a race', async () => {
-    people.push({ id: 'usr_g', email: 'grace@example.com', name: 'G', role: 'member' });
+    await store.addUser({
+      id: 'usr_g',
+      email: 'grace@example.com',
+      name: 'G',
+      role: 'member',
+      passwordHash: 'hash',
+      passwordChangeDue: false,
+      passwordExpiresAt: null,
+    });
     const taken = await joinWithPassword(req(), TOKEN, {
       name: '',
       password: 'a long passphrase here',
     }).catch((e: Error) => e.message);
     expect(calls.some((c) => c.path.endsWith('/accept'))).toBe(false);
-    people.pop();
+    store.users.delete('usr_g');
     answers['/deployment/invites/accept'] = () => invalid;
     const raced = await joinWithPassword(req(), TOKEN, {
       name: '',
@@ -219,7 +180,7 @@ describe('accepting an invitation', () => {
     expect(taken).toBe(INVITE_NOT_ACCEPTED);
     expect(raced).toBe(INVITE_NOT_ACCEPTED);
     // Nobody was created from the lost race.
-    expect(people.map((p) => p.email)).toEqual(['ada@example.com']);
+    expect([...store.users.values()].map((p) => p.email)).toEqual(['ada@example.com']);
   });
 
   it('fails closed when the account can’t be written after the link is spent', async () => {
@@ -227,7 +188,7 @@ describe('accepting an invitation', () => {
     await expect(
       joinWithPassword(req(), TOKEN, { name: '', password: 'a long passphrase here' }),
     ).rejects.toThrow(INVITE_NOT_ACCEPTED);
-    expect(people).toHaveLength(1);
+    expect(store.users.size).toBe(1);
     expect(audit).toHaveBeenCalledWith(expect.any(Request), 'auth.invite_failed', {
       target: 'grace@example.com',
       detail: { reason: 'account not created after accepting', constraint: 'users_email' },
@@ -253,7 +214,15 @@ describe('accepting an invitation', () => {
   });
 
   it('accepts for a signed-in person only at their own address, and raises them to admin', async () => {
-    people.push({ id: 'usr_g', email: 'grace@example.com', name: 'G', role: 'member' });
+    await store.addUser({
+      id: 'usr_g',
+      email: 'grace@example.com',
+      name: 'G',
+      role: 'member',
+      passwordHash: 'hash',
+      passwordChangeDue: false,
+      passwordExpiresAt: null,
+    });
     const me = {
       kind: 'user' as const,
       id: 'usr_g',
@@ -274,7 +243,7 @@ describe('accepting an invitation', () => {
       subject: 'usr_g',
       email: 'grace@example.com',
     });
-    expect(people.find((p) => p.id === 'usr_g')?.role).toBe('admin');
+    expect((await store.user('usr_g'))?.role).toBe('admin');
     expect(audit).toHaveBeenCalledWith(
       expect.any(Request),
       'team.role_changed',
@@ -293,7 +262,8 @@ describe('accepting an invitation', () => {
       await joinWithSso(req(), { ...identity, email: null }, TOKEN).catch((e) => e),
     ).toBeInstanceOf(InviteError);
     const id = await joinWithSso(req(), identity, TOKEN);
-    expect(people.find((p) => p.id === id)).toMatchObject({
+    if (!id) throw new Error('expected a new invited account');
+    expect(await store.user(id)).toMatchObject({
       externalSub: 'idp|1',
       passwordHash: null,
     });

@@ -1,59 +1,44 @@
-import { passkeys, sessions } from '@commerceworker/store/auth';
+import { InMemoryAdminTeam } from '@commerceworker/test-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '~/lib/roles';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
-
-/** What the next `select … get()` reads, in order; what was written, and to which table. */
-let rows: unknown[] = [];
-let writes: { table: unknown; op: 'update' | 'delete'; set?: unknown }[] = [];
-/** How many rows each table's write `returning()` reports. */
-let returned = new Map<unknown, number>();
-const done = (table: unknown) =>
-  Object.assign(Promise.resolve(), {
-    returning: async () => Array.from({ length: returned.get(table) ?? 0 }, (_, i) => ({ id: i })),
-  });
-const fakeDb = {
-  select: () => {
-    const q = { from: () => q, where: () => q, get: async () => rows.shift() };
-    return q;
-  },
-  insert: () => ({ values: async () => {} }),
-  update: (table: unknown) => ({
-    set: (set: unknown) => ({
-      where: () => {
-        writes.push({ table, op: 'update', set });
-        return done(table);
-      },
-    }),
-  }),
-  delete: (table: unknown) => ({
-    where: () => {
-      writes.push({ table, op: 'delete' });
-      return done(table);
-    },
-  }),
-};
+let store: InMemoryAdminTeam;
+let writes: { table: string; op: 'update' | 'delete'; set?: unknown }[] = [];
 const audit = vi.fn(async () => {});
-
 let pepper: string | undefined;
-/** The api's people route: answers how many credentials it revoked. */
 const apiFetch = vi.fn(
   async (_url: string, _init?: RequestInit) =>
     new Response(JSON.stringify({ revokedTokens: 1, revokedGrants: 2 })),
 );
 vi.mock('~/lib/env.server', () => ({
   passwordPepper: () => pepper,
-  db: () => fakeDb,
   api: () => ({ fetch: apiFetch }),
 }));
+vi.mock('~/lib/wire.server', () => ({
+  adminTeam: () => store,
+  adminAuth: () => store,
+  adminPasskeys: () => ({
+    clear: async () => {
+      writes.push({ table: 'passkeys', op: 'delete' });
+      return 1;
+    },
+  }),
+}));
 vi.mock('~/lib/audit.server', () => ({ audit, clientIp: () => '203.0.113.7' }));
-/** An invitation's role as the api reads it by id; rejects or answers null like the real one. */
 const inviteRole = vi.fn<(me: Principal, id: string) => Promise<'member' | 'admin' | null>>();
 vi.mock('~/lib/invites.server', () => ({ inviteRole }));
 
 const { endAccess } = await import('~/lib/access.server');
-const { needsStepUp, resetPassword, setDisabled, setRole } = await import('~/lib/team.server');
+const {
+  needsStepUp,
+  resetPassword,
+  setDisabled,
+  setRole,
+  ownSessions,
+  endOwnSession,
+  endOtherSessions,
+} = await import('~/lib/team.server');
 const { resetTwoFactor } = await import('~/lib/two-factor.server');
 
 const admin: Principal = { kind: 'user', id: 'usr_admin', name: 'Boss', role: 'admin' };
@@ -61,17 +46,45 @@ const request = new Request('https://app.test/team', { method: 'POST' });
 const ann = { email: 'ann@example.com', role: 'admin' };
 
 const touched = () =>
-  writes.map((w) =>
-    w.table === sessions ? 'sessions' : w.table === passkeys ? 'passkeys' : `${w.op} other`,
-  );
+  writes.map((w) => (['sessions', 'passkeys'].includes(w.table) ? w.table : `${w.op} other`));
 
 beforeEach(() => {
-  rows = [];
+  store = new InMemoryAdminTeam({
+    users: [
+      { id: 'usr_admin', email: 'boss@example.com', name: 'Boss', role: 'admin' },
+      { id: 'usr_ann', ...ann, name: 'Ann', passwordHash: 'old' },
+    ],
+    sessions: [
+      { tokenHash: 'ann-a', userId: 'usr_ann', createdAt: 1, expiresAt: Date.now() + 10000 },
+      { tokenHash: 'ann-b', userId: 'usr_ann', createdAt: 1, expiresAt: Date.now() + 10000 },
+    ],
+  });
   writes = [];
-  returned = new Map<unknown, number>([
-    [sessions, 2],
-    [passkeys, 1],
-  ]);
+  const role = store.setRole.bind(store);
+  vi.spyOn(store, 'setRole').mockImplementation(async (id, next) => {
+    writes.push({ table: 'users', op: 'update' });
+    return role(id, next);
+  });
+  const disabled = store.setDisabled.bind(store);
+  vi.spyOn(store, 'setDisabled').mockImplementation(async (id, at) => {
+    writes.push({ table: 'users', op: 'update' });
+    return disabled(id, at);
+  });
+  const password = store.setPassword.bind(store);
+  vi.spyOn(store, 'setPassword').mockImplementation(async (id, hash, temporary) => {
+    writes.push({ table: 'users', op: 'update', set: { passwordHash: hash } });
+    return password(id, hash, temporary);
+  });
+  const end = store.endSessions.bind(store);
+  vi.spyOn(store, 'endSessions').mockImplementation(async (id, except) => {
+    writes.push({ table: 'sessions', op: 'delete' });
+    return end(id, except);
+  });
+  const disable = store.disableTotp.bind(store);
+  vi.spyOn(store, 'disableTotp').mockImplementation(async (id) => {
+    writes.push({ table: 'users', op: 'update' }, { table: 'codes', op: 'delete' });
+    return disable(id);
+  });
   audit.mockClear();
   apiFetch.mockClear();
 });
@@ -88,7 +101,7 @@ describe('endAccess', () => {
     expect(apiFetch).not.toHaveBeenCalled();
     expect(
       await endAccess(request, person, { sessions: { except: 'hash' }, passkeys: true }),
-    ).toEqual({ sessions: 2, passkeys: 1, tokens: 0 });
+    ).toEqual({ sessions: 0, passkeys: 1, tokens: 0 });
   });
 
   it('ends the api’s tokens for them through the signed people route', async () => {
@@ -121,7 +134,6 @@ describe('endAccess', () => {
 
 describe('the Team page ends what no longer fits', () => {
   it('disabling ends sessions; enabling brings none back', async () => {
-    rows = [{ id: 'usr_other_admin' }, ann];
     await setDisabled(request, admin, 'usr_ann', true);
     expect(touched()).toEqual(['update other', 'sessions']);
     expect(audit).toHaveBeenCalledWith(request, 'team.user_disabled', {
@@ -132,13 +144,11 @@ describe('the Team page ends what no longer fits', () => {
     });
 
     writes = [];
-    rows = [ann];
     await setDisabled(request, admin, 'usr_ann', false);
     expect(touched()).toEqual(['update other']);
   });
 
   it('a role change is recorded and takes effect on the next forwarded request', async () => {
-    rows = [{ id: 'usr_other_admin' }, ann];
     await setRole(request, admin, 'usr_ann', 'member');
     expect(touched()).toEqual(['update other']);
     expect(audit).toHaveBeenCalledWith(request, 'team.role_changed', {
@@ -153,7 +163,6 @@ describe('the Team page ends what no longer fits', () => {
   });
 
   it('a password reset ends sessions and passkeys', async () => {
-    rows = [ann];
     const { password } = await resetPassword(request, admin, 'usr_ann');
     expect(password).toBeTruthy();
     expect(touched()).toEqual(['update other', 'sessions', 'passkeys']);
@@ -162,7 +171,6 @@ describe('the Team page ends what no longer fits', () => {
   it('peppers the password a reset sets, when the deployment has a pepper', async () => {
     pepper = 'p'.repeat(64);
     try {
-      rows = [ann];
       await resetPassword(request, admin, 'usr_ann');
       const set = writes.find((w) => w.op === 'update')?.set as { passwordHash?: string };
       expect(set.passwordHash).toMatch(/^pbkdf2p:/);
@@ -172,7 +180,7 @@ describe('the Team page ends what no longer fits', () => {
   });
 
   it('a two-factor reset ends sessions and passkeys too', async () => {
-    rows = [{ email: ann.email, enabledAt: 1 }];
+    await store.enableTotp('usr_ann', 'sealed', 1, 1);
     await resetTwoFactor(request, admin, 'usr_ann');
     expect(touched()).toEqual(['sessions', 'passkeys', 'update other', 'delete other']);
     expect(audit).toHaveBeenCalledWith(request, 'team.two_factor_reset', {
@@ -231,9 +239,9 @@ describe('which Team page changes ask for a step-up', () => {
   });
 
   it('asks before making someone an admin, not when they already are one', async () => {
-    rows = [{ role: 'member' }];
+    await store.setRole('usr_ann', 'member');
     expect(await needsStepUp('role', form({ id: 'usr_ann', role: 'admin' }))).toBe(true);
-    rows = [{ role: 'admin' }];
+    await store.setRole('usr_ann', 'admin');
     expect(await needsStepUp('role', form({ id: 'usr_ann', role: 'admin' }))).toBe(false);
     expect(await needsStepUp('role', form({ id: 'usr_ann', role: 'member' }))).toBe(false);
   });
@@ -243,9 +251,78 @@ describe('which Team page changes ask for a step-up', () => {
     expect(
       await needsStepUp('scim-roles', form({ 'role:grp_1': 'member', 'role:grp_2': '' })),
     ).toBe(false);
-    rows = [{ role: 'admin' }];
+    await store.setRole('usr_ann', 'admin');
     expect(await needsStepUp('enable', form({ id: 'usr_ann' }))).toBe(true);
-    rows = [{ role: 'member' }];
+    await store.setRole('usr_ann', 'member');
     expect(await needsStepUp('enable', form({ id: 'usr_ann' }))).toBe(false);
+  });
+});
+
+describe('own session management', () => {
+  const me = { ...admin, id: 'usr_ann', email: ann.email };
+  const current = 'a'.repeat(64);
+  const other = 'b'.repeat(64);
+  const foreign = 'c'.repeat(64);
+  const put = (hash: string, userId = me.id, createdAt = Date.now()) =>
+    store.startSession({
+      tokenHash: hash,
+      userId,
+      createdAt,
+      expiresAt: Date.now() + 100_000,
+      ip: '203.0.113.7',
+      userAgent: 'Safari',
+    });
+  it('lists only the person’s unexpired, non-idle sessions with the current browser first', async () => {
+    await put(current);
+    await put(other);
+    await put(foreign, admin.id);
+    await put('d'.repeat(64), me.id, Date.now() - 86_400_000);
+    const listed = await ownSessions(me, current);
+    expect(listed.map((r) => [r.ref, r.current])).toEqual([
+      [current.slice(0, 16), true],
+      [other.slice(0, 16), false],
+    ]);
+    expect(
+      await ownSessions({ kind: 'open', id: 'local', name: 'local', role: 'admin' }, current),
+    ).toEqual([]);
+  });
+  it('refuses the current browser, malformed references and another person’s session', async () => {
+    await put(current);
+    await put(foreign, admin.id);
+    await expect(endOwnSession(request, me, current.slice(0, 16), current)).rejects.toThrow(
+      /Sign out/,
+    );
+    await expect(endOwnSession(request, me, 'invalid', current)).rejects.toThrow(/no longer/);
+    await expect(endOwnSession(request, me, foreign.slice(0, 16), current)).rejects.toThrow(
+      /no longer/,
+    );
+    expect(await store.session(current)).toBeDefined();
+    expect(await store.session(foreign)).toBeDefined();
+  });
+  it('ends an owned session by reference and audits it', async () => {
+    await put(other);
+    await endOwnSession(request, me, other.slice(0, 16), current);
+    expect(await store.session(other)).toBeUndefined();
+    expect(audit).toHaveBeenLastCalledWith(request, 'auth.session_ended', {
+      actor: me,
+      target: ann.email,
+      detail: { device: expect.any(String), ip: '203.0.113.7' },
+    });
+  });
+  it('ends other sessions once, preserves the current browser and foreign sessions, and audits the actual count', async () => {
+    await store.endSessions(me.id);
+    await put(current);
+    await put(other);
+    await put(foreign, admin.id);
+    expect(await endOtherSessions(request, me, current)).toBe(1);
+    expect(await endOtherSessions(request, me, current)).toBe(0);
+    expect(await store.session(current)).toBeDefined();
+    expect(await store.session(foreign)).toBeDefined();
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith(request, 'auth.other_sessions_ended', {
+      actor: me,
+      target: ann.email,
+      detail: { count: 1 },
+    });
   });
 });

@@ -4,6 +4,10 @@ import {
   sha256Hex,
   verifyPassword,
 } from '@commerceworker/security/credentials';
+import { adminAuthQueries } from '@commerceworker/store/admin-auth';
+import { adminPasskeyQueries } from '@commerceworker/store/admin-passkeys';
+import { adminPasswordResetQueries } from '@commerceworker/store/admin-password-resets';
+import type { AuthDb } from '@commerceworker/store/auth';
 import {
   authFailures,
   passwordResets,
@@ -53,6 +57,11 @@ vi.mock('~/lib/env.server', () => ({
       return { delivered: true, id: 'msg' };
     },
   }),
+}));
+vi.mock('~/lib/wire.server', () => ({
+  adminPasswordResets: () => adminPasswordResetQueries(store.db as unknown as AuthDb),
+  adminPasskeys: () => adminPasskeyQueries(store.db as unknown as AuthDb),
+  adminAuth: () => adminAuthQueries(store.db as unknown as AuthDb),
 }));
 vi.mock('~/lib/data-key.server', () => ({ openSecret: async (v: string) => v }));
 vi.mock('~/lib/audit.server', () => ({
