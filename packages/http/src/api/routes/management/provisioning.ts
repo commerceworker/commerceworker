@@ -4,6 +4,7 @@ import {
   getStarterInstall,
   listEnvironments,
   listSpacesFor,
+  spacesForWebUser,
 } from '@commerceworker/application';
 import { SCOPES } from '@commerceworker/domain';
 import { availableStarters, createSpaceWithStarter } from '@commerceworker/seed';
@@ -23,7 +24,12 @@ export function provisioningRoutes(deps: AuthDeps): Hono<AuthVars> {
   // Authenticated principals see the spaces they can reach: admin → all, a signed-in member →
   // their teams, a scoped key → just its own. (No requireScope: there is no :space here.)
   app.get('/spaces', async (c) => {
-    const items = await listSpacesFor(ctx, c.get('principal'));
+    const user = c.get('webUser');
+    // First entry through the unified admin links only invitations not already owned by a subject.
+    const allowed = user?.role === 'member' ? new Set(await spacesForWebUser(ctx, user)) : null;
+    const items = allowed
+      ? (await ctx.store.spaces.list()).filter((s) => allowed.has(s.spaceId))
+      : await listSpacesFor(ctx, c.get('principal'));
     return c.json({ items: items.map((s) => ({ id: s.spaceId, name: s.name })) });
   });
   app.post(

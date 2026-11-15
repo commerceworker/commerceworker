@@ -1,5 +1,5 @@
-import { CmsPage } from '~/cms/providers';
-import { Taxonomy } from '~/cms/routes/Taxonomy';
+import { CmsPage } from '@commerceworker/content-admin/providers';
+import { Taxonomy } from '@commerceworker/content-admin/routes/Taxonomy';
 
 export default function TaxonomyRoute() {
   return (

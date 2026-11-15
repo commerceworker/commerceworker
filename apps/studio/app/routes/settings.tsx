@@ -1,8 +1,11 @@
+import {
+  DEFAULT_SETTINGS_SECTION,
+  SETTINGS_SECTIONS,
+} from '@commerceworker/content-admin/components/layout/nav';
+import { Settings } from '@commerceworker/content-admin/components/Settings';
+import { useClient } from '@commerceworker/content-admin/lib/client-context';
+import { CmsPage } from '@commerceworker/content-admin/providers';
 import { Navigate, redirect, useNavigate, useParams } from 'react-router';
-import { DEFAULT_SETTINGS_SECTION, SETTINGS_SECTIONS } from '~/cms/components/layout/nav';
-import { Settings } from '~/cms/components/Settings';
-import { useClient } from '~/cms/lib/client-context';
-import { CmsPage } from '~/cms/providers';
 import type { Route } from './+types/settings';
 
 /** `/settings` (no section) lands on the first one. */

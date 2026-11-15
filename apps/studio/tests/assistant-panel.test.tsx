@@ -30,7 +30,7 @@ vi.mock('~/cms/lib/client-context', () => ({
   useClient: () => ({ conn, client, updateConn }),
   useScopeState: () => scopeState,
 }));
-vi.mock('~/lib/use-me', () => ({
+vi.mock('@commerceworker/content-admin/shared/use-me', () => ({
   useMe: () => ({ kind: 'user', id: 'usr_1', role: 'admin' }),
   useCan: () => admin,
 }));

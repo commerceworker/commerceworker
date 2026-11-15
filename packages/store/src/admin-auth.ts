@@ -38,6 +38,33 @@ export function createAdminAuth(d1: D1Database): AdminAuth {
 export function adminAuthQueries(d: AuthDb): AdminAuth {
   const seen = sql<number>`coalesce(${sessions.lastSeenAt}, ${sessions.createdAt})`;
   return {
+    userByCommerceSubject: (subject) =>
+      d.select(person).from(users).where(eq(users.commerceSubject, subject)).get(),
+    async commerceSubjectForUser(userId) {
+      return (
+        (
+          await d
+            .select({ subject: users.commerceSubject })
+            .from(users)
+            .where(eq(users.id, userId))
+            .get()
+        )?.subject ?? undefined
+      );
+    },
+    async linkCommerceSubject(userId, subject) {
+      try {
+        return changes(
+          await d
+            .update(users)
+            .set({ commerceSubject: subject })
+            .where(and(eq(users.id, userId), isNull(users.commerceSubject)))
+            .run(),
+        );
+      } catch (err) {
+        if (isUniqueViolation(err)) return false;
+        throw err;
+      }
+    },
     async userCount() {
       return (await d.select({ n: count() }).from(users).get())?.n ?? 0;
     },

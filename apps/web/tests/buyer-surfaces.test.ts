@@ -28,7 +28,7 @@ vi.mock('~/lib/auth.server', () => ({
   TokenExpired: class extends Error {},
 }));
 
-const { default: worker } = await import('../workers/app');
+const { webHandler: worker } = await import('../workers/app');
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as never;
 const call = (path: string, headers: Record<string, string> = {}) =>

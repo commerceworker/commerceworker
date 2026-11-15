@@ -1,4 +1,4 @@
-import { SESSION_TOUCH_MS } from '@commerceworker/core';
+import { SESSION_IDLE_MS, SESSION_TOUCH_MS } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
@@ -39,7 +39,7 @@ vi.mock('~/lib/settings.server', () => ({
   twoFactorRequirement: async () => 'none',
 }));
 
-const { principal } = await import('~/lib/auth.server');
+const { principal, sessionPerson } = await import('~/lib/auth.server');
 
 const page = (path = '/orders/ord_1') =>
   new Request(`https://acme.commerceworker.com${path}`, {
@@ -105,6 +105,33 @@ describe('principal()', () => {
     await Promise.all([principal(request), principal(request)]);
     expect(afterResponse).toHaveBeenCalledTimes(1);
     expect(touches).toEqual(['touch']);
+  });
+
+  it('rechecks a content socket session without extending its activity and stops it after sign-out', async () => {
+    const hash = await sha256Hex('tok_abc');
+    expect(await sessionPerson(hash, Date.now())).toMatchObject({ caller: { id: 'usr_ada' } });
+    expect(afterResponse).not.toHaveBeenCalled();
+    await store.endSession(hash);
+    expect(await sessionPerson(hash, Date.now())).toBeNull();
+  });
+
+  it('refuses idle, disabled and setup-due content socket callers', async () => {
+    const hash = await sha256Hex('tok_abc');
+    await store.touchSession(hash, Date.now() - SESSION_IDLE_MS - 1000, null);
+    expect(await sessionPerson(hash, Date.now())).toBeNull();
+    await store.touchSession(hash, Date.now(), null);
+    store.users.set('usr_ada', {
+      ...store.users.get('usr_ada')!,
+      passwordHash: 'temporary',
+      passwordChangeDue: true,
+    });
+    expect(await sessionPerson(hash, Date.now())).toBeNull();
+    store.users.set('usr_ada', {
+      ...store.users.get('usr_ada')!,
+      passwordChangeDue: false,
+      disabledAt: 1,
+    });
+    expect(await sessionPerson(hash, Date.now())).toBeNull();
   });
 
   it('leaves a recently seen session alone', async () => {

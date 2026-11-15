@@ -1,6 +1,6 @@
-import { AssetLibrary } from '~/cms/components/AssetLibrary';
-import { useClient } from '~/cms/lib/client-context';
-import { CmsPage } from '~/cms/providers';
+import { AssetLibrary } from '@commerceworker/content-admin/components/AssetLibrary';
+import { useClient } from '@commerceworker/content-admin/lib/client-context';
+import { CmsPage } from '@commerceworker/content-admin/providers';
 
 function Assets() {
   const { conn } = useClient();

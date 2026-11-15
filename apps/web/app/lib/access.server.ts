@@ -6,6 +6,7 @@
  */
 
 import { ROLES, type Role } from '@commerceworker/core';
+import { revokeContentAccess } from './content-access.server';
 import { engine } from './env.server';
 import { oauthApi } from './oauth.server';
 import { clearPasskeys } from './passkeys.server';
@@ -61,6 +62,11 @@ export async function endAccess(request: Request, person: Person, what: EndWhat)
     } while (cursor);
     // An A2A app's push configs outlive its grant in the engine; they go with it.
     await engine().dropA2aPushes('user', person.id, ids);
+  }
+  if (what.apps || (what.tokens && (what.tokens === true || above(what.tokens.above).length > 0))) {
+    const content = await revokeContentAccess(person.id);
+    ended.tokens += content.tokens;
+    ended.apps += content.apps;
   }
   if (what.passkeys) ended.passkeys = await clearPasskeys(person.id);
   return ended;

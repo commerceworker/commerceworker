@@ -1,7 +1,13 @@
 import type { Principal } from '@commerceworker/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('cloudflare:workers', () => ({ env: {} }));
+const env: { CONTENT_API?: { fetch: typeof contentFetch } } = {};
+const contentFetch = vi.fn(async (_url: string, _init: RequestInit) =>
+  Response.json({ revokedTokens: 2, revokedGrants: 1 }),
+);
+const legacyContent = { userByCommerceSubject: async (_subject: string) => ({ id: 'legacy-ann' }) };
+vi.mock('cloudflare:workers', () => ({ env }));
+vi.mock('~/lib/principal.server', () => ({ principalKey: () => 'test-principal-key' }));
 
 /**
  * The team in memory: Boss (an admin, who makes the changes), another admin, and Ann (an admin
@@ -42,6 +48,7 @@ function seed(over: Partial<Person>[] = []) {
 }
 vi.mock('~/lib/wire.server', () => ({
   authStore: () => auth,
+  contentAuthStore: () => legacyContent,
   workspaceStore: () => workspace,
   passkeyStore: () => ({
     clear: async () => {
@@ -89,6 +96,8 @@ const left = async () => ({
 
 beforeEach(() => {
   seed();
+  delete env.CONTENT_API;
+  contentFetch.mockClear();
   grantPages = [{ items: [{ id: 'grant_1' }, { id: 'grant_2' }] }];
   dropA2aPushes.mockClear();
   revokeGrant.mockClear();
@@ -96,6 +105,38 @@ beforeEach(() => {
 });
 
 describe('endAccess', () => {
+  it('disabling ends both namespaced and linked content credentials without forwarding a browser credential', async () => {
+    env.CONTENT_API = { fetch: contentFetch };
+    await setDisabled(request, admin, 'usr_ann', true);
+    expect(contentFetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/deployment/people/commerce%3Ausr_ann/credentials',
+      '/deployment/people/legacy-ann/credentials',
+    ]);
+    const { verifyPrincipal, principalTarget } = await import('@commerceworker/security/principal');
+    for (const [url, init] of contentFetch.mock.calls) {
+      const headers = new Headers(init.headers);
+      expect(headers.has('cookie')).toBe(false);
+      expect(headers.has('authorization')).toBe(false);
+      expect(
+        await verifyPrincipal(
+          'test-principal-key',
+          headers.get('x-cw-principal'),
+          principalTarget('DELETE', new URL(url).pathname),
+        ),
+      ).toMatchObject({ sub: 'system:commerce', role: 'admin' });
+    }
+  });
+
+  it('reports content revocation failures and permits an idempotent retry after disable', async () => {
+    env.CONTENT_API = { fetch: contentFetch };
+    contentFetch.mockResolvedValueOnce(new Response('down', { status: 503 }));
+    await expect(setDisabled(request, admin, 'usr_ann', true)).rejects.toThrow(
+      'Content credential revocation failed',
+    );
+    expect((await workspace.member('usr_ann'))?.disabledAt).not.toBeNull();
+    await expect(setDisabled(request, admin, 'usr_ann', true)).resolves.toBeUndefined();
+  });
+
   it('ends only what it is asked to, and counts it', async () => {
     expect(await endAccess(request, ann, { sessions: true })).toEqual({
       sessions: 2,

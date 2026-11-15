@@ -1,6 +1,7 @@
 ---
 paths:
   - apps/studio/**
+  - packages/content-admin/**
   - packages/ui/**
   - packages/design/**
 ---

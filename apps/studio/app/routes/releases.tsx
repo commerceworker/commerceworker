@@ -1,5 +1,5 @@
-import { CmsPage } from '~/cms/providers';
-import { Releases } from '~/cms/routes/Releases';
+import { CmsPage } from '@commerceworker/content-admin/providers';
+import { Releases } from '@commerceworker/content-admin/routes/Releases';
 
 export default function ReleasesRoute() {
   return (

@@ -1,5 +1,8 @@
-import { CmsPage } from '~/cms/providers';
-import { EditorSkeleton, WorkflowEditor } from '~/cms/routes/WorkflowEditor';
+import { CmsPage } from '@commerceworker/content-admin/providers';
+import {
+  EditorSkeleton,
+  WorkflowEditor,
+} from '@commerceworker/content-admin/routes/WorkflowEditor';
 import '@xyflow/react/dist/style.css';
 
 /** One workflow's graph editor (React Flow loads with this route only). */

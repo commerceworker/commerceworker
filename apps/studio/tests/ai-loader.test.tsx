@@ -14,7 +14,9 @@ import {
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const css = readFileSync(join(process.cwd(), 'app/app.css'), 'utf8');
+const css =
+  readFileSync(join(process.cwd(), 'app/app.css'), 'utf8') +
+  readFileSync(join(process.cwd(), '../../packages/content-admin/src/styles.css'), 'utf8');
 const marks = (el: Element) => Array.from(el.querySelectorAll('[data-mark]'));
 
 describe('ComposeLoader', () => {

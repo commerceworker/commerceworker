@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Dashboard, flow editor, live order view, approvals and REST API: React Router on Workers.",
+  "description": "Unified commerce and optional content admin, flow editor, live orders and commerce REST API: React Router on Workers.",
   "scripts": {
     "dev": "react-router dev",
     "build": "react-router build",
@@ -20,7 +20,8 @@
     "test": "vitest run",
     "lint": "biome check .",
     "check-types": "react-router typegen && tsc --noEmit",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:content": "playwright test --config playwright.content.config.ts"
   },
   "dependencies": {
     "@ai-sdk/react": "catalog:",
@@ -54,7 +55,9 @@
     "shiki": "catalog:",
     "streamdown": "catalog:",
     "uqr": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@commerceworker/content-admin": "workspace:*",
+    "@commerceworker/store": "workspace:*"
   },
   "devDependencies": {
     "@commerceworker/test-kit": "workspace:*",

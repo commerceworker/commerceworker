@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The commerceworker admin: React Router on Workers. Human sign-in (passwords, two-factor, passkeys, SSO, SCIM), the app shell, and the gateway that forwards API traffic to the api Worker with a signed principal.",
+  "description": "Legacy content gateway and standalone local admin; deployed human pages redirect to the unified Web admin.",
   "scripts": {
     "dev": "node scripts/vendor-scalar.mjs && react-router dev",
     "build": "node scripts/vendor-scalar.mjs && react-router build",
@@ -50,7 +50,8 @@
     "streamdown": "catalog:",
     "uqr": "catalog:",
     "use-stick-to-bottom": "catalog:",
-    "@commerceworker/ports": "workspace:*"
+    "@commerceworker/ports": "workspace:*",
+    "@commerceworker/content-admin": "workspace:*"
   },
   "devDependencies": {
     "@axe-core/playwright": "catalog:",

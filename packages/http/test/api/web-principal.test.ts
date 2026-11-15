@@ -107,9 +107,25 @@ describe('the web principal (x-cw-principal)', () => {
       });
     expect(((await (await asMember()).json()) as { items: unknown[] }).items).toEqual([]);
     await addMember(ctx, 's1', { email: 'member@example.com', role: 'viewer' });
-    await findMemberForSignIn(ctx, 's1', 'usr_member', 'member@example.com');
     const items = ((await (await asMember()).json()) as { items: { id: string }[] }).items;
     expect(items.map((i) => i.id)).toEqual(['s1']);
+  });
+
+  it('does not adopt an invitation already linked to another immutable subject with the same email', async () => {
+    const { ctx, rag, blob, ai } = wire(config);
+    await addMember(ctx, 's1', { email: 'member@example.com', role: 'viewer' });
+    await findMemberForSignIn(ctx, 's1', 'previous-person', 'member@example.com');
+    const current = createApp(ctx, config, rag, blob, ai, inMemoryEdge());
+    const response = await current.request('/spaces', {
+      headers: {
+        'x-cw-principal': await signPrincipal(
+          KEY,
+          person('member'),
+          principalTarget('GET', '/spaces'),
+        ),
+      },
+    });
+    expect(await response.json()).toEqual({ items: [] });
   });
 
   it('describes a person as they are in the space asked about', async () => {

@@ -33,6 +33,8 @@ export const users = sqliteTable(
     passwordHash: text('password_hash'),
     /** The identity provider's subject for single sign-on, linked on first SSO sign-in. */
     externalSub: text('external_sub'),
+    /** Explicitly linked by an admin during unified-admin migration; independent of OIDC. */
+    commerceSubject: text('commerce_subject'),
     createdAt: integer('created_at').notNull(),
     lastLoginAt: integer('last_login_at'),
     disabledAt: integer('disabled_at'),
@@ -50,6 +52,9 @@ export const users = sqliteTable(
   },
   (t) => [
     uniqueIndex('users_email').on(t.email),
+    uniqueIndex('users_commerce_subject')
+      .on(t.commerceSubject)
+      .where(sql`${t.commerceSubject} IS NOT NULL`),
     uniqueIndex('users_external_sub').on(t.externalSub).where(sql`${t.externalSub} IS NOT NULL`),
   ],
 );

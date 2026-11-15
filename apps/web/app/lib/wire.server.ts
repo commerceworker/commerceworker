@@ -58,6 +58,8 @@ import type {
   WebhookReceipts,
   WorkspaceStore,
 } from '@commerceworker/ports/commerce';
+import { createAdminAuth } from '@commerceworker/store/admin-auth';
+import { createAdminTeam } from '@commerceworker/store/admin-team';
 
 /** Wall-clock time. */
 const systemClock: Clock = { now: () => new Date() };
@@ -139,3 +141,14 @@ export const d1Writable = (id: string) => probeDb(createDb(env.DB), id);
 
 /** Signed webhooks already taken, so a replayed signature is refused. */
 export const webhookReceipts = (): WebhookReceipts => d1WebhookReceipts(env.DB);
+
+/** The legacy content identity directory, for preserving existing editorial subjects. */
+export function contentAuthStore() {
+  const db = (env as { CONTENT_DB?: D1Database }).CONTENT_DB;
+  return db ? createAdminAuth(db) : undefined;
+}
+
+export function contentTeamStore() {
+  const db = (env as { CONTENT_DB?: D1Database }).CONTENT_DB;
+  return db ? createAdminTeam(db) : undefined;
+}

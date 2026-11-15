@@ -38,7 +38,7 @@ vi.mock('~/lib/plugins.server', () => ({
     p.startsWith('/punchout/') ? `/plugins/punchout/${p.slice('/punchout/'.length)}` : null,
 }));
 
-const { default: worker } = await import('../workers/app');
+const { webHandler: worker } = await import('../workers/app');
 const { pluginPageContext } = await import('../app/lib/plugin-view');
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as never;

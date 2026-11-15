@@ -5,6 +5,7 @@ import type {
   AssetSearchDeps,
   PluginSourcePolicy,
   RagDeps,
+  WebUser,
   WorkflowNodeDeps,
 } from '@commerceworker/application';
 import {
@@ -68,6 +69,7 @@ export function createApiHasher(pepper?: string): Hasher {
 export type AuthVars = {
   Variables: {
     principal: Principal;
+    webUser?: WebUser;
     environmentId?: string;
     /** Where this request's entry saves note what they changed (`auditMiddleware`). */
     changes?: ChangeLog;
@@ -210,6 +212,7 @@ export async function resolveWebPrincipal(deps: AuthDeps, c: Context): Promise<P
     principalTarget(c.req.method, url.pathname),
   );
   if (!user) throw new HTTPException(401, { message: 'Invalid or expired web session' });
+  c.set('webUser', user);
   try {
     return await principalForWebUser(deps.ctx, spaceFromPath(url.pathname), {
       sub: user.sub,

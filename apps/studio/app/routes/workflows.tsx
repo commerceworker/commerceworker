@@ -1,5 +1,5 @@
-import { CmsPage } from '~/cms/providers';
-import { Workflows } from '~/cms/routes/Workflows';
+import { CmsPage } from '@commerceworker/content-admin/providers';
+import { Workflows } from '@commerceworker/content-admin/routes/Workflows';
 
 export default function WorkflowsRoute() {
   return (

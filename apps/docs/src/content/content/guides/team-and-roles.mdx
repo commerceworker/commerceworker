@@ -26,50 +26,21 @@ approval step lets anyone holding it decide unless the step asks for something e
 
 ## Accounts and sign-in
 
-Admins manage the workspace's accounts at **People and sign-in** (`/team`). An account is a
-**Member**, who signs in and works within the space roles they're given, or an **Admin**, who also
-manages accounts, single sign-on, SCIM provisioning and the audit log, and administers every space.
+Commerce and content share one admin, sign-in and account. Open **Content** in the navigation to
+work with entries, assets, releases and workflows. Manage workspace accounts under **Team and
+roles**, and your password, passkeys and two-factor sign-in under **Account**.
 
-- **People.** Add someone with their email, a name and an account role. They get a temporary
-  password, shown once, to send them privately with the sign-in page; they choose their own the
-  first time they sign in.
-- **Invitations.** **Invite a person** with their email, an account role and, optionally, a role
-  in a space. You get a link, shown once, to send them; when the workspace sends email they get
-  their own link by email too. The link works once, for 7 days. Opening it, they create their
-  account with a password (and can add a passkey after) or continue with single sign-on, and join
-  with exactly what you chose. If their email already has an account, they sign in and accept it
-  there. Pending invitations are listed on the page: **Resend** sends a new link (the old one stops
-  working) and **Revoke** ends one. Inviting someone as an Admin, or sending a new link for an Admin's
-  invitation, asks you to confirm who you are first, and you can only give roles you hold yourself.
-- **Sign-in methods.** A password, a passkey, or your organization's **single sign-on** (OpenID
-  Connect) when the workspace has an identity provider configured. Two-factor sign-in with an
-  authenticator app can be required.
-- **Forgotten passwords.** When the workspace sends email, **Forgot your password?** on the
-  sign-in page emails a code (and a link carrying it) to the address you enter. The code works once,
-  for 15 minutes; asking again replaces it, and a few wrong tries end it. Type the code in the
-  browser you asked from, or open the link anywhere; the link's page shows the address it resets
-  (like `b***@example.com`), so check it's yours. The page answers the same
-  whether or not the address has an account, so nobody can use it to find out who does. Choosing
-  the new password signs you out everywhere; you then sign in with it, and with your two-factor code
-  if you use one: a reset never skips two-factor sign-in, and leaves your passkeys, personal access tokens and
-  connected apps as they are (the email confirming the change says so).
-  Accounts that sign in only through single sign-on, and every account while the workspace requires
-  single sign-on, get no code: reset the password with your identity provider. Without email, an
-  Admin resets it on **People and sign-in**.
-- **SCIM provisioning.** Your identity provider can add, update and turn off people through the
-  SCIM endpoint (`/scim/v2`) with a token made on this page. Turning someone off signs them out
-  everywhere and disconnects their apps and the API tokens they made.
-- **Ending access.** Disabling someone, resetting their password, or resetting their two-factor
-  sign-in does the same: their sessions end, the MCP connections they approved and the personal
-  access tokens they made stop working in every space, and a password or two-factor reset also
-  removes their passkeys. Your space's own API keys are not a person's and keep working.
+A workspace **Admin** also administers content spaces. Other workspace roles get content access
+through their roles in each space; being a commerce Operator or Approver does not grant an
+editorial role. Admins can add people with a temporary password or configure the organization's
+single sign-on and SCIM provisioning.
 
-Over the API, invitations live at `/deployment/invites` (workspace Admins and the admin token
-only): `GET` lists them, `GET /deployment/invites/{id}` reads one, `POST` creates one and returns
-its link once, and `POST /deployment/invites/{id}/resend` and `/revoke` act on one. Inviting
-someone as an Admin is only for an Admin signed in to the admin, never the admin token. The MCP
-server has `invites_list`, `invite_get`, `invite_create`, `invite_resend` and `invite_revoke`. A link that no longer works
-(used, revoked, expired or resent) always gets the same answer, so it says nothing about why.
+For a workspace that previously used a separate content admin, an Admin can open **Content
+accounts**, choose the commerce account and its existing content account, and confirm who they
+are before linking them. Check that both accounts belong to the same person: the link preserves
+the content account's existing access, personal views and assistant history, and cannot be
+replaced. Matching email addresses never link old accounts automatically. Existing content
+bookmarks open the corresponding page in the shared admin.
 
 ## Space access
 
@@ -111,7 +82,7 @@ anyone an administrator: the page says so where you'd make the change, and the A
 A new workspace has no accounts, and until it does, every admin page except `/setup` sends a
 browser there. The workspace's administrator sends you
 the link to `/setup` and a one-time **setup code**. Enter the code, your email, a name and a
-password: that creates your Admin account and signs you in on **People and sign-in**, where you add
+password: that creates your Admin account and signs you in on **Team and roles**, where you add
 everyone else.
 
 The code works once. A wrong code is refused, throttled per address, and recorded in the audit log.

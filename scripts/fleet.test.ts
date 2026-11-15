@@ -1315,11 +1315,18 @@ test('a plugin alias is one free path segment, rendered into the web Worker', ()
   );
 });
 
-test('the reserved path segments cover every top-level path the web app serves', () => {
-  const routes = readFileSync(new URL('../apps/web/app/routes.ts', import.meta.url), 'utf8');
+test('the reserved path segments cover every top-level path the web app serves', async () => {
+  const routes = (await import('../apps/web/app/routes.ts')).default;
   const worker = readFileSync(new URL('../apps/web/workers/app.ts', import.meta.url), 'utf8');
   const segments = new Set<string>();
-  for (const m of routes.matchAll(/route\('([a-z0-9-]+)/g)) segments.add(m[1]!);
+  type RouteNode = { path?: string; children?: RouteNode[] };
+  const collect = (nodes: RouteNode[]) => {
+    for (const node of nodes) {
+      if (node.path) segments.add(node.path.split('/')[0]!);
+      else if (node.children) collect(node.children);
+    }
+  };
+  collect(routes);
   for (const m of worker.matchAll(/'\/([a-z0-9-]+)[/']/g)) segments.add(m[1]!);
   for (const s of ['scim', 'mcp', 'a2a', 'oauth']) segments.add(s); // via *_PATH constants
   const missing = [...segments].filter((s) => !RESERVED_PATH_SEGMENTS.has(s));
@@ -1596,6 +1603,37 @@ const contentConfigs = (d: ReturnType<typeof toDeployment>) => ({
   api: renderApi(contentTemplate('api'), d),
   delivery: renderDelivery(base('delivery'), d, contentTemplate('delivery')),
   studio: renderStudio(contentTemplate('studio'), d),
+});
+
+test('the unified admin binds content only when enabled and the pipeline checks the commerce identity over the default binding', () => {
+  const web = renderWeb(base('web'), withContent);
+  assert.deepEqual(
+    web.services.find((s: Entry) => s.binding === 'CONTENT_API'),
+    {
+      binding: 'CONTENT_API',
+      service: names(withContent).api,
+    },
+  );
+  assert.equal(
+    web.d1_databases.find((db: Entry) => db.binding === 'CONTENT_DB').database_id,
+    withContent.contentD1Id,
+  );
+  assert.equal(
+    renderWeb(base('web'), acme).services.some((s: Entry) => s.binding === 'CONTENT_API'),
+    false,
+  );
+  const pipeline = renderPipeline(contentTemplate('pipeline'), withContent);
+  assert.deepEqual(
+    pipeline.services.find((s: Entry) => s.binding === 'CONTENT_IDENTITY'),
+    {
+      binding: 'CONTENT_IDENTITY',
+      service: names(withContent).web,
+    },
+  );
+  assert.equal(
+    renderStudio(contentTemplate('studio'), withContent).vars.COMMERCE_ORIGIN,
+    `https://${withContent.domain}`,
+  );
 });
 
 test('the content stack is off unless the registry turns it on, and then every host has a default', () => {

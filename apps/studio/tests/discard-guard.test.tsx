@@ -630,7 +630,7 @@ describe('discard guard', () => {
     });
 
     it('every form on the guard hands it its failures', () => {
-      const root = join(process.cwd(), 'app/cms');
+      const root = join(process.cwd(), '../../packages/content-admin/src');
       const sources = readdirSync(root, { recursive: true, encoding: 'utf8' })
         .filter((f) => f.endsWith('.tsx') && !f.endsWith('discard-guard.tsx'))
         .map((f) => [f, readFileSync(join(root, f), 'utf8')] as const);

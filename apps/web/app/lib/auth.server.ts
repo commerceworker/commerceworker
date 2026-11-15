@@ -166,27 +166,9 @@ async function lookUpPrincipal(request: Request): Promise<Caller | null> {
     const row = await authStore().liveSession(hash, now, SESSION_IDLE_MS);
     // An admin's session goes idle sooner than the query's limit for everyone.
     if (row && now - row.seen <= sessionIdleMs(row.role as Role)) {
-      const { seen, totpEnabledAt, passwordChangeDue, passwordHash } = row;
-      const person = { id: row.id, email: row.email, name: row.name, role: row.role };
-      if (now - seen > SESSION_TOUCH_MS)
+      if (now - row.seen > SESSION_TOUCH_MS)
         afterResponse(authStore().touchSession(hash, now, clientIp(request)));
-      const role = person.role as Role;
-      // The shared demo visitor can't set up two-factor sign-in (its Account page is read-only).
-      const due =
-        person.id !== DEMO_USER.id &&
-        !totpEnabledAt &&
-        (await passwordInUse(passwordHash)) &&
-        mustUseTwoFactor(role, await twoFactorRequirement());
-      return {
-        kind: 'user',
-        ...person,
-        role,
-        ...(due ? { twoFactorDue: true as const } : {}),
-        // A temporary password matters only while passwords sign people in.
-        ...(passwordChangeDue && (await passwordInUse(passwordHash))
-          ? { passwordChangeDue: true as const }
-          : {}),
-      };
+      return callerForUser(row);
     }
   }
   return null;
@@ -787,3 +769,36 @@ export async function signOut(request: Request): Promise<string[]> {
 
 /** Who acted, for audit fields such as an approval's `by`. */
 export const actor = (p: Principal) => p.email ?? p.name;
+
+/** Read-only session validation for content sockets, using the same setup and idle rules as pages. */
+export async function sessionPerson(hash: string, now: number) {
+  const row = await authStore().liveSession(hash, now, SESSION_IDLE_MS);
+  if (!row || now - row.seen > sessionIdleMs(row.role as Role)) return null;
+  const caller = await callerForUser(row);
+  return setupDue(caller) ? null : { caller, seenAt: row.seen };
+}
+
+async function callerForUser(
+  row: import('@commerceworker/ports/commerce').AuthUser,
+): Promise<Caller> {
+  const { totpEnabledAt, passwordChangeDue, passwordHash } = row;
+  const person = { id: row.id, email: row.email, name: row.name, role: row.role };
+
+  const role = person.role as Role;
+  // The shared demo visitor can't set up two-factor sign-in (its Account page is read-only).
+  const due =
+    person.id !== DEMO_USER.id &&
+    !totpEnabledAt &&
+    (await passwordInUse(passwordHash)) &&
+    mustUseTwoFactor(role, await twoFactorRequirement());
+  return {
+    kind: 'user',
+    ...person,
+    role,
+    ...(due ? { twoFactorDue: true as const } : {}),
+    // A temporary password matters only while passwords sign people in.
+    ...(passwordChangeDue && (await passwordInUse(passwordHash))
+      ? { passwordChangeDue: true as const }
+      : {}),
+  };
+}

@@ -4,6 +4,10 @@ Every architectural pattern from the platform packages and the order engine that
 
 Each pattern is listed only once. Where both sources have a version, the stricter one wins.
 
+The unified admin uses one human identity and shell for commerce and content. Content screens
+live in `packages/content-admin`; content grants remain per space. Identity migration is explicit,
+immutable and step-up protected, covered by the AdminAuth contract and gateway tests.
+
 ## Repository and toolchain
 
 | Pattern | Source | State | Where / phase |
@@ -63,6 +67,7 @@ Each pattern is listed only once. Where both sources have a version, the stricte
 | MCP tool scopes held to each handler's own by a test | Platform | Content: merged · Commerce: P2 | `packages/http/src/mcp/tool-scopes.ts`, `test/mcp/tool-visibility.test.ts` |
 | Maintainer docs embedded for MCP docs tools | Platform | Content: merged (`docs/content`) · Commerce: P2 | `packages/docs-index` |
 | Signed principal header: HMAC, bound to method and path, under 60 s, trusted only on internal hops | both | Content: merged · Commerce: P2 (bound to the path only) | `packages/security/src/principal.ts`, `packages/core/src/roles.ts` |
+| One human admin shell and identity across commerce and content | both | Merged | `apps/web`, `packages/content-admin`, content identity contract, gateway and device tests |
 | Human auth: passwords, passkeys, TOTP, OIDC, SCIM, setup code | both | Merged | `apps/web/app/lib/*.server.ts` |
 | Host-only `__Host-` session cookies and `Origin` checks | both | Merged | `apps/web/app/lib/auth.server.ts`, `origin.ts` |
 | AI through AI Gateway; schema-validated output; deterministic fallback | Order engine | Merged | `apps/engine/src/ai.ts` |

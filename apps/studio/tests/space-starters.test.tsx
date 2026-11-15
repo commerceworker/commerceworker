@@ -12,7 +12,7 @@ import type { StarterInstall } from '~/cms/lib/management';
 import { ToastProvider } from '~/cms/lib/toast';
 import { CmsPage } from '~/cms/providers';
 
-vi.mock('~/lib/use-me', () => ({
+vi.mock('@commerceworker/content-admin/shared/use-me', () => ({
   useMe: () => ({ kind: 'user', id: 'usr_1', name: 'Pat', role: 'admin' }),
   useCan: () => true,
 }));

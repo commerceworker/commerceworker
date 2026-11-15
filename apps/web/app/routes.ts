@@ -59,6 +59,30 @@ export default [
       route('plugins', 'routes/plugins.tsx'),
       // A plugin's page drawn by the app, from the view it answered with (workers/app.ts).
       route('plugins/:pluginId/*', 'routes/plugin-page.tsx'),
+      route('content/accounts', 'routes/content-accounts.tsx'),
+      route('content', 'routes/content-shell.tsx', [
+        index('routes/content/dashboard.tsx'),
+        route('entries', 'routes/content/content.tsx', { id: 'content-layout' }, [
+          index('routes/content/content-types.tsx', { id: 'content' }),
+          route('space-import', 'routes/content/content-import.tsx', {
+            id: 'content-space-import',
+          }),
+          route(':typeId', 'routes/content/content-entries.tsx', { id: 'content-type' }),
+          route(':typeId/new', 'routes/content/content-entry.tsx', { id: 'content-new' }),
+          route(':typeId/import', 'routes/content/content-import.tsx', { id: 'content-import' }),
+          route(':typeId/entry', 'routes/content/content-singleton.tsx', {
+            id: 'content-singleton',
+          }),
+          route(':typeId/:entryId', 'routes/content/content-entry.tsx', { id: 'content-entry' }),
+        ]),
+        route('approvals', 'routes/content/approvals.tsx', { id: 'content-approvals' }),
+        route('releases', 'routes/content/releases.tsx', { id: 'content-releases' }),
+        route('workflows', 'routes/content/workflows.tsx', { id: 'content-workflows' }),
+        route('workflows/:id', 'routes/content/workflow.tsx', { id: 'content-workflow' }),
+        route('taxonomy', 'routes/content/taxonomy.tsx', { id: 'content-taxonomy' }),
+        route('assets', 'routes/content/assets.tsx', { id: 'content-assets' }),
+        route('settings/:section?', 'routes/content/settings.tsx', { id: 'content-settings' }),
+      ]),
       route('account', 'routes/account.tsx'),
     ]),
   ]),
