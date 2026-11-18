@@ -1,6 +1,6 @@
 # AGENTS.md
 
-CommerceWorker is API-first, agent-first commerce infrastructure on Cloudflare; every order runs as an Order Flow (the `OrderWorkflow` Workflow). It's a pnpm + Turborepo + Biome monorepo; read README.md for the architecture, `docs/port-map.md` for where each part came from, and `PRODUCT.md` / `docs/brand/` for voice.
+CommerceWorker is API-first, agent-first commerce infrastructure on Cloudflare; every order runs as an Order Flow (the `OrderWorkflow` Workflow). It's a pnpm + Turborepo + Biome monorepo; read README.md ("How it works") and `docs/architecture.md` for the architecture, `docs/port-map.md` for where each part came from, and `PRODUCT.md` / `docs/brand/` for voice.
 
 ## Layout
 
@@ -39,8 +39,13 @@ One platform, one product (CommerceWorker). Commerce and content run side by sid
 
 ```bash
 pnpm install
+pnpm db:migrate:local && pnpm db:seed:local  # before the first web:dev: local D1 and the demo data
 pnpm web:dev                 # web, engine and catalog together (engine and catalog are Vite auxiliary Workers)
+pnpm storefront:dev          # the buyer's pages on :5174, in a session of its own
 pnpm test                    # turbo → vitest (core in node, engine and catalog e2e in workerd, web in node)
+pnpm --filter @commerceworker/core exec vitest run tests/graph.test.ts  # one test file
+pnpm --filter @commerceworker/core exec vitest run -t "skips approvals" # tests whose name matches
+pnpm --filter @commerceworker/engine exec vitest run --project plugins  # one engine project (also sandboxed, installs, punchout, stripe)
 pnpm lint                    # turbo → biome check
 pnpm check-types             # turbo → tsc --noEmit (web runs react-router typegen first)
 pnpm test:fleet              # deployments/ registry and the configs scripts/fleet.ts renders
