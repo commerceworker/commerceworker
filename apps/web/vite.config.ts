@@ -228,6 +228,7 @@ export default defineConfig(async () => {
       include: [
         '@ai-sdk/react',
         '@cloudflare/ai-chat/react',
+        '@shadcn/react/message-scroller',
         '@xyflow/react',
         'agents/react',
         'ai',
