@@ -12,22 +12,22 @@ catalogMode: strict
 
 catalog:
   # React
-  react: ^19.2.8
-  react-dom: ^19.2.8
+  react: ^19.3.1
+  react-dom: ^19.3.1
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
 
   # shadcn/ui primitives (shared by packages/ui and apps/web)
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
-  lucide-react: ^1.58.0
+  lucide-react: ^1.73.0
   radix-ui: ^1.6.0
   tailwind-merge: ^3.0.2
   recharts: ^3.10.1
 
   # Styling — Tailwind v4 is CSS-first; keep the plugin and core in lockstep
-  tailwindcss: ^4.3.3
-  '@tailwindcss/vite': ^4.3.3
+  tailwindcss: ^4.3.5
+  '@tailwindcss/vite': ^4.3.5
 
   # Data and validation
   drizzle-orm: ^0.45.4
@@ -38,57 +38,57 @@ catalog:
   agents: 0.32.0
   '@cloudflare/ai-chat': 0.12.2
   ai: 7.0.159
-  '@ai-sdk/react': 4.0.163
-  '@ai-sdk/provider': 4.0.27
+  '@ai-sdk/react': 4.0.177
+  '@ai-sdk/provider': 4.0.38
   streamdown: 2.7.1
   # The assistant panel's Message Scroller (components/ai-elements/message-scroller.tsx).
   '@shadcn/react': 0.3.1
   # The code block's highlighter (app/lib/highlighter.tsx), loaded only when a block shows.
-  shiki: 4.5.0
+  shiki: 4.6.0
 
   # Build toolchain
   typescript: ^7.0.2
   vitest: 5.0.5
-  vite: ^8.0.12
+  vite: ^8.3.8
 
   # Cloudflare
-  wrangler: ^4.149.0
-  '@cloudflare/workers-types': ^5.20261009.1
-  '@cloudflare/vitest-plugin': ^1.4.0
+  wrangler: ^4.162.0
+  '@cloudflare/workers-types': ^5.20261116.1
+  '@cloudflare/vitest-plugin': ^1.8.2
 
 
   # Used by one package each (moved here from their package.json)
   '@a2a-js/sdk': 1.3.0
-  '@astrojs/starlight': ^0.42.8
+  '@astrojs/starlight': ^0.43.1
   '@babel/plugin-proposal-decorators': 8.0.2
-  '@biomejs/biome': ^2.5.15
+  '@biomejs/biome': ^2.6.8
   '@commitlint/cli': ^21.2.4
   '@commitlint/config-conventional': ^21.2.4
   '@commitlint/types': ^21.2.3
-  '@cfworker/json-schema': 4.1.1
-  '@cloudflare/vite-plugin': ^1.63.1
+  '@cfworker/json-schema': 4.1.6
+  '@cloudflare/vite-plugin': ^1.69.1
   '@cloudflare/workers-oauth-provider': 1.2.4
   '@fontsource-variable/inter': ^5.3.0
   '@fontsource/ibm-plex-mono': ^5.3.0
   '@modelcontextprotocol/server': 2.4.0
-  '@playwright/test': 1.65.0
-  '@react-router/dev': ^8.4.0
+  '@playwright/test': 1.65.1
+  '@react-router/dev': ^8.5.1
   '@simplewebauthn/browser': 14.0.0
-  '@simplewebauthn/server': 14.0.3
+  '@simplewebauthn/server': 14.1.0
   '@types/json-logic-js': ^2.0.8
   # Tracks the `engines.node` floor (scripts/toolchain.test.ts), not .nvmrc: newer types let code call APIs the floor lacks.
   '@types/node': ^24
-  '@xyflow/react': ^12.12.0
+  '@xyflow/react': ^12.12.1
   astro: ^7.4.12
   esbuild: 0.28.2
-  isbot: ^5.1.36
-  jose: 6.2.14
+  isbot: ^5.2.3
+  jose: 6.2.17
   jsonc-parser: 3.3.1
-  lucide: 1.66.0
-  postal-mime: ^4.0.8
-  react-router: ^8.4.0
+  lucide: 1.73.0
+  postal-mime: ^4.2.1
+  react-router: ^8.5.1
   tsx: ^4.23.15
-  turbo: ^2.11.7
+  turbo: ^2.11.11
   tw-animate-css: ^1.4.0
   uqr: 0.1.3
   use-stick-to-bottom: ^1.1.6
@@ -96,15 +96,15 @@ catalog:
   # Shared UI components (packages/ui)
   '@base-ui/react': ^1.8.0
   '@tanstack/react-table': ^8.21.3
-  '@testing-library/user-event': ^14.6.7
+  '@testing-library/user-event': ^14.6.12
   cmdk: ^1.1.1
   date-fns: ^4.4.0
   embla-carousel-react: ^8.6.0
   input-otp: ^1.5.0
   react-day-picker: ^9.14.0
   react-dropzone: ^14.4.1
-  react-hook-form: ^7.87.0
-  react-resizable-panels: ^4.12.4
+  react-hook-form: ^7.92.0
+  react-resizable-panels: ^4.24.0
   sonner: ^2.0.8
   vaul: ^1.1.2
 
@@ -115,18 +115,18 @@ catalog:
 
   # Content management, HTTP and MCP surfaces, SDKs
   '@tanstack/react-query': ^5.101.4
-  '@tiptap/core': 3.32.2
-  '@tiptap/extension-table': 3.32.2
-  '@tiptap/pm': 3.32.2
-  '@tiptap/react': 3.32.2
-  '@tiptap/starter-kit': 3.32.2
+  '@tiptap/core': 3.34.0
+  '@tiptap/extension-table': 3.34.0
+  '@tiptap/pm': 3.34.0
+  '@tiptap/react': 3.34.0
+  '@tiptap/starter-kit': 3.34.0
   hono: ^4.13.18
   graphql: ^17.0.2
-  hono-openapi: ^1.3.1
+  hono-openapi: ^1.6.0
   zod-openapi: ^6.0.1
   '@hono/standard-validator': ^0.4.0
-  '@scalar/hono-api-reference': ^0.12.17
-  '@scalar/api-reference': ^1.76.4
+  '@scalar/hono-api-reference': ^0.12.20
+  '@scalar/api-reference': ^1.78.1
   fast-png: ^8.0.0
   thumbhash: ^0.1.1
   '@modelcontextprotocol/client': ^2.4.0
