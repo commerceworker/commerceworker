@@ -278,6 +278,20 @@ export function d1BackOffice(d1: D1Database): BackOffice {
       };
     },
 
+    async stockAlerts() {
+      const free = sql`${products.stock} - ${products.reserved}`;
+      const [row] = await d
+        .select({
+          out: sql<number>`coalesce(sum(${free} <= 0), 0)`.mapWith(Number),
+          low: sql<number>`coalesce(sum(${free} > 0 and ${free} <= ${products.reorderPoint}), 0)`.mapWith(
+            Number,
+          ),
+        })
+        .from(products)
+        .where(sql`${products.kind} <> 'digital'`);
+      return { out: row?.out ?? 0, low: row?.low ?? 0 };
+    },
+
     async everything() {
       const [cust, prods, sources, rules, contracts, sellerRows, stores, stock] = await d.batch([
         d.select().from(customers).orderBy(customers.name),

@@ -182,6 +182,11 @@ export interface Overview {
     oldest: number | null;
     overdue: number;
   }[];
+  /**
+   * Completed orders by the UTC day they ended, over the 14 whole days ending with `now`'s (oldest
+   * first, days with none left out): how many, and their total in the base currency.
+   */
+  readonly sales: { day: string; orders: number; revenue: number }[];
   /** Failed or rolled back in the week before `now`, by flow and step, most first, with the latest reason. */
   readonly stoppedWeek: {
     flowId: string;

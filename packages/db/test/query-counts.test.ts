@@ -348,6 +348,7 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
     () =>
       ports.office.page('', () => 1, { list: 25, group: 10 }, { lists: ['inventory', 'store'] }),
   ],
+  ['admin overview: stock alerts', () => ports.office.stockAlerts()],
   [
     'admin pricing: every source',
     () => ports.office.page('', () => 1, { list: 25, group: 10 }, { lists: ['prices'] }),

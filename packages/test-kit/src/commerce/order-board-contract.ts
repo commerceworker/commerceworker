@@ -577,6 +577,24 @@ export function describeOrderBoardContract(
         expect(o.declined24h).toBe(1);
       });
 
+      it('sums completed orders by the day they ended, over the 14 days ending today', async () => {
+        const s = await make(
+          fixture(
+            order('t1', { status: 'completed', total: 100, updatedAt: NOW + 3_600_000 }),
+            order('t2', { status: 'completed', total: 50, fxRate: 2, updatedAt: NOW + 60_000 }),
+            order('y', { status: 'completed', total: 40, updatedAt: NOW - 3_600_000 }),
+            order('edge', { status: 'completed', total: 7, updatedAt: NOW - 13 * DAY }),
+            order('old', { status: 'completed', total: 999, updatedAt: NOW - 13 * DAY - 1 }),
+            order('f', { status: 'failed', total: 500, updatedAt: NOW + 60_000 }),
+          ),
+        );
+        expect((await s.overview(NOW + 7_200_000)).sales).toEqual([
+          { day: '1970-03-29', orders: 1, revenue: 7 },
+          { day: '1970-04-10', orders: 1, revenue: 40 },
+          { day: '1970-04-11', orders: 2, revenue: 125 },
+        ]);
+      });
+
       it("groups this week's failures by flow and step, most first, with each group's latest reason", async () => {
         const at = (n: number) => NOW - n * 1000;
         const s = await make(

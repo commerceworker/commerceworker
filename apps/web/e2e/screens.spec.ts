@@ -51,27 +51,42 @@ test("a loop's next input is drawn in ink and named, not in a status colour", as
   expect(colours.ring).not.toBe(colours.wait);
 });
 
-test('on a phone the overview puts the decision first, clear of New order', async ({
+test('on a phone the overview puts what needs you first, clear of New order', async ({
   page,
 }, info) => {
   test.skip(info.project.name !== 'iphone', 'iPhone upright');
   await open(page, '/');
-  const decision = page
-    .getByRole('heading', { name: /Needs a decision/ })
-    .or(page.getByText('No decisions waiting', { exact: true }));
-  const strip = page.getByRole('region', { name: 'Open now' });
-  const [d, s] = [await decision.boundingBox(), await strip.boundingBox()];
-  expect(d!.y, 'the decision comes before the status strip').toBeLessThan(s!.y);
-  // The figures are a line per group on a phone, not a block of tiles.
-  const figures = page.getByRole('navigation', { name: 'Orders by status' }).getByRole('link');
-  const heights = await figures.evaluateAll((els) =>
-    els.map((el) => el.getBoundingClientRect().height),
-  );
-  expect(Math.max(...heights)).toBeLessThanOrEqual(48);
+  const needs = page.getByRole('heading', { name: 'Needs you', exact: true });
+  const figures = page.getByRole('region', { name: 'The last 7 days' });
+  const [n, f] = [await needs.boundingBox(), await figures.boundingBox()];
+  expect(n!.y, 'what needs you comes before the figures').toBeLessThan(f!.y);
+  // Four figures, two to a row.
+  const tiles = await figures
+    .getByRole('link')
+    .evaluateAll((els) =>
+      els.map((el) => el.closest('[data-slot=card]')!.getBoundingClientRect().top),
+    );
+  expect(new Set(tiles.map(Math.round)).size).toBeLessThanOrEqual(2);
   const fab = await page.getByRole('link', { name: 'New order' }).last().boundingBox();
-  expect(d!.y + d!.height, 'the decision heading is above the New order button').toBeLessThan(
-    fab!.y,
-  );
+  expect(n!.y + n!.height, 'the heading is above the New order button').toBeLessThan(fab!.y);
+});
+
+test('the overview says what needs you across the workspace, each row opening its screen', async ({
+  page,
+}, info) => {
+  test.skip(info.project.name !== 'desktop', 'the same markup on every device');
+  await open(page, '/');
+  const figures = page.getByRole('region', { name: 'The last 7 days' });
+  for (const name of ['Sales', 'Orders completed', 'Average order', 'Open now'])
+    await expect(figures.getByRole('link', { name, exact: true })).toBeVisible();
+  // The seeded catalog has something short: a row for it opens Inventory.
+  const needs = page.locator('[data-slot=card]').filter({
+    has: page.getByRole('heading', { name: 'Needs you', exact: true }),
+  });
+  const stock = needs.getByRole('link', { name: /out of stock|reorder point/ }).first();
+  await expect(stock).toBeVisible();
+  await stock.click();
+  await expect(page).toHaveURL(/\/inventory$/);
 });
 
 test('on a phone the orders list keeps search and puts the filters in a sheet', async ({

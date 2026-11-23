@@ -30,7 +30,7 @@ import {
 import { money } from '@commerceworker/ui/lib/format';
 import { cn } from '@commerceworker/ui/lib/utils';
 import { Empty, PageHeader, Section } from '@commerceworker/ui/page';
-import { ArrowRight, ChevronRight, Inbox, Play, ReceiptText } from 'lucide-react';
+import { ArrowRight, ChevronRight, Play, ReceiptText } from 'lucide-react';
 import { useEffect, useId } from 'react';
 import { Link, useLoaderData, useRevalidator } from 'react-router';
 import { DecisionDeadline } from '~/components/decision';
@@ -38,6 +38,7 @@ import { StatusDot } from '~/components/status';
 import { rowContext } from '~/lib/approvals';
 import { useStartOrder } from '~/lib/assistant';
 import { requireUser } from '~/lib/auth.server';
+import { stockAlerts } from '~/lib/commerce.server';
 import { engine } from '~/lib/env.server';
 import { ensureSeeded, flowSteps } from '~/lib/flows.server';
 import {
@@ -61,11 +62,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Signed in first (the shell shares this lookup), so a signed-out visitor costs no reads and
   // gets the redirect, not an error from one of them.
   await requireUser(request);
-  const [, o, steps, demo] = await Promise.all([
+  const now = Date.now();
+  const [, o, steps, demo, stock] = await Promise.all([
     ensureSeeded(),
-    overview(),
+    overview(now),
     flowSteps(),
     demoAvailable(),
+    stockAlerts(),
   ]);
   const top = o.approvals;
   const [names, declinedSet, states] = await Promise.all([
@@ -98,9 +101,31 @@ export async function loader({ request }: Route.LoaderArgs) {
     moreDecisions: Math.max(0, o.pendingApprovals - top.length),
     trails: waitTrails(o.waitsByFlow, steps),
     stopped: stoppedSteps(o.stoppedWeek, steps),
+    sales: salesDays(o.sales, now),
+    stock,
+    // Orders waiting on an outside event (a payment, a delivery, a seller), and how many are late.
+    events: o.waitsByFlow
+      .filter((w) => w.for?.split(' · ').some((f) => f.startsWith('event:')))
+      .reduce((t, w) => ({ n: t.n + w.n, overdue: t.overdue + w.overdue }), { n: 0, overdue: 0 }),
+    overdue: o.waitsByFlow.reduce((t, w) => t + w.overdue, 0),
     // When this was read, for the header's "Updated" line.
-    at: Date.now(),
+    at: now,
   };
+}
+
+const DAY = 86_400_000;
+
+/**
+ * The 14 whole UTC days ending today, oldest first, each with its completed orders and their total:
+ * the days with none filled in, so a week's sum and its bars always count the same days.
+ */
+function salesDays(rows: { day: string; orders: number; revenue: number }[], now: number) {
+  const today = Math.floor(now / DAY) * DAY;
+  return Array.from({ length: 14 }, (_, i) => {
+    const day = new Date(today - (13 - i) * DAY).toISOString().slice(0, 10);
+    const r = rows.find((x) => x.day === day);
+    return { day, orders: r?.orders ?? 0, revenue: r?.revenue ?? 0 };
+  });
 }
 
 /** How often the overview refreshes while it is in view. */
@@ -122,6 +147,10 @@ export default function Dashboard() {
     trails,
     stopped,
     demo,
+    sales,
+    stock,
+    events,
+    overdue,
     at,
   } = useLoaderData<typeof loader>();
   // A demo scenario starts through the assistant and opens its order.
@@ -189,61 +218,133 @@ export default function Dashboard() {
     },
   ];
   const completed = day('completed');
+  const week = sales.slice(7);
+  const before = sales.slice(0, 7);
+  const sum = (days: typeof sales, k: 'orders' | 'revenue') => days.reduce((t, d) => t + d[k], 0);
+  const revenue = sum(week, 'revenue');
+  const orders = sum(week, 'orders');
+  const attention: Attention[] = [
+    {
+      key: 'decisions',
+      n: decisions.length + moreDecisions,
+      text: (n) => `${n === 1 ? 'decision' : 'decisions'} waiting on someone`,
+      to: '/approvals',
+      tone: 'wait',
+    },
+    {
+      key: 'overdue',
+      n: overdue,
+      text: (n) => `${n === 1 ? 'order' : 'orders'} past their step’s deadline`,
+      to: '/orders?status=waiting&sort=waiting',
+      tone: 'wait',
+      word: 'overdue',
+    },
+    {
+      key: 'events',
+      n: events.n,
+      text: (n) =>
+        `${n === 1 ? 'order' : 'orders'} waiting on an outside event${events.overdue ? `, ${events.overdue} overdue` : ''}`,
+      to: '/events',
+    },
+    {
+      key: 'failed',
+      n: (day('failed')?.n ?? 0) + (day('rolled_back')?.n ?? 0),
+      text: (n) => `${n === 1 ? 'order' : 'orders'} failed or rolled back today`,
+      to: since('failed'),
+      tone: 'bad',
+    },
+    {
+      key: 'out',
+      n: stock.out,
+      text: (n) => `${n === 1 ? 'item' : 'items'} out of stock`,
+      to: '/inventory',
+      tone: 'bad',
+    },
+    {
+      key: 'low',
+      n: stock.low,
+      text: (n) => `${n === 1 ? 'item' : 'items'} at or under the reorder point`,
+      to: '/inventory',
+      tone: 'wait',
+    },
+  ];
   return (
     <>
       <PageHeader
         title="Overview"
         subtitle={
           <>
-            What needs you, and where your orders are.{' '}
+            What needs you, how the store is selling, and where your orders are.{' '}
             <span className="whitespace-nowrap" suppressHydrationWarning>
               {refreshing === 'loading' ? 'Updating…' : `Updated ${formatTime(at)}`}
             </span>
           </>
         }
       />
-      {/* A column of cards. On a phone the two grids below dissolve into it (`contents`), so the
-          decision can come first, above the figures, while the first screen still has room. */}
+      {/* A column of cards. On a phone the grid below dissolves into it (`contents`), so what
+          needs you comes first, above the figures. */}
       <div className="mx-auto flex max-w-page flex-col gap-4 px-4 pb-10 sm:px-6 lg:gap-6">
-        {/* Open work now, then the last day's endings: each figure opens the matching orders. */}
-        <nav aria-label="Orders by status" className="grid gap-4 lg:grid-cols-[2fr_5fr]">
-          <section aria-label="Open now" className="grid grid-cols-2 gap-4">
-            {now.map((f) => (
-              <FigureCard key={f.status} f={f} />
-            ))}
-          </section>
-          <Card size="sm" className="min-w-0 gap-2">
-            <CardHeader>
-              <CardDescription>
-                <h2>Ended in the last 24 hours</h2>
-              </CardDescription>
-              {completed?.n ? (
-                <CardAction>
-                  <Badge variant="secondary" className="tabular">
-                    {money(completed.total ?? 0, BASE_CURRENCY)} completed
-                  </Badge>
-                </CardAction>
-              ) : null}
-            </CardHeader>
-            <CardContent className="px-2 max-md:overflow-x-auto">
-              <ul className="grid grid-cols-5 gap-1 max-md:flex">
-                {lastDay.map((f) => (
-                  <li key={f.status} className="min-w-0 max-md:shrink-0">
-                    <Ending f={f} />
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        </nav>
+        {/* The last seven whole days against the seven before, and open work now. */}
+        <section aria-label="The last 7 days" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Tile
+            label="Sales"
+            hint="last 7 days"
+            value={money(revenue, BASE_CURRENCY)}
+            change={change(revenue, sum(before, 'revenue'))}
+            to="/performance?days=7"
+            spark={week.map((d) => d.revenue)}
+            sparkLabel={`Completed sales by day, ${week[0]?.day} to ${week.at(-1)?.day}`}
+          />
+          <Tile
+            label="Orders completed"
+            hint="last 7 days"
+            value={String(orders)}
+            change={change(orders, sum(before, 'orders'))}
+            to="/orders?status=completed&within=7d&sort=updated"
+            spark={week.map((d) => d.orders)}
+            sparkLabel={`Completed orders by day, ${week[0]?.day} to ${week.at(-1)?.day}`}
+          />
+          <Tile
+            label="Average order"
+            hint="last 7 days"
+            value={orders ? money(revenue / orders, BASE_CURRENCY) : '–'}
+            change={
+              orders && sum(before, 'orders')
+                ? change(revenue / orders, sum(before, 'revenue') / sum(before, 'orders'))
+                : null
+            }
+            to="/performance?days=7"
+          />
+          <Tile
+            label="Open now"
+            value={String(moving + open(['waiting']))}
+            detail={
+              <>
+                <Link
+                  to={now[0]!.to}
+                  className="relative z-10 hover:text-foreground hover:underline"
+                >
+                  {moving} in flight
+                </Link>
+                {' · '}
+                <Link
+                  to={now[1]!.to}
+                  className="relative z-10 hover:text-foreground hover:underline"
+                >
+                  {open(['waiting'])} waiting
+                </Link>
+              </>
+            }
+            to="/orders"
+          />
+        </section>
 
-        {/* Phones read decisions (moved above the figures), then where orders wait, then what
-            ended badly, then recent orders; wide screens put what ended badly in the rail. */}
         <div className="grid gap-4 max-md:contents lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start lg:gap-6">
           <div className="min-w-0 max-md:contents md:space-y-6 lg:col-start-1">
+            <NeedsYou items={attention} />
+
             {decisions.length ? (
               <Section
-                className="max-md:-order-1"
                 title={
                   <span className="flex items-center gap-2">
                     Needs a decision
@@ -273,34 +374,77 @@ export default function Dashboard() {
                   </Link>
                 ) : null}
               </Section>
-            ) : (
-              <Card size="sm" className="max-md:-order-1">
-                <CardContent>
-                  <Item size="sm" className="p-0">
-                    <ItemMedia variant="icon" className="size-8 rounded-full bg-muted">
-                      <Inbox className="text-muted-foreground" aria-hidden="true" />
-                    </ItemMedia>
-                    <ItemContent>
-                      <ItemTitle>No decisions waiting</ItemTitle>
-                      <ItemDescription>Approvals that need you appear here.</ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      <Button variant="ghost" size="sm" asChild>
-                        <Link to="/approvals?status=all">Past approvals</Link>
-                      </Button>
-                    </ItemActions>
-                  </Item>
-                </CardContent>
-              </Card>
-            )}
+            ) : null}
 
             <WaitingTrails trails={trails} moving={moving} />
+
+            <div className="min-w-0">
+              <Section
+                title="Recently updated"
+                description="The orders that changed last, and where each one is."
+                actions={
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to="/orders?sort=updated">All orders</Link>
+                  </Button>
+                }
+              >
+                {recent.length ? (
+                  <ul className="-mx-2 flex flex-col gap-1">
+                    {recent.map((o) => (
+                      <RecentItem
+                        key={o.id}
+                        o={o}
+                        customer={(o.customerId && names[o.customerId]) || o.customerId}
+                        status={orderStatus(o.status, o.id, declined)}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <Empty
+                    icon={<ReceiptText aria-hidden="true" />}
+                    title="No orders yet"
+                    action={
+                      <Button size="sm" asChild>
+                        <Link to="/orders/new">Start an order</Link>
+                      </Button>
+                    }
+                  >
+                    Orders from the API, your storefronts, email and this console appear here as
+                    they change.
+                  </Empty>
+                )}
+              </Section>
+            </div>
           </div>
 
           <aside
-            aria-label="Ended badly"
+            aria-label="Today and this week"
             className="min-w-0 space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:space-y-6"
           >
+            <Card size="sm" className="min-w-0 gap-2">
+              <CardHeader>
+                <CardTitle className="section-title">
+                  <h2>Ended in the last 24 hours</h2>
+                </CardTitle>
+                {completed?.n ? (
+                  <CardAction>
+                    <Badge variant="secondary" className="tabular">
+                      {money(completed.total ?? 0, BASE_CURRENCY)}
+                    </Badge>
+                  </CardAction>
+                ) : null}
+              </CardHeader>
+              <CardContent className="px-2">
+                <ul aria-label="Orders by how they ended" className="flex flex-col">
+                  {lastDay.map((f) => (
+                    <li key={f.status}>
+                      <Ending f={f} />
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+
             <EndedBadly steps={stopped} />
 
             {canOperate && demo ? (
@@ -361,44 +505,6 @@ export default function Dashboard() {
               </Card>
             ) : null}
           </aside>
-
-          <div className="min-w-0 lg:col-start-1">
-            <Section
-              title="Recently updated"
-              description="The orders that changed last, and where each one is."
-              actions={
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/orders?sort=updated">All orders</Link>
-                </Button>
-              }
-            >
-              {recent.length ? (
-                <ul className="-mx-2 flex flex-col gap-1">
-                  {recent.map((o) => (
-                    <RecentItem
-                      key={o.id}
-                      o={o}
-                      customer={(o.customerId && names[o.customerId]) || o.customerId}
-                      status={orderStatus(o.status, o.id, declined)}
-                    />
-                  ))}
-                </ul>
-              ) : (
-                <Empty
-                  icon={<ReceiptText aria-hidden="true" />}
-                  title="No orders yet"
-                  action={
-                    <Button size="sm" asChild>
-                      <Link to="/orders/new">Start an order</Link>
-                    </Button>
-                  }
-                >
-                  Orders from the API, your storefronts, email and this console appear here as they
-                  change.
-                </Empty>
-              )}
-            </Section>
-          </div>
         </div>
       </div>
     </>
@@ -425,33 +531,192 @@ function FigureLabel({ f }: { f: Figure }) {
 const figureName = (f: Figure) =>
   `${f.label}: ${f.n} ${f.n === 1 ? 'order' : 'orders'}${f.note ? `, ${f.note}` : ''}`;
 
+/** A percentage change, or null when there is nothing to compare with. */
+function change(now: number, before: number): number | null {
+  if (!before) return null;
+  return Math.round(((now - before) / before) * 100);
+}
+
 /**
- * Open work, as a card of its own (the preview cards' balance tiles): set large, since it is what
- * can still be acted on. The whole card opens those orders.
+ * One figure for the last seven days (or open work now), as a card of its own: label at the top,
+ * the figure, then how it compares with the seven days before and, for a daily series, a bar a
+ * day. The whole card opens where the figure comes from. A change is words and grey: going up
+ * or down isn't a status (The One Meaning Rule).
  */
-function FigureCard({ f }: { f: Figure }) {
+function Tile({
+  label,
+  hint,
+  value,
+  change: pct,
+  detail,
+  to,
+  spark,
+  sparkLabel,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  change?: number | null;
+  detail?: React.ReactNode;
+  to: string;
+  spark?: number[];
+  sparkLabel?: string;
+}) {
+  const vs =
+    pct === undefined
+      ? null
+      : pct === null
+        ? 'None the week before'
+        : pct === 0
+          ? 'Same as the week before'
+          : `${pct > 0 ? 'Up' : 'Down'} ${Math.abs(pct)}% on the week before`;
   return (
-    <Card size="sm" className="relative gap-1 transition-colors hover:bg-muted/40">
-      <CardContent className="flex flex-1 flex-col justify-between gap-1">
-        <CardDescription>
+    <Card size="sm" className="relative min-w-0 gap-1 transition-colors hover:bg-muted/40">
+      <CardContent className="flex flex-1 flex-col gap-1">
+        <CardDescription className="flex flex-wrap items-baseline justify-between gap-x-2">
           <Link
-            to={f.to}
-            aria-label={figureName(f)}
+            to={to}
             className="after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-[var(--ring)]"
           >
-            <FigureLabel f={f} />
+            {label}
           </Link>
+          {hint ? <span className="shrink-0 text-2xs">{hint}</span> : null}
         </CardDescription>
-        <CardTitle className="font-semibold text-2xl tabular max-md:text-xl">{f.n}</CardTitle>
+        <CardTitle className="truncate font-semibold text-2xl tabular max-md:text-xl">
+          {value}
+        </CardTitle>
+        <div className="mt-auto flex items-end justify-between gap-3">
+          <p className="min-w-0 text-muted-foreground text-xs">{detail ?? vs}</p>
+          {/* On a phone the tile is too narrow for both: the words stay. */}
+          {spark ? (
+            <Spark values={spark} label={sparkLabel ?? label} className="max-sm:hidden" />
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
 /**
- * One ending in the last day's card. A bad ending with any orders takes its status colour, so a
- * failure isn't drawn like a completion. On a phone the row scrolls sideways when it doesn't fit,
- * so it doesn't push the decision queue off the first screen.
+ * A bar a day, in muted ink, scaled to the largest day; a day with none keeps a hairline so the
+ * week's length still reads. Small enough to sit in a tile, and drawn without a chart library so
+ * the overview's first download stays light.
+ */
+function Spark({
+  values,
+  label,
+  className,
+}: {
+  values: number[];
+  label: string;
+  className?: string;
+}) {
+  const max = Math.max(...values, 0);
+  const w = 6;
+  const gap = 3;
+  const h = 24;
+  return (
+    <svg
+      role="img"
+      aria-label={label}
+      width={values.length * (w + gap) - gap}
+      height={h}
+      className={cn('shrink-0 text-muted-foreground', className)}
+    >
+      {values.map((v, i) => {
+        const bh = max ? Math.max(1, Math.round((v / max) * h)) : 1;
+        return (
+          <rect
+            key={i}
+            x={i * (w + gap)}
+            y={h - bh}
+            width={w}
+            height={bh}
+            rx={1.5}
+            fill="currentColor"
+            opacity={i === values.length - 1 ? 0.9 : 0.45}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+/** One thing that needs someone, from any part of the workspace. */
+type Attention = {
+  key: string;
+  n: number;
+  text: (n: number) => string;
+  to: string;
+  /** Its status colour, when it carries one; otherwise grey. */
+  tone?: 'wait' | 'bad';
+  /** The word beside a count in `wait` that means overdue (The Overdue Rule). */
+  word?: string;
+};
+
+/**
+ * Everything waiting on a person across orders, outside events and stock, most pressing first,
+ * each row opening where it is dealt with. Only what has a count shows; with none, the card says
+ * so in grey.
+ */
+function NeedsYou({ items }: { items: Attention[] }) {
+  const shown = items.filter((i) => i.n > 0);
+  return (
+    <Card size="sm" className="max-md:-order-1">
+      <CardHeader>
+        <CardTitle className="section-title">
+          <h2>Needs you</h2>
+        </CardTitle>
+        <CardDescription>
+          {shown.length
+            ? 'Across orders, outside events and stock.'
+            : 'Nothing is waiting on you: no decisions, nothing overdue, nothing short.'}
+        </CardDescription>
+      </CardHeader>
+      {shown.length ? (
+        <CardContent className="px-2">
+          <ul className="flex flex-col">
+            {shown.map((i) => (
+              <li key={i.key}>
+                <Link
+                  to={i.to}
+                  className="group flex min-h-10 items-center gap-3 rounded-xl px-3 py-1.5 hover:bg-muted touch:min-h-11"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ background: i.tone ? `var(--${i.tone})` : 'var(--muted-foreground)' }}
+                  />
+                  <span
+                    className={cn(
+                      'w-8 shrink-0 text-right font-semibold tabular',
+                      i.tone === 'bad' && 'text-bad',
+                      i.tone === 'wait' && 'text-wait',
+                    )}
+                  >
+                    {i.n > 999 ? '999+' : i.n}
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm">
+                    {i.text(i.n)}
+                    {i.word ? <span className="sr-only"> ({i.word})</span> : null}
+                  </span>
+                  <ChevronRight
+                    className="size-4 shrink-0 text-muted-foreground opacity-60 group-hover:opacity-100"
+                    aria-hidden="true"
+                  />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * One ending in the last day's card, as a row: label, then count. A bad ending with any orders
+ * takes its status colour, so a failure isn't drawn like a completion.
  */
 function Ending({ f }: { f: Figure }) {
   const bad = badFigure(f);
@@ -459,14 +724,11 @@ function Ending({ f }: { f: Figure }) {
     <Link
       to={f.to}
       aria-label={figureName(f)}
-      className="block min-w-0 rounded-xl px-3 py-2 hover:bg-muted max-md:flex max-md:min-h-11 max-md:items-center max-md:gap-2 max-md:py-1"
+      className="flex min-h-9 items-center justify-between gap-3 rounded-xl px-3 hover:bg-muted touch:min-h-11"
     >
       <FigureLabel f={f} />
       <span
-        className={cn(
-          'mt-0.5 block font-medium text-lg tabular max-md:mt-0 max-md:text-base',
-          bad && 'font-semibold',
-        )}
+        className={cn('font-medium text-sm tabular', bad && 'font-semibold')}
         style={bad ? { color: STATUS_COLOR[f.status as keyof typeof STATUS_COLOR] } : undefined}
       >
         {f.n}

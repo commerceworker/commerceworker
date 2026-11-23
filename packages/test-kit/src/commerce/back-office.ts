@@ -189,6 +189,16 @@ export class InMemoryBackOffice implements BackOffice {
     };
   }
 
+  async stockAlerts() {
+    const free = (this.f.products ?? [])
+      .filter((p) => p.kind !== 'digital')
+      .map((p) => ({ free: p.stock - p.reserved, at: p.reorderPoint }));
+    return {
+      out: free.filter((p) => p.free <= 0).length,
+      low: free.filter((p) => p.free > 0 && p.free <= p.at).length,
+    };
+  }
+
   async everything() {
     const stock = [...(this.f.stock ?? [])].sort(by((s) => s.sku));
     return {

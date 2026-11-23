@@ -26,12 +26,18 @@ linked from that panel and from **New order**, lists them by order type with the
 simulates, and **Edit first** opens one in the New order form (without its simulated failure).
 
 Without the demo data the panel is hidden; start an order from **New order** instead. Either way (operators only), the order page opens. The flow graph colours each node as it runs,
-waits and finishes, and the timeline records every step. The overview keeps itself current while it's open. Its top line counts the orders open now and
-those that ended in the last 24 hours, by outcome. Below **Needs a decision**, **Where orders are
+waits and finishes, and the timeline records every step. The overview keeps itself current while it's open. Its top line shows sales, orders completed
+and the average order over the last 7 days (as **Performance** counts them, each compared with the
+7 days before), and the orders open now. **Needs you** gathers what is waiting on someone across
+the workspace: decisions, orders past their step's deadline, orders waiting on an outside event,
+orders that failed or rolled back today, and items out of stock or at their reorder point; each
+row opens the screen where it's dealt with, and only rows with something in them show. Below
+**Needs a decision** (when there is one), **Where orders are
 waiting** lays each flow's open waits along its steps, with how many wait at each, how many are
 overdue (past the step's own timeout, so the step should have moved on), for how long and on whom
 (a person, the outside world, a timer). Only overdue waits are marked; a long wait still within its
-step's timeout is on time, and a timer is never overdue. **Ended badly this week** lists the steps
+step's timeout is on time, and a timer is never overdue. Beside them, **Ended in the last 24 hours** counts
+the orders that ended by outcome, and **Ended badly this week** lists the steps
 where orders failed or rolled back, how many orders at each, with the latest reason. Every figure opens the matching orders.
 
 The **Performance** page shows, in USD, how the business did over the last 7, 30 or 90 days:
