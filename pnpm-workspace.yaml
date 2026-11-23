@@ -102,7 +102,7 @@ catalog:
   embla-carousel-react: ^8.6.0
   input-otp: ^1.5.0
   react-day-picker: ^9.14.0
-  react-dropzone: ^14.4.1
+  react-dropzone: ^20.2.0
   react-hook-form: ^7.87.0
   react-resizable-panels: ^4.12.4
   sonner: ^2.0.8
