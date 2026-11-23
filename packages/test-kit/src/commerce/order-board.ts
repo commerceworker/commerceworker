@@ -424,6 +424,17 @@ export class InMemoryOrderBoard implements OrderBoard {
         };
       })
       .sort((a, b) => b.n - a.n);
+    const salesSince = Math.floor(now / DAY) * DAY - 13 * DAY;
+    const sales = groups(
+      this.orders.filter((o) => o.status === 'completed' && o.updatedAt >= salesSince),
+      (o) => new Date(o.updatedAt).toISOString().slice(0, 10),
+    )
+      .map((g) => ({
+        day: new Date(g[0]!.updatedAt).toISOString().slice(0, 10),
+        orders: g.length,
+        revenue: g.reduce((t, o) => t + o.total / o.fxRate, 0),
+      }))
+      .sort((a, b) => a.day.localeCompare(b.day));
     const queue = await this.approvals('pending', null, 5, 'live');
     return {
       open,
@@ -434,6 +445,7 @@ export class InMemoryOrderBoard implements OrderBoard {
       declined24h: this.orders.filter((o) => this.declined(o) && o.updatedAt >= dayAgo).length,
       waitsByFlow,
       stoppedWeek,
+      sales,
     };
   }
 

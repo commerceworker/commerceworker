@@ -347,15 +347,19 @@ Every data table is `Table` from `packages/ui/src/table.tsx`, with its parts (`T
   picked; it is on the canvas, so it works in the review-only editor and the order page's Graph
   tab. React Flow's credit stays (its authors ask that only subscribers remove it), at caption
   size.
-- **Overview** (`routes/dashboard.tsx`), composed from shadcn's preview-02 cards: open work as two
-  figure cards (label at the top, the count at the foot; the whole card opens those orders), the
-  last day's endings as one card of five figures, then cards with a header (title, a one-line
-  description, an outline action) over Items: decisions as muted Items, waiting steps as muted
-  Item chips along each flow, endings and recent orders as quiet Item rows, and an Empty with an
-  icon when there are no orders. On a phone "Needs a decision" (or "No decisions waiting") comes
-  first, above the figures (the two grids below md are `contents`, and that card is ordered
-  first); the endings are one line, label then count, 44px tall, scrolling sideways if it doesn't
-  fit.
+- **Overview** (`routes/dashboard.tsx`), composed from shadcn's preview-02 cards: four figure
+  tiles (Sales, Orders completed and Average order over the last 7 whole UTC days, as Performance
+  counts them, and Open now), each a card that opens where its figure comes from, with how it
+  compares with the 7 days before in grey words (rising or falling isn't a status) and, from sm, a
+  bar a day in muted ink (inline SVG: the overview loads no chart library). Then **Needs you**: one
+  card of rows across the workspace (decisions waiting, orders past their step's deadline, orders
+  on an outside event, failures today, stock out and low), each a count in its status colour and
+  words, opening its screen; only rows with a count show, and with none the card says so in grey.
+  Then the decision queue (only when there are decisions), waiting steps as muted Item chips along
+  each flow and recent orders as quiet Item rows, with an Empty and an icon when there are no
+  orders. The rail holds the last day's endings as rows (label, then count), what ended badly this
+  week and the demo scenarios. On a phone Needs you comes first, above the tiles (two to a row; the
+  grid below md is `contents`).
 - **Orders list on a phone:** the bar keeps the search and a Filter button with the count of
   filters set; model, channel, status, sort and Needs attention move to a bottom sheet. They are the
   same URL parameters as the bar's from md.

@@ -198,6 +198,27 @@ export function describeBackOfficeContract(
       );
     });
 
+    it('counts physical products out of stock and at or under their reorder point', async () => {
+      const at = (sku: string, stock: number, reserved: number, reorderPoint: number) => ({
+        ...product(sku),
+        stock,
+        reserved,
+        reorderPoint,
+      });
+      const s = await make({
+        products: [
+          at('SA-OUT', 0, 0, 5),
+          at('SA-HELD', 3, 3, 0),
+          at('SA-LOW', 4, 1, 3),
+          at('SA-EDGE', 5, 0, 5),
+          at('SA-FINE', 9, 0, 5),
+          { ...at('SA-EBOOK', 0, 0, 0), kind: 'digital' },
+        ],
+      });
+      expect(await s.stockAlerts()).toEqual({ out: 2, low: 2 });
+      expect(await (await make({})).stockAlerts()).toEqual({ out: 0, low: 0 });
+    });
+
     it("counts what the stores hold of each product, less what's reserved", async () => {
       const s = await make(CATALOG);
       const page = await s.page('walnut', first, SIZES);

@@ -62,6 +62,9 @@ const OPEN_STATUSES = ['queued', 'running', 'waiting'];
 
 const DAY = 86_400_000;
 
+/** The first instant of the overview's sales window: midnight UTC, 13 days before `now`'s. */
+const salesWindow = (now: number) => Math.floor(now / DAY) * DAY - 13 * DAY;
+
 /** Ids in runs that fit one statement's 100 bound parameters, with room for the rest. */
 function chunks<T>(ids: readonly T[], size = 90): T[][] {
   const out: T[][] = [];
@@ -337,7 +340,8 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
       const stopped = inArray(orders.status, ['failed', 'rolled_back']);
       const dayAgo = now - DAY;
       const weekAgo = now - 7 * DAY;
-      const [open, recent, approvalRows, ended24h, declined24h, waitsByFlow, stoppedWeek] =
+      const salesSince = salesWindow(now);
+      const [open, recent, approvalRows, ended24h, declined24h, waitsByFlow, stoppedWeek, sales] =
         await d.batch([
           d
             .select({ status: orders.status, n: sql<number>`count(*)` })
@@ -395,6 +399,19 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
             .where(and(stopped, gte(orders.updatedAt, weekAgo)))
             .groupBy(orders.flowId, orders.stoppedAt)
             .orderBy(sql`count(*) desc`),
+          // An ended order's last update is its end, as on Performance.
+          d
+            .select({
+              day: sql<string>`date(${orders.updatedAt} / 1000, 'unixepoch')`.as('day'),
+              orders: sql<number>`count(*)`.mapWith(Number),
+              revenue: sql<number>`coalesce(sum(${orders.total} / ${orders.fxRate}), 0)`.mapWith(
+                Number,
+              ),
+            })
+            .from(orders)
+            .where(and(eq(orders.status, 'completed'), gte(orders.updatedAt, salesSince)))
+            .groupBy(sql`1`)
+            .orderBy(sql`1`),
         ]);
       return {
         open,
@@ -405,6 +422,7 @@ export function d1OrderBoard(d1: D1Database): OrderBoard {
         declined24h: declined24h[0]?.n ?? 0,
         waitsByFlow,
         stoppedWeek,
+        sales,
       };
     },
 

@@ -151,6 +151,12 @@ export interface BackOffice {
     sizes: { list: number; group: number },
     options?: PageOptions,
   ): Promise<BackOfficePage>;
+  /**
+   * Physical products running short in the warehouse: `out` with no free stock (`stock -
+   * reserved` at or under 0), `low` with some but at or under their reorder point. Digital goods
+   * hold no stock and are never counted.
+   */
+  stockAlerts(): Promise<{ out: number; low: number }>;
   /** Every record the pickers choose from, in one round trip. */
   everything(): Promise<BackOfficeData>;
   /** Currencies an order can be in: those with a rate, the base currency first, then by code. */

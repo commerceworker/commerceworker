@@ -70,3 +70,8 @@ export async function pricingPage(params: URLSearchParams) {
 export async function fxRatesPage() {
   return (await listFxRates({ pricing: pricingStore() })).rates;
 }
+
+/** Physical products out of stock and at or under their reorder point, for the overview. */
+export function stockAlerts() {
+  return backOffice().stockAlerts();
+}
