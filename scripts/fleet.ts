@@ -508,6 +508,7 @@ export const RESERVED_PATH_SEGMENTS = new Set([
   'sellers',
   'setup',
   'team',
+  'webhooks',
 ]);
 
 /** A plugin alias: one lowercase path segment, as `/<segment>/`. */
