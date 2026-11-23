@@ -97,7 +97,7 @@ function RateEditor({ row, onDone }: { row: FxRateRow; onDone: () => void }) {
   );
 }
 
-/** The rate's table on the Commerce page: each currency, its rate, who set it and when. */
+/** The rates table on the Pricing screen: each currency, its rate, who set it and when. */
 export function FxRates({ rates }: { rates: FxRateRow[] }) {
   const canAdmin = useCan('admin');
   const [editing, setEditing] = useState<string | null>(null);

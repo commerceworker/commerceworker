@@ -56,9 +56,9 @@ const office = new InMemoryBackOffice({
 });
 vi.mock('~/lib/wire.server', () => ({ backOffice: () => office }));
 
-const { commercePage } = await import('../app/lib/commerce.server');
+const { customersPage, inventoryPage, pricingPage } = await import('../app/lib/commerce.server');
 
-describe('Commerce paging', () => {
+describe('back office paging', () => {
   it('reads a page from the URL, and anything else as the first', () => {
     const p = new URLSearchParams('inventory=3&customers=0&sellers=x&store-loc_a=2.5');
     expect(pageOf(p, 'inventory')).toBe(3);
@@ -70,9 +70,13 @@ describe('Commerce paging', () => {
 
   it('links to another page of one list, keeping the search and the other lists', () => {
     const p = new URLSearchParams('q=widget&store-loc_a=2');
-    expect(pageHref(p, 'inventory', 3, 'stock')).toBe('?q=widget&store-loc_a=2&inventory=3#stock');
-    expect(pageHref(p, storeKey('loc_a'), 1, 'stores')).toBe('?q=widget#stores');
-    expect(pageHref(new URLSearchParams(), 'inventory', 1, 'stock')).toBe('/commerce#stock');
+    expect(pageHref('/inventory', p, 'inventory', 3, 'stock')).toBe(
+      '/inventory?q=widget&store-loc_a=2&inventory=3#stock',
+    );
+    expect(pageHref('/inventory', p, storeKey('loc_a'), 1, 'stores')).toBe(
+      '/inventory?q=widget#stores',
+    );
+    expect(pageHref('/customers', new URLSearchParams(), 'customers', 1)).toBe('/customers');
   });
 
   it('says which rows a page shows, and how many pages there are', () => {
@@ -85,17 +89,24 @@ describe('Commerce paging', () => {
   });
 
   it('reads each list at its own page from the URL, and a page past the end as the last', async () => {
-    const page = await commercePage(new URLSearchParams('inventory=999&store-loc_b=4'));
+    const page = await inventoryPage(new URLSearchParams('inventory=999&store-loc_b=4'));
     expect(page.inventory).toMatchObject({ total: 1000, page: 40, size: LIST_SIZE });
     expect(page.inventory.rows).toHaveLength(LIST_SIZE);
     expect(page.stores.map((s) => s.stock.page)).toEqual([1, 4]);
     expect(page.stores[1]!.stock.rows[0]?.sku).toBe(sku(30));
-    expect(page.pricing.sources.map((s) => s.entries.size)).toEqual([GROUP_SIZE, GROUP_SIZE]);
-    expect(page.pricing.rates.map((r) => r.currency)).toEqual(['USD']);
+    const priced = await pricingPage(new URLSearchParams());
+    expect(priced.pricing.sources.map((s) => s.entries.size)).toEqual([GROUP_SIZE, GROUP_SIZE]);
+    expect(priced.pricing.rates.map((r) => r.currency)).toEqual(['USD']);
   });
 
-  it('searches every list, dropping the # an order reference starts with', async () => {
-    const page = await commercePage(new URLSearchParams('q=%23item 999'));
+  it('gives each screen only its own lists', async () => {
+    const page = await customersPage(new URLSearchParams());
+    expect(page).not.toHaveProperty('inventory');
+    expect(page.customers.rows).toEqual([]);
+  });
+
+  it('searches a screen’s lists, dropping the # an order reference starts with', async () => {
+    const page = await inventoryPage(new URLSearchParams('q=%23item 999'));
     expect(page.q).toBe('item 999');
     expect(page.inventory.rows.map((r) => r.sku)).toEqual([sku(999)]);
   });

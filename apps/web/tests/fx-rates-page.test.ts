@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({ env: {} }));
 
-/** The pricing store the Commerce page's rates table reads, in memory. */
+/** The pricing store the Pricing screen's rates table reads, in memory. */
 const { InMemoryPricingStore } = await import('@commerceworker/test-kit/commerce');
 const clock = { now: () => new Date() };
 let pricing = new InMemoryPricingStore({}, clock);
@@ -14,7 +14,7 @@ beforeEach(() => {
   pricing = new InMemoryPricingStore({}, clock);
 });
 
-describe('the Commerce page’s exchange rates', () => {
+describe('the Pricing screen’s exchange rates', () => {
   it('lists each currency with its source, who set it and when, never the base currency', async () => {
     expect(await fxRatesPage()).toEqual([]);
     await pricing.setFxRates([{ currency: 'GBP', rate: 0.79 }], 1_000, 'ecb');

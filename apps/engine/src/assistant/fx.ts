@@ -46,7 +46,7 @@ export async function previewFxRate(
   const refreshed = allowedOf(env).includes(i.currency);
   return {
     title: `Set the ${i.currency} rate to ${i.rate} per ${BASE_CURRENCY}`,
-    href: '/commerce#pricing',
+    href: '/pricing',
     consequences: [
       `Now ${rate(current?.rate ?? null)}, then ${rate(i.rate)} ${i.currency} per 1 ${BASE_CURRENCY} (${percent})`,
       ...(change.large
@@ -80,7 +80,7 @@ export async function runFxRate(env: Env, p: Principal, i: ToolInput<'set_fx_rat
   });
   return {
     done: `Set the ${r.currency} rate to ${r.rate} per ${BASE_CURRENCY}`,
-    href: '/commerce#pricing',
+    href: '/pricing',
     id: r.currency,
   };
 }

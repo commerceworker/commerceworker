@@ -20,7 +20,7 @@ const admin: Principal & AuditActor = {
   email: 'ann@example.com',
   role: 'admin',
 };
-const request = new Request('https://app.test/commerce', { method: 'POST' });
+const request = new Request('https://app.test/inventory', { method: 'POST' });
 
 beforeEach(() => {
   audit.mockReset();
@@ -28,7 +28,7 @@ beforeEach(() => {
   signedActor.mockClear();
 });
 
-describe('Update product index on the Commerce page', () => {
+describe('Update product index on the Inventory screen', () => {
   it('runs for an admin, signed for the call, and audits what the run did', async () => {
     const run = { status: 'done', indexed: 1_200, removed: 3, more: true } as const;
     engine.reindexProducts.mockResolvedValueOnce({ ok: true, value: run });

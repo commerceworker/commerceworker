@@ -35,11 +35,14 @@ test('More holds the other pages and closes on navigation', async ({ page }, inf
   await open(page, '/');
   await page.getByRole('button', { name: 'More' }).tap();
   const sheet = page.getByRole('dialog');
-  await sheet.getByRole('link', { name: 'Commerce' }).tap();
-  await expect(page).toHaveURL(/\/commerce$/);
+  // Grouped as the sidebar is: the commerce sections under their own headings.
+  for (const name of ['Catalog', 'Customers', 'Sales', 'Operations'])
+    await expect(sheet.getByRole('heading', { name, exact: true })).toBeVisible();
+  await sheet.getByRole('link', { name: 'Inventory' }).tap();
+  await expect(page).toHaveURL(/\/inventory$/);
   await expect(sheet).toBeHidden();
   // The route announcer says where the navigation landed.
-  await expect(page.locator('p[aria-live="polite"][aria-atomic="true"]')).toHaveText('Commerce');
+  await expect(page.locator('p[aria-live="polite"][aria-atomic="true"]')).toHaveText('Inventory');
 });
 
 test('controls take a 44px tap on touch screens', async ({ page }, info) => {
@@ -58,7 +61,8 @@ test('fields are 16px on touch screens, so iOS does not zoom into them', async (
   test.skip(!isTouch(info), 'touch screens only');
   for (const path of [
     '/orders',
-    '/commerce',
+    '/customers',
+    '/inventory',
     '/customers/cus_northwind',
     '/flows',
     '/orders/new',
@@ -260,8 +264,24 @@ test('the sidebar holds every page, collapses to a rail and remembers it', async
   test.skip(info.project.name !== 'desktop', 'the full sidebar is lg and up');
   await open(page, '/orders');
   const main = page.getByRole('navigation', { name: 'Main' });
-  for (const name of ['Overview', 'Orders', 'Order Flows', 'Commerce', 'Catalog', 'Team and roles'])
+  for (const name of [
+    'Overview',
+    'Orders',
+    'Order Flows',
+    'Products',
+    'Inventory',
+    'Pricing',
+    'Customers',
+    'Quotes',
+    'Outside events',
+    'Records',
+    'Team and roles',
+  ])
     await expect(main.getByRole('link', { name, exact: true })).toBeVisible();
+  // Commerce has its own sections, not one page under Reference.
+  for (const name of ['Build', 'Catalog', 'Customers', 'Sales', 'Operations'])
+    await expect(main.getByText(name, { exact: true }).first()).toBeVisible();
+  await expect(main.getByText('Reference', { exact: true })).toHaveCount(0);
   await expect(main.getByRole('link', { name: 'Orders', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
@@ -273,7 +293,7 @@ test('the sidebar holds every page, collapses to a rail and remembers it', async
   await expect.poll(() => sidebarWidth(page)).toBe(52);
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   // A rail keeps every page by name for screen readers.
-  await expect(main.getByRole('link', { name: 'Commerce', exact: true })).toBeAttached();
+  await expect(main.getByRole('link', { name: 'Inventory', exact: true })).toBeAttached();
   await open(page, '/orders');
   expect(await sidebarWidth(page), 'collapsed before paint after a reload').toBe(52);
   await page.locator('main h1').click();

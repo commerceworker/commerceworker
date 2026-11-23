@@ -69,6 +69,7 @@ test('pages hydrate without a mismatch, the CSP nonce included', async ({ page }
   page.on('console', (m) => {
     if (/hydrat|didn't match/i.test(m.text())) mismatches.push(m.text());
   });
-  for (const path of ['/', '/commerce', '/team']) await open(page, path);
+  for (const path of ['/', '/customers', '/inventory', '/pricing', '/events', '/team'])
+    await open(page, path);
   expect(mismatches).toEqual([]);
 });

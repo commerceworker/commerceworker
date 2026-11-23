@@ -1,5 +1,5 @@
 /**
- * A customer's page: the account as the Commerce page lists it, the places its orders ship to
+ * A customer's page: the account as Customers lists it, the places its orders ship to
  * (`customer_addresses`, which the engine writes as each order starts), and its tax exemption certificates,
  * which the engine holds (`EngineRpc.taxCertificates`). A certificate's file is stored in the
  * documents bucket at `taxCertificateKey` by the web app before the engine adds the certificate,

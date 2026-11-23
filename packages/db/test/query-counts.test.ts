@@ -326,16 +326,35 @@ const REQUESTS: [string, () => Promise<unknown>][] = [
   ['admin records: a search', () => ports.board.recentRecords('north', 30)],
   ['admin performance: 30 days', () => ports.board.performance(now - 30 * 86_400_000)],
   [
-    'admin commerce: a page of every list',
-    () => ports.office.page('', () => 1, { list: 25, group: 10 }),
+    'admin customers: a page',
+    () => ports.office.page('', () => 1, { list: 25, group: 10 }, { lists: ['customers'] }),
   ],
   [
-    'admin commerce: a search',
-    () => ports.office.page('contract', () => 1, { list: 25, group: 10 }),
+    'admin customers: filtered by status',
+    () =>
+      ports.office.page(
+        '',
+        () => 1,
+        { list: 25, group: 10 },
+        { customers: { status: 'active' }, lists: ['customers'] },
+      ),
   ],
   [
-    'admin commerce: customers filtered by status',
-    () => ports.office.page('', () => 1, { list: 25, group: 10 }, { status: 'active' }),
+    'admin sellers: a page',
+    () => ports.office.page('', () => 1, { list: 25, group: 10 }, { lists: ['sellers'] }),
+  ],
+  [
+    'admin inventory: warehouse and stores',
+    () =>
+      ports.office.page('', () => 1, { list: 25, group: 10 }, { lists: ['inventory', 'store'] }),
+  ],
+  [
+    'admin pricing: every source',
+    () => ports.office.page('', () => 1, { list: 25, group: 10 }, { lists: ['prices'] }),
+  ],
+  [
+    'admin pricing: a search',
+    () => ports.office.page('contract', () => 1, { list: 25, group: 10 }, { lists: ['prices'] }),
   ],
   ['companies: a page', () => ports.companies.companies(ALL, { limit: 25 })],
   [

@@ -66,7 +66,7 @@ export async function previewCreateCustomer(
   const kind = plan.ok ? plan.input.kind : (i.kind ?? 'business');
   return {
     title: `Add ${kind === 'business' ? 'business ' : ''}customer ${i.name}`,
-    href: '/commerce#customers',
+    href: '/customers',
     consequences: plan.ok
       ? [
           `${plan.input.kind} · ${plan.input.tier} tier · ${plan.input.terms.replace('_', ' ')}`,

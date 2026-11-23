@@ -8,11 +8,11 @@ import type {
   BackOfficePage,
   BookList,
   ContractPriceRow,
-  CustomerFilter,
   CustomerRecord,
   FxRateRow,
   LocationStockRow,
   Paged,
+  PageOptions,
   PriceEntry,
   PriceRuleRow,
   PriceSourceRow,
@@ -61,14 +61,18 @@ export class InMemoryBackOffice implements BackOffice {
     rawQ: string,
     asked: (list: BookList) => number,
     sizes: { list: number; group: number },
-    filter?: CustomerFilter,
+    options?: PageOptions,
   ): Promise<BackOfficePage> {
+    const filter = options?.customers;
     const q = rawQ.trim().replace(/^#/, '');
     const matches = (...texts: (string | null | undefined)[]) => !q || texts.some((t) => has(t, q));
     const paged = <T>(all: T[], list: BookList, size: number): Paged<T> => {
       const page = Math.min(asked(list), lastPage(all.length, size));
       return {
-        rows: all.slice((page - 1) * size, page * size),
+        rows:
+          !options?.lists || options.lists.includes(list.list)
+            ? all.slice((page - 1) * size, page * size)
+            : [],
         total: all.length,
         page,
         size,

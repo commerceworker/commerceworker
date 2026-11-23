@@ -68,7 +68,9 @@ export function d1BackOffice(d1: D1Database): BackOffice {
   };
 
   return {
-    async page(rawQ, asked, sizes, customerFilter) {
+    async page(rawQ, asked, sizes, options) {
+      const customerFilter = options?.customers;
+      const wanted = (list: BookList) => !options?.lists || options.lists.includes(list.list);
       // "#idz7qp" is how the app writes an order; a search for one shouldn't hide the rest.
       const q = rawQ.trim().replace(/^#/, '');
       const any = (...conds: SQL[]) => (q ? or(...conds) : undefined);
@@ -145,7 +147,7 @@ export function d1BackOffice(d1: D1Database): BackOffice {
         const page = Math.min(asked(list), lastPage(total, size));
         return {
           paged: { total, page, size },
-          read: total ? rows(size, (page - 1) * size) : null,
+          read: total && wanted(list) ? rows(size, (page - 1) * size) : null,
         };
       };
 
@@ -244,7 +246,7 @@ export function d1BackOffice(d1: D1Database): BackOffice {
             ),
       );
 
-      // Every page's rows in a second round trip (none when every list is empty).
+      // Every page's rows in a second round trip (none when every list asked for is empty).
       const plans: Plan<unknown>[] = [
         inventory,
         customerList,

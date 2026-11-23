@@ -6,6 +6,7 @@
 import type {
   BackOffice,
   BookList,
+  CustomerFilter,
   CustomerRecord,
   PriceRuleRow,
   ProductRecord,
@@ -153,8 +154,8 @@ export function describeBackOfficeContract(
         ],
       };
       const s = await make(f);
-      const names = async (filter?: Parameters<BackOffice['page']>[3], q = '') => {
-        const page = await s.page(q, first, SIZES, filter);
+      const names = async (filter?: CustomerFilter, q = '') => {
+        const page = await s.page(q, first, SIZES, { customers: filter });
         return { names: page.customers.rows.map((c) => c.name), total: page.customers.total };
       };
       expect(await names()).toEqual({ names: ['Acme', 'Cleo', 'Nova'], total: 4 });
@@ -176,6 +177,25 @@ export function describeBackOfficeContract(
       expect(await names({ status: 'active', kind: 'consumer' })).toEqual({ names: [], total: 0 });
       expect(await names({ kind: 'business' }, 'ze')).toEqual({ names: ['Zephyr'], total: 1 });
       expect(await names({ status: 'closed' })).toEqual({ names: [], total: 0 });
+    });
+
+    it('reads rows only for the lists asked for, and still counts the rest', async () => {
+      const s = await make(CATALOG);
+      const page = await s.page('', first, SIZES, { lists: ['customers'] });
+      expect(page.customers.rows.map((c) => c.name)).toEqual(['Acme', 'Zephyr']);
+      expect(page.inventory).toMatchObject({ rows: [], total: 7, page: 1 });
+      expect(page.sellers.rows).toEqual([]);
+      expect(page.stores.map((l) => [l.name, l.stock.rows, l.stock.total])).toEqual([
+        ['Downtown', [], 3],
+        ['Uptown', [], 1],
+      ]);
+      expect(page.sources.every((x) => x.entries.rows.length === 0)).toBe(true);
+      const priced = await s.page('', first, SIZES, { lists: ['store', 'prices'] });
+      expect(priced.inventory.rows).toEqual([]);
+      expect(priced.stores.map((l) => skus(l.stock.rows))).toEqual([['BO-A', 'BO-B'], ['BO-W']]);
+      expect(priced.sources.find((x) => x.id === 'contract')!.entries.rows.length).toBeGreaterThan(
+        0,
+      );
     });
 
     it("counts what the stores hold of each product, less what's reserved", async () => {

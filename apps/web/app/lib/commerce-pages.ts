@@ -1,7 +1,7 @@
 /**
- * Paging for the Commerce page's lists. Each list (inventory, customers, sellers, a store's stock,
- * a pricing source's entries) keeps its own page in the URL under its own key, so moving through
- * one leaves the others where they are. Pure, so it is tested without D1 (tests/commerce-pages.test.ts).
+ * Paging for the back office's lists (Customers, Sellers, Inventory and Pricing). Each list
+ * (inventory, customers, sellers, a store's stock, a pricing source's entries) keeps its own page
+ * in the URL under its own key, so moving through one leaves the others where they are. Pure, so it is tested without D1 (tests/commerce-pages.test.ts).
  */
 
 /** Rows per page of a section's list. */
@@ -27,13 +27,22 @@ export function pageOf(params: URLSearchParams, key: string): number {
 /** The last page a list has (1 when it is empty), so a page past the end shows the last one. */
 export const lastPage = (total: number, size: number) => Math.max(1, Math.ceil(total / size));
 
-/** A link to another page of one list, keeping every other parameter, back at its section. */
-export function pageHref(params: URLSearchParams, key: string, page: number, hash: string) {
+/**
+ * A link to another page of one list on the screen at `path`, keeping every other parameter, and
+ * back at its section when the screen has more than one.
+ */
+export function pageHref(
+  path: string,
+  params: URLSearchParams,
+  key: string,
+  page: number,
+  hash?: string,
+) {
   const next = new URLSearchParams(params);
   if (page > 1) next.set(key, String(page));
   else next.delete(key);
   const s = next.toString();
-  return `${s ? `?${s}` : '/commerce'}#${hash}`;
+  return `${path}${s ? `?${s}` : ''}${hash ? `#${hash}` : ''}`;
 }
 
 /** "26–50 of 2,000": the rows a page shows, counted from 1. */

@@ -184,7 +184,7 @@ export default function CustomerPage() {
       <PageHeader
         title={c.name}
         crumbs={
-          <Link to="/commerce#customers" className="hover:underline">
+          <Link to="/customers" className="hover:underline">
             Customers
           </Link>
         }

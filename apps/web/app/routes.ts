@@ -40,7 +40,16 @@ export default [
       // Negotiated quotes: the list, and a quote's editor (lib/quotes.server.ts).
       route('quotes', 'routes/quotes.tsx'),
       route('quotes/:quoteId', 'routes/quote.tsx'),
-      route('commerce', 'routes/commerce.tsx'),
+      // Operations: orders waiting on the outside world, what they wrote to it, and mail they
+      // started from.
+      route('events', 'routes/events.tsx'),
+      route('records', 'routes/records.tsx'),
+      route('intake', 'routes/intake.tsx'),
+      // The back office, each list searched and paged in D1 (lib/commerce.server.ts).
+      route('inventory', 'routes/inventory.tsx'),
+      route('pricing', 'routes/pricing.tsx'),
+      route('sellers', 'routes/sellers.tsx'),
+      route('customers', 'routes/customers.tsx'),
       // The product editor: what the last feed left, the assistant's drafts, staged edits, and
       // publishing them (lib/catalog-board.server.ts, docs/product-editor.md).
       route('catalog', 'routes/catalog.tsx'),
