@@ -490,6 +490,7 @@ export const RESERVED_PATH_SEGMENTS = new Set([
   'flows',
   'health',
   'intake',
+  'integrations',
   'inventory',
   'login',
   'logout',
