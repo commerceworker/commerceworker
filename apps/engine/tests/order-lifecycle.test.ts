@@ -2,7 +2,8 @@
  * What keeps an order's records consistent when a store or the Workflow fails under the OrderAgent:
  * the D1 index row behind a failed write (retried from an alarm), a failed order's rollback
  * outcome (polled until the instance settles, however long it takes), and a cancel whose
- * `terminate` fails (nothing is undone until the run is stopped). The agent is driven directly,
+ * `terminate` fails (nothing is undone until the run is stopped) or finds the run already ended
+ * (its outcome stands). The agent is driven directly,
  * the way `agent.test.ts` does, with the Workflow binding and the index store faked at the seam.
  */
 import { introspectWorkflow, runInDurableObject } from 'cloudflare:test';
@@ -320,6 +321,58 @@ describe('cancelling when the run cannot be stopped', () => {
     });
     expect((await state(id)).status).toBe('cancelled');
     expect(await redemptions(id)).toEqual([]);
+  });
+
+  it('leaves an order that completed while terminate ran as completed, compensating nothing', async () => {
+    const id = 'ord_lc_cancel_completed';
+    await begin(id);
+    await redeem(id);
+    await runInDurableObject(agent(id), async (inst) => {
+      const o = inst as unknown as Inner & {
+        cancel(reason: string): Promise<{ ok: boolean; error?: string }>;
+        report(r: { generation: number; status: OrderState['status'] }): Promise<unknown>;
+      };
+      await o.report({ generation: 1, status: 'running' });
+      vi.spyOn(o.env.ORDER_WORKFLOW, 'get').mockImplementation(async () => ({
+        // The run reaches its End node while the cancel waits on terminate.
+        terminate: async () => {
+          await o.report({ generation: 1, status: 'completed' });
+          throw new Error('instance.not_running');
+        },
+        status: async () => ({ status: 'complete', output: { outcome: 'completed', total: 0 } }),
+      }));
+      const done = await o.cancel('Too late');
+      expect(done).toEqual({ ok: false, error: 'The order had already ended (completed).' });
+      expect(schedules(o, 'retryCancel')).toEqual([]);
+      expect(
+        schedules(o, 'emitWebhook').some((q) => (q.payload as { key?: string }).key === 'cancel'),
+      ).toBe(false);
+    });
+    const s = await state(id);
+    expect(s.status).toBe('completed');
+    expect(
+      s.timeline.some((t) => t.message === 'Not cancelled: the order had already completed'),
+    ).toBe(true);
+    expect(await redemptions(id)).toHaveLength(1);
+  });
+
+  it('takes a finished run’s outcome when its report never landed', async () => {
+    const id = 'ord_lc_cancel_unreported';
+    await begin(id);
+    await redeem(id);
+    await runInDurableObject(agent(id), async (inst) => {
+      const o = inst as unknown as Inner & { cancel(reason: string): Promise<{ ok: boolean }> };
+      vi.spyOn(o.env.ORDER_WORKFLOW, 'get').mockImplementation(async () => ({
+        terminate: async () => {
+          throw new Error('instance.not_running');
+        },
+        status: async () => ({ status: 'complete', output: { outcome: 'declined', total: 0 } }),
+      }));
+      expect(await o.cancel('Over')).toMatchObject({ ok: false });
+    });
+    expect((await state(id)).status).toBe('declined');
+    expect(await d1Status(id)).toBe('declined');
+    expect(await redemptions(id)).toHaveLength(1);
   });
 });
 
