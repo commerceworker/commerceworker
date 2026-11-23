@@ -3,7 +3,19 @@
  * it; a failing Workflow rolls back its own steps instead). Each part is idempotent, so a cancel
  * that runs twice, or after a partial one, undoes nothing more. The order of the steps matters,
  * as the comments say.
+ *
+ * A cancel refunds a card payment only when it is plain that the buyer paid for nothing: money the
+ * card processor captured or charged, on an order nothing was ever fulfilled for (no shipment,
+ * pickup, hand-over or digital code, cancelled since or not). A carrier shipment stays
+ * `label_created` however far the parcel has travelled, a subscription's earlier boxes were
+ * delivered, and a code may have been used, so once anything was fulfilled the payment is kept
+ * and the caller is told how much (`paymentKept`, with `paymentKeptBecause`): a person refunds it
+ * through a return. Payments taken elsewhere (another channel, cash, terms, a supplier payment)
+ * are never refunded here, since no money would move. A paid invoice is left as it always was
+ * (`invoicesPaid`).
  */
+
+import { BASE_CURRENCY, isPaid, refundableTotal } from '@commerceworker/core';
 import type {
   BalanceStore,
   BudgetStore,
@@ -16,7 +28,7 @@ import type {
 } from '@commerceworker/ports/commerce';
 import { reverseBudgetSpend } from './budgets';
 import { type InvoicePorts, voidInvoices } from './invoices';
-import { voidAuthorizations } from './payments';
+import { refund, voidAuthorizations } from './payments';
 import { voidOpenLabels } from './shipping-labels';
 
 export type CompensationPorts = InvoicePorts & {
@@ -66,6 +78,8 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string,
   const unbilled = await ports.balances.reverse(orderId);
   // After the cancel above, so a shipment it cancelled no longer holds the stock.
   const restored = await ports.inventory.restoreShipped(orderId);
+  // Last, and only for an order nothing was fulfilled for.
+  const payment = await refundCaptured(ports, orderId);
   return {
     released,
     voided,
@@ -82,5 +96,57 @@ export async function compensateOrder(ports: CompensationPorts, orderId: string,
     invoicesVoided: invoices.voided,
     invoicesPaid: invoices.paid,
     labelsNotVoided: labels.failed,
+    ...payment,
   };
+}
+
+/** The step key a cancel's refund is recorded under: one per order, so a retry finds it made. */
+const CANCEL_REFUND_STEP = 'cancel';
+
+/** Why a cancel left money the order had taken: see the note at the top. */
+export type PaymentKeptReason = 'fulfilled' | 'not_card' | 'refused';
+
+async function refundCaptured(
+  ports: Pick<CompensationPorts, 'ledger' | 'mode' | 'shipping' | 'fulfillment'>,
+  orderId: string,
+): Promise<{
+  refunded: number;
+  paymentKept: number;
+  paymentKeptBecause: PaymentKeptReason | null;
+  /** The currency of `refunded` and `paymentKept`, when there is either. */
+  paymentCurrency: string | null;
+}> {
+  const none = { refunded: 0, paymentKept: 0, paymentKeptBecause: null, paymentCurrency: null };
+  const rows = await ports.ledger.forOrder(orderId);
+  // Captures and charges only: an order paid by invoice keeps its invoice (`invoicesPaid`).
+  const paid = rows.filter(isPaid);
+  const held = paid.length ? refundableTotal(rows) : 0;
+  if (held <= 0) return none;
+  const paymentCurrency = paid[0]?.currency ?? BASE_CURRENCY;
+  const kept = (paymentKeptBecause: PaymentKeptReason) => ({
+    refunded: 0,
+    paymentKept: held,
+    paymentKeptBecause,
+    paymentCurrency,
+  });
+  // Only money the card processor holds: a refund row for any other would say money moved.
+  if (!ports.mode.live() || paid.some((p) => p.provider !== ports.mode.processor().id))
+    return kept('not_card');
+  // Shipments booked with a carrier, then pickups and hand-overs, then codes: any, in any status.
+  const [booked, handed, codes] = await Promise.all([
+    ports.shipping.booked(orderId),
+    ports.fulfillment.shipments(orderId),
+    ports.fulfillment.entitlements(orderId),
+  ]);
+  if (booked.length || handed.length || codes.length) return kept('fulfilled');
+  try {
+    const r = await refund(ports, { id: orderId, currency: paymentCurrency }, CANCEL_REFUND_STEP);
+    return r.status === 'succeeded'
+      ? { ...none, refunded: r.amount, paymentCurrency }
+      : kept('refused');
+  } catch {
+    // The rest of the cancel is done and must be recorded: the money is reported, not retried
+    // (a disputed charge, or one refunded at the processor meanwhile, would fail every time).
+    return kept('refused');
+  }
 }

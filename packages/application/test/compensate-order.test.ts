@@ -1,6 +1,7 @@
 import type { Order } from '@commerceworker/core';
 import {
   FakeLabelService,
+  FakePaymentProcessor,
   InMemoryBalanceStore,
   InMemoryBudgetStore,
   InMemoryFulfillmentStore,
@@ -13,12 +14,18 @@ import {
   paymentModeFor,
 } from '@commerceworker/test-kit/commerce';
 import { describe, expect, it } from 'vitest';
-import { authorizePayment, compensateOrder, issueInvoice } from '../src/commerce';
+import {
+  authorizePayment,
+  capturePayment,
+  compensateOrder,
+  issueInvoice,
+  refund,
+} from '../src/commerce';
 
 let tick = 0;
 const clock = { now: () => new Date(Date.UTC(2026, 10, 1) + tick++) };
 
-function ports() {
+function ports(processor?: FakePaymentProcessor) {
   const ledger = new InMemoryPaymentLedger(
     {
       customers: [
@@ -35,7 +42,7 @@ function ports() {
   );
   return {
     ledger,
-    mode: paymentModeFor(),
+    mode: paymentModeFor(processor),
     invoices: new InMemoryInvoiceStore(ledger, clock),
     balances: new InMemoryBalanceStore({
       customers: [{ id: 'ada', balance: 0, creditLimit: 500 }],
@@ -126,6 +133,118 @@ describe('cancelling an order', () => {
     expect(await p.balances.account('ada')).toMatchObject({ balance: 0, held: 0, available: 500 });
   });
 
+  /** An order whose card was authorized and captured at the processor. */
+  async function captured(p: ReturnType<typeof ports>) {
+    await authorizePayment(p, order, 'authorize#1', 'card');
+    await capturePayment(p, order, 'capture#1');
+  }
+  const refundsOf = async (p: ReturnType<typeof ports>) =>
+    (await p.ledger.forOrder('o1')).filter((r) => r.kind === 'refund');
+
+  it('refunds a captured card payment, once, when nothing was ever fulfilled', async () => {
+    const processor = new FakePaymentProcessor();
+    const p = ports(processor);
+    await p.inventory.reserve(order, 'reserve#1');
+    await captured(p);
+
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
+      voided: 0,
+      refunded: 100,
+      paymentKept: 0,
+      paymentKeptBecause: null,
+      paymentCurrency: 'USD',
+    });
+    expect(await refundsOf(p)).toMatchObject([{ amount: 100, status: 'succeeded' }]);
+    // A cancel that runs again finds the refund made: nothing more is asked of the processor.
+    expect(await compensateOrder(p, 'o1', 2)).toMatchObject({ refunded: 0, paymentKept: 0 });
+    expect(await refundsOf(p)).toHaveLength(1);
+    expect(processor.refunds.size).toBe(1);
+  });
+
+  it('refunds only what is left after an earlier refund', async () => {
+    const p = ports(new FakePaymentProcessor());
+    await captured(p);
+    await refund(p, order, 'refund#1', 30);
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({ refunded: 70 });
+  });
+
+  const shipment = (status: string) => ({
+    id: 'shp_1',
+    orderId: 'o1',
+    carrier: 'ups',
+    tracking: '1Z',
+    status,
+    provider: null,
+    externalId: null,
+  });
+
+  // A carrier shipment stays `label_created` once the parcel is on its way, and the cancel itself
+  // cancels it: either way the goods may be with the customer.
+  it.each(['label_created', 'cancelled', 'collected', 'returned', 'void_failed'])(
+    'keeps the payment of an order that had a %s shipment, and says why',
+    async (status) => {
+      const p = ports(new FakePaymentProcessor());
+      await captured(p);
+      await p.shipping.book([shipment(status)]);
+      expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
+        refunded: 0,
+        paymentKept: 100,
+        paymentKeptBecause: 'fulfilled',
+        paymentCurrency: 'USD',
+      });
+      expect(await refundsOf(p)).toEqual([]);
+    },
+  );
+
+  it('keeps the payment of an order staged for pickup', async () => {
+    const p = ports(new FakePaymentProcessor());
+    await captured(p);
+    await p.fulfillment.stagePickup('o1', 'pickup#1');
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
+      refunded: 0,
+      paymentKept: 100,
+      paymentKeptBecause: 'fulfilled',
+    });
+  });
+
+  it('keeps the payment of an order whose digital codes went out', async () => {
+    const p = ports(new FakePaymentProcessor());
+    await captured(p);
+    await p.fulfillment.issueEntitlements('o1', 'deliver#1', [{ index: 0, sku: 'TEE', qty: 1 }]);
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
+      revoked: 1,
+      refunded: 0,
+      paymentKept: 100,
+      paymentKeptBecause: 'fulfilled',
+    });
+  });
+
+  it('never records a refund for money the card processor did not take', async () => {
+    // Mock mode, where payments are only recorded: a refund row would say money moved.
+    const p = ports();
+    await captured(p);
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
+      refunded: 0,
+      paymentKept: 100,
+      paymentKeptBecause: 'not_card',
+    });
+    expect(await refundsOf(p)).toEqual([]);
+  });
+
+  it('finishes the cancel and reports the money when the processor’s refund fails', async () => {
+    const processor = new FakePaymentProcessor();
+    const p = ports(processor);
+    await captured(p);
+    processor.refund = async () => {
+      throw new Error('charge is disputed');
+    };
+    expect(await compensateOrder(p, 'o1', 1)).toMatchObject({
+      refunded: 0,
+      paymentKept: 100,
+      paymentKeptBecause: 'refused',
+    });
+  });
+
   it('undoes nothing for an order that holds nothing', async () => {
     expect(await compensateOrder(ports(), 'o_none', 1)).toEqual({
       released: 0,
@@ -142,6 +261,10 @@ describe('cancelling an order', () => {
       invoicesVoided: 0,
       invoicesPaid: [],
       labelsNotVoided: 0,
+      refunded: 0,
+      paymentKept: 0,
+      paymentKeptBecause: null,
+      paymentCurrency: null,
     });
   });
 

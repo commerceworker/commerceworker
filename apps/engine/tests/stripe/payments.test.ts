@@ -1,9 +1,10 @@
 import { introspectWorkflow } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import type { Order, OrderInput, OrderState } from '@commerceworker/core';
-import { createDb, customers, payments, publishFlow } from '@commerceworker/db';
+import { createDb, customers, payments, publishFlow, shipments } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { compensateOrder } from '../../src/connectors';
 import { ensureTemplates } from '../../src/flows';
 import { startOrder } from '../../src/orders';
 import {
@@ -475,6 +476,46 @@ describe('orders through Stripe', () => {
     expect((await state(orderId)).status).toBe('cancelled');
     expect(stripe.intents.get(auth.externalId!)!.status).toBe('canceled');
     expect((await rows(orderId))[0]!.status).toBe('voided');
+  });
+
+  it('refunds a captured payment of an order nothing was fulfilled for, once, and none once shipped', async () => {
+    const o = order('ord_s_cancel_paid', { total: 40, subtotal: 40 });
+    await authorizePayment(env, o, 'authorize#1', 'card');
+    await capturePayment(env, o, 'capture#1');
+    const before = stripe.callsTo('POST', '/v1/refunds').length;
+
+    expect(await compensateOrder(env, o.id)).toMatchObject({
+      refunded: 40,
+      paymentKept: 0,
+      paymentCurrency: 'USD',
+    });
+    const [call] = stripe.callsTo('POST', '/v1/refunds').slice(before);
+    expect(call!.params).toMatchObject({ amount: '4000' });
+    const made = (await rows(o.id)).filter((r) => r.kind === 'refund');
+    expect(made).toMatchObject([{ amount: 40, status: 'succeeded', provider: 'stripe' }]);
+    // The refund is keyed by where it is recorded: a cancel that runs again asks for nothing.
+    expect(call!.idempotencyKey).toBe(made[0]!.id);
+    expect(await compensateOrder(env, o.id)).toMatchObject({ refunded: 0, paymentKept: 0 });
+    expect(stripe.callsTo('POST', '/v1/refunds')).toHaveLength(before + 1);
+
+    // An order with a shipment keeps its payment, cancelled label or not.
+    const shipped = order('ord_s_cancel_shipped', { total: 40, subtotal: 40 });
+    await authorizePayment(env, shipped, 'authorize#1', 'card');
+    await capturePayment(env, shipped, 'capture#1');
+    await db().insert(shipments).values({
+      id: 'shp_s_cancel',
+      orderId: shipped.id,
+      carrier: 'ups',
+      tracking: '1Z',
+      status: 'label_created',
+      createdAt: 1,
+    });
+    expect(await compensateOrder(env, shipped.id)).toMatchObject({
+      refunded: 0,
+      paymentKept: 40,
+      paymentKeptBecause: 'fulfilled',
+    });
+    expect(stripe.callsTo('POST', '/v1/refunds')).toHaveLength(before + 1);
   });
 
   it('cancels the intent when the order fails and rolls back', async () => {

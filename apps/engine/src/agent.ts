@@ -18,6 +18,7 @@ import {
   aiGateFeedback,
   approvalWait,
   atLeast,
+  BASE_CURRENCY,
   decisionProblem,
   describePlan,
   EMPTY_ORDER_STATE,
@@ -1417,6 +1418,23 @@ function undoneText(u: Awaited<ReturnType<typeof compensateOrder>>) {
   if (u.sellerOrdersCancelled) parts.push(plural(u.sellerOrdersCancelled, 'seller order'));
   if (u.payoutsReversed) parts.push(`reversed ${plural(u.payoutsReversed, 'payout')}`);
   if (u.revoked) parts.push(`revoked ${plural(u.revoked, 'code')}`);
+  const cash = (n: number) =>
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: u.paymentCurrency ?? BASE_CURRENCY,
+    }).format(n);
+  if (u.refunded) parts.push(`refunded ${cash(u.refunded)}`);
+  // Said plainly: this is money a person still has to deal with.
+  if (u.paymentKept)
+    parts.push(
+      `kept ${cash(u.paymentKept)} already paid (${
+        u.paymentKeptBecause === 'fulfilled'
+          ? 'the order was fulfilled: refund it through a return'
+          : u.paymentKeptBecause === 'not_card'
+            ? 'it was not taken by the card processor: settle it where it was paid'
+            : 'the refund did not go through: refund it at the card processor'
+      })`,
+    );
   const text = parts.join(', ');
   return u.labelsNotVoided
     ? `${text}; ${plural(u.labelsNotVoided, 'label')} could not be voided with the label provider`

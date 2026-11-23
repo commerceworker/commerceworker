@@ -24,6 +24,7 @@ CommerceWorker began as a renamed order engine codebase (P0, done). The phases b
 A review of Commerce Worker v1's commerce behavior against this codebase (2026-11-22), with everything that exists only to run v1 as a hosted, multi-tenant service left out. `docs/port-map.md` ("Commerce-primitive parity with v1") holds the list: what is done, what is open in order of merchant impact, what already matches or exceeds v1, and what is not taken and why.
 
 - **Tax classes** (done). A product names a tax class, the tax node rates a class everywhere or per place, and a mixed order is taxed line by line, the order keeping each SKU's rate. A return's default refund includes the tax charged on the returned lines.
+- **Cancelling a paid order** (done). A card payment captured for an order nothing was fulfilled for is refunded when the order is cancelled; otherwise the timeline says how much was kept and why.
 
 ## Unified admin
 
