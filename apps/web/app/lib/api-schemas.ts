@@ -68,8 +68,16 @@ export const subscriptionInput = z.object({
 /** An integration's name and scope (`IntegrationScope` in @commerceworker/core). */
 export const integrationInput = z.object({
   name: z.string().trim().min(1).max(100),
-  /** Events it may deliver; `"*"` is any. */
-  events: z.array(z.string().min(1).max(100)).max(50).default([]),
+  /** Events it may deliver, by the keys flows wait for (`payment.received`); `"*"` is any. */
+  events: z
+    .array(
+      z
+        .string()
+        .max(100)
+        .regex(/^(\*|[a-z0-9][a-z0-9_.:-]*)$/i, 'An event is letters, digits and . _ : -'),
+    )
+    .max(50)
+    .default([]),
   startOrders: z.boolean().default(false),
   /** Flows an order body may name; `"*"` is any. */
   flows: z.array(z.string().min(1).max(100)).max(50).default([]),

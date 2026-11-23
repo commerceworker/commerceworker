@@ -48,6 +48,7 @@ import {
   Monitor,
   Moon,
   Package,
+  PlugZap,
   Plus,
   Puzzle,
   ReceiptText,
@@ -244,6 +245,7 @@ const WORKSPACE: NavItem[] = [
   { to: '/team', label: 'Team and roles', icon: UsersRound },
   { to: '/audit', label: 'Audit log', icon: ScrollText },
   { to: '/plugins', label: 'Plugins', icon: Puzzle },
+  { to: '/integrations', label: 'Integrations', icon: PlugZap },
   { to: '/webhooks', label: 'Webhooks', icon: Webhook },
   { to: '/privacy', label: 'Privacy requests', icon: ShieldCheck },
 ];

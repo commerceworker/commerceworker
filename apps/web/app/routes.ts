@@ -69,6 +69,9 @@ export default [
       route('webhooks', 'routes/webhooks.tsx'),
       // Privacy requests: export or erase one person (admin, lib/privacy.server.ts).
       route('privacy', 'routes/privacy.tsx'),
+      // Signing keys for outside systems that send events or start orders (admin,
+      // lib/integrations.server.ts).
+      route('integrations', 'routes/integrations.tsx'),
       route('plugins', 'routes/plugins.tsx'),
       // A plugin's page drawn by the app, from the view it answered with (workers/app.ts).
       route('plugins/:pluginId/*', 'routes/plugin-page.tsx'),

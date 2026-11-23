@@ -260,9 +260,14 @@ where they are.
 
 ### Signed events
 
-Each external system gets its own integration: an admin creates it with
-[`POST /api/v1/integrations`](/reference/rest-api/#integrations), which returns its `id` and a
-signing secret (`whsec_…`) shown once. The integration limits what the system may do: the events it
+Each external system gets its own integration: an admin creates it on **Integrations** (under
+Workspace in the sidebar) or with [`POST /api/v1/integrations`](/reference/rest-api/#integrations),
+which returns its `id` and a signing secret (`whsec_…`) shown once. On **Integrations**,
+**New integration** asks for a name, the events it may send (the common ones to tick, others to
+type, or any), whether it may start orders and on which flows, and a channel to keep it to, then
+for your authenticator code or password; **Rotate secret** issues a new one (the old one keeps
+working for 24 hours) and **Revoke** ends it at once, after you confirm in the assistant. Each row
+says what the integration may do and when it last sent a signed request. The integration limits what the system may do: the events it
 may deliver (`events`, or `["*"]` for any), and optionally one `channel`, in which case it reaches
 only orders on that channel. A payment provider's key can deliver `payment.received` and nothing
 else.

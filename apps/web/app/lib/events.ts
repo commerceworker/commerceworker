@@ -48,3 +48,6 @@ export const eventWaiting = (key: string) => EVENTS[key]?.waiting ?? key;
 export const eventShort = (key: string) => EVENTS[key]?.short ?? key;
 /** The button that records it by hand: "Record payment". */
 export const eventAction = (key: string) => EVENTS[key]?.action ?? `Record ${key}`;
+
+/** The events the app has words for, for pickers (a custom flow's own keys are typed in). */
+export const KNOWN_EVENTS = Object.keys(EVENTS);
