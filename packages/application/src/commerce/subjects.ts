@@ -202,7 +202,23 @@ export async function eraseDataSubject(
   }
 
   const erased = await eraseOrders(ports, list, terms, now);
-  if (erased.refused.length) return { ok: false, reason: 'active_orders', orders: erased.refused };
+  if (erased.refused.length) {
+    // An order started running after the check: what this round already erased stays erased, and
+    // is said, so it is recorded.
+    const { ok: _ok, done: _done, teamMember: _member, ...counts } = result;
+    return {
+      ok: false,
+      reason: 'active_orders',
+      orders: erased.refused,
+      erased: {
+        ...counts,
+        orders: erased.orders,
+        documents: erased.documents,
+        messages: erased.messages,
+        inboundEmails: erased.inboundEmails,
+      },
+    };
+  }
   Object.assign(result, {
     orders: erased.orders,
     documents: erased.documents,

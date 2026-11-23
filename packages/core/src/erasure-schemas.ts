@@ -70,6 +70,12 @@ export const erasureRefusedSchema = z.object({
   ok: z.literal(false),
   reason: z.literal('active_orders'),
   orders: z.array(z.string()).describe('The orders in the way'),
+  erased: erasureDoneSchema
+    .omit({ ok: true, done: true, teamMember: true })
+    .optional()
+    .describe(
+      'What this call erased before it found an order running (their sign-ins, links, carts and some orders): it stays erased. Absent when it found one before erasing anything',
+    ),
 });
 
 /** The `409` the REST API answers an erasure refused with: the refusal, and why in words. */
