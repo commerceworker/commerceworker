@@ -77,6 +77,7 @@ export const PAGES = [
   '/audit',
   '/plugins',
   '/webhooks',
+  '/privacy',
 ];
 
 /**
