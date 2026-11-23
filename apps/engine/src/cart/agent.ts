@@ -57,11 +57,13 @@ import {
   guestCartOpen,
   isCartExpired,
   isFinalCart,
+  lockCart,
   newId,
   type PluginCart,
   type ProxiedPrincipal,
   quotedCart,
   storedCart,
+  unlockCart,
 } from '@commerceworker/core';
 import type { ObjectExport } from '@commerceworker/ports/commerce';
 import { Agent, type Connection, type ConnectionContext, callable, getCurrentAgent } from 'agents';
@@ -163,6 +165,19 @@ export class CartAgent extends Agent<Env, CartState> {
     const c = this.state.cart;
     if (!c) throw new Error('No such cart.');
     return storedCart(c);
+  }
+
+  /** Locks an open cart for a submit or return; true if this locked it (staff may have already). */
+  private hold(c: Cart): boolean {
+    if (c.status === 'locked') return false;
+    this.setState({ ...this.state, cart: lockCart(c) });
+    return true;
+  }
+
+  /** Opens a cart locked for a submit or return that didn't happen; one closed meanwhile stays closed. */
+  private release() {
+    const c = this.state.cart;
+    if (c?.status === 'locked') this.setState({ ...this.state, cart: unlockCart(c) });
   }
 
   /**
@@ -563,9 +578,9 @@ export class CartAgent extends Agent<Env, CartState> {
     const problem = cartReadyProblem(c);
     if (problem) return { ok: false, error: problem };
     const { pluginId, returnUrl } = c.external;
-    const held = c;
     this.submitting = true;
-    this.setState({ ...this.state, cart: { ...c, status: 'locked' } });
+    // A cart staff locked by hand stays locked if this fails.
+    const locked = this.hold(c);
     try {
       if (!(await mayUse(this.env, pluginId, 'carts:external')))
         throw new Error('The plugin that opened this cart can no longer return it.');
@@ -590,13 +605,17 @@ export class CartAgent extends Agent<Env, CartState> {
       );
       const checked = checkCartReturn(answer);
       if (!checked.ok) throw new Error(checked.error);
+      // Read again after the plugin answered: a cart closed meanwhile (its buyer's data erased)
+      // keeps nothing of the return and is never ended a second way.
+      const now = this.cart();
+      if (now.status !== 'locked') throw new Error('The cart has closed.');
       this.tables();
       this
         .sql`INSERT OR REPLACE INTO cart_return (id, url, fields) VALUES (1, ${returnUrl}, ${JSON.stringify(checked.fields)})`;
-      await this.save(finishCart(held, { status: 'returned' }, Date.now()), 'cart.returned');
+      await this.save(finishCart(now, { status: 'returned' }, Date.now()), 'cart.returned');
       return { ok: true, url: returnUrl, fields: checked.fields };
     } catch (err) {
-      this.setState({ ...this.state, cart: held });
+      if (locked) this.release();
       console.error(`returning cart ${c.id}`, err);
       return { ok: false, error: err instanceof Error ? err.message : 'The cart didn’t go back.' };
     } finally {
@@ -649,22 +668,33 @@ export class CartAgent extends Agent<Env, CartState> {
     const c = this.cart();
     const problem = cartSubmitProblem(c, actor, { submitting: this.submitting, confirmedVersion });
     if (problem) return { ok: false, error: problem };
-    const held = c;
     // Held before the first await, so no op or cancel lands between the check and the start.
     this.submitting = true;
-    this.setState({ ...this.state, cart: { ...c, status: 'locked' } });
+    const locked = this.hold(c);
     try {
       const flow = await loadFlowVersion(this.env, c.flowId);
       if (!flow) throw new Error('The cart’s flow is gone.');
       const started = await startOrderOnce(this.env, cartOrderStart(c, flow, actor));
       if ('mismatch' in started) throw new Error('This cart already started a different order.');
+      // Ended from the cart as it is now: one closed meanwhile isn't ended a second way.
+      const now = this.cart();
+      if (now.status !== 'locked') {
+        console.error(
+          JSON.stringify({
+            type: 'cart_closed_while_submitting',
+            cartId: c.id,
+            status: now.status,
+          }),
+        );
+        return { ok: false, error: `The cart was ${now.status} while its order started.` };
+      }
       await this.save(
-        finishCart(held, { status: 'submitted', orderId: started.orderId }, Date.now()),
+        finishCart(now, { status: 'submitted', orderId: started.orderId }, Date.now()),
         'cart.submitted',
       );
       return { ok: true, orderId: started.orderId };
     } catch (err) {
-      this.setState({ ...this.state, cart: held });
+      if (locked) this.release();
       console.error(`submitting cart ${c.id}`, err);
       return { ok: false, error: err instanceof Error ? err.message : 'The order didn’t start.' };
     } finally {

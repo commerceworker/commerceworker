@@ -5,6 +5,7 @@ import {
   attachmentProblem,
   CART_CHANGED_SINCE_CONFIRM,
   CART_EXTEND_STEP_MS,
+  CART_LIFECYCLE,
   type Cart,
   type CartActor,
   type CartOp,
@@ -27,11 +28,14 @@ import {
   externalCartCap,
   externalCartEnd,
   externalCartProblem,
+  FINAL_CART_STATUSES,
   type FlowVersion,
   finishCart,
   guestCartOpen,
   isCartExpired,
   isQuoteCurrent,
+  LifecycleError,
+  lockCart,
   MAX_CART_ATTACHMENTS,
   MAX_CHAT_BODY,
   MAX_CHECKOUT_LINES,
@@ -45,6 +49,7 @@ import {
   SHIP_TO_LIMITS,
   staffCartActor,
   storedCart,
+  unlockCart,
 } from '../src';
 
 const cart = (c: Partial<Cart> = {}): Cart => ({
@@ -505,7 +510,7 @@ describe('cart readiness', () => {
   });
 
   it('finishes a cart and never reopens it', () => {
-    const done = finishCart(cart(), { status: 'submitted', orderId: 'ord_1' }, 70);
+    const done = finishCart(lockCart(cart()), { status: 'submitted', orderId: 'ord_1' }, 70);
     expect(done).toMatchObject({
       status: 'submitted',
       orderId: 'ord_1',
@@ -513,10 +518,35 @@ describe('cart readiness', () => {
       updatedAt: 70,
     });
     expect(cartReadyProblem(done)).toMatch(/submitted/);
-    expect(finishCart(cart(), { status: 'returned' }, 70).orderId).toBeNull();
+    expect(finishCart(lockCart(cart()), { status: 'returned' }, 70).orderId).toBeNull();
     expect(
       isQuoteCurrent(finishCart(cart({ quote, quotedVersion: 1 }), { status: 'canceled' }, 70)),
     ).toBe(true);
+  });
+
+  it('moves a cart only along its lifecycle: locked to start or return, open again if that fails', () => {
+    const locked = lockCart(cart());
+    expect(locked.status).toBe('locked');
+    // Locking changes nothing it was priced on.
+    expect(locked.version).toBe(cart().version);
+    expect(unlockCart(locked).status).toBe('open');
+    // A locked cart can still be canceled (an erasure closes it at once)...
+    const canceled = finishCart(locked, { status: 'canceled' }, 70);
+    // ...and then whatever was starting can't end it a second way, or open it again.
+    expect(() => finishCart(canceled, { status: 'returned' }, 71)).toThrow(LifecycleError);
+    expect(() => finishCart(canceled, { status: 'submitted', orderId: 'ord_1' }, 71)).toThrow(
+      LifecycleError,
+    );
+    expect(() => unlockCart(canceled)).toThrow(LifecycleError);
+    expect(() => lockCart(canceled)).toThrow(LifecycleError);
+    // An open cart isn't submitted or returned without being held first.
+    expect(() => finishCart(cart(), { status: 'submitted', orderId: 'ord_1' }, 70)).toThrow(
+      LifecycleError,
+    );
+    expect(() => lockCart(locked)).toThrow(LifecycleError);
+    expect(CART_LIFECYCLE.states.filter((s) => CART_LIFECYCLE.terminal(s)).sort()).toEqual(
+      [...FINAL_CART_STATUSES].sort(),
+    );
   });
 
   it('expires only an open external cart past its time', () => {
@@ -789,7 +819,7 @@ describe('a cart in its events', () => {
   it('shows no quote that prices the cart as it was, and the order a submitted one became', () => {
     expect(cartSummary(cart({ quote, quotedVersion: 0 })).quote).toBeNull();
     const done = finishCart(
-      cart({ quote, quotedVersion: 1 }),
+      lockCart(cart({ quote, quotedVersion: 1 })),
       { status: 'submitted', orderId: 'ord_9' },
       5,
     );

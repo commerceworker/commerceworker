@@ -3,7 +3,12 @@
  * CartAgent in the engine; this page lists the D1 index those agents keep, and opens new ones.
  */
 
-import { ORDER_MODEL_LABELS, type OrderModel } from '@commerceworker/core';
+import {
+  type CartStatus,
+  ORDER_MODEL_LABELS,
+  type OrderModel,
+  CART_STATUS_LABELS as STATUS_LABELS,
+} from '@commerceworker/core';
 import { Ago } from '@commerceworker/ui/ago';
 import { Button } from '@commerceworker/ui/button';
 import { Card } from '@commerceworker/ui/card';
@@ -34,15 +39,6 @@ import { useCan } from '~/lib/use-me';
 import type { Route } from './+types/carts';
 
 export const meta = () => [{ title: 'Carts · CommerceWorker' }];
-
-const STATUS_LABELS = {
-  open: 'Open',
-  locked: 'Locked',
-  submitted: 'Submitted',
-  returned: 'Returned',
-  canceled: 'Cancelled',
-} as const;
-type CartStatus = keyof typeof STATUS_LABELS;
 
 /**
  * An open or locked cart waits on its buyer; a submitted one became an order. Returned (sent back

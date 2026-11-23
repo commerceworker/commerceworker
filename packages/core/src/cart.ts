@@ -23,6 +23,7 @@ import {
   MAX_LINE_QUANTITY,
   quoteNodes,
 } from './checkout';
+import { defineLifecycle } from './lifecycle';
 import { MAX_EXTERNAL_CART_MS } from './plugin-host';
 import { atLeast, type Principal, type Role } from './roles';
 import type { FlowVersion } from './types';
@@ -32,6 +33,39 @@ export type CartStatus = (typeof CART_STATUSES)[number];
 
 /** Statuses a cart never leaves: it became an order, went back to the buyer's system, or ended. */
 export const FINAL_CART_STATUSES: readonly CartStatus[] = ['submitted', 'returned', 'canceled'];
+
+/**
+ * A cart's status moves. An open cart is locked while its order starts or its return renders,
+ * and goes back to open if that fails; a locked cart may still be canceled (a data subject's
+ * erasure closes it at once), and then whatever was starting finds it closed.
+ */
+export const CART_LIFECYCLE = defineLifecycle<CartStatus>({
+  open: ['locked', 'canceled'],
+  locked: ['open', 'submitted', 'returned', 'canceled'],
+  submitted: [],
+  returned: [],
+  canceled: [],
+});
+
+export const CART_STATUS_LABELS: Record<CartStatus, string> = {
+  open: 'Open',
+  locked: 'Locked',
+  submitted: 'Submitted',
+  returned: 'Returned',
+  canceled: 'Cancelled',
+};
+
+/** Holds an open cart while its order starts or its return renders: no op lands meanwhile. */
+export function lockCart(cart: Cart): Cart {
+  CART_LIFECYCLE.assert(cart.status, 'locked');
+  return { ...cart, status: 'locked' };
+}
+
+/** Lets a locked cart go again, as it was, when its order or return didn't happen. */
+export function unlockCart(cart: Cart): Cart {
+  CART_LIFECYCLE.assert(cart.status, 'open');
+  return { ...cart, status: 'open' };
+}
 
 export const MAX_CART_TITLE = 120;
 export const MAX_PROMO_CODES = 5;
@@ -694,12 +728,17 @@ export type CartProduct = { sku: string; name: string; unitPrice: number | null 
 /** One page of a cart search, in the cart's currency; `more` when the words matched more. */
 export type CartProductPage = { products: CartProduct[]; currency: string; more: boolean };
 
-/** Ends the cart: `submitted` (staff, into an order) or `returned` (external, to the buyer's system). */
+/**
+ * Ends the cart: `submitted` (staff, into an order) or `returned` (external, to the buyer's
+ * system) from locked, or `canceled`. Throws `LifecycleError` for a move its lifecycle doesn't
+ * have, so a cart closed meanwhile is never ended a second way.
+ */
 export function finishCart(
   cart: Cart,
   how: { status: 'submitted'; orderId: string } | { status: 'returned' } | { status: 'canceled' },
   now: number,
 ): Cart {
+  CART_LIFECYCLE.assert(cart.status, how.status);
   return {
     ...cart,
     status: how.status,

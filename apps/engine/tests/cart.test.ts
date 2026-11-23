@@ -207,6 +207,49 @@ describe('pricing a cart', () => {
   });
 });
 
+describe('a cart staff locked by hand', () => {
+  it('stays locked when its submit fails, and is submitted from locked', async () => {
+    introspector = await introspectWorkflow(env.ORDER_WORKFLOW);
+    await introspector.modifyAll(async (m) => {
+      await m.disableSleeps();
+      await m.disableRetryDelays();
+    });
+    const id = await open();
+    const ada = staff(await who('operator', 'ada'));
+    await cart(id).applyAs(ada, { op: 'add', sku: 'WID-100', qty: 3 });
+    await cart(id).applyAs(ada, { op: 'lock' });
+    // Something else already started an order under the cart's key: the submit can't.
+    await api().startOrderOnce({
+      flowId: 'tpl-b2b-order',
+      input: {
+        model: 'b2b',
+        channel: 'api',
+        currency: 'USD',
+        title: 'Not the cart',
+        customerId: 'cus_northwind',
+        lines: [{ sku: 'WID-100', name: 'Widget', qty: 1, unitPrice: 10 }],
+        contact: { email: 'buyer@example.test', name: 'Buyer' },
+        meta: {},
+      },
+      startedBy: 'usr_cart_ada',
+      idempotencyKey: `cart:${id}`,
+    });
+    expect(await cart(id).submitAs(ada)).toEqual({
+      ok: false,
+      error: 'This cart already started a different order.',
+    });
+    // Locked as staff left it, not opened by the failed submit.
+    expect((await state(id)).cart!.status).toBe('locked');
+
+    const other = await open();
+    await cart(other).applyAs(ada, { op: 'add', sku: 'WID-100', qty: 3 });
+    await cart(other).applyAs(ada, { op: 'lock' });
+    const done = await cart(other).submitAs(ada);
+    if (!done.ok) throw new Error(done.error);
+    expect((await state(other)).cart).toMatchObject({ status: 'submitted', orderId: done.orderId });
+  });
+});
+
 describe('shipping a cart', () => {
   const berlin = { line1: '1 Hauptstr.', city: 'Berlin', postalCode: '10115', country: 'DE' };
   async function openShipping() {

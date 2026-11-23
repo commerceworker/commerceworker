@@ -35,6 +35,7 @@ import {
   holdProblem,
   type NodeRun,
   newId,
+  ORDER_LIFECYCLE,
   type Order,
   type OrderEvent,
   type OrderReport,
@@ -682,7 +683,9 @@ export class OrderAgent extends Agent<Env, State> {
   }
 
   async checkInstance(payload: { attempt: number }) {
-    if (!this.state.instanceId) return;
+    // Only a failed run settles its rollback (ORDER_LIFECYCLE: failed → rolled_back); a poll left
+    // over once it has settled changes nothing.
+    if (!this.state.instanceId || this.state.status !== 'failed' || this.state.rollback) return;
     // `rollback` is newer than the installed workers-types.
     const st = (await (
       await this.env.ORDER_WORKFLOW.get(this.state.instanceId)
@@ -1030,6 +1033,7 @@ export class OrderAgent extends Agent<Env, State> {
     try {
       const done = await this.cancelOrder(reason);
       if (!done.ok) {
+        if (done.ended) return { ok: false, error: done.error };
         // The run couldn't be stopped: nothing was undone, and a retry is queued (once).
         if (!this.getSchedules().some((s) => s.callback === 'retryCancel'))
           await this.schedule(CANCEL_RETRY_S, 'retryCancel', { reason, actor: caller, attempt: 1 });
@@ -1063,6 +1067,7 @@ export class OrderAgent extends Agent<Env, State> {
           });
         return;
       }
+      if (done.ended) return;
       if (p.attempt >= CANCEL_RETRIES_BEFORE_ALERT)
         console.error(
           JSON.stringify({
@@ -1088,7 +1093,9 @@ export class OrderAgent extends Agent<Env, State> {
    * finished (`terminate` throws for those, and the status confirms it); an instance that is
    * still running after a failed `terminate` may yet capture or ship, so it is not stopped.
    */
-  private async stopInstance(): Promise<{ ok: true } | { ok: false; error: string }> {
+  private async stopInstance(): Promise<
+    { ok: true; completed?: { outcome: unknown } } | { ok: false; error: string }
+  > {
     if (!this.state.instanceId) return { ok: true };
     try {
       const instance = await this.env.ORDER_WORKFLOW.get(this.state.instanceId);
@@ -1096,8 +1103,14 @@ export class OrderAgent extends Agent<Env, State> {
         await instance.terminate({ rollback: true });
         return { ok: true };
       } catch (err) {
-        const { status } = await instance.status();
-        if (['errored', 'terminated', 'complete'].includes(status)) return { ok: true };
+        const st = await instance.status();
+        // A run that reached its End node finished on its own: its outcome stands.
+        if (st.status === 'complete')
+          return {
+            ok: true,
+            completed: { outcome: (st.output as { outcome?: unknown } | undefined)?.outcome },
+          };
+        if (['errored', 'terminated'].includes(st.status)) return { ok: true };
         throw err;
       }
     } catch (err) {
@@ -1105,7 +1118,9 @@ export class OrderAgent extends Agent<Env, State> {
     }
   }
 
-  private async cancelOrder(reason: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  private async cancelOrder(
+    reason: string,
+  ): Promise<{ ok: true } | { ok: false; error: string; ended?: true }> {
     const stopped = await this.stopInstance();
     if (!stopped.ok) {
       // Compensating now would undo what the still-running Workflow goes on to redo (capture,
@@ -1126,6 +1141,7 @@ export class OrderAgent extends Agent<Env, State> {
       });
       return { ok: false, error: stopped.error };
     }
+    if (stopped.completed) return this.endedBeforeCancel(stopped.completed.outcome);
     const undone = this.state.orderId ? await compensateOrder(this.env, this.state.orderId) : null;
     if (this.state.orderId) {
       await this.records().cancelApprovals(this.state.orderId);
@@ -1154,6 +1170,33 @@ export class OrderAgent extends Agent<Env, State> {
       },
     });
     return { ok: true };
+  }
+
+  /**
+   * A cancel that reached a run already finished at its End node. Nothing is compensated: what it
+   * captured or shipped stands. The order takes the run's outcome if its report hasn't landed.
+   */
+  private async endedBeforeCancel(
+    outcome: unknown,
+  ): Promise<{ ok: false; error: string; ended: true }> {
+    const from = this.state.status;
+    const to = outcome as OrderStatus;
+    const adopt = typeof outcome === 'string' && from !== to && ORDER_LIFECYCLE.can(from, to);
+    const status = adopt ? to : from;
+    this.patch({
+      ...(adopt ? { status: to } : {}),
+      timeline: this.log({
+        kind: 'order',
+        message: `Not cancelled: the order had already ${status === 'completed' ? 'completed' : `ended ${status}`}`,
+        key: 'cancel:ended',
+      }),
+    });
+    if (adopt) {
+      this.forgetEvents();
+      await this.mirrorIndex();
+      await this.mirrorPurchaseOrder();
+    }
+    return { ok: false, error: `The order had already ended (${status}).`, ended: true };
   }
 
   // ── A2A watchers ──

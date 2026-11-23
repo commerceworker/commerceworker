@@ -322,7 +322,9 @@ signed webhook, the assistant, MCP or A2A). An event nothing was waiting for is 
 
 Cancel from the order page, the API (`POST /api/v1/orders/:id/cancel` with an optional `reason`),
 or the [assistant](/guides/assistant/) (after the person confirms). Cancelling an order that has already
-ended, or one that is already being cancelled, does nothing. Otherwise CommerceWorker:
+ended, or one that is already being cancelled, does nothing. So does a cancel that reaches a run
+which finished on its own a moment before: the order keeps the outcome its End node gave it, nothing
+is undone, and the timeline says it was not cancelled. Otherwise CommerceWorker:
 
 1. stops the run;
 2. undoes the order's work: releases its inventory reservations, voids its payment

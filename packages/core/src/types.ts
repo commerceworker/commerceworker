@@ -4,6 +4,7 @@
  */
 
 import type { ApprovalPlan } from './b2b/approvals';
+import { defineLifecycle } from './lifecycle';
 import type { FlowGraph, OrderInput, OrderInputDraft } from './order-schemas';
 
 // The schemas' inferred types, still importable from here; the schemas live in order-schemas.ts.
@@ -157,6 +158,10 @@ export const ORDER_STATUSES = [
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+/**
+ * Statuses an order's run has ended in: it takes no more events and no report moves it. A failed
+ * order still has one move, to `rolled_back`, once the rollbacks its steps registered all ran.
+ */
 export const TERMINAL_ORDER_STATUSES: OrderStatus[] = [
   'completed',
   'declined',
@@ -164,6 +169,23 @@ export const TERMINAL_ORDER_STATUSES: OrderStatus[] = [
   'failed',
   'rolled_back',
 ];
+
+/**
+ * An order's status moves. The Workflow reports `running` and `waiting` as its plan moves, and the
+ * End node's outcome; the agent starts it `queued`, cancels it, and settles a failed run's
+ * rollback. Any live status may end directly: a plan snapshot is non-durable, so the ending may be
+ * the first report the agent sees.
+ */
+export const ORDER_LIFECYCLE = defineLifecycle<OrderStatus>({
+  queued: ['running', 'waiting', 'completed', 'declined', 'cancelled', 'failed'],
+  running: ['waiting', 'completed', 'declined', 'cancelled', 'failed'],
+  waiting: ['running', 'completed', 'declined', 'cancelled', 'failed'],
+  completed: [],
+  declined: [],
+  cancelled: [],
+  failed: ['rolled_back'],
+  rolled_back: [],
+});
 
 /** What a node needs from the outside world while the Workflow waits on it. */
 export type PendingWait = {
