@@ -16,7 +16,9 @@ test('an admin adds an integration with what it may do, and sees its secret once
   await sheet.getByLabel('payment.received').click();
   await sheet.getByLabel('Others your flows wait for').fill('carrier.exception');
   await sheet.getByLabel('It may start orders').click();
-  await expect(sheet.getByLabel('On any flow, or the one routing picks')).toBeChecked();
+  await expect(sheet.getByLabel('On which flows')).toHaveValue('any');
+  // "Only these flows" with none ticked would mean nothing; the routing choice is its own.
+  await sheet.getByLabel('On which flows').selectOption('routing');
   await sheet.getByLabel('Only orders on').selectOption('edi');
   if (isTouch(info)) {
     const size = await sheet
@@ -30,7 +32,7 @@ test('an admin adds an integration with what it may do, and sees its secret once
   await expect(page.getByRole('note').locator('code')).toHaveText(/^whsec_[0-9a-f]{48}$/);
   const row = page.getByRole('listitem').filter({ hasText: name });
   await expect(row).toContainText(
-    'Sends Payment, carrier.exception · starts orders · EDI orders only',
+    'Sends Payment, carrier.exception · starts orders on the flow routing picks · EDI orders only',
   );
   await expect(row).toContainText('Not used yet');
   await page.reload();

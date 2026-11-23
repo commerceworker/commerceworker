@@ -171,6 +171,19 @@ import { webhookReceipts } from './wire.server';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
+/** What an integration was granted, for its audit event: never its secret. */
+const scopeOf = (i: {
+  events: string[];
+  startOrders: boolean;
+  flows: string[];
+  channel?: string | null;
+}) => ({
+  events: i.events,
+  startOrders: i.startOrders,
+  flows: i.flows,
+  channel: i.channel ?? null,
+});
+
 /** Purchase orders of one X12 interchange started at the same time. */
 const EDI_CONCURRENCY = 4;
 
@@ -714,7 +727,7 @@ async function handleIntegrations(
     await audit(request, 'integration.created', {
       actor: caller,
       target: created.integration.name,
-      detail: { id: created.integration.id },
+      detail: { id: created.integration.id, ...scopeOf(parsed.data), via: 'api' },
     });
     return json(created, 201);
   }
@@ -913,7 +926,15 @@ export async function handleSignedOrder(request: Request): Promise<Response> {
   }
   const parsed = inboundOrderSchema.safeParse(body);
   if (!parsed.success) return json({ error: 'Invalid order', issues: parsed.error.issues }, 400);
-  const scope = allowsOrder(signed.integration, parsed.data);
+  // The flow it would run on, named or routed, is what the key's scope is held to.
+  const routed = parsed.data.flowId
+    ? undefined
+    : flowForOrder(
+        parsed.data.model,
+        parsed.data.channel,
+        parseOrderRoutes((env as { ORDER_ROUTES?: string }).ORDER_ROUTES),
+      );
+  const scope = allowsOrder(signed.integration, { ...parsed.data, routed });
   if (!scope.ok) return json({ error: scope.reason }, 403);
   const r = await startInbound(parsed.data, {
     request,

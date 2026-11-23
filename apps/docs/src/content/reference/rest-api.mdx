@@ -502,9 +502,10 @@ a leaked key is revoked on its own and a payment provider can't start orders. Al
 need the `admin` role.
 
 - `POST /api/v1/integrations` takes `name` (1 to 100 characters) and the scope:
-  `events` (event names it may deliver to `/api/v1/webhooks/events`, or `["*"]`; default none),
-  `startOrders` (may post to `/api/v1/webhooks/orders`; default `false`), `flows` (flow ids an
-  order body may name in `flowId`, or `["*"]`; default none) and `channel` (only orders on this
+  `events` (event names it may deliver to `/api/v1/webhooks/events`: letters, digits and
+  `. _ : -`, or `["*"]`; default none), `startOrders` (may post to `/api/v1/webhooks/orders`;
+  default `false`), `flows` (the flows its orders may run on, named in `flowId` or picked by
+  routing: flow ids, or `["*"]` for any; default none, which is only the flow routing picks) and `channel` (only orders on this
   channel, both those it starts and those it sends events to; default `null`, any). It returns
   `201 { integration, secret }`. The `secret` (`whsec_…`) is shown once; `integration.id` goes in
   the signature as `k=`.

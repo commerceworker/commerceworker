@@ -785,8 +785,22 @@ describe('integrations over REST', () => {
     expect(audit).toHaveBeenCalledWith(expect.any(Request), 'integration.created', {
       actor: admin,
       target: 'Stripe',
-      detail: { id: 'int_new' },
+      // What it was granted is on the record; its secret never is.
+      detail: {
+        id: 'int_new',
+        events: ['payment.received'],
+        startOrders: false,
+        flows: [],
+        channel: null,
+        via: 'api',
+      },
     });
+    expect(JSON.stringify(audit.mock.calls)).not.toContain('whsec_');
+  });
+
+  it('refuses an event key that is not one a flow could wait for', async () => {
+    const res = await post('integrations', { name: 'X', events: ['pay ment<script>'] }, admin);
+    expect(res.status).toBe(400);
   });
 
   it('rotates and revokes, 404 for an unknown key, and needs an admin', async () => {

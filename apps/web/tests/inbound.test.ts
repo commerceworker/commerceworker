@@ -34,6 +34,7 @@ const keys: Record<string, ReturnType<typeof key>> = {
   int_shop: key('int_shop', {}),
   int_pos: key('int_pos', { channel: 'pos', flows: [] }),
   int_payments: key('int_payments', { events: ['payment.received'], startOrders: false }),
+  int_b2b: key('int_b2b', { flows: ['tpl-b2b-order'] }),
 };
 vi.mock('~/lib/integrations.server', () => ({
   findIntegration: async (id: string) => keys[id] ?? null,
@@ -126,6 +127,25 @@ describe('POST /api/v1/webhooks/orders', () => {
     });
     expect((await post(order, 'whsec_test', 'int_gone')).status).toBe(401);
     expect(startOrderOnce).not.toHaveBeenCalled();
+  });
+
+  it('keeps a key limited to some flows off the flow routing picks for another', async () => {
+    // Naming no flow, a b2c web order routes to the storefront flow: not this key's.
+    const routed = await post(order, 'whsec_test', 'int_b2b');
+    expect(routed.status).toBe(403);
+    expect(((await routed.json()) as { error: string }).error).toContain(
+      'routing picks tpl-storefront-order',
+    );
+    expect(startOrderOnce).not.toHaveBeenCalled();
+    // Routed onto its own flow, it goes ahead.
+    startOrderOnce.mockResolvedValueOnce({ orderId: 'ord_b2b' });
+    const own = await post(
+      { ...order, model: 'b2b', externalId: 'b2b-1' },
+      'whsec_test',
+      'int_b2b',
+    );
+    expect(own.status).toBe(201);
+    expect(await own.json()).toMatchObject({ flowId: 'tpl-b2b-order' });
   });
 
   it('refuses a bad signature, a bad body and an unknown currency', async () => {

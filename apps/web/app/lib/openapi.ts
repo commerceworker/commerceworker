@@ -1380,7 +1380,7 @@ export function openApiDocument(serverUrl: string) {
         post: {
           summary: 'Create an integration (admin)',
           description:
-            'The scope says what its signed webhooks may do: `events` it may deliver, whether it may `startOrders`, the `flows` an order may name and the one `channel` it may reach. The response carries the signing secret. It is shown only once.',
+            'The scope says what its signed webhooks may do: `events` it may deliver, whether it may `startOrders`, the `flows` its orders may run on (named or routed; none is only the flow routing picks) and the one `channel` it may reach. The response carries the signing secret. It is shown only once.',
           requestBody: body(integrationInput),
           responses: {
             '201': ok('The integration and its secret', ref('IntegrationSecret')),

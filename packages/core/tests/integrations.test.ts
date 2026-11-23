@@ -37,8 +37,12 @@ describe('integration scopes', () => {
   it('keeps a channel-bound key to its own channel', () => {
     expect(allowsEvent(storefront, 'payment.received', 'web')).toEqual({ ok: true });
     expect(allowsEvent(storefront, 'payment.received', 'pos')).toMatchObject({ ok: false });
-    expect(allowsOrder(storefront, { channel: 'web' })).toEqual({ ok: true });
-    expect(allowsOrder(storefront, { channel: 'pos' })).toMatchObject({ ok: false });
+    expect(allowsOrder(storefront, { channel: 'web', routed: 'tpl-storefront-order' })).toEqual({
+      ok: true,
+    });
+    expect(
+      allowsOrder(storefront, { channel: 'pos', routed: 'tpl-storefront-order' }),
+    ).toMatchObject({ ok: false });
   });
 
   it('lets an order name only the flows the key allows', () => {
@@ -51,6 +55,26 @@ describe('integration scopes', () => {
     expect(
       allowsOrder({ ...storefront, flows: ['*'] }, { channel: 'web', flowId: 'tpl-b2b-order' }),
     ).toEqual({ ok: true });
+  });
+});
+
+describe('the flows a key may start orders on', () => {
+  const only = (flows: string[]): IntegrationScope => ({ ...storefront, flows });
+
+  it('keeps a list of flows to those flows, named or routed', () => {
+    expect(allowsOrder(only(['flw_a']), { channel: 'web', routed: 'flw_a' })).toEqual({ ok: true });
+    // Naming no flow doesn't let routing take the order somewhere the key wasn't given.
+    expect(allowsOrder(only(['flw_a']), { channel: 'web', routed: 'flw_b' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('routing picks flw_b'),
+    });
+    expect(allowsOrder(only(['flw_a']), { channel: 'web' })).toMatchObject({ ok: false });
+  });
+
+  it('lets any flow through with "*", and only routing with none', () => {
+    expect(allowsOrder(only(['*']), { channel: 'web', routed: 'flw_b' })).toEqual({ ok: true });
+    expect(allowsOrder(only([]), { channel: 'web', routed: 'flw_b' })).toEqual({ ok: true });
+    expect(allowsOrder(only([]), { channel: 'web', flowId: 'flw_b' })).toMatchObject({ ok: false });
   });
 });
 

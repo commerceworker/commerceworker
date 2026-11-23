@@ -62,12 +62,24 @@ export async function loader({ request }: Route.LoaderArgs) {
 /** A secret shown once, with who it's for. */
 type Secret = { label: string; value: string; name: string };
 
+/**
+ * The flows its orders may run on, from the form's choice: any (`"*"`), only the one routing picks
+ * (none), or only those ticked, named or routed.
+ */
+function flowsOf(f: FormData): string[] {
+  const mode = String(f.get('flowMode') ?? 'any');
+  if (mode === 'routing') return [];
+  if (mode === 'these') return f.getAll('flows').map(String);
+  return ['*'];
+}
+
 /** Typed-in event keys: commas or spaces between them. */
 const typed = (v: FormDataEntryValue | null) =>
   String(v ?? '')
     .split(/[\s,]+/)
     .map((e) => e.trim())
-    .filter(Boolean);
+    // Only "Any event" grants any: a typed "*" is not taken as one.
+    .filter((e) => e && e !== '*');
 
 /**
  * Creating an integration lets an outside system act on orders, and rotating changes what it
@@ -91,11 +103,7 @@ export async function action({ request }: Route.ActionArgs) {
               ? ['*']
               : [...new Set([...f.getAll('events').map(String), ...typed(f.get('otherEvents'))])],
           startOrders,
-          flows: !startOrders
-            ? []
-            : f.get('anyFlow') === 'on'
-              ? ['*']
-              : f.getAll('flows').map(String),
+          flows: !startOrders ? [] : flowsOf(f),
           channel: (String(f.get('channel') ?? '') || null) as OrderChannel | null,
         })
       : null;
@@ -107,14 +115,20 @@ export async function action({ request }: Route.ActionArgs) {
           field === 'name'
             ? 'Give it a name, up to 100 characters.'
             : field === 'events'
-              ? 'An event is up to 100 characters, and it can have up to 50.'
+              ? 'An event is letters, digits and . _ : - (up to 100 characters), and it can have up to 50.'
               : 'Check what it may do.',
       },
       400,
     );
   }
+  if (parsed?.success && startOrders && f.get('flowMode') === 'these' && !parsed.data.flows.length)
+    return data({ error: 'Tick the flows its orders may run on.' }, 400);
   if (parsed?.success && !parsed.data.events.length && !parsed.data.startOrders)
     return data({ error: 'Choose the events it may send, or let it start orders.' }, 400);
+  // A rotation of one that's gone or revoked is refused before it spends a code.
+  const id = String(f.get('id') ?? '');
+  if (intent === 'rotate' && !(await listIntegrations()).some((i) => i.id === id && !i.revokedAt))
+    return data({ error: `No live integration ${id}.` }, 404);
   if (me.kind === 'user') {
     const failed = await stepUp(request, me, {
       code: String(f.get('code') ?? ''),
@@ -134,7 +148,14 @@ export async function action({ request }: Route.ActionArgs) {
     await audit(request, 'integration.created', {
       actor: me,
       target: created.integration.name,
-      detail: { id: created.integration.id, via: 'app' },
+      detail: {
+        id: created.integration.id,
+        events: parsed.data.events,
+        startOrders: parsed.data.startOrders,
+        flows: parsed.data.flows,
+        channel: parsed.data.channel ?? null,
+        via: 'app',
+      },
     });
     return data(
       {
@@ -147,7 +168,6 @@ export async function action({ request }: Route.ActionArgs) {
       { headers: SECRET_HEADERS },
     );
   }
-  const id = String(f.get('id') ?? '');
   const rotated = await rotateIntegration(id);
   if (!rotated) return data({ error: `No live integration ${id}.` }, 404);
   await audit(request, 'integration.rotated', {
@@ -266,7 +286,7 @@ function NewIntegration({
 }) {
   const [anyEvent, setAnyEvent] = useState(false);
   const [orders, setOrders] = useState(false);
-  const [anyFlow, setAnyFlow] = useState(true);
+  const [flowMode, setFlowMode] = useState<FlowMode>('any');
   return (
     <Form method="post" className="flex flex-col gap-5">
       <input type="hidden" name="intent" value="create" />
@@ -312,10 +332,24 @@ function NewIntegration({
         </Check>
         {orders ? (
           <>
-            <Check id="integration-any-flow" name="anyFlow" checked={anyFlow} onChange={setAnyFlow}>
-              On any flow, or the one routing picks
-            </Check>
-            {anyFlow ? null : (
+            <Field>
+              <FieldLabel htmlFor="integration-flow-mode" className="font-normal">
+                On which flows
+              </FieldLabel>
+              <NativeSelect
+                id="integration-flow-mode"
+                name="flowMode"
+                value={flowMode}
+                onChange={(e) => setFlowMode(e.currentTarget.value as FlowMode)}
+              >
+                <NativeSelectOption value="any">
+                  Any flow it names, or routing picks
+                </NativeSelectOption>
+                <NativeSelectOption value="routing">Only the flow routing picks</NativeSelectOption>
+                <NativeSelectOption value="these">Only these flows</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            {flowMode === 'these' ? (
               <div className="grid gap-x-4 sm:grid-cols-2">
                 {flows.map((fl) => (
                   <Check key={fl.id} id={`integration-flow-${fl.id}`} name="flows" value={fl.id}>
@@ -323,7 +357,7 @@ function NewIntegration({
                   </Check>
                 ))}
               </div>
-            )}
+            ) : null}
           </>
         ) : null}
       </FieldSet>
@@ -353,6 +387,8 @@ function NewIntegration({
     </Form>
   );
 }
+
+type FlowMode = 'any' | 'routing' | 'these';
 
 /** A checkbox and its label, 44px tall on touch. */
 function Check({
@@ -393,13 +429,13 @@ function scope(i: Data['integrations'][number], flowName: Map<string, string>) {
     : i.events.length
       ? i.events.map(eventShort).join(', ')
       : null;
-  const orders = i.startOrders
-    ? `starts orders${
-        i.flows.includes('*') || !i.flows.length
-          ? ''
-          : ` on ${i.flows.map((f) => flowName.get(f) ?? f).join(', ')}`
-      }`
-    : null;
+  const orders = !i.startOrders
+    ? null
+    : i.flows.includes('*')
+      ? 'starts orders on any flow'
+      : i.flows.length
+        ? `starts orders on ${i.flows.map((f) => flowName.get(f) ?? f).join(', ')} only`
+        : 'starts orders on the flow routing picks';
   const channel = i.channel
     ? `${ORDER_CHANNEL_LABELS[i.channel as OrderChannel]} orders only`
     : null;

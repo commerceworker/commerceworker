@@ -46,6 +46,7 @@ const store = {
   listIntegrations: vi.fn(async () => [
     view({ id: 'int_old', revokedAt: 5, createdAt: 9 }),
     view({ id: 'int_live', createdAt: 2 }),
+    view({ id: 'int_1', createdAt: 1 }),
   ]),
   createIntegration: vi.fn(async (input: Record<string, unknown>) => ({
     integration: view({ ...input, id: 'int_new' }),
@@ -97,7 +98,7 @@ describe('the Integrations screen', () => {
       params: {},
       context: {},
     } as never);
-    expect(d.integrations.map((i) => i.id)).toEqual(['int_live', 'int_old']);
+    expect(d.integrations.map((i) => i.id)).toEqual(['int_live', 'int_1', 'int_old']);
   });
 
   it('adds one with the scope chosen, after a step-up, returning its secret once', async () => {
@@ -107,6 +108,7 @@ describe('the Integrations screen', () => {
       events: ['payment.received'],
       otherEvents: 'carrier.exception, payment.received  invoice.disputed',
       startOrders: 'on',
+      flowMode: 'these',
       flows: ['flw_b2b'],
       channel: 'edi',
       code: '123456',
@@ -127,13 +129,20 @@ describe('the Integrations screen', () => {
     expect(audit).toHaveBeenCalledWith(expect.any(Request), 'integration.created', {
       actor: me,
       target: 'Partner ERP',
-      detail: { id: 'int_new', via: 'app' },
+      detail: {
+        id: 'int_new',
+        events: ['payment.received', 'carrier.exception', 'invoice.disputed'],
+        startOrders: true,
+        flows: ['flw_b2b'],
+        channel: 'edi',
+        via: 'app',
+      },
     });
     expect(JSON.stringify(audit.mock.calls)).not.toContain('whsec_');
   });
 
   it('names no flows for one that starts no orders, whatever was ticked', async () => {
-    await call({ intent: 'create', name: 'Pay', anyEvent: 'on', anyFlow: 'on' });
+    await call({ intent: 'create', name: 'Pay', anyEvent: 'on', flowMode: 'any' });
     expect(store.createIntegration).toHaveBeenCalledWith(
       { name: 'Pay', events: ['*'], startOrders: false, flows: [], channel: null },
       'ann@example.com',
@@ -148,6 +157,34 @@ describe('the Integrations screen', () => {
     expect(body(nameless).error).toContain('Give it a name');
     expect(stepUp).not.toHaveBeenCalled();
     expect(store.createIntegration).not.toHaveBeenCalled();
+  });
+
+  it('gives each flow choice its own scope, and wants a flow ticked for "only these"', async () => {
+    const make = (fields: Record<string, string | string[]>) =>
+      call({ intent: 'create', name: 'Shop', startOrders: 'on', ...fields });
+    await make({ flowMode: 'any' });
+    await make({ flowMode: 'routing', flows: ['flw_b2b'] });
+    expect(store.createIntegration.mock.calls.map((c) => c[0].flows)).toEqual([['*'], []]);
+    const none = await make({ flowMode: 'these' });
+    expect(body(none).error).toBe('Tick the flows its orders may run on.');
+    expect(stepUp).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes no "*" typed as an event: only "Any event" grants any', async () => {
+    const r = await call({ intent: 'create', name: 'X', otherEvents: '*' });
+    expect(body(r).error).toBe('Choose the events it may send, or let it start orders.');
+    await call({ intent: 'create', name: 'X', otherEvents: '* payment.received' });
+    expect(store.createIntegration).toHaveBeenLastCalledWith(
+      expect.objectContaining({ events: ['payment.received'] }),
+      'ann@example.com',
+    );
+    const odd = await call({ intent: 'create', name: 'X', otherEvents: 'pay<ment>' });
+    expect(String(body(odd).error)).toContain('letters, digits');
+  });
+
+  it('refuses a channel it doesn’t know', async () => {
+    const r = await call({ intent: 'create', name: 'X', anyEvent: 'on', channel: 'fax' });
+    expect(init(r)?.status).toBe(400);
   });
 
   it('refuses a failed step-up, audits it and changes nothing', async () => {
@@ -174,6 +211,10 @@ describe('the Integrations screen', () => {
       target: 'Payments',
       detail: { id: 'int_1', via: 'app' },
     });
+    // An unknown or revoked one is refused before a code is spent on it.
+    stepUp.mockClear();
     expect(init(await call({ intent: 'rotate', id: 'int_gone', code: '1' }))?.status).toBe(404);
+    expect(init(await call({ intent: 'rotate', id: 'int_old', code: '1' }))?.status).toBe(404);
+    expect(stepUp).not.toHaveBeenCalled();
   });
 });

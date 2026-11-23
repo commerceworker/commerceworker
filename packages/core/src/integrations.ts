@@ -35,16 +35,26 @@ export function allowsEvent(
   return OK;
 }
 
-/** Whether the integration may start an order on `channel`, naming `flowId` if it does. */
+/**
+ * Whether the integration may start an order on `channel`. `flowId` is the flow the body names;
+ * `routed` is the flow routing would pick when it names none. The key's `flows` say which flows
+ * its orders may run on: `"*"` any, named or routed; a list only those, named or routed; none at
+ * all only the flow routing picks (a named one is refused).
+ */
 export function allowsOrder(
   scope: IntegrationScope,
-  order: { channel: string; flowId?: string },
+  order: { channel: string; flowId?: string; routed?: string },
 ): ScopeCheck {
   if (!scope.startOrders) return { ok: false, reason: 'This integration may not start orders' };
   if (scope.channel && order.channel !== scope.channel)
     return { ok: false, reason: `This integration may only start ${scope.channel} orders` };
   if (order.flowId && !allows(scope.flows, order.flowId))
     return { ok: false, reason: `This integration may not choose flow ${order.flowId}` };
+  if (!order.flowId && scope.flows.length && !allows(scope.flows, order.routed ?? ''))
+    return {
+      ok: false,
+      reason: `This integration may only start orders on its own flows; name one with flowId (routing picks ${order.routed ?? 'none'})`,
+    };
   return OK;
 }
 

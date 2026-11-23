@@ -88,9 +88,11 @@ const res = await fetch('https://app.commerceworker.com/api/v1/webhooks/orders',
 
 An admin creates one integration per sending system and scopes it
 ([Integrations](/reference/rest-api/#integrations)). To start orders it needs `startOrders: true`.
-If it is bound to a `channel`, every order it posts must be on that channel. If the body names a
-`flowId`, that flow must be in the integration's `flows` (or `flows` is `["*"]`); a body without
-`flowId` is routed as below whatever `flows` says. Anything outside the scope is a `403`.
+If it is bound to a `channel`, every order it posts must be on that channel. Its `flows` say which
+flows its orders may run on, whether the body names one in `flowId` or routing (below) picks it:
+`["*"]` is any flow; a list is only those flows, so an order that names none is refused if routing
+would put it on another; none at all is only the flow routing picks, and a body that names a
+`flowId` is refused. Anything outside the scope is a `403`.
 
 ## Routing
 
