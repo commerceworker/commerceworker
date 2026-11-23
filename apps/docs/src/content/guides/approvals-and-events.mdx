@@ -154,7 +154,7 @@ have no live run when the inbox reads it, its row says "No live run for this ord
 decided here" in place of the buttons and links to the order, and the keyboard skips it.
 
 A recorded order is never counted as live work anywhere: the overview's open orders and **Where
-orders are waiting**, the orders list's open statuses and **Needs attention**, and Commerce's
+orders are waiting**, the orders list's open statuses and **Needs attention**, and
 **Outside events** leave it out. Where it is listed on its own (all orders, recently updated), an
 order recorded as open reads **Recorded**, in grey, rather than waiting or overdue.
 
@@ -231,17 +231,17 @@ flow listens for the event, or the order has ended, nothing happens and the call
   [assistant](/guides/assistant/#edits-from-a-page)'s confirm card, and nothing is delivered until
   you confirm there. The delivery's `source` is `assistant` and `by` names you. The event name and
   the API endpoint are under **For developers**.
-- **Commerce page**: lists the events the 20 most recently updated orders waiting on an outside event
+- **Outside events**: lists the events the 20 most recently updated orders waiting on an outside event
   wait for (it says how many wait in all when there are more), with each order's customer and total, and the same button as the order page, which asks on the same
   confirm card. If the order stopped waiting before you confirm, the card says so and offers no
   confirm. Seller responses on a marketplace order are recorded per seller on the order page.
 
-The Commerce page's **Records** section shows what orders have done outside the flow, newest first:
+**Records** shows what orders have done outside the flow, newest first:
 money (payments, invoices and seller payouts), shipments, stock holds, seller orders, messages sent
 and documents. Each row names its order and, for connector writes, the step that wrote it
-(`capture#1`): a retried step finds that same record rather than writing another. The search box at
-the top of the page finds an order, customer, SKU or seller across every section. Long lists
-(inventory, each store's stock, each pricing source, customers and sellers) show a page at a time,
+(`capture#1`): a retried step finds that same record rather than writing another. Its search box
+finds an order, customer, SKU or seller; every screen has its own search box, for what it lists.
+Long lists (inventory, each store's stock, each pricing source, customers, sellers) show a page at a time,
 with **Previous** and **Next** under them; each keeps its own page, so paging one leaves the others
 where they are.
 - **REST API**, with an API token of the `operator` role:

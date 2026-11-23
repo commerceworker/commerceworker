@@ -1,5 +1,5 @@
 /**
- * Exchange rates through the assistant, REST's and the Commerce page's twin: reading them, and
+ * Exchange rates through the assistant, REST's and the Pricing screen's twin: reading them, and
  * setting one. A rate changes what buyers pay in its currency, so setting one stops for a confirm
  * whose card shows the rate now, the new one and the change, flags a large change, and says what
  * stays as it was: orders already priced keep their `fxRate`. The use-cases are

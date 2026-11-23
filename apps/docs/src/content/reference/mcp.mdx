@@ -337,8 +337,8 @@ converting do. Amounts are in the base currency.
 ## Exchange rates
 
 `list_fx_rates` (operator and above, `readOnlyHint: true`) and `set_fx_rate` (admin) are REST's
-`GET /api/v1/fx-rates` and `POST /api/v1/fx-rates/:currency`, and the Commerce page's **Exchange rates**
-table runs the same code, so they refuse what REST refuses and write the same audit entry
+`GET /api/v1/fx-rates` and `POST /api/v1/fx-rates/:currency`, and the **Exchange rates**
+table on **Pricing** runs the same code, so they refuse what REST refuses and write the same audit entry
 (`fx.rate_set`, with the old and new rate and the change). `list_fx_rates` shows each currency's rate
 (units per one USD), when it was set and whether the daily ECB refresh or a person set it; a currency the
 workspace is set up to sell in but has no rate for yet shows with none. `set_fx_rate` takes

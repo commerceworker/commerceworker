@@ -1,5 +1,5 @@
 /**
- * The Commerce page's back office: the catalog, customers, sellers, stores' stock and pricing
+ * The admin's back office screens: the catalog, customers, sellers, stores' stock and pricing
  * sources, each list searched and paged, so the page stays the same size however large they grow;
  * everything at once for the new-order and cart pickers; and the currencies an order can be in.
  * Read only. `d1BackOffice` (packages/db) and `InMemoryBackOffice` (packages/test-kit) implement

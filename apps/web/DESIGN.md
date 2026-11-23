@@ -203,7 +203,7 @@ Tailwind's default breakpoints, read as devices:
 | Width | Typically | What changes |
 |---|---|---|
 | below `sm` (640px) | iPhone upright | The header shows the mark and Assistant as icons |
-| below `md` (768px) | phones, either way up | Bottom tab bar, no sidebar; tables stack into cards (see Tables); the Commerce jump links stick under the header |
+| below `md` (768px) | phones, either way up | Bottom tab bar, no sidebar; tables stack into cards (see Tables) |
 | `md` to `lg` (768–1023px) | iPad upright | The sidebar is an icon rail beside the page and opens over it |
 | `lg` and up (1024px) | iPad on its side, desktop | The full sidebar (the reader can collapse it); the full flow editor; the order page's graph beside its panels; the assistant as a column |
 | `xl` and up (1280px) | desktop | The full sidebar and the assistant's column side by side; below this, opening the assistant rails the sidebar |

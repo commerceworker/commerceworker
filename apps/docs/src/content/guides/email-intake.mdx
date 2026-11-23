@@ -5,8 +5,8 @@ description: Start orders from email — mailboxes, who may send, what becomes t
 
 Customers can start an order by emailing an order, an order form or a purchase order to one of the
 workspace's intake addresses. CommerceWorker checks the message, turns it into order input and starts
-the mailbox's flow. Your CommerceWorker administrator sets up the intake domain; the **Email intake**
-section of the Commerce page lists the addresses.
+the mailbox's flow. Your CommerceWorker administrator sets up the intake domain; **Email intake**
+lists the addresses.
 
 ## Mailboxes
 
@@ -88,5 +88,5 @@ passed DMARC, so a failed reply never fails the intake.
 ## The intake log
 
 Every message is recorded as `accepted`, `duplicate` or `rejected`, along with the reason, the
-order and the number of attachments read. The Commerce page shows the latest twenty under
-**Email intake**, next to the workspace's mailbox addresses. Messages are kept for 180 days.
+order and the number of attachments read. **Email intake** shows the latest twenty, under
+**Addresses**, next to the workspace's mailbox addresses. Messages are kept for 180 days.

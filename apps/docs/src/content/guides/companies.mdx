@@ -8,13 +8,13 @@ company, and it has members and teams. Consumers and internal accounts have no c
 else about a business customer (its balance, credit limit, terms, contract prices, tax
 certificates) stays on the customer.
 
-Operators work with companies on a customer's page (linked from **Customers** on **Commerce**), over
+Operators work with companies on a customer's page (linked from **Customers**), over
 the [REST API](/reference/rest-api/) and through the [assistant](/guides/assistant/) and
 [MCP](/reference/mcp/#companies). Every change asks first on a confirm card.
 
 ## Adding and changing a customer
 
-**New customer** on **Commerce** opens a form: name, email, kind, pricing tier, payment terms and,
+**New customer**, in the header of **Customers**, opens a form: name, email, kind, pricing tier, payment terms and,
 for a business customer, an optional legal name and tax id. A business customer is added with its
 company, **active** at once. It starts with a credit limit of zero, so orders on account fail the
 [credit check](/guides/commerce-models/#credit-accounts) until an admin sets the limit on the customer's page

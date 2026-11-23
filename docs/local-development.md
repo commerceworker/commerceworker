@@ -109,10 +109,10 @@ pnpm db:seed:all --url http://localhost:5298 --orders 5000 --days 30
    - three months of audit history;
    - on the most recent 3,000 generated orders (`--orders` to change), what the engine would have
      recorded: invoices, shipments (labels, pickups, returns), stock holds, seller orders and
-     payouts, messages, and invoice and purchase order documents, for Commerce's **Records** tabs;
+     payouts, messages, and invoice and purchase order documents, for the **Records** screen's tabs;
 4. `pnpm db:seed:live`, only if the dev server answers: it starts each of the 15 demo scenarios as
    a real order through `POST /api/v1/orders` (so an order's page has its graph and timeline,
-   **Approvals** its context and Commerce its outside events), and the five that stop for a person
+   **Approvals** its context and Outside events its waiting orders), and the five that stop for a person
    or an outside event (`b2b-credit`, `purchase`, `b2b-email`, `marketplace`, `pickup`) several
    times more, 36 orders in all, each with its own Idempotency-Key (`seed-live:<scenario>`, then
    `seed-live:<scenario>:<n>`) so a re-run starts none twice. They are the open work: the overview's
@@ -142,7 +142,7 @@ either, so a generated cart's own page finds nothing.
 ## Volume data
 
 The demo scenarios give a handful of orders. To see the overview, the orders list, approvals,
-Carts, Commerce and the Performance page at the size a busy workspace reaches, fill the local
+Carts, Inventory, Customers, Pricing and the Performance page at the size a busy workspace reaches, fill the local
 database with generated history:
 
 ```bash
@@ -167,7 +167,7 @@ own steps for where an order waits or stopped and why), and writes:
   waiting or running, and none has a pending approval: with no run behind it, nothing could act on
   it. Each has the approvals it passed (decided), its payment (a card soon after checkout, a B2B
   invoice when it completes; some refunded later) and a `node_runs` row per step it ran;
-- products (`BENCH-…`) with store stock, contract prices and volume rules, for Commerce;
+- products (`BENCH-…`) with store stock, contract prices and volume rules, for Inventory and Pricing;
 - carts (`cart_bench_…`), most submitted to one of the orders above. No CartAgent holds them, so
   Carts lists them without a link (`cartOpens`: only an id `newId('cart')` made opens).
 
@@ -175,7 +175,7 @@ Each run replaces what the previous one wrote; `--seed <n>` (default 1) makes it
 relative to today. Only the index tables are written, with no OrderAgent or Workflow behind an
 order, and `instance_id` null: that is how the app tells a recorded order from a live one. A
 recorded order is never live work: the overview's open counts and waits, the approvals queue and
-its badge, the orders list's open statuses and Commerce's outside events leave it out, and a list
+its badge, the orders list's open statuses and the Outside events screen leave it out, and a list
 that shows it with an open status reads **Recorded** (`liveStatus`, `apps/web/app/lib/format.ts`). A generated order's page is the read-only **recorded order** view the order page falls back
 to when the engine has no run for an order (`recordedOrder`, `apps/web/app/lib/orders.server.ts`):
 its flow coloured by the steps `node_runs` recorded and the ones it waits at, with the path it took

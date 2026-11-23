@@ -142,7 +142,7 @@ problem in its summary and output, including a missing or free-text ship-to.
 price sources, in priority order. The default chain is an accepted [quote](/guides/quotes/) of
 the customer's company (stops when one matches, ahead of every other source), price books (stops),
 contract prices (stops) and volume tiers (keeps going), with the product's list price as the
-fallback. The Commerce page shows the chain in order; your administrator maintains its entries.
+fallback. **Pricing** shows the chain in order, under **Price sources**; your administrator maintains its entries.
 
 1. For each active source in order, the node finds its entries that match the line and takes the
    lowest price among them, so the deepest volume tier wins. In the price-book source the entry's
@@ -176,7 +176,7 @@ doesn't reprice an order already priced. A flow that runs Price lines again (in 
 the rate of that day. A `unitPrice` given on the order is
 already in the order's currency. Totals carry `baseTotal`, the total in USD.
 
-An admin can set a currency's rate: on the Commerce page's **Exchange rates** table (**Edit**, then confirm
+An admin can set a currency's rate: on the **Exchange rates** table on **Pricing** (**Edit**, then confirm
 in the assistant), over REST (`POST /api/v1/fx-rates/:currency`) or with the MCP tool `set_fx_rate`. The table
 and `GET /api/v1/fx-rates` (or `list_fx_rates`, for an operator or above) show each currency's rate, when it
 was set and by whom: the daily refresh, or a person. A rate is a positive number of units per one USD,
@@ -194,7 +194,7 @@ by hand holds until someone changes it, and the table shows who set it and when.
 - `order.total` in an expression is in the order's currency; use `order.baseTotal` for a threshold
   that should hold across currencies. Policy rule amounts compare `order.total`.
 
-The Commerce page lists the workspace's rates; your administrator keeps them current.
+**Pricing** lists the workspace's rates; your administrator keeps them current.
 
 ## Durations
 
