@@ -11,8 +11,13 @@ CommerceWorker POSTs signed order and cart events to the endpoints you subscribe
 
 ## Subscribing
 
-Subscriptions are managed through the [REST API](/reference/rest-api/) with an `admin`
-[API token](/guides/team-and-roles/#api-tokens); there is no UI for them. Creating, rotating and deleting a subscription, and sending a delivery again, is recorded in the [audit log](/guides/team-and-roles/#audit-log).
+An admin manages subscriptions on **Webhooks** (under Workspace in the sidebar), or through the
+[REST API](/reference/rest-api/) with an `admin` [API token](/guides/team-and-roles/#api-tokens).
+**New subscription** takes the address and the events (every event, including ones added later, or
+the ones you pick), asks you to confirm it's you (your authenticator code or password, as other
+sensitive admin changes do) and shows the signing secret once. Choosing a subscription lists its
+latest 50 deliveries: the event, the order or cart it's about, its status and attempts, and what
+the receiver answered. **Remove** asks you to confirm in the assistant first. Creating, rotating and deleting a subscription, and sending a delivery again, is recorded in the [audit log](/guides/team-and-roles/#audit-log).
 
 ```bash
 curl -X POST https://app.commerceworker.com/api/v1/webhook-subscriptions \
@@ -115,7 +120,8 @@ chat, files, promotion codes or who its buyer is. A cart's `status` is `canceled
 
 ## Rotating the secret
 
-`POST /api/v1/webhook-subscriptions/:id/rotate` (an `admin` token) returns `{ "subscription", "secret" }`
+**Rotate secret** on **Webhooks** does the same as
+`POST /api/v1/webhook-subscriptions/:id/rotate` (an `admin` token), which returns `{ "subscription", "secret" }`
 with a new `secret`, shown once. For 24 hours each delivery is signed with both the new secret and
 the previous one, so the receiver can switch without rejecting any: the header then carries two
 `v1=` signatures (`t=1760340000,v1=<new>,v1=<previous>`). While that lasts, listing subscriptions
@@ -175,7 +181,8 @@ are deleted, sent or not, and are not retried; the cart's title loses their name
 
 ## Redelivering
 
-An admin can send a delivery again, whether it `failed` or was `delivered`: after fixing a
+An admin can send a delivery again, whether it `failed` or was `delivered`, with **Send again**
+on its row under **Webhooks** (the assistant asks you to confirm) or over the API: after fixing a
 receiver, or to replay an event it lost.
 
 ```bash

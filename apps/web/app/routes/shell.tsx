@@ -61,6 +61,7 @@ import {
   UserRound,
   UsersRound,
   Warehouse,
+  Webhook,
   Workflow,
 } from 'lucide-react';
 import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react';
@@ -242,6 +243,7 @@ const WORKSPACE: NavItem[] = [
   { to: '/team', label: 'Team and roles', icon: UsersRound },
   { to: '/audit', label: 'Audit log', icon: ScrollText },
   { to: '/plugins', label: 'Plugins', icon: Puzzle },
+  { to: '/webhooks', label: 'Webhooks', icon: Webhook },
 ];
 
 /** Approvals waiting on someone: the bar's one call for attention, filled in `wait`. */
