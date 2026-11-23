@@ -35,6 +35,8 @@ import { useAssistant } from '~/lib/assistant';
 import { audit } from '~/lib/audit.server';
 import { requireUser, stepUp, stepUpMethod } from '~/lib/auth.server';
 import { orderRef } from '~/lib/format';
+import { SECRET_HEADERS } from '~/lib/secret-response';
+import { auditUrl } from '~/lib/webhook-audit';
 import {
   createSubscription,
   listDeliveries,
@@ -44,6 +46,9 @@ import {
 import type { Route } from './+types/webhooks';
 
 export const meta = () => [{ title: 'Webhooks · CommerceWorker' }];
+
+/** A new secret's response is never stored (`SECRET_HEADERS`), a full-page submit included. */
+export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;
 
 /** Deliveries shown for the chosen subscription, newest first. */
 const DELIVERIES = 50;
@@ -56,7 +61,10 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     subscriptions,
     chosen: chosen?.id ?? null,
-    deliveries: chosen ? await listDeliveries(chosen.id, DELIVERIES) : [],
+    // The payloads carry buyers' details and the page never shows them: they stay on the server.
+    deliveries: chosen
+      ? (await listDeliveries(chosen.id, DELIVERIES)).map(({ payload: _, ...d }) => d)
+      : [],
     // Undefined where nobody signs in (a workspace with no admin yet): nothing to step up from.
     stepUp: me.kind === 'user' ? method : undefined,
   };
@@ -78,6 +86,24 @@ export async function action({ request }: Route.ActionArgs) {
   const intent = String(f.get('intent') ?? '');
   if (intent !== 'create' && intent !== 'rotate')
     return data({ error: 'That isn’t something this page does.' }, 400);
+  // The address and events are checked first, so a mistyped one doesn't spend a one-time code.
+  const parsed =
+    intent === 'create'
+      ? subscriptionInput.safeParse({
+          url: String(f.get('url') ?? '').trim(),
+          events: f.get('all') === 'on' ? ['*'] : f.getAll('events').map(String),
+        })
+      : null;
+  if (parsed && !parsed.success)
+    return data(
+      {
+        error:
+          parsed.error.issues[0]?.path[0] === 'events'
+            ? 'Choose the events to send, or all of them.'
+            : (parsed.error.issues[0]?.message ?? 'Check the address.'),
+      },
+      400,
+    );
   if (me.kind === 'user') {
     const failed = await stepUp(request, me, {
       code: String(f.get('code') ?? ''),
@@ -92,53 +118,44 @@ export async function action({ request }: Route.ActionArgs) {
       return data({ error: failed }, 403);
     }
   }
-  if (intent === 'create') {
-    const all = f.get('all') === 'on';
-    const parsed = subscriptionInput.safeParse({
-      url: String(f.get('url') ?? '').trim(),
-      events: all ? ['*'] : f.getAll('events').map(String),
-    });
-    if (!parsed.success)
-      return data(
-        {
-          error:
-            parsed.error.issues[0]?.path[0] === 'events'
-              ? 'Choose the events to send, or all of them.'
-              : (parsed.error.issues[0]?.message ?? 'Check the address.'),
-        },
-        400,
-      );
+  if (parsed?.success) {
     const created = await createSubscription(parsed.data);
     await audit(request, 'webhook.subscribed', {
       actor: me,
-      target: parsed.data.url,
+      target: auditUrl(parsed.data.url),
       detail: { id: created.subscription.id, events: parsed.data.events, via: 'app' },
     });
-    return {
-      chosen: created.subscription.id,
-      secret: {
-        label: 'Signing secret for the new subscription',
-        value: created.secret,
-        url: created.subscription.url,
-      } satisfies Secret,
-    };
+    return data(
+      {
+        chosen: created.subscription.id,
+        secret: {
+          label: 'Signing secret for the new subscription',
+          value: created.secret,
+          url: created.subscription.url,
+        } satisfies Secret,
+      },
+      { headers: SECRET_HEADERS },
+    );
   }
   const id = String(f.get('id') ?? '');
   const rotated = await rotateSubscription(id);
   if (!rotated) return data({ error: `No webhook subscription ${id}.` }, 404);
   await audit(request, 'webhook.rotated', {
     actor: me,
-    target: rotated.subscription.url,
+    target: auditUrl(rotated.subscription.url),
     detail: { id, via: 'app' },
   });
-  return {
-    chosen: id,
-    secret: {
-      label: 'New signing secret',
-      value: rotated.secret,
-      url: rotated.subscription.url,
-    } satisfies Secret,
-  };
+  return data(
+    {
+      chosen: id,
+      secret: {
+        label: 'New signing secret',
+        value: rotated.secret,
+        url: rotated.subscription.url,
+      } satisfies Secret,
+    },
+    { headers: SECRET_HEADERS },
+  );
 }
 
 type Data = Awaited<ReturnType<typeof loader>>;

@@ -159,6 +159,7 @@ import { overBudget } from './rate-limit';
 import { matchOperation, operationRole, queryInput } from './rest-operations';
 import { setStorefrontSettings, storefrontAdmin } from './storefront.server';
 import { addPlatform, revokePlatform, setUcpSettings, ucpAdmin } from './ucp.server';
+import { auditUrl } from './webhook-audit';
 import {
   createSubscription,
   deleteSubscription,
@@ -609,7 +610,7 @@ async function handleSubscriptions(
     const created = await createSubscription(parsed.data);
     await audit(request, 'webhook.subscribed', {
       actor: caller,
-      target: parsed.data.url,
+      target: auditUrl(parsed.data.url),
       detail: { id: created.subscription.id, events: parsed.data.events, via: 'api' },
     });
     return json(created, 201);
@@ -630,7 +631,7 @@ async function handleSubscriptions(
     if (!rotated) return json({ error: 'Not found' }, 404);
     await audit(request, 'webhook.rotated', {
       actor: caller,
-      target: rotated.subscription.url,
+      target: auditUrl(rotated.subscription.url),
       detail: { id, via: 'api' },
     });
     return json(rotated);

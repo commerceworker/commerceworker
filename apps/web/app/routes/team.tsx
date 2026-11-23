@@ -66,6 +66,7 @@ import {
   scimTokenSet,
   setScimRoles,
 } from '~/lib/scim.server';
+import { SECRET_HEADERS } from '~/lib/secret-response';
 import {
   approvalSeparation,
   assistantRouting,
@@ -153,6 +154,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 /** One-time secrets come back from the action and are shown once, never stored in the clear. */
 type Secret = { kind: 'password' | 'token'; label: string; value: string };
 
+/** A one-time password's or token's response is never stored (`SECRET_HEADERS`). */
+export const headers: Route.HeadersFunction = ({ actionHeaders }) => actionHeaders;
+
 export async function action({ request }: Route.ActionArgs) {
   const me = await requireUser(request, 'admin');
   const f = await request.formData();
@@ -189,23 +193,29 @@ export async function action({ request }: Route.ActionArgs) {
           name: str('name'),
           role: str('role'),
         });
-        return {
-          secret: {
-            kind: 'password',
-            label: `Temporary password for ${r.email}`,
-            value: r.password,
-          } as Secret,
-        };
+        return data(
+          {
+            secret: {
+              kind: 'password',
+              label: `Temporary password for ${r.email}`,
+              value: r.password,
+            } as Secret,
+          },
+          { headers: SECRET_HEADERS },
+        );
       }
       case 'reset': {
         const r = await resetPassword(request, me, str('id'));
-        return {
-          secret: {
-            kind: 'password',
-            label: `New temporary password for ${r.email}`,
-            value: r.password,
-          } as Secret,
-        };
+        return data(
+          {
+            secret: {
+              kind: 'password',
+              label: `New temporary password for ${r.email}`,
+              value: r.password,
+            } as Secret,
+          },
+          { headers: SECRET_HEADERS },
+        );
       }
       case 'two-factor-requirement': {
         const next = str('required');
@@ -254,18 +264,22 @@ export async function action({ request }: Route.ActionArgs) {
           role: str('role'),
           lifetime: str('lifetime'),
         });
-        return {
-          secret: { kind: 'token', label: `API token “${r.name}”`, value: r.token } as Secret,
-        };
+        return data(
+          { secret: { kind: 'token', label: `API token “${r.name}”`, value: r.token } as Secret },
+          { headers: SECRET_HEADERS },
+        );
       }
       case 'scim-token':
-        return {
-          secret: {
-            kind: 'token',
-            label: 'SCIM token',
-            value: await createScimToken(request, me),
-          } as Secret,
-        };
+        return data(
+          {
+            secret: {
+              kind: 'token',
+              label: 'SCIM token',
+              value: await createScimToken(request, me),
+            } as Secret,
+          },
+          { headers: SECRET_HEADERS },
+        );
       case 'scim-revoke':
         await revokeScimToken(request, me);
         return {
