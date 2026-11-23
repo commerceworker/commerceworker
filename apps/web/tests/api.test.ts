@@ -1109,6 +1109,38 @@ describe('data subject requests over REST', () => {
     expect(await res.json()).toMatchObject({ orders: ['ord_1'] });
     expect(audit).not.toHaveBeenCalled();
   });
+
+  it('records what a refused call erased first, as a round that ran', async () => {
+    const erased = {
+      orders: 2,
+      customers: 0,
+      documents: 1,
+      messages: 0,
+      inboundEmails: 0,
+      carts: 1,
+      taxCertificates: 0,
+      addresses: 0,
+      companyMembers: 0,
+      purchaseOrders: 0,
+      quotes: 0,
+      shopperSignIns: 0,
+      shopperSessions: 1,
+      ucpLinks: 0,
+    };
+    engine.eraseDataSubject.mockResolvedValueOnce({
+      ok: false,
+      reason: 'active_orders',
+      orders: ['ord_1'],
+      erased,
+    });
+    const res = await post('data-subjects/erase', { email: 'jane@example.com' }, admin);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ orders: ['ord_1'], erased });
+    const [, action, event] = audit.mock.calls[0]!;
+    expect(action).toBe('personal_data.erased');
+    expect(event.target).toMatch(/^subject:[0-9a-f]{16}$/);
+    expect(event.detail).toEqual({ ...erased, done: false, stopped: 'active_orders', via: 'api' });
+  });
 });
 
 describe('plugins over REST', () => {

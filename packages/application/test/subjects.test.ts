@@ -101,6 +101,24 @@ describe('data subject requests', () => {
     });
   });
 
+  it('says what it erased when an order starts running partway through a round', async () => {
+    // The index says ended, so the round starts; the order's agent then refuses, running again.
+    const { p, cartCalls } = ports();
+    const store = p.subjects as InMemorySubjectStore;
+    (store as unknown as { f: { orders: { id: string; status: string }[] } }).f.orders.find(
+      (o) => o.id === 'sc2_o_mail',
+    )!.status = 'completed';
+    const r = await eraseDataSubject(p, 'ada@example.com', now);
+    expect(r).toMatchObject({
+      ok: false,
+      reason: 'active_orders',
+      orders: ['sc2_o_mail'],
+      // The other two orders and her carts went before it was found; nothing past the batch did.
+      erased: { orders: 2, carts: 2, customers: 0, addresses: 0 },
+    });
+    expect(cartCalls.length).toBeGreaterThan(0);
+  });
+
   it('erases their orders, carts, files and accounts once nothing runs', async () => {
     const { p, deleted, cartCalls, running } = ports();
     running.clear();

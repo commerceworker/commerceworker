@@ -146,12 +146,29 @@ describe('privacy requests from the admin', () => {
       orders: ['ord_a', 'ord_b'],
     });
     const r = await erase({ email: EMAIL, confirm: 'person@example.com', code: '123456' });
-    expect(body(r)).toEqual({ kind: 'running', running: ['ord_a', 'ord_b'] });
+    expect(body(r)).toEqual({ kind: 'running', running: ['ord_a', 'ord_b'], erased: null });
     expect(audit).not.toHaveBeenCalledWith(
       expect.anything(),
       'personal_data.erased',
       expect.anything(),
     );
+  });
+
+  it('records what a refused round erased first, and says so', async () => {
+    const { ok: _ok, done: _d, teamMember: _t, ...erased } = round({ orders: 40, carts: 1 });
+    engine.eraseDataSubject.mockResolvedValueOnce({
+      ok: false,
+      reason: 'active_orders',
+      orders: ['ord_a'],
+      erased,
+    });
+    const r = await erase({ email: EMAIL, confirm: 'person@example.com', code: '123456' });
+    expect(body(r)).toMatchObject({ kind: 'running', running: ['ord_a'], erased: { orders: 40 } });
+    expect(audit).toHaveBeenCalledWith(expect.any(Request), 'personal_data.erased', {
+      actor: me,
+      target: expect.stringMatching(/^subject:[0-9a-f]{16}$/),
+      detail: { ...erased, done: false, stopped: 'active_orders', via: 'app' },
+    });
   });
 
   it('downloads an export as a file never stored, audited by a hash', async () => {

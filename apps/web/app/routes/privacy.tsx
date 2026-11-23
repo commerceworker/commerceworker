@@ -70,7 +70,9 @@ export async function action({ request }: Route.ActionArgs) {
   }
   const r = await eraseSubject(request, me, email);
   return data(
-    r.ok ? { kind: 'erased' as const, erased: r } : { kind: 'running' as const, running: r.orders },
+    r.ok
+      ? { kind: 'erased' as const, erased: r }
+      : { kind: 'running' as const, running: r.orders, erased: r.erased },
     { headers: NO_STORE },
   );
 }
@@ -230,6 +232,25 @@ function summary(d: Record<string, unknown> | null) {
 
 type Result = ReturnType<typeof useActionData<typeof action>>;
 
+/** "3 orders, 1 customer account, …": what an erasure round removed. */
+function describe(c: {
+  orders: number;
+  customers: number;
+  messages: number;
+  documents: number;
+  inboundEmails: number;
+  carts: number;
+}) {
+  return [
+    plural(c.orders, 'order'),
+    plural(c.customers, 'customer account'),
+    plural(c.messages, 'message'),
+    plural(c.documents, 'document'),
+    plural(c.inboundEmails, 'intake email'),
+    c.carts ? plural(c.carts, 'cart') : null,
+  ].filter((x): x is string => !!x);
+}
+
 /** What the erase did, what's left, or why it was refused. */
 function Outcome({ result }: { result: Result }) {
   if (!result) return null;
@@ -244,8 +265,10 @@ function Outcome({ result }: { result: Result }) {
       <Alert variant="warning" role="alert" className="mt-4">
         <AlertTitle>Stopped: {plural(result.running.length, 'order')} still running</AlertTitle>
         <AlertDescription>
-          Anything erased before the erasure reached them stays erased. Cancel them or let them
-          finish, then erase again.
+          {result.erased
+            ? `Before reaching them it erased ${describe(result.erased).join(', ')}, and that stays erased. `
+            : 'Nothing was erased. '}
+          Cancel them or let them finish, then erase again.
           <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
             {result.running.map((id) => (
               <li key={id}>
@@ -259,14 +282,7 @@ function Outcome({ result }: { result: Result }) {
       </Alert>
     );
   const { counts, done, teamMember } = result.erased;
-  const parts = [
-    plural(counts.orders, 'order'),
-    plural(counts.customers, 'customer account'),
-    plural(counts.messages, 'message'),
-    plural(counts.documents, 'document'),
-    plural(counts.inboundEmails, 'intake email'),
-    counts.carts ? plural(counts.carts, 'cart') : null,
-  ].filter(Boolean);
+  const parts = describe(counts);
   const nothing = Object.values(counts).every((n) => n === 0);
   return (
     <div role="status" className="mt-4 grid gap-2 text-sm">

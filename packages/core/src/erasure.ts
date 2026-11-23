@@ -164,8 +164,13 @@ export type ErasureResult =
       /** The address is also a team member's; remove them on the team page. */
       teamMember: boolean;
     }
-  /** Orders still running can't be erased; cancel them or wait for them to finish. */
-  | { ok: false; reason: 'active_orders'; orders: string[] };
+  /**
+   * Orders still running can't be erased; cancel them or wait for them to finish. A round finds
+   * one either before it starts (nothing erased) or partway, after ending their sessions and links,
+   * erasing their carts and some of the batch's orders: `erased` says what it did, so a caller
+   * records it (`personal_data.erased`, `done: false`) as it would a round that finished.
+   */
+  | { ok: false; reason: 'active_orders'; orders: string[]; erased?: ErasureCounts };
 
 /** The tallies an erasure pass reports. */
 export type ErasureCounts = Omit<

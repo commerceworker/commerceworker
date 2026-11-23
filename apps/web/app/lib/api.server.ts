@@ -674,6 +674,13 @@ async function handleDataSubjects(
     });
   }
   const result = await engine().eraseDataSubject(parsed.data.email);
+  // Refused partway: what the round erased first is recorded as any round is.
+  if (!result.ok && result.erased)
+    await audit(request, 'personal_data.erased', {
+      actor: caller,
+      target,
+      detail: { ...result.erased, done: false, stopped: 'active_orders', via: 'api' },
+    });
   if (!result.ok)
     return json(
       {
