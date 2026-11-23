@@ -119,20 +119,23 @@ describe('privacy requests from the admin', () => {
     });
   });
 
-  it('erases round after round until done, auditing each by a hash, never the address', async () => {
-    engine.eraseDataSubject
-      .mockResolvedValueOnce(round({ done: false }))
-      .mockResolvedValueOnce(round({ done: true, orders: 3, customers: 1, teamMember: true }));
+  it('erases one round a request, auditing it by a hash, never the address', async () => {
+    engine.eraseDataSubject.mockResolvedValueOnce(
+      round({ done: false, orders: 100, customers: 0, teamMember: true }),
+    );
     const r = await erase({ email: EMAIL, confirm: 'person@example.com', code: '123456' });
-    expect(engine.eraseDataSubject).toHaveBeenCalledTimes(2);
+    expect(engine.eraseDataSubject).toHaveBeenCalledTimes(1);
     expect(body(r)).toMatchObject({
       kind: 'erased',
-      erased: { done: true, teamMember: true, counts: { orders: 103, customers: 1, messages: 4 } },
+      erased: { done: false, teamMember: true, counts: { orders: 100, messages: 2 } },
     });
     expect(new Headers(init(r).headers).get('cache-control')).toBe('private, no-store');
     const erased = audit.mock.calls.filter((c) => c[1] === 'personal_data.erased');
-    expect(erased).toHaveLength(2);
-    expect(erased[0]![2].target).toMatch(/^subject:[0-9a-f]{16}$/);
+    expect(erased).toHaveLength(1);
+    expect(erased[0]![2]).toMatchObject({
+      target: expect.stringMatching(/^subject:[0-9a-f]{16}$/),
+      detail: { orders: 100, done: false, teamMember: true, via: 'app' },
+    });
     expect(JSON.stringify(audit.mock.calls).toLowerCase()).not.toContain('person@example.com');
   });
 
@@ -149,13 +152,6 @@ describe('privacy requests from the admin', () => {
       'personal_data.erased',
       expect.anything(),
     );
-  });
-
-  it('stops after its rounds, partly erased, so the admin runs it again', async () => {
-    engine.eraseDataSubject.mockResolvedValue(round({ done: false }));
-    const r = await erase({ email: EMAIL, confirm: 'person@example.com', code: '123456' });
-    expect(engine.eraseDataSubject).toHaveBeenCalledTimes(20);
-    expect(body(r)).toMatchObject({ kind: 'erased', erased: { done: false } });
   });
 
   it('downloads an export as a file never stored, audited by a hash', async () => {

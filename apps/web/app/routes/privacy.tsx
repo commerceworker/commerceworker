@@ -3,7 +3,7 @@ import { Alert, AlertDescription, AlertTitle } from '@commerceworker/ui/alert';
 import { Button } from '@commerceworker/ui/button';
 import { Field, FieldDescription, FieldLabel } from '@commerceworker/ui/field';
 import { Input } from '@commerceworker/ui/input';
-import { count, plural } from '@commerceworker/ui/lib/format';
+import { plural } from '@commerceworker/ui/lib/format';
 import { Body, Empty, PageHeader, Section } from '@commerceworker/ui/page';
 import { Table, TableBody, TableHead, Td, Th, Tr } from '@commerceworker/ui/table';
 import { Download, Eraser, ShieldCheck } from 'lucide-react';
@@ -14,7 +14,7 @@ import { dataSubjectInput } from '~/lib/api-schemas';
 import { audit } from '~/lib/audit.server';
 import { requireUser, stepUp, stepUpMethod } from '~/lib/auth.server';
 import { orderRef } from '~/lib/format';
-import { ERASE_ROUNDS, eraseSubject, recentRequests } from '~/lib/privacy.server';
+import { eraseSubject, recentRequests } from '~/lib/privacy.server';
 import type { Route } from './+types/privacy';
 
 export const meta = () => [{ title: 'Privacy requests · CommerceWorker' }];
@@ -70,9 +70,7 @@ export async function action({ request }: Route.ActionArgs) {
   }
   const r = await eraseSubject(request, me, email);
   return data(
-    r.ok
-      ? { kind: 'erased' as const, erased: r, limit: ERASE_ROUNDS * 100 }
-      : { kind: 'running' as const, running: r.orders },
+    r.ok ? { kind: 'erased' as const, erased: r } : { kind: 'running' as const, running: r.orders },
     { headers: NO_STORE },
   );
 }
@@ -83,6 +81,8 @@ export default function Privacy() {
   const nav = useNavigation();
   const erasing = nav.state === 'submitting' && nav.formAction === '/privacy';
   const [email, setEmail] = useState('');
+  // A round left orders: the same form erases the next 100.
+  const more = result?.kind === 'erased' && !result.erased.done;
   return (
     <>
       <PageHeader
@@ -154,7 +154,8 @@ export default function Privacy() {
                 disabled={erasing || !email.includes('@')}
                 className="justify-self-start"
               >
-                <Eraser aria-hidden="true" /> {erasing ? 'Erasing…' : 'Erase this person'}
+                <Eraser aria-hidden="true" />{' '}
+                {erasing ? 'Erasing…' : more ? 'Continue erasing' : 'Erase this person'}
               </Button>
             </Form>
             <Outcome result={result} />
@@ -241,11 +242,10 @@ function Outcome({ result }: { result: Result }) {
   if (result.kind === 'running')
     return (
       <Alert variant="warning" role="alert" className="mt-4">
-        <AlertTitle>
-          Nothing erased: {plural(result.running.length, 'order')} still running
-        </AlertTitle>
+        <AlertTitle>Stopped: {plural(result.running.length, 'order')} still running</AlertTitle>
         <AlertDescription>
-          Cancel them or let them finish, then erase again.
+          Anything erased before the erasure reached them stays erased. Cancel them or let them
+          finish, then erase again.
           <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
             {result.running.map((id) => (
               <li key={id}>
@@ -283,9 +283,8 @@ function Outcome({ result }: { result: Result }) {
         )}
       </p>
       {done ? null : (
-        <p className="text-wait">
-          They have more than {count(result.limit)} orders, or one started meanwhile: erase again to
-          continue.
+        <p className="text-muted-foreground">
+          More of their orders are left: continue to erase the next 100.
         </p>
       )}
       {teamMember ? (
