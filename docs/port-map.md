@@ -86,6 +86,7 @@ A review of v1's commerce primitives against this codebase, area by area (money;
 |---|---|---|---|
 | Tax classes | `packages/tax` (`taxClassId`, class 0 untaxed, rates per class) | A product's `taxClass` (`packages/core/src/product/model.ts`), projected to `products.tax_class` by the catalog; `classTaxRate`, `skuTaxRates`, `skuTaxRate` and per-line `computeTotals` in `packages/core/src/shipping.ts`; `taxOrder`; `commerce.tax`'s **Rates by tax class** and `class` on a region | Numeric class ids with a magic untaxed zero, and tax rounded per row: named classes a merchant rates per place, an unknown class never taxed below standard goods, each SKU's rate kept on the order (`taxRates`, never on a line a buyer can send or another node can rewrite) so later re-totals charge the same, and tax rounded once per order |
 | A return refunds the tax paid on it | credit memos add each line's proportional tax (`routes/v1/sales/orders.ts`) | `returnValue` and `returnRequest` in `packages/core/src/returns.ts`: the default refund is the lines' value and the tax charged on it, and the request says how much is tax | Tax spread pro rata across the order: each returned line refunds tax at the rate it was charged, its tax class's or the order's, and shipping's tax stays with shipping |
+| Cancelling a paid, unfulfilled order refunds it | Order cancel (v1 released stock and left the payment, as this did) | `compensateOrder` in `packages/application/src/commerce/compensate-order.ts`: a card payment the processor captured or charged is refunded, once, when the order has no shipment, pickup, hand-over or digital code in any status; otherwise the order's timeline says how much was kept and why | A cancelled order kept the buyer's money and said nothing: refunded only where nothing was fulfilled (a carrier shipment never leaves `label_created`, so anything shipped is refunded through a return), never for money taken outside the card processor, and a refund that fails is reported without stopping the cancel |
 
 ### Open, by merchant impact
 
@@ -93,7 +94,7 @@ Found by the review and still to be confirmed against source, one slice at a tim
 
 | Gap | v1 source | Nearest counterpart here |
 |---|---|---|
-| Cancelling an order after capture voids authorizations but refunds nothing (v1 has the same flaw) | order cancel | `compensateOrder`; capture and charge have no rollback |
+| A failed run's rollback after capture refunds nothing, and says nothing about the money (a late step failing must not refund a delivered order, so this needs a rule of its own) | None | Capture and charge have no rollback |
 | A zero-total order can't pass a card flow with live payments | `packages/payment` free method | `authorizePayment` |
 | `allowBackorder` ships short lines without spending stock or recording what is owed | `inventory-reserver.ts` | `commerce.reserve`, `bookShipment` |
 | No way to set or correct stock, or a store's stock, outside an order flow | inventory adjustments, source items, transfers, counts | `InventoryStore` (flow movements only) |

@@ -9,7 +9,7 @@
 import { introspectWorkflow, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { b2bOrderFlow, type Order, type OrderState } from '@commerceworker/core';
-import { createDb, orders, promotionRedemptions, publishFlow } from '@commerceworker/db';
+import { createDb, orders, payments, promotionRedemptions, publishFlow } from '@commerceworker/db';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureTemplates } from '../src/flows';
@@ -303,6 +303,40 @@ describe('cancelling when the run cannot be stopped', () => {
       expect(await redemptions(id)).toEqual([]);
       expect(await d1Status(id)).toBe('cancelled');
     });
+  });
+
+  it('says on the timeline what a cancel left paid, and records no refund for it', async () => {
+    // The default test deployment only records payments: nothing a processor could give back.
+    const id = 'ord_lc_cancel_paid';
+    await begin(id);
+    await db()
+      .insert(payments)
+      .values([
+        {
+          id: `cap_${id}`,
+          orderId: id,
+          kind: 'capture',
+          amount: 80,
+          status: 'succeeded',
+          createdAt: 2,
+          currency: 'USD',
+        },
+      ]);
+    await runInDurableObject(agent(id), async (inst) => {
+      const o = inst as unknown as Inner & { cancel(reason: string): Promise<{ ok: boolean }> };
+      vi.spyOn(o.env.ORDER_WORKFLOW, 'get').mockImplementation(async () => ({
+        terminate: async () => {},
+        status: async () => ({ status: 'terminated' }),
+      }));
+      expect(await o.cancel('Out of stock')).toEqual({ ok: true });
+      const s = (inst as unknown as { state: OrderState }).state;
+      expect(s.status).toBe('cancelled');
+      expect(s.timeline.at(-1)?.message).toContain(
+        'kept $80.00 already paid (it was not taken by the card processor',
+      );
+    });
+    const rows = await db().select().from(payments).where(eq(payments.orderId, id)).all();
+    expect(rows.filter((r) => r.kind === 'refund')).toEqual([]);
   });
 
   it('goes ahead when terminate throws because the run had already finished', async () => {

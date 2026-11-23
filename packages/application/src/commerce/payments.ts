@@ -489,7 +489,7 @@ export function paySupplier(ports: PaymentPorts, order: Order, stepKey: string) 
  */
 export async function refund(
   ports: PaymentPorts,
-  order: Order,
+  order: Pick<Order, 'id' | 'currency'>,
   stepKey: string,
   requested?: number,
 ): Promise<PaymentResult> {
@@ -516,7 +516,7 @@ export async function refund(
 
 async function refundAcross(
   ports: PaymentPorts,
-  order: Order,
+  order: Pick<Order, 'id' | 'currency'>,
   id: string,
   rows: PaymentRecord[],
   requested: number | undefined,
