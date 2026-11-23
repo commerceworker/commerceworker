@@ -32,7 +32,8 @@ cancelled it, or it reached an End node with that outcome. `failed` means a node
 reached an End node with outcome `failed`; once the order's compensations have run the
 status becomes `rolled_back`, and it stays `failed` if the rollback itself fails. The moves between
 statuses are listed under [Order](/reference/lifecycles/#order) in the status lifecycles; nothing
-else moves an order, and nothing moves one that has ended.
+else moves an order, and nothing moves one that has ended, except a failed order to `rolled_back`
+once its rollback runs.
 
 Each order has:
 

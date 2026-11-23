@@ -211,6 +211,43 @@ describe('a failed order’s rollback', () => {
     expect(s.timeline.some((t) => t.message === 'Rollback failed: plugin down')).toBe(true);
     expect(await d1Status(id)).toBe('failed');
   });
+
+  it('ignores a poll left over once the order is no longer failed, or its rollback is settled', async () => {
+    const running = 'ord_lc_poll_running';
+    await begin(running);
+    await agent(running).report({ generation: 1, status: 'running' });
+    const settled = 'ord_lc_poll_settled';
+    await begin(settled);
+    await agent(settled).report({ generation: 1, status: 'failed', reason: 'boom' });
+    for (const id of [running, settled]) {
+      await runInDurableObject(agent(id), async (inst) => {
+        const o = inst as unknown as Inner & {
+          checkInstance(p: { attempt: number }): Promise<void>;
+        };
+        for (const s of schedules(o, 'checkInstance')) await o.cancelSchedule(s.id);
+        if (id === settled) {
+          // The rollback is already recorded: a second poll must not settle it again.
+          vi.spyOn(o.env.ORDER_WORKFLOW, 'get').mockImplementationOnce(async () => ({
+            status: async () => ({
+              status: 'errored',
+              rollback: { outcome: 'complete', error: null },
+            }),
+          }));
+          await o.checkInstance({ attempt: 0 });
+          expect(schedules(o, 'checkInstance')).toEqual([]);
+        }
+        const get = vi.spyOn(o.env.ORDER_WORKFLOW, 'get');
+        get.mockClear();
+        await o.checkInstance({ attempt: 0 });
+        expect(get).not.toHaveBeenCalled();
+        expect(schedules(o, 'checkInstance')).toEqual([]);
+      });
+    }
+    expect((await state(running)).status).toBe('running');
+    const s = await state(settled);
+    expect(s.status).toBe('rolled_back');
+    expect(s.timeline.filter((t) => t.message === 'Rollback complete')).toHaveLength(1);
+  });
 });
 
 describe('cancelling when the run cannot be stopped', () => {
