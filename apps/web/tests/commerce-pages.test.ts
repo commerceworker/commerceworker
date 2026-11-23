@@ -31,6 +31,7 @@ const product = (i: number) => ({
   lengthCm: null,
   widthCm: null,
   heightCm: null,
+  taxClass: null,
 });
 const store = (id: string, name: string) => ({
   id,

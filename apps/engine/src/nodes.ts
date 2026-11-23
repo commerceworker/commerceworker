@@ -65,6 +65,7 @@ import {
   shippingConfigSchema,
   stockLines,
   stringList,
+  taxClassRatesSchema,
   taxExemptNote,
   taxRegionsSchema,
   threeWayMatch,
@@ -343,44 +344,55 @@ export const EXECUTORS: Record<string, Exec> = {
   'commerce.tax': async ({ env, ctx, config, node, stepKey, dryRun }) => {
     const by = providerOf(config);
     const regions = taxRegionsSchema.safeParse(config.regions ?? []);
-    const r = await taxOrder({ certificates: taxCertificateStore(env) }, ctx.order, {
-      now: ctx.now,
-      exemptions: config.exemptions !== false,
-      includeShipping: config.includeShipping !== false,
-      regions: regions.success ? regions.data : [],
-      fallbackRate: num(config.rate, 0.08),
-      provider: by
-        ? (input) =>
-            provide(env, by, {
-              surface: 'tax',
-              op: 'calculate',
-              nodeId: node.id,
-              stepKey,
-              orderId: ctx.order.id,
-              config,
-              order: ctx.order,
-              input,
-            })
-        : undefined,
-    });
+    const classes = taxClassRatesSchema.safeParse(config.classes ?? {});
+    if (!regions.success || !classes.success)
+      throw new NonRetryableError(
+        `Invalid tax ${regions.success ? 'classes' : 'regions'}: ${(regions.error ?? classes.error)?.issues[0]?.message}`,
+      );
+    const r = await taxOrder(
+      { certificates: taxCertificateStore(env), pricing: pricingStore(env) },
+      ctx.order,
+      {
+        classes: classes.data,
+        now: ctx.now,
+        exemptions: config.exemptions !== false,
+        includeShipping: config.includeShipping !== false,
+        regions: regions.data,
+        fallbackRate: num(config.rate, 0.08),
+        provider: by
+          ? (input) =>
+              provide(env, by, {
+                surface: 'tax',
+                op: 'calculate',
+                nodeId: node.id,
+                stepKey,
+                orderId: ctx.order.id,
+                config,
+                order: ctx.order,
+                input,
+              })
+          : undefined,
+      },
+    );
     if (!r.ok)
       throw new NonRetryableError(
         r.problem === 'untaxable'
           ? `Tax provider “${by}” charged tax on nothing taxable`
           : `Tax provider “${by}” charged ${cash(r.amount, ctx)}, over ${PROVIDER_MAX_TAX_RATE * 100}% of ${cash(r.taxable, ctx)} taxable`,
       );
-    const { rate, taxShipping, totals: t, certificate: cert, exempted } = r;
+    const { rate, taxShipping, totals: t, certificate: cert, exempted, lines, byClass } = r;
     // An order keeps the certificate's id, not its number, which names the business and would
     // outlive the customer's erasure in step outputs; a quote (never stored as a step) shows it.
     const exemption = cert
       ? { certificateId: cert.id, exempted, ...(dryRun ? { certificate: cert.number } : {}) }
       : null;
     return {
-      order: { ...t, taxRate: rate, taxShipping },
+      order: { ...t, lines, taxRate: rate, taxShipping },
       output: {
         rate,
         taxShipping,
         ...t,
+        ...(byClass.length ? { byClass } : {}),
         ...(by ? { provider: by } : {}),
         ...(exemption ? { exemption } : {}),
       },

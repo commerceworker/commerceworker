@@ -15,7 +15,12 @@ import {
 } from './b2b/approvals';
 import { policyRulesSchema } from './policy';
 import { routeGuardErrors } from './route-guards';
-import { SHIPPING_SELECTIONS, shippingConfigSchema, taxRegionsSchema } from './shipping';
+import {
+  SHIPPING_SELECTIONS,
+  shippingConfigSchema,
+  taxClassRatesSchema,
+  taxRegionsSchema,
+} from './shipping';
 import { MAX_PERIOD_COUNT, type SubscriptionInterval } from './subscriptions';
 
 export type NodeCategory = 'trigger' | 'commerce' | 'control' | 'ai';
@@ -281,7 +286,7 @@ export const NODE_SPECS = [
     category: 'commerce',
     label: 'Calculate tax',
     description:
-      'Computes tax on the subtotal, and on shipping unless told not to (mock tax engine); none when the customer holds an exemption certificate covering the ship-to.',
+      'Computes tax on the subtotal, each line at the rate of its product tax class where one is set, and on shipping unless told not to (built-in rates, or a tax provider); none when the customer holds an exemption certificate covering the ship-to.',
     icon: 'Percent',
     fields: [
       { key: 'rate', label: 'Rate', kind: 'number', default: 0.08 },
@@ -291,7 +296,15 @@ export const NODE_SPECS = [
         kind: 'json',
         schema: taxRegionsSchema,
         default: [],
-        hint: 'Rates for ship-to countries or regions ([{ "country": "US", "region": "CA", "rate": 0.0725 }]), the most specific match first; Rate applies elsewhere',
+        hint: 'Rates for ship-to countries or regions ([{ "country": "US", "region": "CA", "rate": 0.0725 }]), the most specific match first; Rate applies elsewhere. Add "class" to rate one tax class there ({ "country": "GB", "class": "reduced", "rate": 0.05 })',
+      },
+      {
+        key: 'classes',
+        label: 'Rates by tax class',
+        kind: 'json',
+        schema: taxClassRatesSchema,
+        default: {},
+        hint: 'Rates for products with a tax class ({ "gift-card": 0, "reduced": 0.05 }), wherever Rates by region names none for the class; a product with no class, or a class with no rate, is taxed at the standard rate',
       },
       {
         key: 'includeShipping',

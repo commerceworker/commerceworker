@@ -1,7 +1,8 @@
 /**
  * The catalog's half of CommerceWorker's `products` table (D1): one row per variant SKU, whose name,
- * list price and shipping weight and size the catalog keeps current (a variant without a weight or
- * size clears the row's, so `dim_weight` shipping never bills a size the catalog no longer has).
+ * list price, shipping weight and size and tax class the catalog keeps current (a variant without a
+ * weight or size clears the row's, so `dim_weight` shipping never bills a size the catalog no longer
+ * has, and a product whose tax class is removed is taxed at the standard rate again).
  * Stock, reservations, cost, reorder settings, seller and kind stay CommerceWorker's own, so the
  * engine's pricing, reservations and replenishment read exactly what they always did.
  *
@@ -60,6 +61,7 @@ export function orderLines(product: Product, type: ProductType, channel: Channel
       lengthCm: v.dimensionsCm?.length ?? null,
       widthCm: v.dimensionsCm?.width ?? null,
       heightCm: v.dimensionsCm?.height ?? null,
+      taxClass: product.taxClass ?? null,
     });
   }
   return out;

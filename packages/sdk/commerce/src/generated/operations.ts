@@ -1915,6 +1915,7 @@ export type PutCatalogProductsInput = {
     slug?: { [key: string]: string };
     description?: { [key: string]: string };
     brand?: string;
+    taxClass?: string;
     categories?: string[];
     primaryCategory?: string;
     media?: {
@@ -2711,6 +2712,7 @@ export type StartOrderInput = {
       unitPrice?: number;
       sellerId?: string;
       locationId?: string;
+      taxRate?: number;
     }[];
     contact?: {
       email: string;
@@ -3553,6 +3555,7 @@ export type Product = {
   slug?: { [key: string]: string };
   description?: { [key: string]: string };
   brand?: string;
+  taxClass?: string;
   categories: string[];
   primaryCategory?: string;
   media: {
@@ -3632,6 +3635,7 @@ export type Order = {
     unitPrice?: number;
     sellerId?: string;
     locationId?: string;
+    taxRate?: number;
   }[];
   contact?: {
     email: string;
@@ -4033,6 +4037,7 @@ export type ProductData = {
   slug?: { [key: string]: string };
   description?: { [key: string]: string };
   brand?: string;
+  taxClass?: string;
   categories: string[];
   primaryCategory?: string;
   media: {

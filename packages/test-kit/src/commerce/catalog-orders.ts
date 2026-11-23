@@ -15,6 +15,7 @@ export class InMemoryCatalogOrders implements CatalogOrders {
           lengthCm: line.lengthCm ?? null,
           widthCm: line.widthCm ?? null,
           heightCm: line.heightCm ?? null,
+          taxClass: line.taxClass ?? null,
         },
       });
     }

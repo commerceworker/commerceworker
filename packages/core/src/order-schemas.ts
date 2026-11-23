@@ -55,6 +55,12 @@ export const orderLineSchema = z.object({
    * `fulfillment.locationId`, or central stock.
    */
   locationId: z.string().optional(),
+  /**
+   * The rate the tax node charged this line, when its product's tax class is taxed apart from the
+   * order's `taxRate`. The tax node writes it; a value sent with an order is replaced when that
+   * node runs and charges nothing before it does.
+   */
+  taxRate: z.number().min(0).max(1).optional(),
 });
 export type OrderLine = z.infer<typeof orderLineSchema>;
 

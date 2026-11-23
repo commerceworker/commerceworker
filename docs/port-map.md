@@ -76,6 +76,59 @@ From Commerce Worker v1's B2B domain, re-implemented on D1 as pure core logic, a
 
 What v1 had that P5 did not take: projects and jobs, requisition lists and approval groups (D10); its Postgres schema, multi-tenant company scoping and control plane (a deployment is one customer, on D1).
 
+## Commerce-primitive parity with v1
+
+A review of v1's commerce primitives against this codebase, area by area (money; inventory, fulfilment and shipping; payments, refunds, returns and the order lifecycle; customers, B2B and buyer subscriptions; catalog, search, import and events), begun 2026-11-22. Only what a single merchant's store needs counts: v1's control plane, hostname dispatch, merchant functions, plan billing, usage metering, plan gating and tenant scoping are excluded, as is its auth, CMS and UIs. Each slice follows the pricing slice's layering and `docs/patterns.md`.
+
+### Done
+
+| Part | v1 source | Where it went | What v1 got wrong, and the fix |
+|---|---|---|---|
+| Tax classes | `packages/tax` (`taxClassId`, class 0 untaxed, rates per class) | A product's `taxClass` (`packages/core/src/product/model.ts`), projected to `products.tax_class` by the catalog; `classTaxRate`, `withLineTaxRates` and per-line `computeTotals` in `packages/core/src/shipping.ts`; `taxOrder`; `commerce.tax`'s **Rates by tax class** and `class` on a region | Numeric class ids with a magic untaxed zero, and tax rounded per row: named classes a merchant rates per place, an unknown class never taxed below standard goods, each line keeping its rate so later re-totals charge the same, tax rounded once per order, and a rate sent on a line never trusted |
+
+### Open, by merchant impact
+
+Found by the review and still to be confirmed against source, one slice at a time. Wrong money and stock first.
+
+| Gap | v1 source | Nearest counterpart here |
+|---|---|---|
+| A return's default refund leaves out the tax charged on the returned lines | credit memos in `routes/v1/sales/orders.ts` | `returnValue`, `packages/core/src/returns.ts` |
+| Cancelling an order after capture voids authorizations but refunds nothing (v1 has the same flaw) | order cancel | `compensateOrder`; capture and charge have no rollback |
+| A zero-total order can't pass a card flow with live payments | `packages/payment` free method | `authorizePayment` |
+| `allowBackorder` ships short lines without spending stock or recording what is owed | `inventory-reserver.ts` | `commerce.reserve`, `bookShipment` |
+| No way to set or correct stock, or a store's stock, outside an order flow | inventory adjustments, source items, transfers, counts | `InventoryStore` (flow movements only) |
+| A product archived, unlisted or deleted in the catalog stays sellable at its last price | cart refuses a disabled product | `products` rows are kept and nothing marks them unsellable |
+| A catalog product can't be made digital, and its cost is always 0 | product types, `products.cost` | `products.kind` and `cost` have no writer but seeds |
+| Tax-inclusive prices (VAT, GST) | `pricesIncludeTax` in `packages/tax` | Tax is always added on top |
+| Layered and compound jurisdiction rates | `packages/tax` jurisdictions | One rate per place and class; a tax provider plugin otherwise |
+| A per-customer promotion limit doesn't bind guests | counts prior orders by email | `redeem` needs a customer id |
+| Refunds outside a running flow's refund node, and a second return | order refund route, credit memos | `commerce.refund` only |
+| Refunds and disputes made at the processor leave no entry on the order's timeline and send no webhook | payment webhook state machine | The ledger is reconciled; a dispute reaches only a waiting node |
+| Availability checks read central stock only, while routing ships from stores | salable sums every source | `checkout/quote.ts` |
+| Built-in shipping makes up a tracking number; no staff-entered tracking | manual carrier with tracks | `packages/core/src/labels.ts` |
+| Subscribers can't replace a failing card, pause, resume or cancel for themselves; one retry, then the order ends | `packages/subscriptions`, dunning workflow | `tpl-subscription`, `core/subscriptions.ts` (the machine is ported, nothing calls it) |
+| Approver groups and thresholds per company, as data | approval groups and rules | One approver rule per node (D4, D10 of `docs/b2b.md`) |
+| Promotions by category or attribute, a per-unit fixed discount, bulk codes, editing a promotion | catalog rules, coupons | `packages/core/src/promotions.ts` |
+| Order edits after placement, partial shipment and per-line cancel, partial invoices | order edit routes | None |
+| Return records a shopper can open, with replacement or store credit; gift-card balances | RMA routes, gift-card accounts | A return is an event payload; gift cards are digital codes |
+| Postcode and city on live rate requests | carrier adapters | `shipping-rates.ts` sends country and weight |
+| Saved lists (wishlists, requisition lists), shopper profile and address-book edits, marketing consent, product reviews | customer routes | None |
+| Events for products, inventory and customers, and `order.created`; pausing a subscription; bulk replay | webhook topics | `ORDER_EVENTS`, `CART_EVENTS` |
+| Search with filters and facets, stemming and suggestions; availability on the public catalog; a product sitemap | search routes | Keyword search; filters on category listings only |
+
+### Reviewed: matches or exceeds v1
+
+Tax after discounts; race-safe promotion caps released on cancel; unit-level buy-X-get-Y; exchange rates per order; holds, shipments and restocks as one guarded, step-keyed ledger (v1 double-reserved and treated a failed reserve as non-fatal); routing and split shipments inside the flow; label voids on rollback; idempotent authorize, capture, void and refund with a guarded void-versus-capture race; refunds capped and spread across payments; processor captures and refunds reconciled into the ledger; renewals idempotent across continue-as-new, billed on anchor-counted periods and shipped each cycle; approval evaluation (v1 approved an empty approver set); shopper sign-in by emailed code; export and erasure; webhook delivery from a recorded outbox with stable delivery ids, rotation and a day of retries; streamed, resumable imports; typed, versioned attributes and claimed identifiers.
+
+### Not taken, and why
+
+- Projects and jobs, reward points and customer segments: in v1 they are tables and CRUD with no rule behind them (a job's budget and spend are never updated, points are never earned or redeemed at checkout, segments have no routes).
+- Bundles, grouped products, customizations and scheduled per-currency prices: stored by v1 but never read by its cart or pricing.
+- Volume tiers: v1 takes the largest qualifying quantity step even when it costs more; here the lowest matching price wins, which is the documented price-book rule.
+- A cart-time stock hold: holds are taken in the flow after authorization, and the loser of a race has its authorization voided, so nothing oversells.
+- Pluggable payment gateways and configurable order statuses: the card-processor port and Order Flows replace them.
+- Supplier-feed normalization, downloadable-file hosting beyond digital codes, and v1's rules engine: a PIM, the assets service and JSON Logic cover them (see ROADMAP, "Not planned").
+
 ## Planned
 
 | Target | From | Mode | Phase |

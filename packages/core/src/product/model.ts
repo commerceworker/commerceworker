@@ -244,6 +244,14 @@ export const productInputSchema = z.object({
   slug: localizedSchema.optional(),
   description: localizedSchema.optional(),
   brand: z.string().max(200).optional(),
+  /**
+   * How this kind of goods is taxed (`reduced`, `gift-card`): the tax node's rate for the class
+   * applies to its order lines. Without one, the standard rate does.
+   */
+  taxClass: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]{0,39}$/, 'lowercase letters, digits, "-" or "_" (max 40)')
+    .optional(),
   categories: z.array(codeSchema).max(LIMITS.categories).default([]),
   /** Breadcrumb category; defaults to the first of `categories`. */
   primaryCategory: codeSchema.optional(),

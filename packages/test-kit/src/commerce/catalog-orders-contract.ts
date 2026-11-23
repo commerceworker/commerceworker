@@ -9,7 +9,7 @@ export function describeCatalogOrdersContract(
   }>,
 ) {
   describe(`${name}: catalog order products`, () => {
-    it('keeps the newest fields, ignores equal timestamps and clears legacy missing dimensions', async () => {
+    it('keeps the newest fields, ignores equal timestamps and clears legacy missing dimensions and tax class', async () => {
       const { store, read } = await make();
       const line: CatalogOrderLine = {
         sku: 'coc_one',
@@ -19,6 +19,7 @@ export function describeCatalogOrdersContract(
         lengthCm: 50,
         widthCm: 40,
         heightCm: 30,
+        taxClass: 'reduced',
       };
       await store.apply([{ line, at: 200 }]);
       await store.apply([
@@ -30,7 +31,14 @@ export function describeCatalogOrdersContract(
       await store.apply([{ line: bare, at: 300 }]);
       expect(await read(line.sku)).toEqual({
         at: 300,
-        line: { ...bare, weightKg: null, lengthCm: null, widthCm: null, heightCm: null },
+        line: {
+          ...bare,
+          weightKg: null,
+          lengthCm: null,
+          widthCm: null,
+          heightCm: null,
+          taxClass: null,
+        },
       });
     });
 
@@ -47,6 +55,7 @@ export function describeCatalogOrdersContract(
           lengthCm: null,
           widthCm: null,
           heightCm: null,
+          taxClass: null,
         },
       }));
       await store.apply(rows);

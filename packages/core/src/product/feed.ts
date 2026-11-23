@@ -3,7 +3,7 @@
  *
  * - NDJSON: one product per line, exactly the `ProductInput` shape. The complete format.
  * - CSV: one row per variant, rows of one product contiguous (a key that appears again later
- *   replaces the earlier rows). Columns: `key`, `type`, `status`, `brand`, `categories` and
+ *   replaces the earlier rows). Columns: `key`, `type`, `status`, `brand`, `taxClass`, `categories` and
  *   `media` (both `|`-separated), `title:<locale>`, `slug:<locale>`, `description:<locale>`,
  *   `price.<channel>` and `compareAt.<channel>` (decimal, in the channel's currency),
  *   `visible.<channel>`, `sku`, `gtin`, `mpn`, `variantPrice.<channel>`, `weightKg` and
@@ -385,6 +385,7 @@ export async function* csvProducts(
       };
       if (cells.status) product.status = cells.status as ProductInput['status'];
       if (cells.brand) product.brand = cells.brand;
+      if (cells.taxClass) product.taxClass = cells.taxClass;
       const slug = localizedCol('slug');
       if (slug) product.slug = slug;
       const description = localizedCol('description');

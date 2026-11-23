@@ -227,7 +227,13 @@ export async function pluginContract(stub: ContractStub, cases: ContractCases): 
                   ...base,
                   surface,
                   op: 'calculate',
-                  input: { subtotal: 10, shipping: 5, includeShipping: true, currency: 'USD' },
+                  input: {
+                    subtotal: 10,
+                    shipping: 5,
+                    includeShipping: true,
+                    currency: 'USD',
+                    lines: [{ sku: 'SKU-1', qty: 1, amount: 10 }],
+                  },
                 } as const)
               : ({ ...base, surface, op: 'validate', input: { address: SHIP_TO } } as const);
         const answer = await call(req);

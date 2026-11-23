@@ -31,6 +31,7 @@ const product = (sku: string, name = `Product ${sku}`): ProductRecord => ({
   lengthCm: null,
   widthCm: null,
   heightCm: null,
+  taxClass: null,
 });
 
 const customer = (id: string, name: string, kind = 'business'): CustomerRecord => ({

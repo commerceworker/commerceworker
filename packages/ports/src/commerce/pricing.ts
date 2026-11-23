@@ -52,6 +52,8 @@ export interface ProductRecord {
   readonly lengthCm: number | null;
   readonly widthCm: number | null;
   readonly heightCm: number | null;
+  /** The catalog product's tax class; null is the standard rate. */
+  readonly taxClass: string | null;
 }
 
 /** The pricing chain for one customer: active sources, their entries, and the customer's tier. */

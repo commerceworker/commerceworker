@@ -644,6 +644,8 @@ export type ProvideRequest = {
         shipping: number;
         includeShipping: boolean;
         currency: string;
+        /** Each line's amount and its product's tax class (absent for standard goods). */
+        lines: { sku: string; qty: number; amount: number; taxClass?: string }[];
         /**
          * The customer's exemption certificate in force where the order ships, verified by staff
          * (`exemptingCertificate`), when there is one and the node applies exemptions: where it

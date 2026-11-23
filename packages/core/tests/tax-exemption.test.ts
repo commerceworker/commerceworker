@@ -238,6 +238,7 @@ describe('a tax provider’s request', () => {
       subtotal: 10,
       shipping: 0,
       includeShipping: true,
+      lines: [],
       currency: 'USD',
       exemption: { certificate: 'RS-1', regions: [{ country: 'US' }] },
     },

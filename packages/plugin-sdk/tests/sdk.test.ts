@@ -443,7 +443,7 @@ describe('providers', () => {
         orderId: 'o',
         config: {},
         order: {} as never,
-        input: { subtotal: 1, shipping: 0, includeShipping: true, currency: 'USD' },
+        input: { subtotal: 1, shipping: 0, includeShipping: true, currency: 'USD', lines: [] },
       }),
     ).toEqual({ fail: { message: "carrier doesn't provide tax calculate" } });
   });

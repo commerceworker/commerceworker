@@ -216,6 +216,7 @@ export class InMemoryInventoryStore implements InventoryStore {
           lengthCm: null,
           widthCm: null,
           heightCm: null,
+          taxClass: null,
         };
       });
   }
