@@ -274,7 +274,7 @@ that failed, rolled back, was declined or cancelled: where it stopped and why), 
 | Field | Meaning |
 |---|---|
 | `orderId`, `status`, `reason` | Identity, status, and the reason when cancelled or failed |
-| `order` | The order with computed `subtotal`, `shipping`, `tax` and `total` (`subtotal + shipping + tax`), and once taxed `taxRate` and `taxShipping` |
+| `order` | The order with computed `subtotal`, `shipping`, `tax` and `total` (`subtotal + shipping + tax`), and once taxed `taxRate`, `taxShipping` and, for SKUs taxed by their tax class, `taxRates` |
 | `flow` | The pinned flow version, including its graph |
 | `nodes` | Per node: `status`, `runs`, `summary`, `output`, `error`, `branches`, `startedAt`, `endedAt` |
 | `edges` | Per edge: `pending`, `active` or `inactive` |

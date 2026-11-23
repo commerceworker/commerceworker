@@ -182,7 +182,11 @@ export type TaxRegion = z.infer<typeof taxRegionsSchema>[number];
 /** A tax class's rate wherever no region names the class, for `commerce.tax`. */
 export const taxClassRatesSchema = z
   .record(taxClassSchema, taxRateSchema)
-  .refine((r) => Object.keys(r).length <= 50, 'At most 50 tax classes');
+  .refine((r) => Object.keys(r).length <= 50, 'At most 50 tax classes')
+  .refine(
+    (r) => !(STANDARD_TAX_CLASS in r),
+    'The standard rate is Rate, or a region with no class',
+  );
 export type TaxClassRates = z.infer<typeof taxClassRatesSchema>;
 
 const isStandard = (c: string | null | undefined) => !c || c === STANDARD_TAX_CLASS;
@@ -241,19 +245,32 @@ export function classTaxRate(
 }
 
 /**
- * The lines with each one's tax rate set where it differs from the order's `standard` rate, and
- * cleared where it doesn't (or for every line when `rates` is absent: one rate for the order).
+ * The rates of the SKUs taxed apart from the order's `standard` rate, by SKU: what the tax node
+ * keeps as the order's `taxRates`. Undefined when every SKU is taxed at the standard rate.
  */
-export function withLineTaxRates<L extends { sku: string; taxRate?: number }>(
-  lines: readonly L[],
+export function skuTaxRates(
+  skus: Iterable<string>,
   standard: number,
-  rates?: (sku: string) => number,
-): L[] {
-  return lines.map((l) => {
-    const { taxRate: _old, ...rest } = l;
-    const rate = rates?.(l.sku);
-    return (rate === undefined || rate === standard ? rest : { ...rest, taxRate: rate }) as L;
-  });
+  rateOf: (sku: string) => number,
+): Record<string, number> | undefined {
+  const rates: Record<string, number> = {};
+  for (const sku of skus) {
+    const rate = rateOf(sku);
+    if (rate !== standard) rates[sku] = rate;
+  }
+  return Object.keys(rates).length ? rates : undefined;
+}
+
+/** The rate a taxed order charged `sku`: its own in `taxRates`, else the order's `taxRate`. */
+export function skuTaxRate(
+  order: { taxRate?: number; taxRates?: Record<string, number> },
+  sku: string,
+): number {
+  // An order no tax node ran on charged nothing. `hasOwn`: a SKU may be named like a prototype key.
+  if (order.taxRate === undefined) return 0;
+  return order.taxRates && Object.hasOwn(order.taxRates, sku)
+    ? (order.taxRates[sku] as number)
+    : order.taxRate;
 }
 
 /** The configured services' rates for a request, unsorted. */
@@ -340,24 +357,25 @@ export function pickOption(
 /**
  * Subtotal, shipping, tax and total from the order's lines, shipping and tax rate. Tax is
  * `(subtotal + shipping when taxShipping) × taxRate`; an order no tax node has run on has none.
- * A line with a `taxRate` of its own (its product's tax class) is taxed at that instead, and the
- * tax is rounded once, for the order.
+ * A line whose SKU has a rate of its own in `taxRates` (its product's tax class) is taxed at that
+ * instead, and the tax is rounded once, for the order.
  */
 export function computeTotals(
   order: Pick<Order, 'lines' | 'fxRate'> &
-    Partial<Pick<Order, 'shipping' | 'taxRate' | 'taxShipping'>>,
+    Partial<Pick<Order, 'shipping' | 'taxRate' | 'taxShipping' | 'taxRates'>>,
 ): Pick<Order, 'subtotal' | 'shipping' | 'tax' | 'total' | 'baseTotal'> {
   const subtotal = money(order.lines.reduce((s, l) => s + l.qty * (l.unitPrice ?? 0), 0));
   const shipping = money(order.shipping ?? 0);
   const rate = order.taxRate ?? 0;
-  // Line rates count only once a tax node has run, so one sent with an order charges nothing.
-  const byLine = order.taxRate !== undefined && order.lines.some((l) => l.taxRate !== undefined);
-  const tax = byLine
-    ? money(
-        order.lines.reduce((s, l) => s + l.qty * (l.unitPrice ?? 0) * (l.taxRate ?? rate), 0) +
-          (order.taxShipping ? shipping * rate : 0),
-      )
-    : money((subtotal + (order.taxShipping ? shipping : 0)) * rate);
+  const tax =
+    order.taxRate !== undefined && order.taxRates
+      ? money(
+          order.lines.reduce(
+            (s, l) => s + l.qty * (l.unitPrice ?? 0) * skuTaxRate(order, l.sku),
+            0,
+          ) + (order.taxShipping ? shipping * rate : 0),
+        )
+      : money((subtotal + (order.taxShipping ? shipping : 0)) * rate);
   const total = money(subtotal + shipping + tax);
   return { subtotal, shipping, tax, total, baseTotal: toBase(total, order.fxRate) };
 }

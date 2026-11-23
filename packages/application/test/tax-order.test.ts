@@ -132,7 +132,7 @@ describe('taxing an order', () => {
     // 100 × 10% + 100 × 5% + 100 × 0% + 10 shipping × 10%.
     expect(r.totals).toMatchObject({ subtotal: 300, tax: 16, total: 326 });
     expect(r.rate).toBe(0.1);
-    expect(r.lines.map((l) => l.taxRate)).toEqual([undefined, 0.05, 0]);
+    expect(r.taxRates).toEqual({ BOOK: 0.05, GIFT: 0 });
     expect(r.byClass).toEqual([
       { sku: 'BOOK', taxClass: 'reduced', rate: 0.05 },
       { sku: 'GIFT', taxClass: 'gift-card', rate: 0 },
@@ -150,7 +150,7 @@ describe('taxing an order', () => {
     });
     if (!r.ok) throw new Error('refused');
     // The gift card's class has no rate, so it is taxed as ordinary goods are.
-    expect(r.lines.map((l) => l.taxRate)).toEqual([undefined, 0.02, undefined]);
+    expect(r.taxRates).toEqual({ BOOK: 0.02 });
     expect(r.totals.tax).toBe(19.33);
   });
 
@@ -158,12 +158,12 @@ describe('taxing an order', () => {
     const p = await ports(false);
     let reads = 0;
     const pricing = { products: async () => (reads++, PRODUCTS) };
-    const stale = { ...mixed(), lines: mixed().lines.map((l) => ({ ...l, taxRate: 0 })) };
+    // Rates an earlier tax node kept are not this node's: it taxes one rate.
+    const stale = { ...mixed(), taxRate: 0.2, taxRates: { A: 0, BOOK: 0, GIFT: 0 } };
     const r = await taxOrder({ ...p, pricing }, stale as Order, opts);
     if (!r.ok) throw new Error('refused');
     expect(reads).toBe(0);
-    // A rate sent on a line is not the tax node's: it is dropped.
-    expect(r.lines.every((l) => l.taxRate === undefined)).toBe(true);
+    expect(r.taxRates).toBeUndefined();
     expect(r.totals.tax).toBe(31);
   });
 
@@ -171,7 +171,7 @@ describe('taxing an order', () => {
     const exempt = await taxOrder(await ports(), mixed(), { ...opts, classes: { reduced: 0.05 } });
     if (!exempt.ok) throw new Error('refused');
     expect(exempt.totals.tax).toBe(0);
-    expect(exempt.lines.every((l) => l.taxRate === undefined)).toBe(true);
+    expect(exempt.taxRates).toBeUndefined();
 
     let asked: { lines: unknown } | undefined;
     const r = await taxOrder(await ports(false), mixed(), {
@@ -188,8 +188,8 @@ describe('taxing an order', () => {
       { sku: 'BOOK', qty: 2, amount: 100, taxClass: 'reduced' },
       { sku: 'GIFT', qty: 1, amount: 100, taxClass: 'gift-card' },
     ]);
-    // The provider's amount is the order's tax: no line keeps a built-in rate beside it.
+    // The provider's amount is the order's tax: no SKU keeps a built-in rate beside it.
     expect(r.totals.tax).toBe(15.5);
-    expect(r.lines.every((l) => l.taxRate === undefined)).toBe(true);
+    expect(r.taxRates).toBeUndefined();
   });
 });

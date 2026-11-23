@@ -8,7 +8,7 @@
  * nodes that recompute totals keep the same tax.
  *
  * Built in, a product's tax class is taxed at its own rate where the node gives one (`classes`, or
- * a region entry with a `class`): each such line keeps its rate, and the products are read only
+ * a region entry with a `class`): each such SKU's rate is kept on the order, and the products are read only
  * when the node taxes by class. A provider is told each line's class and answers one amount.
  */
 import {
@@ -21,11 +21,11 @@ import {
   providerTaxProblem,
   regionalTaxRate,
   shipToCountry,
+  skuTaxRates,
   type TaxCertificate,
   type TaxClassRates,
   type TaxRegion,
   taxesByClass,
-  withLineTaxRates,
 } from '@commerceworker/core';
 import type { PricingStore, TaxCertificateStore } from '@commerceworker/ports/commerce';
 
@@ -48,9 +48,9 @@ export type TaxedOrder =
       readonly ok: true;
       readonly rate: number;
       readonly taxShipping: boolean;
-      /** The order's lines, each with its own rate where its tax class has one. */
-      readonly lines: Order['lines'];
-      /** The lines taxed apart from `rate`, by class. */
+      /** The rate of each SKU taxed apart from `rate`; undefined when none is. */
+      readonly taxRates: Record<string, number> | undefined;
+      /** Those SKUs, with the class that set each one's rate. */
       readonly byClass: { sku: string; taxClass: string; rate: number }[];
       readonly totals: ReturnType<typeof computeTotals>;
       readonly certificate: TaxCertificate | null;
@@ -108,11 +108,11 @@ export async function taxOrder(
         )
       : new Map<string, string>();
   // One rate for the order unless the node itself rates a class on it.
-  let lines = withLineTaxRates(order.lines, rate);
+  let taxRates: Record<string, number> | undefined;
   const byClass: { sku: string; taxClass: string; rate: number }[] = [];
   if (opts.provider) {
     // What computeTotals will tax: the lines' subtotal and rounded shipping, not stored totals.
-    const { subtotal, shipping } = computeTotals({ ...order, lines, taxRate: 0 });
+    const { subtotal, shipping } = computeTotals({ ...order, taxRate: 0, taxRates: undefined });
     const answer = await opts.provider({
       subtotal,
       shipping,
@@ -138,24 +138,20 @@ export async function taxOrder(
     if (problem) return { ok: false, problem, amount: answer.amount, taxable };
     rate = taxable > 0 ? answer.amount / taxable : 0;
   } else if (classOf.size) {
-    const rateOf = (sku: string) =>
-      classTaxRate(classOf.get(sku), opts.regions, classes, country, shipTo?.region, rate);
-    lines = withLineTaxRates(order.lines, rate, rateOf);
-    const seen = new Set<string>();
-    for (const l of lines) {
-      const taxClass = classOf.get(l.sku);
-      if (l.taxRate === undefined || !taxClass || seen.has(l.sku)) continue;
-      seen.add(l.sku);
-      byClass.push({ sku: l.sku, taxClass, rate: l.taxRate });
-    }
+    const standard = rate;
+    taxRates = skuTaxRates(classOf.keys(), standard, (sku) =>
+      classTaxRate(classOf.get(sku), opts.regions, classes, country, shipTo?.region, standard),
+    );
+    for (const [sku, r] of Object.entries(taxRates ?? {}))
+      byClass.push({ sku, taxClass: classOf.get(sku) as string, rate: r });
   }
   return {
     ok: true,
     rate,
     taxShipping,
-    lines,
+    taxRates,
     byClass,
-    totals: computeTotals({ ...order, lines, taxRate: rate, taxShipping }),
+    totals: computeTotals({ ...order, taxRate: rate, taxShipping, taxRates }),
     certificate,
     exempted,
   };

@@ -2712,7 +2712,6 @@ export type StartOrderInput = {
       unitPrice?: number;
       sellerId?: string;
       locationId?: string;
-      taxRate?: number;
     }[];
     contact?: {
       email: string;
@@ -3635,7 +3634,6 @@ export type Order = {
     unitPrice?: number;
     sellerId?: string;
     locationId?: string;
-    taxRate?: number;
   }[];
   contact?: {
     email: string;
@@ -3672,6 +3670,8 @@ export type Order = {
   taxRate?: number;
   /** Whether the tax node taxed shipping */
   taxShipping?: boolean;
+  /** The rate the tax node charged each SKU whose tax class is taxed apart from taxRate; a SKU not named was charged taxRate */
+  taxRates?: { [key: string]: number };
   /** Units of the order currency per one unit of the base currency, fixed when priced */
   fxRate?: number;
   /** total in the base currency */

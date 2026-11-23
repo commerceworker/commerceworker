@@ -343,8 +343,9 @@ export const EXECUTORS: Record<string, Exec> = {
 
   'commerce.tax': async ({ env, ctx, config, node, stepKey, dryRun }) => {
     const by = providerOf(config);
-    const regions = taxRegionsSchema.safeParse(config.regions ?? []);
-    const classes = taxClassRatesSchema.safeParse(config.classes ?? {});
+    // An empty field reads as unset, as it does when the flow is checked.
+    const regions = taxRegionsSchema.safeParse(config.regions || []);
+    const classes = taxClassRatesSchema.safeParse(config.classes || {});
     if (!regions.success || !classes.success)
       throw new NonRetryableError(
         `Invalid tax ${regions.success ? 'classes' : 'regions'}: ${(regions.error ?? classes.error)?.issues[0]?.message}`,
@@ -380,14 +381,15 @@ export const EXECUTORS: Record<string, Exec> = {
           ? `Tax provider “${by}” charged tax on nothing taxable`
           : `Tax provider “${by}” charged ${cash(r.amount, ctx)}, over ${PROVIDER_MAX_TAX_RATE * 100}% of ${cash(r.taxable, ctx)} taxable`,
       );
-    const { rate, taxShipping, totals: t, certificate: cert, exempted, lines, byClass } = r;
+    const { rate, taxShipping, totals: t, certificate: cert, exempted, taxRates, byClass } = r;
     // An order keeps the certificate's id, not its number, which names the business and would
     // outlive the customer's erasure in step outputs; a quote (never stored as a step) shows it.
     const exemption = cert
       ? { certificateId: cert.id, exempted, ...(dryRun ? { certificate: cert.number } : {}) }
       : null;
     return {
-      order: { ...t, lines, taxRate: rate, taxShipping },
+      // Always set, so a second tax node replaces the first one's rates by SKU.
+      order: { ...t, taxRate: rate, taxShipping, taxRates },
       output: {
         rate,
         taxShipping,

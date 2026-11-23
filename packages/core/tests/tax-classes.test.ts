@@ -3,11 +3,12 @@ import {
   classTaxRate,
   computeTotals,
   regionalTaxRate,
+  skuTaxRate,
+  skuTaxRates,
   type TaxRegion,
   taxClassRatesSchema,
   taxesByClass,
   taxRegionsSchema,
-  withLineTaxRates,
 } from '../src';
 
 const regions: TaxRegion[] = [
@@ -54,56 +55,66 @@ describe('tax classes', () => {
     ).toBe(false);
   });
 
-  it('sets a line rate only where it differs from the order rate, and clears old ones', () => {
-    const lines = [
-      { sku: 'A', qty: 1, taxRate: 0.3 },
-      { sku: 'B', qty: 1 },
-      { sku: 'C', qty: 1 },
-    ];
+  it('refuses a rate for the standard class, which Rate and the regions set', () => {
+    expect(taxClassRatesSchema.safeParse({ standard: 0 }).success).toBe(false);
+  });
+
+  it('keeps a rate by SKU only where it differs from the order rate', () => {
     const rates = new Map([
       ['A', 0.2],
       ['B', 0.05],
       ['C', 0],
     ]);
-    expect(withLineTaxRates(lines, 0.2, (sku) => rates.get(sku) as number)).toEqual([
-      { sku: 'A', qty: 1 },
-      { sku: 'B', qty: 1, taxRate: 0.05 },
-      { sku: 'C', qty: 1, taxRate: 0 },
-    ]);
-    expect(withLineTaxRates(lines, 0.2)).toEqual([
-      { sku: 'A', qty: 1 },
-      { sku: 'B', qty: 1 },
-      { sku: 'C', qty: 1 },
-    ]);
+    const rateOf = (sku: string) => rates.get(sku) as number;
+    expect(skuTaxRates(rates.keys(), 0.2, rateOf)).toEqual({ B: 0.05, C: 0 });
+    expect(skuTaxRates(['A'], 0.2, rateOf)).toBeUndefined();
+  });
+
+  it('reads a SKU’s rate from the order, and nothing before a tax node ran', () => {
+    const order = { taxRate: 0.2, taxRates: { B: 0.05, C: 0 } };
+    expect(['A', 'B', 'C'].map((sku) => skuTaxRate(order, sku))).toEqual([0.2, 0.05, 0]);
+    // A SKU named like a prototype key is an ordinary SKU.
+    expect(skuTaxRate(order, 'constructor')).toBe(0.2);
+    expect(skuTaxRate({ taxRates: { B: 0.05 } }, 'B')).toBe(0);
+    expect(skuTaxRate({}, 'A')).toBe(0);
   });
 });
 
-describe('totals with line tax rates', () => {
+describe('totals with tax rates by SKU', () => {
   const lines = [
     { sku: 'A', qty: 3, unitPrice: 19.99 },
-    { sku: 'B', qty: 1, unitPrice: 9.99, taxRate: 0.05 },
-    { sku: 'C', qty: 2, unitPrice: 25, taxRate: 0 },
+    { sku: 'B', qty: 1, unitPrice: 9.99 },
+    { sku: 'C', qty: 2, unitPrice: 25 },
   ];
+  const taxRates = { B: 0.05, C: 0 };
 
-  it('taxes each line at its own rate and shipping at the order rate, rounded once', () => {
-    const t = computeTotals({ lines, shipping: 7.5, taxRate: 0.2, taxShipping: true });
+  it('taxes each SKU at its own rate and shipping at the order rate, rounded once', () => {
+    const t = computeTotals({ lines, shipping: 7.5, taxRate: 0.2, taxShipping: true, taxRates });
     // 59.97 × 0.2 + 9.99 × 0.05 + 0 + 7.5 × 0.2 = 11.994 + 0.4995 + 1.5 = 13.9935.
     expect(t).toMatchObject({ subtotal: 119.96, shipping: 7.5, tax: 13.99, total: 141.45 });
-    expect(computeTotals({ lines, shipping: 7.5, taxRate: 0.2, taxShipping: false }).tax).toBe(
-      12.49,
-    );
+    expect(
+      computeTotals({ lines, shipping: 7.5, taxRate: 0.2, taxShipping: false, taxRates }).tax,
+    ).toBe(12.49);
   });
 
-  it('charges nothing for line rates before a tax node has run', () => {
-    expect(computeTotals({ lines: [{ sku: 'A', qty: 1, unitPrice: 100, taxRate: 0.5 }] }).tax).toBe(
-      0,
-    );
+  it('charges nothing for rates by SKU before a tax node has run', () => {
+    expect(computeTotals({ lines, taxRates: { A: 0.5 } }).tax).toBe(0);
+  });
+
+  it('keeps each SKU’s rate when lines are split, merged or dropped after tax', () => {
+    // Buy-X-get-Y splits a line; a seller rejecting drops one.
+    const split = [
+      { sku: 'B', qty: 1, unitPrice: 9.99 },
+      { sku: 'A', qty: 2, unitPrice: 19.99 },
+      { sku: 'A', qty: 1, unitPrice: 0 },
+    ];
+    // 39.98 × 0.2 + 9.99 × 0.05 = 7.996 + 0.4995.
+    expect(computeTotals({ lines: split, taxRate: 0.2, taxRates }).tax).toBe(8.5);
   });
 
   it('is unchanged for an order with one rate', () => {
-    const plain = lines.map(({ taxRate: _r, ...l }) => l);
-    expect(
-      computeTotals({ lines: plain, shipping: 7.5, taxRate: 0.0825, taxShipping: true }).tax,
-    ).toBe(Math.round((119.96 + 7.5) * 0.0825 * 100) / 100);
+    expect(computeTotals({ lines, shipping: 7.5, taxRate: 0.0825, taxShipping: true }).tax).toBe(
+      Math.round((119.96 + 7.5) * 0.0825 * 100) / 100,
+    );
   });
 });

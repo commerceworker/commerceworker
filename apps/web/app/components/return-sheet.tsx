@@ -32,7 +32,12 @@ export function ReturnSheet({
   disabled,
   onSubmit,
 }: {
-  order: { lines: OrderLine[]; total?: number };
+  order: {
+    lines: OrderLine[];
+    total?: number;
+    taxRate?: number;
+    taxRates?: Record<string, number>;
+  };
   flow: { nodes: unknown[] } | null | undefined;
   disabled: boolean;
   onSubmit: (input: ReturnInput) => Promise<unknown>;
@@ -64,7 +69,12 @@ function ReturnForm({
   disabled,
   onSubmit,
 }: {
-  order: { lines: OrderLine[]; total?: number };
+  order: {
+    lines: OrderLine[];
+    total?: number;
+    taxRate?: number;
+    taxRates?: Record<string, number>;
+  };
   flow: { nodes: unknown[] } | null | undefined;
   disabled: boolean;
   onSubmit: (input: ReturnInput) => Promise<unknown>;

@@ -223,7 +223,7 @@ Goods taxed at another rate carry a **tax class** on their [product](/guides/pro
 (`taxClass`, such as `reduced` or `gift-card`). **Rates by tax class** on the node gives a class its
 rate everywhere (`{ "gift-card": 0, "reduced": 0.05 }`), and a region entry with a `class` gives it
 one for that place (`{ "country": "GB", "class": "reduced", "rate": 0.05 }`), the most specific
-winning. Each of those lines is then taxed at its own rate and keeps it as `taxRate` on the line,
+winning. Each of those lines is then taxed at its own rate, kept by SKU in the order's `taxRates`,
 while the order's `taxRate` stays the standard rate, which also taxes shipping. A product with no
 class, or a class the node gives no rate, is taxed at the standard rate. A customer's exemption
 certificate still exempts the whole order, and a tax provider is told each line's class and decides

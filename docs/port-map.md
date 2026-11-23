@@ -84,7 +84,8 @@ A review of v1's commerce primitives against this codebase, area by area (money;
 
 | Part | v1 source | Where it went | What v1 got wrong, and the fix |
 |---|---|---|---|
-| Tax classes | `packages/tax` (`taxClassId`, class 0 untaxed, rates per class) | A product's `taxClass` (`packages/core/src/product/model.ts`), projected to `products.tax_class` by the catalog; `classTaxRate`, `withLineTaxRates` and per-line `computeTotals` in `packages/core/src/shipping.ts`; `taxOrder`; `commerce.tax`'s **Rates by tax class** and `class` on a region | Numeric class ids with a magic untaxed zero, and tax rounded per row: named classes a merchant rates per place, an unknown class never taxed below standard goods, each line keeping its rate so later re-totals charge the same, tax rounded once per order, and a rate sent on a line never trusted |
+| Tax classes | `packages/tax` (`taxClassId`, class 0 untaxed, rates per class) | A product's `taxClass` (`packages/core/src/product/model.ts`), projected to `products.tax_class` by the catalog; `classTaxRate`, `skuTaxRates`, `skuTaxRate` and per-line `computeTotals` in `packages/core/src/shipping.ts`; `taxOrder`; `commerce.tax`'s **Rates by tax class** and `class` on a region | Numeric class ids with a magic untaxed zero, and tax rounded per row: named classes a merchant rates per place, an unknown class never taxed below standard goods, each SKU's rate kept on the order (`taxRates`, never on a line a buyer can send or another node can rewrite) so later re-totals charge the same, and tax rounded once per order |
+| A return refunds the tax paid on it | credit memos add each line's proportional tax (`routes/v1/sales/orders.ts`) | `returnValue` and `returnRequest` in `packages/core/src/returns.ts`: the default refund is the lines' value and the tax charged on it, and the request says how much is tax | Tax spread pro rata across the order: each returned line refunds tax at the rate it was charged, its tax class's or the order's, and shipping's tax stays with shipping |
 
 ### Open, by merchant impact
 
@@ -92,7 +93,6 @@ Found by the review and still to be confirmed against source, one slice at a tim
 
 | Gap | v1 source | Nearest counterpart here |
 |---|---|---|
-| A return's default refund leaves out the tax charged on the returned lines | credit memos in `routes/v1/sales/orders.ts` | `returnValue`, `packages/core/src/returns.ts` |
 | Cancelling an order after capture voids authorizations but refunds nothing (v1 has the same flaw) | order cancel | `compensateOrder`; capture and charge have no rollback |
 | A zero-total order can't pass a card flow with live payments | `packages/payment` free method | `authorizePayment` |
 | `allowBackorder` ships short lines without spending stock or recording what is owed | `inventory-reserver.ts` | `commerce.reserve`, `bookShipment` |

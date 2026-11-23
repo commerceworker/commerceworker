@@ -196,7 +196,8 @@ assistant's card then shows what will happen, and nothing happens until you conf
 
 A return is the buyer's choice (changed their mind, wrong size or fit, not as described). A claim
 says something went wrong (damaged, faulty, wrong item, missing from the delivery, lost in
-transit). The refund defaults to what the chosen items cost, without shipping or tax. It must be
+transit). The refund defaults to what was paid for the chosen items: their price and the tax charged on
+them, each at its own rate, without shipping or the tax on it. It must be
 above zero and can't be more than the order total.
 
 Claims for items missing from the delivery or lost in transit have nothing to send back, so the
@@ -206,7 +207,7 @@ an older published flow keep waiting for goods, so publish the flow again to off
 approval separation on, whoever started the order can't record these two claims.
 
 The request reaches the flow as `vars.return_requested`, with `kind`, `reasonCode`, `reason`,
-`goodsBack`, `lines`, `amount` and `note`. Only a request recorded here can set `goodsBack`: the
+`goodsBack`, `lines`, `amount`, `tax` (the tax within a default `amount`, when there is any) and `note`. Only a request recorded here can set `goodsBack`: the
 API and connected systems can still deliver `return.requested`, but that always waits for the
 goods before any refund.
 

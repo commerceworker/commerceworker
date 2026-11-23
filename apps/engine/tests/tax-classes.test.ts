@@ -42,8 +42,7 @@ const start = (flowId: string) =>
       lines: [
         { sku: 'TXC-STD', qty: 1 },
         { sku: 'TXC-BOOK', qty: 2 },
-        // A rate sent with the order is never the tax node's.
-        { sku: 'TXC-GIFT', qty: 1, taxRate: 0.5 },
+        { sku: 'TXC-GIFT', qty: 1 },
       ],
       meta: { shipTo },
     },
@@ -63,7 +62,7 @@ beforeAll(async () => {
 });
 
 describe('an order of products in different tax classes', () => {
-  it('is taxed line by line, and keeps each line’s rate on the order', async () => {
+  it('is taxed line by line, and keeps each SKU’s rate on the order', async () => {
     await flow('test-tax-classes', {
       regions: [
         { country: 'GB', rate: 0.2 },
@@ -76,11 +75,7 @@ describe('an order of products in different tax classes', () => {
     expect(done.status).toBe('completed');
     // 100 × 20% + 100 × 5% + 100 × 0%.
     expect(done.order).toMatchObject({ subtotal: 300, tax: 25, total: 325, taxRate: 0.2 });
-    expect(done.order?.lines.map((l) => [l.sku, l.taxRate])).toEqual([
-      ['TXC-STD', undefined],
-      ['TXC-BOOK', 0.05],
-      ['TXC-GIFT', 0],
-    ]);
+    expect(done.order?.taxRates).toEqual({ 'TXC-BOOK': 0.05, 'TXC-GIFT': 0 });
     expect(done.nodes.tax?.output).toMatchObject({
       rate: 0.2,
       byClass: [
@@ -95,7 +90,7 @@ describe('an order of products in different tax classes', () => {
     const { orderId } = await start('test-tax-one-rate');
     const done = await settled(orderId, 30_000, { rollback: false });
     expect(done.order).toMatchObject({ subtotal: 300, tax: 60, total: 360 });
-    expect(done.order?.lines.every((l) => l.taxRate === undefined)).toBe(true);
+    expect(done.order?.taxRates).toBeUndefined();
     expect(done.nodes.tax?.output).not.toHaveProperty('byClass');
   });
 
@@ -130,6 +125,11 @@ describe('an order of products in different tax classes', () => {
         stepKey: 'tax#1',
       });
     await expect(run({ classes: { reduced: 5 } })).rejects.toThrow(/Invalid tax classes/);
+    // An emptied field is unset, as it is when the flow is checked.
+    expect((await run({ classes: '', regions: '' })).order).toMatchObject({
+      tax: 4,
+      taxRate: 0.08,
+    });
     await expect(run({ regions: [{ country: 'gb', rate: 0.2 }] })).rejects.toThrow(
       /Invalid tax regions/,
     );
