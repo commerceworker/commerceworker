@@ -11,131 +11,15 @@
  *   `attr.<code>:<locale>` for localized text). Attribute cells are read according to the
  *   attribute's kind: `|` separates multi_enum values, money is `12.34 USD`, measure is `2.5`.
  *
- * Both parsers stream: memory stays flat however large the feed. Pure.
+ * Both parsers stream: memory stays flat however large the feed. Pure. CSV records come from
+ * `csvRecords` (../csv.ts), shared with the admin's bulk imports.
  */
+import { type CsvRecord, csvRecords } from '../csv';
 import { toMinor } from '../money';
 import type { AttributeDef, Channel, Json, ProductInput, ProductType, VariantInput } from './model';
 import { parseTypeRef } from './model';
 
-/** A CSV record and the byte offset just past it (its line break included). */
-export type CsvRecord = { record: string[]; end: number };
-
-/** UTF-8 bytes of the UTF-16 code unit `c` (a surrogate pair counts 4 on its high half). */
-const utf8Bytes = (c: number) =>
-  c < 0x80
-    ? 1
-    : c < 0x800
-      ? 2
-      : c >= 0xd800 && c <= 0xdbff
-        ? 4
-        : c >= 0xdc00 && c <= 0xdfff
-          ? 0
-          : 3;
-
-/**
- * RFC 4180 records from a byte stream: quoted fields, `""` escapes, CRLF or LF, a leading BOM.
- * Each record carries the byte offset just past it, counted from `start` (where the stream begins
- * in the file), so a reader can stop after any record and resume there with a range read
- * (stopping early cancels the stream). The
- * feed must be UTF-8: invalid bytes would make the offsets wrong, so they fail the parse.
- */
-export async function* csvRecords(
-  stream: ReadableStream<Uint8Array>,
-  start = 0,
-): AsyncGenerator<CsvRecord, void, undefined> {
-  // ignoreBOM keeps a BOM as a character, so its three bytes are counted like any other.
-  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-  let field = '';
-  let record: string[] = [];
-  let quoted = false;
-  // After a closing quote inside a quoted field: the next char decides (`"` escape or end).
-  let quoteSeen = false;
-  let started = false;
-  let pendingCR = false;
-  let bytes = start;
-  let first = start === 0;
-  let finished = false;
-  const reader = stream.getReader();
-  const endRecord = function* () {
-    record.push(field);
-    field = '';
-    const r = record;
-    record = [];
-    started = false;
-    if (!(r.length === 1 && r[0] === '')) yield { record: r, end: bytes };
-  };
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      let text: string;
-      try {
-        text = done ? decoder.decode() : decoder.decode(value, { stream: true });
-      } catch {
-        throw new SyntaxError(`the feed is not valid UTF-8 (near byte ${bytes})`);
-      }
-      for (let i = 0; i < text.length; i++) {
-        const code = text.charCodeAt(i);
-        bytes += utf8Bytes(code);
-        if (first) {
-          first = false;
-          if (code === 0xfeff) continue;
-        }
-        const ch = text[i] as string;
-        if (pendingCR) {
-          pendingCR = false;
-          if (ch === '\n') continue;
-        }
-        if (quoted) {
-          if (quoteSeen) {
-            quoteSeen = false;
-            if (ch === '"') {
-              field += '"';
-              continue;
-            }
-            quoted = false;
-            // Fall through: the char after a closing quote is handled as unquoted.
-          } else if (ch === '"') {
-            quoteSeen = true;
-            continue;
-          } else {
-            field += ch;
-            continue;
-          }
-        }
-        if (ch === '"' && !started) {
-          quoted = true;
-          started = true;
-        } else if (ch === ',') {
-          record.push(field);
-          field = '';
-          started = false;
-        } else if (ch === '\n' || ch === '\r') {
-          if (ch === '\r') {
-            pendingCR = true;
-            // A CRLF record ends after its LF: count it now, so `end` lands past the line break.
-            if (text[i + 1] === '\n') {
-              bytes += 1;
-              i++;
-              pendingCR = false;
-            }
-          }
-          yield* endRecord();
-        } else {
-          field += ch;
-          started = true;
-        }
-      }
-      if (done) break;
-    }
-    finished = true;
-    if (quoted && !quoteSeen) throw new SyntaxError('unterminated quoted field at end of feed');
-    if (field !== '' || record.length) yield* endRecord();
-  } finally {
-    // Stopped early (a chunk is full, or an error): cancel the rest of the stream.
-    if (finished) reader.releaseLock();
-    else await reader.cancel().catch(() => {});
-  }
-}
+export { type CsvRecord, csvRecords };
 
 export type NdjsonRecord = { line: number; value?: unknown; error?: string; end: number };
 
