@@ -260,7 +260,12 @@ async function planReturn(env: Env, i: ActionInput['record_return'], p: Principa
   const { id, s } = await loadOrder(env, i.orderId);
   const wait = s.waits.find((x) => x.kind === 'event' && x.event === 'return.requested');
   if (!wait) return { id, s, issue: `${orderRef(id)} isn't waiting for a return.` };
-  const checked = returnRequest(i, { lines: s.order?.lines ?? [], total: s.order?.total });
+  const checked = returnRequest(i, {
+    lines: s.order?.lines ?? [],
+    total: s.order?.total,
+    taxRate: s.order?.taxRate,
+    taxRates: s.order?.taxRates,
+  });
   if ('issue' in checked) return { id, s, issue: checked.issue };
   if (!checked.request.goodsBack && !flowReadsGoodsBack(s.flow))
     return {

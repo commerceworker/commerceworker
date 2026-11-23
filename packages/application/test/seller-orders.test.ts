@@ -23,6 +23,7 @@ const product = (sku: string, sellerId: string | null): ProductRecord => ({
   lengthCm: null,
   widthCm: null,
   heightCm: null,
+  taxClass: null,
 });
 const seller = (id: string, over: Partial<SellerRecord> = {}): SellerRecord => ({
   id,

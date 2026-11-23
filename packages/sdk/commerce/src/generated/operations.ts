@@ -1915,6 +1915,7 @@ export type PutCatalogProductsInput = {
     slug?: { [key: string]: string };
     description?: { [key: string]: string };
     brand?: string;
+    taxClass?: string;
     categories?: string[];
     primaryCategory?: string;
     media?: {
@@ -3553,6 +3554,7 @@ export type Product = {
   slug?: { [key: string]: string };
   description?: { [key: string]: string };
   brand?: string;
+  taxClass?: string;
   categories: string[];
   primaryCategory?: string;
   media: {
@@ -3668,6 +3670,8 @@ export type Order = {
   taxRate?: number;
   /** Whether the tax node taxed shipping */
   taxShipping?: boolean;
+  /** The rate the tax node charged each SKU whose tax class is taxed apart from taxRate; a SKU not named was charged taxRate */
+  taxRates?: { [key: string]: number };
   /** Units of the order currency per one unit of the base currency, fixed when priced */
   fxRate?: number;
   /** total in the base currency */
@@ -4033,6 +4037,7 @@ export type ProductData = {
   slug?: { [key: string]: string };
   description?: { [key: string]: string };
   brand?: string;
+  taxClass?: string;
   categories: string[];
   primaryCategory?: string;
   media: {

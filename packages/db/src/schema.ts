@@ -509,6 +509,8 @@ export const products = sqliteTable('products', {
   lengthCm: real('length_cm'),
   widthCm: real('width_cm'),
   heightCm: real('height_cm'),
+  /** The catalog product's tax class, for the tax node's rates by class; null is standard. */
+  taxClass: text('tax_class'),
 });
 
 // `products_search` (migration 0058): an FTS5 index over each product's SKU and name, its rowid the

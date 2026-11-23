@@ -5,6 +5,7 @@
  * arrived.
  */
 
+import { skuTaxRate } from './shipping';
 import type { OrderLine } from './types';
 import { boundText } from './untrusted';
 
@@ -43,18 +44,39 @@ export type ReturnRequest = {
   reason: string;
   goodsBack: boolean;
   lines: { sku: string; qty: number }[];
+  /** What to refund: the lines' value with the tax charged on them, or the amount a person set. */
   amount: number;
+  /** The tax within `amount`, when it is the lines' own value and they were taxed. */
+  tax?: number;
   note?: string;
 };
 
+/** The rates an order was taxed at: `taxRate`, and `taxRates` for the SKUs taxed apart from it. */
+type TaxedBy = { taxRate?: number; taxRates?: Record<string, number> };
+
 const cents = (n: number) => Math.round(n * 100) / 100;
 
-/** The lines' value at what was paid for them, or null when one of them has no price. */
+/**
+ * What was paid for the lines, or null when one of them has no price: their value and the tax
+ * charged on it, each SKU at its own rate (its tax class's) or else the order's. Shipping and the
+ * tax on it aren't the goods', so they aren't in it.
+ */
 export function returnValue(
   lines: { sku: string; qty: number }[],
   ordered: OrderLine[],
+  taxed: TaxedBy = {},
 ): number | null {
+  const parts = returnParts(lines, ordered, taxed);
+  return parts && cents(parts.value + parts.tax);
+}
+
+function returnParts(
+  lines: { sku: string; qty: number }[],
+  ordered: OrderLine[],
+  taxed: TaxedBy,
+): { value: number; tax: number } | null {
   let value = 0;
+  let tax = 0;
   for (const { sku, qty } of lines) {
     let left = qty;
     // A SKU can be on the order twice at different prices: take them in order.
@@ -63,10 +85,11 @@ export function returnValue(
       if (take <= 0) break;
       if (o.unitPrice === undefined) return null;
       value += take * o.unitPrice;
+      tax += take * o.unitPrice * skuTaxRate(taxed, sku);
       left -= take;
     }
   }
-  return cents(value);
+  return { value, tax };
 }
 
 /**
@@ -75,7 +98,7 @@ export function returnValue(
  */
 export function returnRequest(
   input: ReturnInput,
-  order: { lines: OrderLine[]; total?: number },
+  order: { lines: OrderLine[]; total?: number } & TaxedBy,
 ): { request: ReturnRequest } | { issue: string } {
   const reason = RETURN_REASONS[input.reasonCode];
   if (!reason) return { issue: 'Choose a reason.' };
@@ -93,10 +116,12 @@ export function returnRequest(
     if (qty > limit.get(sku)!) return { issue: `Only ${limit.get(sku)} of ${sku} were ordered.` };
 
   const lines = [...want].map(([sku, qty]) => ({ sku, qty }));
-  const value = input.amount ?? returnValue(lines, order.lines);
+  const parts = input.amount === undefined ? returnParts(lines, order.lines, order) : null;
+  const value = input.amount ?? (parts && parts.value + parts.tax);
   if (value === null) return { issue: 'These items have no price: enter the amount to refund.' };
   // Rounded first: what is checked is what the card shows and the refund reads.
   const amount = cents(value);
+  const tax = parts ? cents(parts.tax) : 0;
   if (!(amount > 0)) return { issue: 'Enter an amount above zero to refund.' };
   if (order.total !== undefined && amount > order.total)
     return { issue: 'That is more than the order total.' };
@@ -110,6 +135,7 @@ export function returnRequest(
       goodsBack: reason.goodsBack,
       lines,
       amount,
+      ...(tax > 0 ? { tax } : {}),
       ...(note ? { note } : {}),
     },
   };

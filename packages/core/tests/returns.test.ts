@@ -29,6 +29,45 @@ describe('returnRequest', () => {
     });
   });
 
+  it('refunds the tax charged on the returned lines, each at its own rate, and not shipping’s', () => {
+    // 2 × 50 at 10%, 1 × 20 at its class's 5%, 1 × 30 untaxed, 10 shipping taxed at 10%.
+    const taxed = {
+      total: 172,
+      taxRate: 0.1,
+      taxRates: { B: 0.05, C: 0 },
+      lines: [
+        { sku: 'A', qty: 2, unitPrice: 50 },
+        { sku: 'B', qty: 1, unitPrice: 20 },
+        { sku: 'C', qty: 1, unitPrice: 30 },
+      ],
+    };
+    const back = (lines: { sku: string; qty: number }[]) =>
+      returnRequest({ reasonCode: 'changed_mind', lines }, taxed);
+    expect(back([{ sku: 'A', qty: 1 }])).toMatchObject({ request: { amount: 55, tax: 5 } });
+    expect(back([{ sku: 'B', qty: 1 }])).toMatchObject({ request: { amount: 21, tax: 1 } });
+    const untaxed = back([{ sku: 'C', qty: 1 }]);
+    expect(untaxed).toMatchObject({ request: { amount: 30 } });
+    expect(untaxed).not.toHaveProperty('request.tax');
+    // Everything back is everything paid but the shipping and its tax.
+    expect(
+      back([
+        { sku: 'A', qty: 2 },
+        { sku: 'B', qty: 1 },
+        { sku: 'C', qty: 1 },
+      ]),
+    ).toMatchObject({ request: { amount: 161, tax: 11 } });
+    expect(returnValue([{ sku: 'A', qty: 1 }], taxed.lines, taxed)).toBe(55);
+    // An amount a person set is the refund, with no tax worked out beside it.
+    const set = returnRequest(
+      { reasonCode: 'changed_mind', lines: [{ sku: 'A', qty: 1 }], amount: 40 },
+      taxed,
+    );
+    expect(set).toMatchObject({ request: { amount: 40 } });
+    expect(set).not.toHaveProperty('request.tax');
+    // An order no tax node ran on charged nothing, so refunds none.
+    expect(returnValue([{ sku: 'B', qty: 1 }], taxed.lines)).toBe(20);
+  });
+
   it('says nothing comes back for a shortage', () => {
     const r = returnRequest({ reasonCode: 'short_shipped', lines: [{ sku: 'B', qty: 1 }] }, order);
     expect(r).toMatchObject({ request: { kind: 'claim', goodsBack: false, amount: 20 } });

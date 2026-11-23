@@ -1146,8 +1146,8 @@ channel's currency is `BASE_CURRENCY` (`USD`), the currency of an order's list p
 
 1. `publishKeys` adds `order: orderLines(product, type, channel)` to the `ListingChange` of the
    orders channel when the product has a type and renders there (is active, visible, with an active
-   variant). `orderLines` returns one `{ sku, name, price, weightKg, lengthCm, widthCm, heightCm }` (the
-   weight and size null when the variant has none) per active variant with a price in
+   variant). `orderLines` returns one `{ sku, name, price, weightKg, lengthCm, widthCm, heightCm, taxClass }` (the
+   weight and size null when the variant has none, `taxClass` the product's, or null) per active variant with a price in
    `BASE_CURRENCY`: the variant's `prices.<channel>`, else the listing's `price`. The name is the
    title in the channel's default locale, plus the variant's axis option labels in parentheses
    (`Field jacket (S)`); the price is `fromMinor`, a decimal. A product that no longer lists carries
@@ -1155,9 +1155,9 @@ channel's currency is `BASE_CURRENCY` (`USD`), the currency of an order's list p
    because orders may name its SKUs.
 2. The changes queue consumer runs `applyOrders` beside `applyChanges` and `applySearch`. It keeps the
    newest change per SKU in the batch and upserts in batches of 100: `INSERT … ON CONFLICT (sku) DO
-   UPDATE SET name, price, catalog_at, weight_kg, length_cm, width_cm, height_cm WHERE catalog_at IS
-   NULL OR catalog_at < excluded.catalog_at`. The weight and size are set as sent, so a variant that
-   loses them clears the row's.
+   UPDATE SET name, price, catalog_at, weight_kg, length_cm, width_cm, height_cm, tax_class WHERE
+   catalog_at IS NULL OR catalog_at < excluded.catalog_at`. The weight, size and tax class are set as
+   sent, so a variant that loses its size, or a product its tax class, clears the row's.
    `catalog_at` is the change's `at`, so a change that arrives late, as queue delivery allows, never
    overwrites a newer one. A new row has `cost` 0 and takes the column defaults (no stock, `kind`
    `physical`); an existing row keeps `cost`, `stock`, `reserved`, reorder settings, `supplier`,
@@ -1559,7 +1559,7 @@ Bundle: about 10 KiB gzipped (segmented listings added about 1 KiB to the 9.4 it
 | `PUBLISHERS` | catalog | Durable Object `CatalogPublisher` (SQLite, migration tag `v5`), `PUBLISH_FANOUT` per shard named `pub-<shard>-<n>`: the shards' storage writes |
 | `FEED_PARTS` | catalog | Queue producer for `commerceworker-catalog-feed-parts`; the Worker consumes it |
 | `CHANGES` | catalog | Queue `commerceworker-catalog-changes` (dead-letter queue `commerceworker-catalog-changes-dlq`); producer and consumer are the catalog Worker |
-| `DB` | catalog | D1 `commerceworker` (the web app's database): the catalog writes `products.name`, `price`, `catalog_at` and the weight and size columns ([CommerceWorker's products](#commerceworkers-products)) |
+| `DB` | catalog | D1 `commerceworker` (the web app's database): the catalog writes `products.name`, `price`, `catalog_at`, the weight and size columns and `tax_class` ([CommerceWorker's products](#commerceworkers-products)) |
 | `PUBLISHED` | catalog | R2 `commerceworker-catalog`: product documents, alias pointers, category trees, listing indexes, and the backups (`backups/`) |
 | `PURGE` | catalog | Queue producer for `commerceworker-catalog-purge` (`{ tags }` messages) |
 | `CARDS` | catalog | KV namespace of listing cards and `u:f1:<key>` uid entries; created by `provision.sh` |

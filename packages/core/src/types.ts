@@ -128,6 +128,12 @@ export type Order = OrderInput & {
   taxRate?: number;
   /** Whether that tax node taxed shipping too. */
   taxShipping?: boolean;
+  /**
+   * The rate the tax node charged each SKU whose product's tax class is taxed apart from
+   * `taxRate`. Kept by SKU, not on the lines, so nodes that split, merge or re-route lines can't
+   * lose it; read it with `skuTaxRate`.
+   */
+  taxRates?: Record<string, number>;
   /** Units of the order's currency per one BASE_CURRENCY, fixed when the order is priced. */
   fxRate?: number;
   /** `total` in BASE_CURRENCY, for credit, budgets and reporting. */

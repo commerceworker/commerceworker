@@ -11,7 +11,7 @@ describeCatalogOrdersContract('D1', async () => {
     store: d1CatalogOrders(DB),
     read: async (sku) => {
       const row = await DB.prepare(`SELECT sku, name, price, weight_kg AS weightKg,
-      length_cm AS lengthCm, width_cm AS widthCm, height_cm AS heightCm,
+      length_cm AS lengthCm, width_cm AS widthCm, height_cm AS heightCm, tax_class AS taxClass,
       catalog_at AS at FROM products WHERE sku = ?`)
         .bind(sku)
         .first<CatalogOrderLine & { at: number }>();

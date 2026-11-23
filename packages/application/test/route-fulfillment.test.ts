@@ -26,6 +26,7 @@ const product = (sku: string, kind = 'physical'): ProductRecord => ({
   lengthCm: null,
   widthCm: null,
   heightCm: null,
+  taxClass: null,
 });
 const site = (over: Partial<StoreLocation> & { id: string; name: string }): StoreLocation => ({
   kind: 'store',

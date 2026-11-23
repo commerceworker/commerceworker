@@ -80,10 +80,10 @@ describe('CSV products', () => {
 
   it('groups variant rows into products and reads cells by attribute kind', async () => {
     const text = [
-      'key,type,title:en,title:fr,brand,categories,price.web,sku,attr.material,attr.tags,attr.weight,attr.care:en,attr.size,attr.color,variantPrice.web',
-      'tee,apparel,Tee,T-shirt,Acme,tops|tees,19.99,TEE-S,cotton,eco|sale,180,Wash cold,S,red,',
-      'tee,,,,,,,TEE-M,,,,,M,red,22',
-      'hat,apparel,Hat,,Acme,hats,9.5,HAT-1,wool,,,,S,blue,',
+      'key,type,title:en,title:fr,brand,taxClass,categories,price.web,sku,attr.material,attr.tags,attr.weight,attr.care:en,attr.size,attr.color,variantPrice.web',
+      'tee,apparel,Tee,T-shirt,Acme,reduced,tops|tees,19.99,TEE-S,cotton,eco|sale,180,Wash cold,S,red,',
+      'tee,,,,,,,,TEE-M,,,,,M,red,22',
+      'hat,apparel,Hat,,Acme,,hats,9.5,HAT-1,wool,,,,S,blue,',
     ].join('\n');
     const rows = await read(text);
     expect(rows.map((r) => [r.row, r.last])).toEqual([
@@ -97,6 +97,7 @@ describe('CSV products', () => {
       type: 'apparel',
       title: { en: 'Tee', fr: 'T-shirt' },
       brand: 'Acme',
+      taxClass: 'reduced',
       categories: ['tops', 'tees'],
       media: [],
       attributes: {

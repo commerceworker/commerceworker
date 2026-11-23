@@ -34,6 +34,7 @@ const product = (sku: string, kind = 'physical'): ProductRecord => ({
   lengthCm: null,
   widthCm: null,
   heightCm: null,
+  taxClass: null,
 });
 
 const order = (lines: Order['lines'], id = 'o1') => ({ id, lines }) as unknown as Order;

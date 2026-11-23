@@ -144,6 +144,12 @@ export const orderSchema = orderInputSchema.extend({
   total: z.number().describe('subtotal + shipping + tax'),
   taxRate: z.number().optional().describe('The rate the tax node applied'),
   taxShipping: z.boolean().optional().describe('Whether the tax node taxed shipping'),
+  taxRates: z
+    .record(z.string(), z.number())
+    .optional()
+    .describe(
+      'The rate the tax node charged each SKU whose tax class is taxed apart from taxRate; a SKU not named was charged taxRate',
+    ),
   fxRate: z
     .number()
     .optional()

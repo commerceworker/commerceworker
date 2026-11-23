@@ -41,6 +41,7 @@ const product = (sku: string, price: number): ProductRecord => ({
   lengthCm: null,
   widthCm: null,
   heightCm: null,
+  taxClass: null,
 });
 
 /** The fixture the contract seeds every store with. */

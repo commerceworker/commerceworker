@@ -94,6 +94,34 @@ describe("CommerceWorker's products", () => {
     expect(await sized(bare.sku)).toEqual({ name: 'Soft duffel (S)', ...none });
   });
 
+  it('carries a product’s tax class to each variant, and clears it once the product drops it', async () => {
+    const taxClass = (sku: string) =>
+      env.DB.prepare('SELECT name, tax_class FROM products WHERE sku = ?').bind(sku).first();
+    const skus = [`${Date.now()}-book-s`, `${Date.now()}-book-m`] as const;
+    const p = product({
+      title: { en: 'Atlas' },
+      taxClass: 'reduced',
+      variants: [
+        { sku: skus[0], attributes: { size: 'S' } },
+        { sku: skus[1], attributes: { size: 'M' } },
+      ],
+    });
+    await api.putProducts([p], { by });
+    await settle();
+    for (const sku of skus) {
+      await until(sku, (r) => !!r);
+      expect(await taxClass(sku)).toMatchObject({ tax_class: 'reduced' });
+    }
+    // Without one it is ordinary goods again, taxed at the standard rate.
+    const { taxClass: _c, ...plain } = p;
+    // Nothing else changes: the tax class alone is a change the orders' products hear of.
+    const before = (await row(skus[0]))?.catalog_at ?? 0;
+    await api.putProducts([plain], { by });
+    await settle();
+    await until(skus[0], (r) => (r?.catalog_at ?? 0) > before);
+    expect(await taxClass(skus[0])).toEqual({ name: 'Atlas (S)', tax_class: null });
+  });
+
   it('clears them for a line that omits them, as the catalog before explicit nulls sent', async () => {
     const sku = `unsized-${Date.now()}`;
     const crate = { sku, name: 'Crate', price: 1 };
