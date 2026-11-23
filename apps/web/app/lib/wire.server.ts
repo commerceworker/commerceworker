@@ -105,7 +105,7 @@ export const orderBoard = (): OrderBoard => d1OrderBoard(env.DB);
 /** Flows: drafts, published versions and templates. */
 export const flowStore = (): FlowStore => d1FlowStore(env.DB, systemClock);
 
-/** The Commerce page's lists, the pickers' records and the currencies. */
+/** The back office screens' lists, the pickers' records and the currencies. */
 export const backOffice = (): BackOffice => d1BackOffice(env.DB);
 
 /** The people and groups SCIM provisioning manages. */

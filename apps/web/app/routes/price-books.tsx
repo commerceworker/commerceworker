@@ -102,8 +102,8 @@ export default function PriceBooks() {
       <PageHeader
         title="Price books"
         crumbs={
-          <Link to="/commerce#pricing" className="hover:underline">
-            Commerce
+          <Link to="/pricing" className="hover:underline">
+            Pricing
           </Link>
         }
         subtitle="Named prices for a customer or a tier. Where several books price a line, the highest priority wins, then the lowest price in it. Prices are in USD, the base currency."

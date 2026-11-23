@@ -12,7 +12,7 @@
  * `products` against `product_vectors` (what the index holds) on the hourly cron: new and renamed
  * SKUs are embedded and upserted, SKUs that are gone are deleted. Every write is keyed by SKU, so
  * a run cut short repeats harmlessly. Until a SKU is indexed it is still found by its words. An
- * admin can run it now too (`EngineRpc.reindexProducts`, the Commerce page); a run holds a lease
+ * admin can run it now too (`EngineRpc.reindexProducts`, the Inventory screen); a run holds a lease
  * (`product_index_lease`), so the cron and that never overlap.
  *
  * The binding is optional: without it (tests, local dev, a demo, a deployment not yet

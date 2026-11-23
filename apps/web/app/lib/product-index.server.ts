@@ -1,5 +1,5 @@
 /**
- * An admin's "Update product index" on the Commerce page: one run of the engine's product index
+ * An admin's "Update product index" on the Inventory screen: one run of the engine's product index
  * reindex now, rather than at the next hourly cron, say after a large import. The engine checks
  * the signed actor's role again and holds a lease, so a run that overlaps the cron's (or a double
  * click) answers `busy` and changes nothing. Every run it answers is audited with its counts.

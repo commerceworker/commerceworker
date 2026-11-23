@@ -62,7 +62,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work.
 
 | Path | Role |
 |---|---|
-| `apps/web` (`@commerceworker/web`) | Dashboard, flow editor (palette, canvas, inspector, assistant), live order view, approvals inbox, Commerce page, REST API, `/mcp`, `/a2a`, OAuth, staff carts. React Router on Workers |
+| `apps/web` (`@commerceworker/web`) | Dashboard, flow editor (palette, canvas, inspector, assistant), live order view, approvals inbox, the commerce screens (catalog, pricing, customers, quotes and purchase orders, outside events, records), REST API, `/mcp`, `/a2a`, OAuth, staff carts. React Router on Workers |
 | `apps/storefront` (`@commerceworker/storefront`) | What buyers reach, at its own host (`shop.<domain>`), uncached and with no admin bundle: a punchout buyer's cart pages, files, product search and socket, and UCP (agentic checkout). React Router on Workers |
 | `apps/engine` (`@commerceworker/engine`) | OrderAgent and AssistantAgent DOs, CommerceWorker and Replenish Workflows, node executors, connectors, AI, `EngineApi` RPC |
 | `apps/docs` (`@commerceworker/docs`) | Documentation site (Starlight), deployed as a static-assets Worker. Reference pages render from `@commerceworker/core` at build time |
@@ -161,7 +161,7 @@ Two channels connect without producing that payload themselves:
 
 ### Email intake
 
-Send an order, order form or purchase order to `orders@commerceworker.com` (or `po@`, or `purchasing@` for purchase requests) from a customer's address. The sender gets an acknowledgement with the order reference, and the Commerce page lists every message received with its outcome. Who may send is covered in the [Email intake guide](https://docs.commerceworker.com/guides/email-intake/); setting up Email Routing for your own domain is in [docs/deploy.md](docs/deploy.md).
+Send an order, order form or purchase order to `orders@commerceworker.com` (or `po@`, or `purchasing@` for purchase requests) from a customer's address. The sender gets an acknowledgement with the order reference, and **Email intake** lists every message received with its outcome. Who may send is covered in the [Email intake guide](https://docs.commerceworker.com/guides/email-intake/); setting up Email Routing for your own domain is in [docs/deploy.md](docs/deploy.md).
 
 ## Docs
 

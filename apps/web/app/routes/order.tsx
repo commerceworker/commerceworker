@@ -824,9 +824,13 @@ function NextSteps({ orderId }: { orderId: string }) {
       description={
         <>
           The new order runs on the flow’s current version; this one stays as it is, for the record.
-          To see what blocked it,{' '}
-          <Link to="/commerce" className="text-link hover:underline">
-            check stock and credit
+          To see what blocked it, check{' '}
+          <Link to="/inventory" className="text-link hover:underline">
+            stock
+          </Link>{' '}
+          and{' '}
+          <Link to="/customers" className="text-link hover:underline">
+            customers’ credit
           </Link>
           .
         </>

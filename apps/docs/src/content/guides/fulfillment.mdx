@@ -24,13 +24,13 @@ releases and consumption move the stock they were made against, so a hold at a s
 the warehouse.
 
 A product has a `kind`, `physical` or `digital`. Digital products hold no stock: reserving skips
-them, and the Commerce page shows them as "Digital, no stock".
+them, and **Inventory** shows them as "Digital, no stock".
 
 The workspace starts with two stores, both offering pickup and shipping, with coordinates: `loc_soho`
 (40.7233, -74.0030) and `loc_mission` (37.7599, -122.4148). `TEE-01` has no central stock and is stocked at both stores; `MON-27` has central
-stock and store stock; `EBK-101` and `GFT-25` are digital. The Commerce page's **Stores** table lists
-each store's flags and, per item, its available, reserved and on-hand stock; **Inventory** is the
-warehouse's, and notes how much of an item out there is still in stores. A reserved count links to
+stock and store stock; `EBK-101` and `GFT-25` are digital. The **Stores** card on **Inventory** lists
+each store's flags and, per item, its available, reserved and on-hand stock; its **Warehouse** card is the
+central stock, and notes how much of an item out there is still in stores. A reserved count links to
 the orders holding that stock (**Records**, **Stock holds**).
 
 An order names its store in `fulfillment`: `{ method, locationId? }`, where `method` is one of
@@ -74,7 +74,7 @@ On `tpl-omnichannel-order`, the `pickup` branch is:
 
 Send `pickup.collected` when the customer has the goods, the way any
 [wait event](/guides/approvals-and-events/#waiting-for-events) is sent: the **Mark as collected** button on the order
-page or the Commerce page, `POST /api/v1/orders/:id/events` with `{ "event": "pickup.collected" }`, or a
+page or **Outside events**, `POST /api/v1/orders/:id/events` with `{ "event": "pickup.collected" }`, or a
 [signed event](/guides/approvals-and-events/#signed-events) from the store's system. The payload is
 optional.
 
@@ -224,7 +224,7 @@ when no shipping-rate node ran.
 ### Tax exemption
 
 A business customer that doesn't pay sales tax (a reseller, a charity) holds a **tax exemption
-certificate**. Open the customer from **Customers** on the Commerce page (its page also lists the
+certificate**. Open the customer from **Customers** (its page also lists the
 customer's most recently changed orders, and under **Addresses** the places its orders ship to, each
 with how many orders went there and a link to the latest; an address is added when an order with it
 starts, and those of orders placed before the list existed are added over the following days); its **Tax exemption

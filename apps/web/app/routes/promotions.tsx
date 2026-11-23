@@ -146,8 +146,8 @@ export default function Promotions() {
       <PageHeader
         title="Promotions"
         crumbs={
-          <Link to="/commerce#pricing" className="hover:underline">
-            Commerce
+          <Link to="/pricing" className="hover:underline">
+            Pricing
           </Link>
         }
         subtitle="Codes buyers and staff enter on a cart, and automatic promotions that need none. A flow applies them with an Apply promotions step, after Price lines and before Calculate tax."

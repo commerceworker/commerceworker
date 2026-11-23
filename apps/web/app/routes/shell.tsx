@@ -33,12 +33,16 @@ import {
 import { TooltipProvider } from '@commerceworker/ui/tooltip';
 import {
   Blocks,
+  BookOpen,
   ChevronsUpDown,
   ChevronUp,
   Ellipsis,
   FileText,
   Gauge,
   Handshake,
+  History,
+  Hourglass,
+  Inbox,
   LayoutDashboard,
   MessageSquareText,
   Monitor,
@@ -52,11 +56,14 @@ import {
   Stamp,
   Store,
   Sun,
+  Tags,
+  TicketPercent,
   UserRound,
   UsersRound,
+  Warehouse,
   Workflow,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react';
 import {
   Link,
   NavLink,
@@ -163,14 +170,19 @@ type NavItem = {
   badge?: boolean;
   document?: boolean;
   /** The sidebar group it heads or belongs to; the day's work has none. */
-  section?: 'Build' | 'Reference' | 'Content';
+  section?: NavSection;
   /** A plugin's page, under its own heading. */
   plugin?: boolean;
 };
 
+/** The sidebar's commerce groups, in this order after the day's work. */
+const COMMERCE_SECTIONS = ['Build', 'Catalog', 'Customers', 'Sales', 'Operations'] as const;
+type NavSection = (typeof COMMERCE_SECTIONS)[number] | 'Content';
+
 /**
- * In this order everywhere: the day's work, then building, then reference pages (and plugins'),
- * then the workspace's.
+ * In this order everywhere: the day's work, then building, then commerce's own sections (the
+ * catalog, customers, sales documents and operations), then content, plugins' pages and the
+ * workspace's.
  */
 const NAV: NavItem[] = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
@@ -178,11 +190,19 @@ const NAV: NavItem[] = [
   { to: '/approvals', label: 'Approvals', icon: Stamp, badge: true },
   { to: '/carts', label: 'Carts', icon: ShoppingCart },
   { to: '/flows', label: 'Order Flows', icon: Workflow, section: 'Build' },
-  { to: '/commerce', label: 'Commerce', icon: Store, section: 'Reference' },
-  { to: '/purchase-orders', label: 'Purchase orders', icon: FileText, section: 'Reference' },
-  { to: '/quotes', label: 'Quotes', icon: Handshake, section: 'Reference' },
-  { to: '/catalog', label: 'Catalog', icon: Package, section: 'Reference' },
-  { to: '/performance', label: 'Performance', icon: Gauge, section: 'Reference' },
+  { to: '/catalog', label: 'Products', icon: Package, section: 'Catalog' },
+  { to: '/inventory', label: 'Inventory', icon: Warehouse, section: 'Catalog' },
+  { to: '/pricing', label: 'Pricing', icon: Tags, section: 'Catalog' },
+  { to: '/price-books', label: 'Price books', icon: BookOpen, section: 'Catalog' },
+  { to: '/promotions', label: 'Promotions', icon: TicketPercent, section: 'Catalog' },
+  { to: '/customers', label: 'Customers', icon: UsersRound, section: 'Customers' },
+  { to: '/sellers', label: 'Marketplace sellers', icon: Store, section: 'Customers' },
+  { to: '/quotes', label: 'Quotes', icon: Handshake, section: 'Sales' },
+  { to: '/purchase-orders', label: 'Purchase orders', icon: FileText, section: 'Sales' },
+  { to: '/events', label: 'Outside events', icon: Hourglass, section: 'Operations' },
+  { to: '/records', label: 'Records', icon: History, section: 'Operations' },
+  { to: '/intake', label: 'Email intake', icon: Inbox, section: 'Operations' },
+  { to: '/performance', label: 'Performance', icon: Gauge, section: 'Operations' },
 ];
 
 /**
@@ -472,7 +492,7 @@ const ROW = 'touch:h-11';
 
 /**
  * Every page, from md, on shadcn's Sidebar (`@commerceworker/ui/sidebar`): the brand row on the
- * header's line, whose mark is the toggle (⌘\); the day's work; Build, Reference, From plugins and,
+ * header's line, whose mark is the toggle (⌘\); the day's work; Build, the commerce sections, Content, From plugins and,
  * for admins, Workspace; the account at its foot.
  */
 function AppSidebar({
@@ -679,8 +699,10 @@ function ShellFrame() {
       : [];
   const groups = [
     { items: nav.filter((n) => !n.section && !n.plugin) },
-    { title: 'Build', items: nav.filter((n) => n.section === 'Build') },
-    { title: 'Reference', items: nav.filter((n) => n.section === 'Reference') },
+    ...COMMERCE_SECTIONS.map((title) => ({
+      title,
+      items: nav.filter((n) => n.section === title),
+    })),
     { title: 'Content', items: nav.filter((n) => n.section === 'Content') },
     { title: 'From plugins', items: nav.filter((n) => n.plugin) },
     { title: 'Workspace', items: workspace },
@@ -893,8 +915,8 @@ function TabBar({
 }
 
 /**
- * The More sheet, grouped as the sidebar groups them: the pages without a tab, plugins' pages and
- * the workspace's, then the account, the theme and signing in or out (as in the account menu).
+ * The More sheet, grouped as the sidebar groups them: the pages without a tab, each section's,
+ * plugins' pages and the workspace's, then the account, the theme and signing in or out (as in the account menu).
  */
 function MoreMenu({
   nav,
@@ -923,8 +945,15 @@ function MoreMenu({
       ))}
     </ul>
   );
-  const pages = nav.filter((n) => !n.plugin);
-  const pluginPages = nav.filter((n) => n.plugin);
+  // The sidebar's groups: the pages without a tab first, then each section under its heading.
+  const sections = [
+    { title: 'Pages', items: nav.filter((n) => !n.plugin && !n.section) },
+    ...[...COMMERCE_SECTIONS, 'Content' as const].map((title) => ({
+      title,
+      items: nav.filter((n) => n.section === title),
+    })),
+    { title: 'From plugins', items: nav.filter((n) => n.plugin) },
+  ].filter((g) => g.items.length);
   return (
     <>
       <div className="border-b px-4 pt-4 pb-3 pr-14">
@@ -934,14 +963,12 @@ function MoreMenu({
         <SheetDescription className="text-xs">{ROLE_LABELS[me.role]}</SheetDescription>
       </div>
       <div className="p-2">
-        <h2 className={heading}>Pages</h2>
-        {list(pages)}
-        {pluginPages.length ? (
-          <>
-            <h2 className={cn(heading, 'pt-3')}>From plugins</h2>
-            {list(pluginPages)}
-          </>
-        ) : null}
+        {sections.map((g, i) => (
+          <Fragment key={g.title}>
+            <h2 className={cn(heading, i > 0 && 'pt-3')}>{g.title}</h2>
+            {list(g.items)}
+          </Fragment>
+        ))}
         {workspace.length ? (
           <>
             <h2 className={cn(heading, 'pt-3')}>Workspace</h2>

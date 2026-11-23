@@ -8,10 +8,10 @@ too. The roles are ordered, so each one can do everything the roles before it ca
 
 | Role | Can |
 |---|---|
-| `viewer` | See orders, flows, approvals and the Commerce page; use the [assistant](/guides/assistant/) to read |
+| `viewer` | See orders, flows, approvals and the commerce screens (Catalog, Customers, Sales and Operations in the sidebar); use the [assistant](/guides/assistant/) to read |
 | `approver` | Also approve and reject approvals, including through the assistant |
 | `operator` | Also start, cancel and restart orders, deliver events, create, edit and publish flows, run the stock review, add, verify and revoke customers' [tax exemption certificates](/guides/fulfillment/#tax-exemption), write the [product catalog](/guides/product-catalog/) (deleting a channel needs `admin`), and have the assistant do those and draft flow changes |
-| `admin` | Also manage the team and API tokens, webhook subscriptions and integration keys, republish the catalog, update the product index (**Update product index** under Inventory on the Commerce page), read the audit log, and install and manage plugins at **Plugins** (in the sidebar's Workspace group) ([Installing a plugin](/guides/installing-plugins/)) |
+| `admin` | Also manage the team and API tokens, webhook subscriptions and integration keys, republish the catalog, update the product index (**Update product index** on **Inventory**), read the audit log, and install and manage plugins at **Plugins** (in the sidebar's Workspace group) ([Installing a plugin](/guides/installing-plugins/)) |
 
 Every request checks the role on the server; the dashboard also hides controls a role can't use.
 

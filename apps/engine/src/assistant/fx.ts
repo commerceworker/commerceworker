@@ -1,5 +1,5 @@
 /**
- * Exchange rates through the assistant, REST's and the Commerce page's twin: reading them, and
+ * Exchange rates through the assistant, REST's and the Pricing screen's twin: reading them, and
  * setting one. A rate changes what buyers pay in its currency, so setting one stops for a confirm
  * whose card shows the rate now, the new one and the change, flags a large change, and says what
  * stays as it was: orders already priced keep their `fxRate`. The use-cases are
@@ -46,7 +46,7 @@ export async function previewFxRate(
   const refreshed = allowedOf(env).includes(i.currency);
   return {
     title: `Set the ${i.currency} rate to ${i.rate} per ${BASE_CURRENCY}`,
-    href: '/commerce#pricing',
+    href: '/pricing',
     consequences: [
       `Now ${rate(current?.rate ?? null)}, then ${rate(i.rate)} ${i.currency} per 1 ${BASE_CURRENCY} (${percent})`,
       ...(change.large
@@ -80,7 +80,7 @@ export async function runFxRate(env: Env, p: Principal, i: ToolInput<'set_fx_rat
   });
   return {
     done: `Set the ${r.currency} rate to ${r.rate} per ${BASE_CURRENCY}`,
-    href: '/commerce#pricing',
+    href: '/pricing',
     id: r.currency,
   };
 }

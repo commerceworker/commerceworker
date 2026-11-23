@@ -82,8 +82,8 @@ test('editing the customer offers its fields, but not the credit limit', async (
 test('the customers list filters by kind and company status, and offers a new customer', async ({
   page,
 }, info) => {
-  await open(page, '/commerce');
-  const customers = page.locator('#customers');
+  await open(page, '/customers');
+  const customers = page.locator('main');
   await expect(customers.getByRole('link', { name: 'Ada Lovelace' })).toBeVisible();
   await customers.getByLabel('Company status').selectOption('active');
   await expect(page).toHaveURL(/customer-status=active/);
