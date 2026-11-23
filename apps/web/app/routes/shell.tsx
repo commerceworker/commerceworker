@@ -52,6 +52,7 @@ import {
   Puzzle,
   ReceiptText,
   ScrollText,
+  ShieldCheck,
   ShoppingCart,
   Stamp,
   Store,
@@ -244,6 +245,7 @@ const WORKSPACE: NavItem[] = [
   { to: '/audit', label: 'Audit log', icon: ScrollText },
   { to: '/plugins', label: 'Plugins', icon: Puzzle },
   { to: '/webhooks', label: 'Webhooks', icon: Webhook },
+  { to: '/privacy', label: 'Privacy requests', icon: ShieldCheck },
 ];
 
 /** Approvals waiting on someone: the bar's one call for attention, filled in `wait`. */

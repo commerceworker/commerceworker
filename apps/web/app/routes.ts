@@ -67,6 +67,8 @@ export default [
       // Installed plugins (admin). Their own pages are under /plugins/<id>/, forwarded by workers/app.ts.
       // Outbound webhook subscriptions and their deliveries (admin, lib/webhooks.server.ts).
       route('webhooks', 'routes/webhooks.tsx'),
+      // Privacy requests: export or erase one person (admin, lib/privacy.server.ts).
+      route('privacy', 'routes/privacy.tsx'),
       route('plugins', 'routes/plugins.tsx'),
       // A plugin's page drawn by the app, from the view it answered with (workers/app.ts).
       route('plugins/:pluginId/*', 'routes/plugin-page.tsx'),
@@ -97,6 +99,8 @@ export default [
       route('account', 'routes/account.tsx'),
     ]),
   ]),
+  // A privacy export's file, posted from the Privacy requests page.
+  route('privacy/export', 'routes/privacy-export.ts'),
   // Resource routes the editor and order page post to.
   route('catalog/cards', 'routes/catalog-cards.ts'),
   route('orders/:orderId/records', 'routes/order-records.ts'),
