@@ -25,18 +25,27 @@ export async function exportSubject(request: Request, me: AuditActor, email: str
  * Erases the person, one round of up to 100 orders, as one REST call does, and audits it. A round
  * that leaves orders asks to be run again (`done: false`), so each request erases and audits one
  * round: no more is ever erased unrecorded than a REST call could. Refused while any of their orders
- * is running; a round can find one only after it has erased others, so a refusal never means
- * nothing was erased.
+ * is running; a round can find one partway, after erasing others: the refusal then says what it
+ * erased (`erased`), which is recorded as any round is.
  */
 export async function eraseSubject(
   request: Request,
   me: AuditActor,
   email: string,
 ): Promise<
-  { ok: true; done: boolean; teamMember: boolean; counts: Counts } | { ok: false; orders: string[] }
+  | { ok: true; done: boolean; teamMember: boolean; counts: Counts }
+  | { ok: false; orders: string[]; erased: Counts | null }
 > {
   const r = await engine().eraseDataSubject(email);
-  if (!r.ok) return { ok: false, orders: r.orders };
+  if (!r.ok) {
+    if (r.erased)
+      await audit(request, 'personal_data.erased', {
+        actor: me,
+        target: await subjectTarget(email),
+        detail: { ...r.erased, done: false, stopped: 'active_orders', via: 'app' },
+      });
+    return { ok: false, orders: r.orders, erased: r.erased ?? null };
+  }
   const { ok: _ok, done, teamMember, ...counts } = r;
   await audit(request, 'personal_data.erased', {
     actor: me,
