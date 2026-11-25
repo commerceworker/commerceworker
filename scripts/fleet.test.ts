@@ -116,7 +116,11 @@ test('the engine config carries the deployment everywhere a name is account-wide
   assert.equal(c.name, 'commerceworker-engine-acme');
   assert.deepEqual(
     c.workflows.map((w: { name: string }) => w.name),
-    ['commerceworker-order-acme', 'commerceworker-replenish-acme'],
+    [
+      'commerceworker-order-acme',
+      'commerceworker-replenish-acme',
+      'commerceworker-bulk-import-acme',
+    ],
   );
   assert.equal(c.d1_databases[0].database_name, 'commerceworker-acme');
   assert.equal(c.d1_databases[0].database_id, 'd1-acme');
@@ -2493,6 +2497,7 @@ test('the engine renders the standby, the backups bucket and the two Workflows w
     workflows: [
       'ORDER_WORKFLOW',
       'REPLENISH',
+      'BULK_IMPORT',
       'D1_BACKUP',
       'D1_RESTORE',
       'OBJECTS_BACKUP',
@@ -2586,7 +2591,7 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
   assert.deepEqual(REDUNDANCY_BINDINGS(off), {
     databases: ['DB'],
     buckets: ['DOCS'],
-    workflows: ['ORDER_WORKFLOW', 'REPLENISH'],
+    workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'BULK_IMPORT'],
   });
   const on = renderEngine(base('engine'), protectedAcme());
   // What the flag adds is exactly those bindings, the replica's queue consumers and the gateway
@@ -2626,6 +2631,7 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
       workflows: [
         'ORDER_WORKFLOW',
         'REPLENISH',
+        'BULK_IMPORT',
         'OBJECTS_BACKUP',
         'OBJECTS_RESTORE',
         'OBJECTS_DRILL',
@@ -2639,7 +2645,14 @@ test('a deployment without redundancy has the engine bindings stripped, and keep
     {
       databases: ['DB', 'STANDBY_DB'],
       buckets: ['DOCS', 'BACKUPS', 'DOCS_REPLICA'],
-      workflows: ['ORDER_WORKFLOW', 'REPLENISH', 'D1_BACKUP', 'D1_RESTORE', 'DOCS_RECONCILE'],
+      workflows: [
+        'ORDER_WORKFLOW',
+        'REPLENISH',
+        'BULK_IMPORT',
+        'D1_BACKUP',
+        'D1_RESTORE',
+        'DOCS_RECONCILE',
+      ],
     },
   );
   assert.equal(backsUpObjects(protectedAcme()), true);
@@ -2834,6 +2847,7 @@ test('r2Replica as an exception strips the replica and nothing else; the flag of
     workflows: [
       'ORDER_WORKFLOW',
       'REPLENISH',
+      'BULK_IMPORT',
       'D1_BACKUP',
       'D1_RESTORE',
       'OBJECTS_BACKUP',

@@ -24,6 +24,7 @@ import { d1AddressBook } from '@commerceworker/db/address-book';
 import { d1AuditLog } from '@commerceworker/db/audit-log';
 import { d1BalanceStore } from '@commerceworker/db/balance-store';
 import { d1BudgetStore } from '@commerceworker/db/budget-store';
+import { d1BulkJobStore } from '@commerceworker/db/bulk-job-store';
 import { d1CartRecords } from '@commerceworker/db/cart-records';
 import { d1CheckoutSessions } from '@commerceworker/db/checkout-sessions';
 import { d1CompanyDirectory } from '@commerceworker/db/company-directory';
@@ -551,6 +552,8 @@ export const pluginInstalls = (env: Pick<Env, 'DB'>): PluginInstallStore =>
 export const sealedSecrets = (env: Pick<Env, 'DB'>): SealedSecretStore => d1SealedSecrets(env.DB);
 
 /** Customers' tax exemption certificates. */
+export const bulkJobStore = (env: Pick<Env, 'DB'>) => d1BulkJobStore(env.DB);
+
 /** Price books and the contract prices staff write: the books themselves, not the pricing chain. */
 export const priceBookStore = (env: Pick<Env, 'DB'>): PriceBookStore => d1PriceBookStore(env.DB);
 

@@ -1539,6 +1539,7 @@ Bundle: about 10 KiB gzipped (segmented listings added about 1 KiB to the 9.4 it
 | `CART_AGENT` | engine | Durable Object class `CartAgent` (SQLite, migration tag `v5`) |
 | `HEALTH_PROBE` | engine | Durable Object class `HealthProbe` (SQLite, migration tag `v6`): one object, `health`, that the deploy smoke test's write check writes a row to and deletes; empty between checks (`apps/engine/src/health.ts`) |
 | `ORDER_WORKFLOW` | engine | Workflow `commerceworker-order`, class `OrderWorkflow`, `limits.steps: 10000` |
+| `BULK_IMPORT` | engine | Workflow `commerceworker-bulk-import` (class `BulkImport`). The instance ID identifies the import job. Each step reads the uploaded CSV from its saved byte offset and records progress in D1. Refused rows are written to an R2 report. |
 | `REPLENISH` | engine | Workflow `commerceworker-replenish`, class `Replenish`, schedule `0 6 * * *` |
 | `DB` | both | D1 `commerceworker`, migrations in `packages/db/migrations` |
 | `DOCS` | both | R2 `commerceworker-docs` |

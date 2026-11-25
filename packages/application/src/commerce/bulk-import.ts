@@ -95,9 +95,10 @@ export async function readBulkChunk(
         return { ok: true, header: readHeader, rows, offset, nextRow, done: false };
     }
   } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
     return {
       ok: false,
-      error: `Row ${nextRow}: ${err instanceof Error ? err.message : String(err)}`,
+      error: `Row ${nextRow}: ${err.message}`,
     };
   }
   if (!header) return { ok: false, error: 'The file is empty: it needs a header row.' };

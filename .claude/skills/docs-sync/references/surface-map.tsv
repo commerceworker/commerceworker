@@ -63,6 +63,7 @@
 ^apps/docs/src/components/McpSkills\.astro$	reference/mcp	gen
 ^apps/web/app/lib/mcp-discovery\.ts$	reference/mcp docs/architecture.md	prose
 ^(packages/core/src/(catalog|templates|inbound|webhooks)\.ts|apps/engine/src/(connectors|nodes)\.ts|packages/db/(src/schema\.ts|migrations/0020_fulfillment\.sql)|apps/web/app/routes/order-new\.tsx)$	guides/fulfillment	gen
+^apps/engine/src/bulk-import\.ts$	docs/architecture.md docs/configuration.md	prose
 ^packages/core/src/catalog\.ts$	docs/workflow.md docs/planner.md	prose
 ^packages/core/src/(webhooks|assistant)\.ts$	docs/workflow.md docs/architecture.md	prose
 ^apps/engine/src/outbox\.ts$	docs/workflow.md docs/data-model.md	prose

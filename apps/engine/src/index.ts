@@ -49,6 +49,7 @@ export { A2AAgent } from './a2a/agent';
 export { OrderAgent } from './agent';
 export { EngineApi } from './api';
 export { AssistantAgent } from './assistant/agent';
+export { BulkImport } from './bulk-import';
 export { CartAgent } from './cart/agent';
 // The commerce database's daily backup and its restore drill (d1-backup.ts); bound only when the
 // registry's `redundancy` is on.
