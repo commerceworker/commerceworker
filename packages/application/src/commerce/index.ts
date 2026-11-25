@@ -3,6 +3,7 @@ export * from './apply-promotions';
 export * from './approvals';
 export * from './audit-trail';
 export * from './budgets';
+export * from './bulk-import';
 export * from './companies';
 export * from './compensate-order';
 export * from './credit';

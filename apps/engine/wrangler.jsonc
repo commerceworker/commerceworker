@@ -75,6 +75,12 @@
       "schedules": ["0 6 * * *"],
       "default_retention": { "success_retention": "7 days", "error_retention": "30 days" }
     },
+    {
+      "name": "commerceworker-bulk-import",
+      "binding": "BULK_IMPORT",
+      "class_name": "BulkImport",
+      "limits": { "steps": 10000 }
+    },
     // The redundancy bindings below (the six Workflows, STANDBY_DB, BACKUPS, DOCS_REPLICA and the
     // docs replica's queue consumers) belong to a deployment whose registry sets `redundancy`;
     // scripts/fleet.ts strips them from the rest.

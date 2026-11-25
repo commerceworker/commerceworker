@@ -191,6 +191,7 @@ PagerDuty has no secret here: it is connected to the account in the dashboard (N
 | `LOADER` | engine | Worker Loader (`worker_loaders` in `wrangler.jsonc`; open beta, Workers Paid): loads a sandboxed plugin's bundle as a Dynamic Worker, with `PluginEgress` as its `globalOutbound`, `PluginTail` as its tail and `PluginDb` (over `PluginStorage`) and `PluginSecrets` as its env. Unused until a plugin is sandboxed. See [Plugins](plugins.md#runtimes) |
 | `METRICS` | web, storefront, engine | Analytics Engine dataset `commerceworker_ops` (`commerceworker_ops_<id>` for a customer; created by its first write): one data point per request outcome, order-step failure, D1 round trip and failover, always on ([Metrics](operations.md#metrics)) |
 | `ORDER_WORKFLOW` | engine | Workflow `commerceworker-order` (class `OrderWorkflow`), up to 10,000 steps per instance |
+| `BULK_IMPORT` | engine | Workflow `commerceworker-bulk-import` (class `BulkImport`). The instance ID identifies the import job. Each step reads the uploaded CSV from its saved byte offset and records progress in D1. Refused rows are written to an R2 report. |
 | `REPLENISH` | engine | Workflow `commerceworker-replenish` (class `Replenish`), scheduled `0 6 * * *` |
 | Cron trigger | engine | `triggers.crons` `30 3 * * *`: `scheduled()` runs the daily [retention sweep](data-model.md#retention); `15 * * * *`: hourly, the product index catches up with `products` (`reindexProducts` in `apps/engine/src/product-index.ts`; an admin can also run it from the Inventory screen) |
 | `AI` | engine | Workers AI |

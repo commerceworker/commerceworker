@@ -23,8 +23,12 @@ export const isBulkKind = (v: unknown): v is BulkKind =>
 /** The largest file an import takes, in bytes, and the most rows it reads. */
 export const BULK_MAX_BYTES = 20 * 1024 * 1024;
 export const BULK_MAX_ROWS = 100_000;
-/** Rows an import applies in one step, each step one round of writes. */
-export const BULK_CHUNK_ROWS = 200;
+/**
+ * Rows an import applies in one step: about four D1 statements a row at most (a stock count is a
+ * ledger row, its application, its mark and the reorder settings), so a step stays well under a
+ * Worker invocation's thousand queries.
+ */
+export const BULK_CHUNK_ROWS = 100;
 /** Row errors an import keeps with its job; the full list is its error report file. */
 export const BULK_KEPT_ERRORS = 100;
 

@@ -4,6 +4,7 @@ export * from './auth';
 export * from './back-office';
 export * from './balances';
 export * from './budgets';
+export * from './bulk-jobs';
 export * from './carts';
 export * from './catalog-orders';
 export * from './catalog-reader';
