@@ -1659,3 +1659,28 @@ export const healthProbes = sqliteTable('health_probes', {
   id: text('id').primaryKey(),
   at: integer('at').notNull(),
 });
+
+/** Bulk import jobs (migration 0083): see `BulkJobStore` in @commerceworker/ports/commerce. */
+export const bulkJobs = sqliteTable(
+  'bulk_jobs',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    checkOnly: integer('check_only', { mode: 'boolean' }).notNull().default(false),
+    fileName: text('file_name').notNull(),
+    sourceKey: text('source_key').notNull(),
+    reportKey: text('report_key'),
+    status: text('status').notNull().default('queued'),
+    header: text('header').notNull().default('[]'),
+    offset: integer('offset').notNull().default(0),
+    nextRow: integer('next_row').notNull().default(1),
+    applied: integer('applied').notNull().default(0),
+    failed: integer('failed').notNull().default(0),
+    errors: text('errors').notNull().default('[]'),
+    error: text('error'),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('bulk_jobs_created').on(t.createdAt)],
+);

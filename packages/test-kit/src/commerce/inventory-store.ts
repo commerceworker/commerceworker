@@ -7,6 +7,7 @@ import type { OrderLine, StockLine } from '@commerceworker/core';
 import type {
   InventoryStore,
   ProductRecord,
+  StockCount,
   StockLevel,
   StockRow,
   StockStatus,
@@ -43,6 +44,9 @@ export class InMemoryInventoryStore implements InventoryStore {
   private readonly reservations = new Map<string, Reservation>();
   /** Movement ids already applied: the ledger that makes every change happen once. */
   private readonly applied = new Set<string>();
+  /** Reorder points a stock import set, over the fixture's. */
+  private readonly reorderQuantities = new Map<string, number>();
+  private readonly reorderPoints = new Map<string, number>();
 
   constructor(private readonly fixture: InventoryFixture = {}) {
     for (const p of fixture.products ?? [])
@@ -62,7 +66,7 @@ export class InMemoryInventoryStore implements InventoryStore {
   /** Applies a movement once: a repeated id changes nothing. */
   private move(
     id: string,
-    kind: 'hold' | 'restock' | 'release' | 'consume',
+    kind: 'hold' | 'restock' | 'release' | 'consume' | 'count',
     r: { sku: string; qty: number; locationId?: string },
   ) {
     if (this.applied.has(id)) return false;
@@ -70,6 +74,7 @@ export class InMemoryInventoryStore implements InventoryStore {
     if (!level) return false;
     if (kind === 'hold') level.reserved += r.qty;
     if (kind === 'restock') level.stock += r.qty;
+    if (kind === 'count') level.stock = r.qty;
     if (kind === 'release') level.reserved = Math.max(0, level.reserved - r.qty);
     if (kind === 'consume') {
       level.stock -= r.qty;
@@ -195,7 +200,9 @@ export class InMemoryInventoryStore implements InventoryStore {
     return (this.fixture.products ?? [])
       .filter((p) => {
         const level = this.central.get(p.sku)!;
-        return level.stock - level.reserved <= (p.reorderPoint ?? 0);
+        return (
+          level.stock - level.reserved <= (this.reorderPoints.get(p.sku) ?? p.reorderPoint ?? 0)
+        );
       })
       .map((p) => {
         const level = this.central.get(p.sku)!;
@@ -206,8 +213,8 @@ export class InMemoryInventoryStore implements InventoryStore {
           cost: 1,
           stock: level.stock,
           reserved: level.reserved,
-          reorderPoint: p.reorderPoint ?? 0,
-          reorderQty: 0,
+          reorderPoint: this.reorderPoints.get(p.sku) ?? p.reorderPoint ?? 0,
+          reorderQty: this.reorderQuantities.get(p.sku) ?? 0,
           supplier: '',
           sellerId: null,
           kind: p.kind ?? 'physical',
@@ -232,7 +239,7 @@ export class InMemoryInventoryStore implements InventoryStore {
           stock: level.stock,
           reserved: level.reserved,
           available: level.stock - level.reserved,
-          reorderPoint: p.reorderPoint ?? 0,
+          reorderPoint: this.reorderPoints.get(p.sku) ?? p.reorderPoint ?? 0,
           supplier: '',
         };
       })
@@ -243,6 +250,20 @@ export class InMemoryInventoryStore implements InventoryStore {
       )
       .sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0))
       .slice(0, f.limit);
+  }
+
+  async setCounts(jobId: string, rows: readonly StockCount[]) {
+    const unknown = new Set<string>();
+    for (const r of rows) {
+      if (!this.central.has(r.sku)) {
+        unknown.add(r.sku);
+        continue;
+      }
+      if (!this.move(`cnt_${jobId}_${r.row}`, 'count', { sku: r.sku, qty: r.stock })) continue;
+      if (r.reorderQty !== undefined) this.reorderQuantities.set(r.sku, r.reorderQty);
+      if (r.reorderPoint !== undefined) this.reorderPoints.set(r.sku, r.reorderPoint);
+    }
+    return { unknown: [...unknown] };
   }
 
   async restock(orderId: string, stepKey: string, lines: readonly StockLine[]) {

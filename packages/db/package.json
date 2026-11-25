@@ -9,6 +9,7 @@
     "./budget-store": "./src/budget-store.ts",
     "./company-directory": "./src/company-directory.ts",
     "./pricing-store": "./src/pricing-store.ts",
+    "./bulk-job-store": "./src/bulk-job-store.ts",
     "./price-book-store": "./src/price-book-store.ts",
     "./purchase-order-store": "./src/purchase-order-store.ts",
     "./quote-store": "./src/quote-store.ts",

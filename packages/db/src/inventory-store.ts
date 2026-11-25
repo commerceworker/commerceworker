@@ -6,7 +6,12 @@
  */
 import type { OrderLine, StockLine } from '@commerceworker/core';
 import type { Clock } from '@commerceworker/ports';
-import type { InventoryStore, StockLevel, StockStatus } from '@commerceworker/ports/commerce';
+import type {
+  InventoryStore,
+  StockCount,
+  StockLevel,
+  StockStatus,
+} from '@commerceworker/ports/commerce';
 import { and, asc, eq, inArray, lte, or, type SQL, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
@@ -14,10 +19,12 @@ import { createDb } from './index';
 import { contains } from './match';
 import { locationStock, products, reservations, shipments, stockMovements } from './schema';
 
-type Kind = 'hold' | 'restock' | 'release' | 'consume';
+/** `count` sets stock on hand to what was counted (a bulk import); the others move it by `qty`. */
+type Kind = 'hold' | 'restock' | 'release' | 'consume' | 'count';
 
 type StockMove = {
   m: { id: string; orderId: string; sku: string; kind: Kind; qty: number; locationId?: string };
+  reorder?: Pick<StockCount, 'reorderPoint' | 'reorderQty'>;
   first?: BatchItem<'sqlite'>;
   guard?: SQL;
 };
@@ -42,6 +49,8 @@ function stockChange(kind: Kind, qty: number, t: { stock: SQLiteColumn; reserved
       return { reserved: sql`max(0, ${t.reserved} - ${qty})` };
     case 'consume':
       return { stock: sql`${t.stock} - ${qty}`, reserved: sql`max(0, ${t.reserved} - ${qty})` };
+    case 'count':
+      return { stock: sql`${qty}` };
   }
 }
 
@@ -56,7 +65,7 @@ export function d1InventoryStore(d1: D1Database, clock: Clock): InventoryStore {
    * reservation row it belongs to); `guard`, checked after it, must hold for the change to apply
    * and be marked applied. A `locationId` moves a store's stock instead of central stock.
    */
-  function moveStatements({ m, first, guard }: StockMove): BatchItem<'sqlite'>[] {
+  function moveStatements({ m, first, guard, reorder }: StockMove): BatchItem<'sqlite'>[] {
     const pending = and(
       sql`exists (select 1 from ${stockMovements} where ${and(eq(stockMovements.id, m.id), eq(stockMovements.applied, false))})`,
       guard,
@@ -74,7 +83,7 @@ export function d1InventoryStore(d1: D1Database, clock: Clock): InventoryStore {
           )
       : d
           .update(products)
-          .set(stockChange(m.kind, m.qty, products))
+          .set({ ...stockChange(m.kind, m.qty, products), ...reorder })
           .where(and(eq(products.sku, m.sku), pending));
     const mark = d
       .update(stockMovements)
@@ -345,6 +354,34 @@ export function d1InventoryStore(d1: D1Database, clock: Clock): InventoryStore {
         )
         .orderBy(asc(products.sku))
         .limit(f.limit);
+    },
+
+    async setCounts(jobId: string, rows: readonly StockCount[]) {
+      const known = new Set<string>();
+      for (const run of chunk([...new Set(rows.map((r) => r.sku))], SKUS_PER_QUERY))
+        for (const p of await d
+          .select({ sku: products.sku })
+          .from(products)
+          .where(inArray(products.sku, run)))
+          known.add(p.sku);
+      const counted = rows.filter((r) => known.has(r.sku));
+      if (counted.length) {
+        // Each count is a ledger row keyed by the job and the row (the job stands where an order's
+        // id does), applied once; its reorder settings are set beside it. One transaction.
+        await moveStocks(
+          counted.map((r) => ({
+            m: {
+              id: `cnt_${jobId}_${r.row}`,
+              orderId: jobId,
+              sku: r.sku,
+              kind: 'count',
+              qty: r.stock,
+            },
+            reorder: { reorderPoint: r.reorderPoint, reorderQty: r.reorderQty },
+          })),
+        );
+      }
+      return { unknown: [...new Set(rows.filter((r) => !known.has(r.sku)).map((r) => r.sku))] };
     },
 
     async restock(orderId, stepKey, lines: readonly StockLine[]) {

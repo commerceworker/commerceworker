@@ -209,6 +209,36 @@ export function describeInventoryStoreContract(
       expect(await s.stockList({ q: 'IC-', limit: 2 })).toHaveLength(2);
     });
 
+    it('sets stock to a count once per job and row, leaving what is reserved', async () => {
+      const s = await fresh();
+      await s.reserve(order('ic_held', [{ sku: 'IC-TEE', qty: 3 }]), 'reserve#1');
+      const r = await s.setCounts('blk_ic', [
+        { row: 2, sku: 'IC-TEE', stock: 7, reorderPoint: 9, reorderQty: 4 },
+        { row: 3, sku: 'IC-NONE', stock: 1 },
+      ]);
+      expect(r).toEqual({ unknown: ['IC-NONE'] });
+      expect(await level(s, 'IC-TEE')).toMatchObject({ stock: 7, reserved: 3 });
+      expect(await s.stockList({ q: 'IC-TEE', limit: 5 })).toMatchObject([
+        { reorderPoint: 9, available: 4 },
+      ]);
+      await s.setCounts('blk_new', [
+        { row: 2, sku: 'IC-TEE', stock: 7, reorderPoint: 12, reorderQty: 11 },
+      ]);
+      // The same row again changes nothing, even after stock and reorder settings changed.
+      await s.restock('ic_after', 'restock#1', [{ sku: 'IC-TEE', qty: 2 }]);
+      await s.setCounts('blk_ic', [
+        { row: 2, sku: 'IC-TEE', stock: 7, reorderPoint: 9, reorderQty: 4 },
+      ]);
+      expect((await s.belowReorderPoint()).find((p) => p.sku === 'IC-TEE')).toMatchObject({
+        reorderPoint: 12,
+        reorderQty: 11,
+      });
+      expect((await level(s, 'IC-TEE'))?.stock).toBe(9);
+      // Another row, or another job, counts again.
+      await s.setCounts('blk_ic2', [{ row: 2, sku: 'IC-TEE', stock: 0 }]);
+      expect((await level(s, 'IC-TEE'))?.stock).toBe(0);
+    });
+
     it('restocks once per step and line', async () => {
       const s = await fresh();
       const lines = [{ sku: 'IC-ONE', qty: 1 }];

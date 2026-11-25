@@ -40,6 +40,16 @@ export interface ReserveResult {
   readonly short: string[];
 }
 
+/** A counted level for one SKU, from a row of a stock import. */
+export interface StockCount {
+  readonly row: number;
+  readonly sku: string;
+  /** On hand, as counted. */
+  readonly stock: number;
+  readonly reorderPoint?: number;
+  readonly reorderQty?: number;
+}
+
 export interface InventoryStore {
   /** Levels per SKU: central stock, or a store's when `locationId` is set. Unknown SKUs are absent. */
   levels(skus: readonly string[], locationId?: string): Promise<Map<string, StockLevel>>;
@@ -81,4 +91,11 @@ export interface InventoryStore {
   stockList(f: { q?: string; belowReorder?: boolean; limit: number }): Promise<StockRow[]>;
   /** Adds returned or received stock to central stock, once per step and line. */
   restock(orderId: string, stepKey: string, lines: readonly StockLine[]): Promise<void>;
+  /**
+   * Sets central stock to what was counted, for a bulk import's rows: each a `count` in the
+   * ledger keyed by the job and the row, so a step retried changes nothing twice; reserved stock
+   * is left as it is. A row's reorder settings, when it has them, are set beside it. SKUs with no
+   * product are left out and returned.
+   */
+  setCounts(jobId: string, rows: readonly StockCount[]): Promise<{ unknown: string[] }>;
 }
