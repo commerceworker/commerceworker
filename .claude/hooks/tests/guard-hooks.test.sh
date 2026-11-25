@@ -168,7 +168,10 @@ check "and doesn't warn" "" "$(echo '{}' | CLAUDE_PROJECT_DIR=$TMPDIR/wt "$hooks
 
 # A PATH with every system tool but jq.
 mkdir -p "$TMPDIR/nojq"
-for f in /bin/* /usr/bin/*; do [ "${f##*/}" = jq ] || ln -sf "$f" "$TMPDIR/nojq/${f##*/}"; done
+for f in /bin/* /usr/bin/*; do
+  [ -f "$f" ] && [ -x "$f" ] && [ "${f##*/}" != jq ] || continue
+  ln -sf "$f" "$TMPDIR/nojq/${f##*/}"
+done
 check "without jq the session start says the hooks are off" "jq is not installed" "$(echo '{}' | PATH="$TMPDIR/nojq" /bin/bash "$hooks/session-context.sh")"
 check "and the guards stay silent rather than erroring" "" "$(echo '{"tool_input":{"command":"pnpm deploy"}}' | PATH="$TMPDIR/nojq" /bin/bash "$hooks/guard-bash.sh" 2>&1)"
 
